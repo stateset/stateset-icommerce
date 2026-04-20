@@ -3,8 +3,9 @@
  *
  * Tests for cli/src/tools/currency.js
  * Covers: get_exchange_rate, list_exchange_rates, convert_currency,
- *         set_exchange_rate, get_currency_settings, set_base_currency,
- *         enable_currencies, format_currency
+ *         set_exchange_rate, set_exchange_rates, delete_exchange_rate,
+ *         get_currency_settings, update_currency_settings, set_base_currency,
+ *         enable_currencies, check_currency_enabled, format_currency
  */
 
 import { describe, it } from 'node:test';
@@ -59,7 +60,15 @@ function makeCurrencyCommerce(overrides = {}) {
       getRatesFor: async () => [mockRate],
       convert: async () => mockConversion,
       setRate: async (data) => ({ id: 'rate_001', ...data, rateAt: '2026-03-01T00:00:00Z' }),
+      setRates: async (rates) =>
+        rates.map((rate, index) => ({
+          id: `rate_00${index + 1}`,
+          ...rate,
+          rateAt: '2026-03-01T00:00:00Z',
+        })),
+      deleteRate: async () => true,
       getSettings: async () => mockSettings,
+      updateSettings: async (data) => ({ ...mockSettings, ...data }),
       setBaseCurrency: async (currency) => ({
         baseCurrency: currency,
         enabledCurrencies: ['USD', 'EUR', 'GBP'],
@@ -68,6 +77,7 @@ function makeCurrencyCommerce(overrides = {}) {
         baseCurrency: 'USD',
         enabledCurrencies: currencies,
       }),
+      isEnabled: async (currency) => currency === 'USD',
       format: async (amount, currency) => `$${amount.toFixed(2)} ${currency}`,
       ...overrides,
     },
@@ -79,9 +89,9 @@ function makeCurrencyCommerce(overrides = {}) {
 // ============================================================================
 
 describe('currencyTools — module exports', () => {
-  it('exports an array of 8 tools', () => {
+  it('exports an array of 12 tools', () => {
     assert.ok(Array.isArray(currencyTools));
-    assert.equal(currencyTools.length, 8);
+    assert.equal(currencyTools.length, 12);
   });
 
   it('exports expected tool names', () => {
@@ -91,9 +101,13 @@ describe('currencyTools — module exports', () => {
       'list_exchange_rates',
       'convert_currency',
       'set_exchange_rate',
+      'set_exchange_rates',
+      'delete_exchange_rate',
       'get_currency_settings',
+      'update_currency_settings',
       'set_base_currency',
       'enable_currencies',
+      'check_currency_enabled',
       'format_currency',
     ]);
   });
@@ -107,7 +121,7 @@ describe('currencyTools — module exports', () => {
   it('all tools have valid permissions', () => {
     for (const tool of currencyTools) {
       assert.ok(
-        ['read', 'write', 'admin'].includes(tool.permission),
+        ['read', 'write', 'delete', 'admin'].includes(tool.permission),
         `${tool.name} has invalid permission: ${tool.permission}`,
       );
     }
@@ -140,12 +154,22 @@ describe('currencyTools — permission assignments', () => {
     }
   });
 
-  it('write tools have write permission', () => {
-    const writeToolNames = ['set_exchange_rate', 'set_base_currency', 'enable_currencies'];
-    for (const name of writeToolNames) {
+  it('admin tools have admin permission', () => {
+    const adminToolNames = [
+      'set_exchange_rate',
+      'set_exchange_rates',
+      'update_currency_settings',
+      'set_base_currency',
+      'enable_currencies',
+    ];
+    for (const name of adminToolNames) {
       const tool = findTool(name);
-      assert.equal(tool.permission, 'write', `${name} should be write`);
+      assert.equal(tool.permission, 'admin', `${name} should be admin`);
     }
+  });
+
+  it('delete tools have delete permission', () => {
+    assert.equal(findTool('delete_exchange_rate').permission, 'delete');
   });
 });
 
@@ -180,9 +204,25 @@ describe('currencyTools — input schemas', () => {
     assert.ok(schema.source, 'missing source field');
   });
 
+  it('set_exchange_rates has rates field', () => {
+    const schema = findTool('set_exchange_rates').inputSchema;
+    assert.ok(schema.rates, 'missing rates field');
+  });
+
+  it('delete_exchange_rate has rateId field', () => {
+    const schema = findTool('delete_exchange_rate').inputSchema;
+    assert.ok(schema.rateId, 'missing rateId field');
+  });
+
   it('get_currency_settings has empty inputSchema', () => {
     const schema = findTool('get_currency_settings').inputSchema;
     assert.deepStrictEqual(schema, {});
+  });
+
+  it('update_currency_settings has optional settings fields', () => {
+    const schema = findTool('update_currency_settings').inputSchema;
+    assert.ok(schema.baseCurrency);
+    assert.ok(schema.enabledCurrencies);
   });
 
   it('set_base_currency has currency field', () => {
@@ -193,6 +233,11 @@ describe('currencyTools — input schemas', () => {
   it('enable_currencies has currencies field', () => {
     const schema = findTool('enable_currencies').inputSchema;
     assert.ok(schema.currencies, 'missing currencies field');
+  });
+
+  it('check_currency_enabled has currency field', () => {
+    const schema = findTool('check_currency_enabled').inputSchema;
+    assert.ok(schema.currency, 'missing currency field');
   });
 
   it('format_currency has amount and currency fields', () => {
@@ -337,6 +382,54 @@ describe('currencyTools — set_exchange_rate handler', () => {
   });
 });
 
+describe('currencyTools — set_exchange_rates handler', () => {
+  it('returns preview when allowApply is false', async () => {
+    const tool = findTool('set_exchange_rates');
+    const result = await tool.handler({
+      commerce: makeCurrencyCommerce(),
+      params: { rates: [{ baseCurrency: 'USD', quoteCurrency: 'EUR', rate: 0.92 }] },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.preview.count, 1);
+  });
+
+  it('sets multiple exchange rates when allowApply is true', async () => {
+    const tool = findTool('set_exchange_rates');
+    const result = await tool.handler({
+      commerce: makeCurrencyCommerce(),
+      params: { rates: [{ baseCurrency: 'USD', quoteCurrency: 'EUR', rate: 0.92 }] },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.count, 1);
+  });
+});
+
+describe('currencyTools — delete_exchange_rate handler', () => {
+  it('returns preview when allowApply is false', async () => {
+    const tool = findTool('delete_exchange_rate');
+    const result = await tool.handler({
+      commerce: makeCurrencyCommerce(),
+      params: { rateId: 'rate_001' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.preview.rateId, 'rate_001');
+  });
+
+  it('deletes rate when allowApply is true', async () => {
+    const tool = findTool('delete_exchange_rate');
+    const result = await tool.handler({
+      commerce: makeCurrencyCommerce(),
+      params: { rateId: 'rate_001' },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.deleted, true);
+  });
+});
+
 // ============================================================================
 // Handler: get_currency_settings
 // ============================================================================
@@ -354,6 +447,30 @@ describe('currencyTools — get_currency_settings handler', () => {
     assert.deepStrictEqual(result.settings.enabledCurrencies, ['USD', 'EUR', 'GBP']);
     assert.equal(result.settings.autoConvert, true);
     assert.equal(result.settings.roundingMode, 'half_up');
+  });
+});
+
+describe('currencyTools — update_currency_settings handler', () => {
+  it('returns preview when allowApply is false', async () => {
+    const tool = findTool('update_currency_settings');
+    const result = await tool.handler({
+      commerce: makeCurrencyCommerce(),
+      params: { autoConvert: false },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.preview.autoConvert, false);
+  });
+
+  it('updates settings when allowApply is true', async () => {
+    const tool = findTool('update_currency_settings');
+    const result = await tool.handler({
+      commerce: makeCurrencyCommerce(),
+      params: { autoConvert: false, enabledCurrencies: ['USD', 'EUR'] },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.deepStrictEqual(result.settings.enabledCurrencies, ['USD', 'EUR']);
   });
 });
 
@@ -420,6 +537,19 @@ describe('currencyTools — enable_currencies handler', () => {
   });
 });
 
+describe('currencyTools — check_currency_enabled handler', () => {
+  it('returns enabled status', async () => {
+    const tool = findTool('check_currency_enabled');
+    const result = await tool.handler({
+      commerce: makeCurrencyCommerce(),
+      params: { currency: 'USD' },
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.currency, 'USD');
+    assert.equal(result.enabled, true);
+  });
+});
+
 // ============================================================================
 // Handler: format_currency
 // ============================================================================
@@ -444,7 +574,7 @@ describe('currencyTools — format_currency handler', () => {
 
 describe('currencyTools — error paths (empty commerce)', () => {
   const readTools = ['get_exchange_rate', 'list_exchange_rates', 'convert_currency',
-    'get_currency_settings', 'format_currency'];
+    'get_currency_settings', 'check_currency_enabled', 'format_currency'];
 
   for (const toolName of readTools) {
     it(`${toolName} throws TypeError when commerce.currency is missing`, async () => {
@@ -461,7 +591,14 @@ describe('currencyTools — error paths (empty commerce)', () => {
     });
   }
 
-  const writeTools = ['set_exchange_rate', 'set_base_currency', 'enable_currencies'];
+  const writeTools = [
+    'set_exchange_rate',
+    'set_exchange_rates',
+    'delete_exchange_rate',
+    'update_currency_settings',
+    'set_base_currency',
+    'enable_currencies',
+  ];
 
   for (const toolName of writeTools) {
     it(`${toolName} throws TypeError when commerce.currency is missing and allowApply is true`, async () => {

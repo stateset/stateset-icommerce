@@ -146,3 +146,34 @@ describe('x402_create_payment_intent tool', () => {
     assert.equal(result.intent.signingHash, '0xabc123');
   });
 });
+
+describe('x402_get_credit_account tool', () => {
+  it('reads the credit account from the getter-style x402 binding', async () => {
+    const tool = x402Tools.find((entry) => entry.name === 'x402_get_credit_account');
+    assert.ok(tool, 'x402_get_credit_account should exist');
+
+    const commerce = createGetterStyleCommerce({
+      getCreditAccount: async (payload) => ({
+        id: 'credit_123',
+        payerAddress: payload.payerAddress,
+        asset: payload.asset,
+        network: payload.network,
+        balance: '2500000',
+      }),
+    });
+
+    const result = await tool.handler({
+      commerce,
+      params: {
+        payerAddress: '0xPayer',
+        asset: 'usdc',
+        network: 'base',
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.account.id, 'credit_123');
+    assert.equal(result.account.payerAddress, '0xPayer');
+    assert.equal(result.account.network, 'base');
+  });
+});

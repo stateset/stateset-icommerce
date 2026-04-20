@@ -1,23 +1,30 @@
 {
   "source": {
     "agents": "cli/src/agent-definitions.js",
-    "mcpServer": "cli/src/mcp-server.js",
-    "scaffoldServer": "cli/src/scaffold-server.js"
+    "registry": "cli/src/mcp-server-registry.js"
   },
   "totalAgents": 20,
-  "totalCommerceTools": 535,
+  "totalCommerceTools": 708,
   "totalScaffoldTools": 13,
+  "totalX402Tools": 5,
   "fullAccessAgentCount": 1,
   "scopedAgentCount": 19,
-  "totalScopedToolReferences": 202,
+  "totalScopedToolReferences": 301,
   "supportedServers": [
     {
       "name": "stateset-commerce",
-      "toolCount": 535
+      "toolCount": 708,
+      "source": "cli/src/mcp-server.js"
     },
     {
       "name": "stateset-scaffold",
-      "toolCount": 13
+      "toolCount": 13,
+      "source": "cli/src/scaffold-server.js"
+    },
+    {
+      "name": "stateset-x402",
+      "toolCount": 5,
+      "source": "cli/src/x402-mcp-server.js"
     }
   ],
   "agents": [
@@ -25,10 +32,10 @@
       "id": "agents",
       "name": "Agents Agent",
       "description": "Multi-agent runtime orchestration, A2A commerce, and agent lifecycle management",
-      "toolCount": 39,
+      "toolCount": 53,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 39
+        "stateset-commerce": 53
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -39,10 +46,10 @@
       "id": "analytics",
       "name": "Analytics Agent",
       "description": "Business intelligence and forecasting specialist",
-      "toolCount": 10,
+      "toolCount": 14,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 10
+        "stateset-commerce": 14
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -53,10 +60,10 @@
       "id": "checkout",
       "name": "Checkout Agent",
       "description": "Shopping cart and checkout flow specialist (Agentic Commerce Protocol)",
-      "toolCount": 16,
+      "toolCount": 32,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 16
+        "stateset-commerce": 32
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -67,10 +74,10 @@
       "id": "currency",
       "name": "Currency Agent",
       "description": "Multi-currency support and exchange rate management specialist",
-      "toolCount": 8,
+      "toolCount": 12,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 8
+        "stateset-commerce": 12
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -81,10 +88,10 @@
       "id": "customer-service",
       "name": "Customer Service",
       "description": "Full-service agent with access to all commerce tools",
-      "toolCount": 535,
+      "toolCount": 708,
       "usesAllCommerceTools": true,
       "serverCounts": {
-        "stateset-commerce": 535
+        "stateset-commerce": 708
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -109,10 +116,10 @@
       "id": "invoices",
       "name": "Invoices Agent",
       "description": "B2B invoice management and accounts receivable specialist",
-      "toolCount": 7,
+      "toolCount": 9,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 7
+        "stateset-commerce": 9
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -151,10 +158,10 @@
       "id": "payments",
       "name": "Payments Agent",
       "description": "Payment processing and refund management specialist",
-      "toolCount": 7,
+      "toolCount": 21,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 7
+        "stateset-commerce": 21
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -165,10 +172,10 @@
       "id": "promotions",
       "name": "Promotions Agent",
       "description": "Promotions, discounts, and coupon code management specialist",
-      "toolCount": 12,
+      "toolCount": 17,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 12
+        "stateset-commerce": 17
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -193,10 +200,10 @@
       "id": "shipments",
       "name": "Shipments Agent",
       "description": "Shipment tracking and delivery management specialist",
-      "toolCount": 5,
+      "toolCount": 16,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 5
+        "stateset-commerce": 16
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -235,10 +242,10 @@
       "id": "subscriptions",
       "name": "Subscriptions Agent",
       "description": "Subscription plans, recurring billing, and customer subscription lifecycle management",
-      "toolCount": 17,
+      "toolCount": 19,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 17
+        "stateset-commerce": 19
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -249,10 +256,10 @@
       "id": "suppliers",
       "name": "Suppliers Agent",
       "description": "Supplier management and purchase order specialist",
-      "toolCount": 8,
+      "toolCount": 12,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 8
+        "stateset-commerce": 12
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -277,10 +284,10 @@
       "id": "tax",
       "name": "Tax Agent",
       "description": "Tax calculation and compliance specialist",
-      "toolCount": 9,
+      "toolCount": 29,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 9
+        "stateset-commerce": 29
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -291,10 +298,10 @@
       "id": "warranties",
       "name": "Warranties Agent",
       "description": "Product warranty and claims management specialist",
-      "toolCount": 6,
+      "toolCount": 9,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 6
+        "stateset-commerce": 9
       },
       "serverNamespaces": [
         "stateset-commerce"

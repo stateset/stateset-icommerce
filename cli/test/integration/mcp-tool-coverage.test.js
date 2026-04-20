@@ -8,122 +8,21 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-
-// Import every tool module individually so we can test them in isolation
-import { customerTools } from '../../src/tools/customers.js';
-import { orderTools } from '../../src/tools/orders.js';
-import { productTools } from '../../src/tools/products.js';
-import { inventoryTools } from '../../src/tools/inventory.js';
-import { customObjectTools } from '../../src/tools/custom-objects.js';
-import { returnTools } from '../../src/tools/returns.js';
-import { cartTools } from '../../src/tools/carts.js';
-import { analyticsTools } from '../../src/tools/analytics.js';
-import { currencyTools } from '../../src/tools/currency.js';
-import { taxTools } from '../../src/tools/tax.js';
-import { promotionTools } from '../../src/tools/promotions.js';
-import { subscriptionTools } from '../../src/tools/subscriptions.js';
-import { syncTools } from '../../src/tools/sync.js';
-import { manufacturingTools } from '../../src/tools/manufacturing.js';
-import { paymentTools } from '../../src/tools/payments.js';
-import { stablecoinTools } from '../../src/tools/stablecoin.js';
-import { treasuryTools } from '../../src/tools/treasury.js';
-import { erc8004Tools } from '../../src/tools/erc8004.js';
-import { x402Tools } from '../../src/tools/x402.js';
-import { agentCardTools } from '../../src/tools/agent-cards.js';
-import { a2aTools } from '../../src/tools/a2a.js';
-import { agentRuntimeTools } from '../../src/tools/agent-runtime.js';
-import { shipmentTools } from '../../src/tools/shipments.js';
-import { supplierTools } from '../../src/tools/suppliers.js';
-import { invoiceTools } from '../../src/tools/invoices.js';
-import { warrantyTools } from '../../src/tools/warranties.js';
-import { importTools } from '../../src/tools/import.js';
-import { policyTools } from '../../src/tools/policies.js';
-import { vectorTools } from '../../src/tools/vector.js';
-import { giftCardTools } from '../../src/tools/gift-cards.js';
-import { storeCreditTools } from '../../src/tools/store-credits.js';
-import { segmentTools } from '../../src/tools/segments.js';
-import { shippingZoneTools } from '../../src/tools/shipping-zones.js';
-import { reviewTools } from '../../src/tools/reviews.js';
-import { wishlistTools } from '../../src/tools/wishlists.js';
-import { loyaltyTools } from '../../src/tools/loyalty.js';
-import { fraudTools } from '../../src/tools/fraud.js';
-import { connectorTools } from '../../src/tools/connectors.js';
-import { auditTools } from '../../src/tools/audit.js';
-import { proofTools } from '../../src/tools/proofs.js';
-import { circuitBreakerTools } from '../../src/tools/circuit-breaker.js';
-import { checkoutTools } from '../../src/tools/checkout.js';
-import { complianceTools } from '../../src/tools/compliance.js';
-import { catalogTools } from '../../src/tools/catalog.js';
-import { a2aAutomationTools } from '../../src/tools/a2a-automation.js';
-import { a2aObservabilityTools } from '../../src/tools/a2a-observability.js';
-import { a2aPlatformTools } from '../../src/tools/a2a-platform.js';
-import { a2aIntelligenceTools } from '../../src/tools/a2a-intelligence.js';
-
-// Also import the aggregated list exported from mcp-server
 import { TOOL_NAMES } from '../../src/mcp-server.js';
+import {
+  DOMAIN_TOOL_ARRAYS,
+  ALL_DOMAIN_TOOLS,
+  COMMERCE_GETTER_TO_MODULE,
+  AUDITED_CLASS_METHOD_TOOL_COVERAGE,
+  readCommerceBindingSource,
+  getBindingClassMethodNames,
+} from '../../src/coverage/mcp-api-coverage.js';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 const VALID_PERMISSIONS = new Set(['read', 'write', 'delete', 'admin', 'preview']);
-
-/**
- * Collect all domain tool arrays into a single flat list (mirrors mcp-server.js
- * ALL_TOOL_DEFS but without the agentic runtime tools added inside the server).
- */
-const DOMAIN_TOOL_ARRAYS = {
-  customerTools,
-  orderTools,
-  productTools,
-  inventoryTools,
-  customObjectTools,
-  returnTools,
-  cartTools,
-  analyticsTools,
-  currencyTools,
-  taxTools,
-  promotionTools,
-  subscriptionTools,
-  syncTools,
-  manufacturingTools,
-  paymentTools,
-  stablecoinTools,
-  treasuryTools,
-  erc8004Tools,
-  x402Tools,
-  agentCardTools,
-  a2aTools,
-  agentRuntimeTools,
-  shipmentTools,
-  supplierTools,
-  invoiceTools,
-  warrantyTools,
-  importTools,
-  policyTools,
-  vectorTools,
-  giftCardTools,
-  storeCreditTools,
-  segmentTools,
-  shippingZoneTools,
-  reviewTools,
-  wishlistTools,
-  loyaltyTools,
-  fraudTools,
-  connectorTools,
-  auditTools,
-  proofTools,
-  circuitBreakerTools,
-  checkoutTools,
-  complianceTools,
-  catalogTools,
-  a2aAutomationTools,
-  a2aObservabilityTools,
-  a2aPlatformTools,
-  a2aIntelligenceTools,
-};
-
-const ALL_DOMAIN_TOOLS = Object.values(DOMAIN_TOOL_ARRAYS).flat();
 
 // ============================================================================
 // Tests
@@ -156,6 +55,65 @@ describe('MCP tool coverage', () => {
           TOOL_NAMES.includes(mcpName),
           `Domain tool "${tool.name}" missing from TOOL_NAMES`,
         );
+      }
+    });
+  });
+
+  describe('embedded API parity', () => {
+    it('covers every live Commerce getter with an MCP tool module mapping', () => {
+      const source = readCommerceBindingSource();
+      const getterMatches = [...source.matchAll(/get\s+([A-Za-z0-9]+)\(\):\s+[A-Za-z0-9]+/g)];
+      const getterNames = new Set(getterMatches.map((match) => match[1]));
+
+      // Skip aliases or non-MCP runtime surfaces that are intentionally handled elsewhere.
+      getterNames.delete('customStates');
+      getterNames.delete('events');
+
+      for (const getterName of getterNames) {
+        assert.ok(
+          COMMERCE_GETTER_TO_MODULE[getterName],
+          `Missing MCP module coverage mapping for Commerce getter "${getterName}"`,
+        );
+      }
+
+      for (const [getterName, moduleName] of Object.entries(COMMERCE_GETTER_TO_MODULE)) {
+        assert.ok(getterNames.has(getterName), `Stale Commerce getter mapping "${getterName}"`);
+        assert.ok(
+          Array.isArray(DOMAIN_TOOL_ARRAYS[moduleName]) && DOMAIN_TOOL_ARRAYS[moduleName].length > 0,
+          `Mapped module "${moduleName}" for getter "${getterName}" has no tools`,
+        );
+      }
+    });
+  });
+
+  describe('audited method parity', () => {
+    it('covers audited binding methods with MCP tool support', () => {
+      const source = readCommerceBindingSource();
+
+      for (const [className, coverage] of Object.entries(AUDITED_CLASS_METHOD_TOOL_COVERAGE)) {
+        const bindingMethods = getBindingClassMethodNames(source, className);
+        const exportedToolNames = new Set(coverage.tools.map((tool) => tool.name));
+
+        for (const methodName of bindingMethods) {
+          assert.ok(
+            coverage.methodToTools[methodName],
+            `Missing audited method coverage mapping for ${className}.${methodName}()`,
+          );
+
+          for (const toolName of coverage.methodToTools[methodName]) {
+            assert.ok(
+              exportedToolNames.has(toolName),
+              `Mapped tool "${toolName}" for ${className}.${methodName}() is not exported`,
+            );
+          }
+        }
+
+        for (const methodName of Object.keys(coverage.methodToTools)) {
+          assert.ok(
+            bindingMethods.has(methodName),
+            `Stale audited method coverage mapping "${className}.${methodName}()"`,
+          );
+        }
       }
     });
   });
@@ -443,16 +401,16 @@ describe('MCP tool coverage', () => {
 
   describe('per-module sanity', () => {
     const expectedModules = [
-      { name: 'customerTools', min: 2 },
-      { name: 'orderTools', min: 3 },
-      { name: 'productTools', min: 2 },
-      { name: 'inventoryTools', min: 3 },
-      { name: 'returnTools', min: 3 },
-      { name: 'cartTools', min: 5 },
-      { name: 'analyticsTools', min: 5 },
-      { name: 'paymentTools', min: 2 },
-      { name: 'shipmentTools', min: 1 },
-      { name: 'a2aTools', min: 2 },
+      { name: 'customers', min: 2 },
+      { name: 'orders', min: 3 },
+      { name: 'products', min: 2 },
+      { name: 'inventory', min: 3 },
+      { name: 'returns', min: 3 },
+      { name: 'carts', min: 5 },
+      { name: 'analytics', min: 5 },
+      { name: 'payments', min: 2 },
+      { name: 'shipments', min: 1 },
+      { name: 'a2a', min: 2 },
     ];
 
     for (const { name, min } of expectedModules) {

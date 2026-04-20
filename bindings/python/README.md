@@ -8,6 +8,16 @@ Local-first embedded commerce library for Python, powered by Rust.
 pip install stateset-embedded
 ```
 
+Optional framework adapters:
+
+```bash
+pip install "stateset-embedded[langchain]"
+pip install "stateset-embedded[crewai]"
+pip install "stateset-embedded[autogen]"
+# or install all Python framework helpers together
+pip install "stateset-embedded[agents]"
+```
+
 Or build from source:
 
 ```bash
@@ -78,6 +88,82 @@ commerce.currency.set_rate("USD", "EUR", 0.92, source="manual")
 conversion = commerce.currency.convert("USD", "EUR", 100.0)
 print(f"$100 USD = €{conversion.converted_amount} EUR")
 ```
+
+## Agent Toolkit
+
+The Python package also ships a native agent toolkit for core embedded commerce
+operations:
+
+```python
+from stateset_embedded import Commerce, create_embedded_agent_toolkit
+
+commerce = Commerce(":memory:")
+toolkit = create_embedded_agent_toolkit(commerce, allow_apply=False)
+
+openai_tools = toolkit.get_tools(format="openai")
+descriptors = toolkit.create_tool_descriptors(
+    filter=["list_customers", "list_orders", "get_sales_summary"]
+)
+callable_registry = toolkit.create_callable_registry(filter=["list_customers"])
+langchain_tools = toolkit.create_langchain_tools(filter=["list_customers"])
+
+execution = toolkit.execute_openai_tool_call(
+    {
+        "call_id": "py_demo_1",
+        "function": {
+            "name": "list_customers",
+            "arguments": "{\"limit\": 5}",
+        },
+    }
+)
+print(execution["output_message"])
+```
+
+This toolkit is aimed at Python agent runtimes such as CrewAI- or AutoGen-style
+hosts that need core commerce operations in-process. Use the JS toolkit or MCP
+server when you need the full registry-generated tool surface and policy
+runtime.
+
+OpenAI-compatible helper methods are available out of the box, and the
+framework-specific helpers are available when the corresponding framework
+packages are installed:
+
+- `create_tool_descriptors()`
+- `create_callable_registry()`
+- `execute_tool()` and `execute_tool_calls()`
+- `create_openai_tools()`
+- `create_langchain_tools()`
+- `create_crewai_tools()`
+- `create_autogen_tools()`
+
+Each helper also accepts a `tool_factory` callback so you can generate your own
+framework objects from the native descriptors.
+
+The package also exposes helper modules for direct imports:
+
+```python
+from stateset_embedded.generic import create_tool_descriptors, create_callable_registry
+from stateset_embedded.openai import create_openai_tools, execute_openai_tool_call
+from stateset_embedded.langchain import create_langchain_tools
+from stateset_embedded.crewai import create_crewai_tools
+from stateset_embedded.autogen import create_autogen_tools
+
+descriptors = create_tool_descriptors(commerce, filter=["list_customers"])
+registry = create_callable_registry(commerce, filter=["list_customers"])
+openai_tools = create_openai_tools(commerce, filter=["list_customers"])
+langchain_tools = create_langchain_tools(commerce, filter=["list_customers"])
+crewai_tools = create_crewai_tools(commerce, filter=["count_customers"])
+autogen_tools = create_autogen_tools(commerce, filter=["get_sales_summary"])
+```
+
+Runnable repo examples for those module imports live in:
+
+- `examples/python/openai_tools.py`
+- `examples/python/generic_tools.py`
+- `examples/python/langchain_tools.py`
+- `examples/python/crewai_tools.py`
+- `examples/python/autogen_tools.py`
+- `examples/python/framework_adapters.py`
 
 ## Sequencer Sync
 

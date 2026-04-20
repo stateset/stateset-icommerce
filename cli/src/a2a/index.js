@@ -558,7 +558,9 @@ export function createA2AService(commerce, config) {
         const submissionIntent = { ...intent, ...signedIntent };
 
         // Submit to sequencer
-        await sequencerClient.submitPaymentIntent(buildSequencerPaymentIntentPayload(submissionIntent));
+        await sequencerClient.submitPaymentIntent(
+          buildSequencerPaymentIntentPayload(submissionIntent),
+        );
 
         // Update payment with intent info
         await commerce.a2a().updatePayment(paymentId, {
@@ -999,7 +1001,8 @@ export function createA2AService(commerce, config) {
         status: 'accepted',
         total: fromSmallestUnit(quote.total, decimals),
         asset: quote.asset,
-        network: normalizeAcceptedNetworks(quote.accepted_networks)[0] || quote.network || defaultNetwork,
+        network:
+          normalizeAcceptedNetworks(quote.accepted_networks)[0] || quote.network || defaultNetwork,
       },
     };
   }
@@ -1976,7 +1979,9 @@ export function createA2AService(commerce, config) {
         let receipt = null;
 
         if (typeof sequencerClient.getPaymentReceipt === 'function') {
-          const response = await sequencerClient.getPaymentReceipt(escrow.intent_id, { maxRetries: 0 });
+          const response = await sequencerClient.getPaymentReceipt(escrow.intent_id, {
+            maxRetries: 0,
+          });
           receipt = response?.receipt || response;
         } else if (typeof sequencerClient.waitForReceipt === 'function') {
           receipt = await sequencerClient.waitForReceipt(escrow.intent_id);

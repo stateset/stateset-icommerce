@@ -2,10 +2,11 @@
  * Analytics & Forecasting Tools Test Suite
  *
  * Tests for cli/src/tools/analytics.js
- * Covers: get_sales_summary, get_top_products, get_customer_metrics,
- *         get_top_customers, get_inventory_health, get_low_stock_items,
+ * Covers: get_sales_summary, get_revenue_by_period, get_top_products,
+ *         get_product_performance, get_customer_metrics, get_top_customers,
+ *         get_inventory_health, get_low_stock_items, get_inventory_movement,
  *         get_demand_forecast, get_revenue_forecast, get_order_status_breakdown,
- *         get_return_metrics
+ *         get_fulfillment_metrics, get_return_metrics
  */
 
 import { describe, it } from 'node:test';
@@ -41,6 +42,20 @@ const mockTopProduct = {
   unitsSold: 85,
   revenue: 2550.0,
   orderCount: 60,
+};
+
+const mockRevenueByPeriod = {
+  period: '2026-03-01',
+  revenue: 4200.0,
+  orderCount: 48,
+};
+
+const mockProductPerformance = {
+  sku: 'WIDGET-001',
+  name: 'Widget Pro',
+  revenue: 2550.0,
+  unitsSold: 85,
+  grossMargin: 0.42,
 };
 
 const mockCustomerMetrics = {
@@ -79,6 +94,13 @@ const mockLowStockItem = {
   daysOfStock: 1.2,
 };
 
+const mockInventoryMovement = {
+  sku: 'WIDGET-001',
+  movementType: 'received',
+  quantity: 24,
+  occurredAt: '2026-03-15T00:00:00Z',
+};
+
 const mockDemandForecast = {
   sku: 'WIDGET-001',
   name: 'Widget Pro',
@@ -110,6 +132,12 @@ const mockOrderStatusBreakdown = {
   refunded: 3,
 };
 
+const mockFulfillmentMetrics = {
+  averagePickTimeMinutes: 12.5,
+  averagePackTimeMinutes: 6.2,
+  onTimeShipmentRate: 0.96,
+};
+
 const mockReturnMetrics = {
   totalReturns: 18,
   returnRatePercent: 4.5,
@@ -120,14 +148,18 @@ function makeAnalyticsCommerce() {
   return {
     analytics: {
       salesSummary: async () => mockSalesSummary,
+      revenueByPeriod: async () => [mockRevenueByPeriod],
       topProducts: async () => [mockTopProduct],
+      productPerformance: async () => [mockProductPerformance],
       customerMetrics: async () => mockCustomerMetrics,
       topCustomers: async () => [mockTopCustomer],
       inventoryHealth: async () => mockInventoryHealth,
       lowStockItems: async () => [mockLowStockItem],
+      inventoryMovement: async () => [mockInventoryMovement],
       demandForecast: async () => [mockDemandForecast],
       revenueForecast: async () => [mockRevenueForecast],
       orderStatusBreakdown: async () => mockOrderStatusBreakdown,
+      fulfillmentMetrics: async () => mockFulfillmentMetrics,
       returnMetrics: async () => mockReturnMetrics,
     },
   };
@@ -138,23 +170,27 @@ function makeAnalyticsCommerce() {
 // ============================================================================
 
 describe('analyticsTools — module exports', () => {
-  it('exports an array of 10 tools', () => {
+  it('exports an array of 14 tools', () => {
     assert.ok(Array.isArray(analyticsTools));
-    assert.equal(analyticsTools.length, 10);
+    assert.equal(analyticsTools.length, 14);
   });
 
   it('exports expected tool names', () => {
     const names = analyticsTools.map((t) => t.name);
     assert.deepStrictEqual(names, [
       'get_sales_summary',
+      'get_revenue_by_period',
       'get_top_products',
+      'get_product_performance',
       'get_customer_metrics',
       'get_top_customers',
       'get_inventory_health',
       'get_low_stock_items',
+      'get_inventory_movement',
       'get_demand_forecast',
       'get_revenue_forecast',
       'get_order_status_breakdown',
+      'get_fulfillment_metrics',
       'get_return_metrics',
     ]);
   });
@@ -204,6 +240,17 @@ describe('analyticsTools — input schemas', () => {
     assert.ok(schema.limit, 'missing limit field');
   });
 
+  it('get_revenue_by_period has period and granularity fields', () => {
+    const schema = findTool('get_revenue_by_period').inputSchema;
+    assert.ok(schema.period, 'missing period field');
+    assert.ok(schema.granularity, 'missing granularity field');
+  });
+
+  it('get_product_performance has period field', () => {
+    const schema = findTool('get_product_performance').inputSchema;
+    assert.ok(schema.period, 'missing period field');
+  });
+
   it('get_customer_metrics has period field', () => {
     const schema = findTool('get_customer_metrics').inputSchema;
     assert.ok(schema.period, 'missing period field');
@@ -225,6 +272,11 @@ describe('analyticsTools — input schemas', () => {
     assert.ok(schema.threshold, 'missing threshold field');
   });
 
+  it('get_inventory_movement has period field', () => {
+    const schema = findTool('get_inventory_movement').inputSchema;
+    assert.ok(schema.period, 'missing period field');
+  });
+
   it('get_demand_forecast has skus and daysAhead fields', () => {
     const schema = findTool('get_demand_forecast').inputSchema;
     assert.ok(schema.skus, 'missing skus field');
@@ -239,6 +291,11 @@ describe('analyticsTools — input schemas', () => {
 
   it('get_order_status_breakdown has period field', () => {
     const schema = findTool('get_order_status_breakdown').inputSchema;
+    assert.ok(schema.period, 'missing period field');
+  });
+
+  it('get_fulfillment_metrics has period field', () => {
+    const schema = findTool('get_fulfillment_metrics').inputSchema;
     assert.ok(schema.period, 'missing period field');
   });
 
@@ -283,6 +340,19 @@ describe('analyticsTools — get_sales_summary handler', () => {
   });
 });
 
+describe('analyticsTools — get_revenue_by_period handler', () => {
+  it('returns revenue rows', async () => {
+    const tool = findTool('get_revenue_by_period');
+    const result = await tool.handler({
+      commerce: makeAnalyticsCommerce(),
+      params: { period: 'last30days', granularity: 'day' },
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.count, 1);
+    assert.equal(result.rows[0].period, '2026-03-01');
+  });
+});
+
 // ============================================================================
 // Handler: get_top_products
 // ============================================================================
@@ -303,6 +373,19 @@ describe('analyticsTools — get_top_products handler', () => {
     assert.equal(result.products[0].unitsSold, 85);
     assert.equal(result.products[0].revenue, 2550.0);
     assert.equal(result.products[0].orderCount, 60);
+  });
+});
+
+describe('analyticsTools — get_product_performance handler', () => {
+  it('returns product performance rows', async () => {
+    const tool = findTool('get_product_performance');
+    const result = await tool.handler({
+      commerce: makeAnalyticsCommerce(),
+      params: { period: 'last30days' },
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.count, 1);
+    assert.equal(result.products[0].sku, 'WIDGET-001');
   });
 });
 
@@ -399,6 +482,19 @@ describe('analyticsTools — get_low_stock_items handler', () => {
   });
 });
 
+describe('analyticsTools — get_inventory_movement handler', () => {
+  it('returns inventory movement rows', async () => {
+    const tool = findTool('get_inventory_movement');
+    const result = await tool.handler({
+      commerce: makeAnalyticsCommerce(),
+      params: { period: 'last30days' },
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.count, 1);
+    assert.equal(result.movements[0].movementType, 'received');
+  });
+});
+
 // ============================================================================
 // Handler: get_demand_forecast
 // ============================================================================
@@ -481,6 +577,18 @@ describe('analyticsTools — get_order_status_breakdown handler', () => {
     assert.equal(result.breakdown.delivered, 90);
     assert.equal(result.breakdown.cancelled, 5);
     assert.equal(result.breakdown.refunded, 3);
+  });
+});
+
+describe('analyticsTools — get_fulfillment_metrics handler', () => {
+  it('returns fulfillment metrics', async () => {
+    const tool = findTool('get_fulfillment_metrics');
+    const result = await tool.handler({
+      commerce: makeAnalyticsCommerce(),
+      params: { period: 'last30days' },
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.metrics.onTimeShipmentRate, 0.96);
   });
 });
 

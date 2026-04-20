@@ -8,10 +8,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.2"
+stateset-embedded = "0.9.9"
 
 # For PostgreSQL support
-stateset-embedded = { version = "0.2", features = ["postgres"] }
+stateset-embedded = { version = "0.9.9", features = ["postgres"] }
 ```
 
 ## Quick Start
@@ -230,4 +230,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Examples
 
 - `examples/basic_usage.rs`
-- `examples/async_usage.rs`
+- `examples/error_handling.rs`
+- `examples/events_webhooks.rs`

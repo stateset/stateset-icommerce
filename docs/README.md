@@ -35,8 +35,11 @@ Generate per-binding API docs into `docs/api/` (requires language-specific doc t
 Create a versioned snapshot under `docs/versions/`:
 
 ```bash
-./docs/scripts/snapshot-version.sh v0.7.1
+./docs/scripts/snapshot-version.sh vX.Y.Z
 ```
+
+The snapshot command also builds the standalone mdBook under
+`docs/versions/vX.Y.Z/book/`.
 
 ## Generated inventories
 

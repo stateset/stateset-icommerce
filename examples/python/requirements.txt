@@ -1,1 +1,3 @@
-stateset-embedded>=0.8.0
+stateset-embedded>=1.0.0
+# Optional framework extras for the dedicated agent examples:
+# stateset-embedded[agents]>=1.0.0

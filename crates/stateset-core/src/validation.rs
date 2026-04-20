@@ -116,28 +116,11 @@ impl ValidationBuilder {
 
     /// Validate email format
     pub fn email(self, field: &str, value: &str) -> Self {
-        let value = value.trim();
-        let is_valid = {
-            if value.is_empty() || value.contains(char::is_whitespace) {
-                false
-            } else {
-                let parts: Vec<&str> = value.split('@').collect();
-                if parts.len() == 2 {
-                    let domain = parts[1];
-                    if parts[0].is_empty() || domain.is_empty() {
-                        false
-                    } else {
-                        domain.contains('.')
-                            && !domain.starts_with('.')
-                            && !domain.ends_with('.')
-                            && !domain.contains("..")
-                    }
-                } else {
-                    false
-                }
-            }
-        };
-        self.check(field, is_valid, "must be a valid email address")
+        self.check(
+            field,
+            crate::errors::validate_email(value).is_ok(),
+            "must be a valid email address",
+        )
     }
 
     /// Validate optional email format
@@ -346,6 +329,13 @@ mod tests {
         assert!(ValidationBuilder::new().email("email", "@example.com").build().is_err());
         assert!(ValidationBuilder::new().email("email", "alice@").build().is_err());
         assert!(ValidationBuilder::new().email("email", "alice@example").build().is_err());
+    }
+
+    #[test]
+    fn test_validation_builder_email_rejects_invalid_labels_and_dots() {
+        assert!(ValidationBuilder::new().email("email", "alice..bob@example.com").build().is_err());
+        assert!(ValidationBuilder::new().email("email", "alice@-example.com").build().is_err());
+        assert!(ValidationBuilder::new().email("email", "alice@example..com").build().is_err());
     }
 
     #[test]

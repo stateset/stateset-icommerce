@@ -937,18 +937,36 @@ pub fn validate_email(email: &str) -> Result<()> {
         return Err(CommerceError::ValidationError("Email cannot be empty".into()));
     }
 
+    if email.len() > 254 {
+        return Err(CommerceError::ValidationError("Email cannot exceed 254 characters".into()));
+    }
+
     if email.contains(char::is_whitespace) {
         return Err(CommerceError::ValidationError("Email cannot contain whitespace".into()));
     }
 
-    let parts: Vec<&str> = email.split('@').collect();
-    if parts.len() != 2 {
+    if email.chars().any(char::is_control) {
+        return Err(CommerceError::ValidationError(
+            "Email cannot contain control characters".into(),
+        ));
+    }
+
+    if !email.is_ascii() {
+        return Err(CommerceError::ValidationError(
+            "Email must use ASCII or punycode characters".into(),
+        ));
+    }
+
+    let Some((local, domain)) = email.rsplit_once('@') else {
+        return Err(CommerceError::ValidationError(
+            "Email must contain exactly one @ symbol".into(),
+        ));
+    };
+    if local.contains('@') || domain.contains('@') {
         return Err(CommerceError::ValidationError(
             "Email must contain exactly one @ symbol".into(),
         ));
     }
-
-    let (local, domain) = (parts[0], parts[1]);
 
     if local.is_empty() {
         return Err(CommerceError::ValidationError(
@@ -959,6 +977,60 @@ pub fn validate_email(email: &str) -> Result<()> {
     if domain.is_empty() {
         return Err(CommerceError::ValidationError(
             "Email domain (after @) cannot be empty".into(),
+        ));
+    }
+
+    if local.len() > 64 {
+        return Err(CommerceError::ValidationError(
+            "Email local part cannot exceed 64 characters".into(),
+        ));
+    }
+
+    if domain.len() > 253 {
+        return Err(CommerceError::ValidationError(
+            "Email domain cannot exceed 253 characters".into(),
+        ));
+    }
+
+    if local.starts_with('.') || local.ends_with('.') {
+        return Err(CommerceError::ValidationError(
+            "Email local part cannot start or end with a dot".into(),
+        ));
+    }
+
+    if local.contains("..") {
+        return Err(CommerceError::ValidationError(
+            "Email local part cannot contain consecutive dots".into(),
+        ));
+    }
+
+    if !local.chars().all(|ch| {
+        ch.is_ascii_alphanumeric()
+            || matches!(
+                ch,
+                '!' | '#'
+                    | '$'
+                    | '%'
+                    | '&'
+                    | '\''
+                    | '*'
+                    | '+'
+                    | '-'
+                    | '/'
+                    | '='
+                    | '?'
+                    | '^'
+                    | '_'
+                    | '`'
+                    | '{'
+                    | '|'
+                    | '}'
+                    | '~'
+                    | '.'
+            )
+    }) {
+        return Err(CommerceError::ValidationError(
+            "Email local part contains unsupported characters".into(),
         ));
     }
 
@@ -973,6 +1045,35 @@ pub fn validate_email(email: &str) -> Result<()> {
         return Err(CommerceError::ValidationError(
             "Email domain cannot start or end with a dot".into(),
         ));
+    }
+
+    if domain.contains("..") {
+        return Err(CommerceError::ValidationError(
+            "Email domain cannot contain consecutive dots".into(),
+        ));
+    }
+
+    for label in domain.split('.') {
+        if label.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Email domain cannot contain empty labels".into(),
+            ));
+        }
+        if label.len() > 63 {
+            return Err(CommerceError::ValidationError(
+                "Email domain labels cannot exceed 63 characters".into(),
+            ));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(CommerceError::ValidationError(
+                "Email domain labels cannot start or end with a hyphen".into(),
+            ));
+        }
+        if !label.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') {
+            return Err(CommerceError::ValidationError(
+                "Email domain contains unsupported characters".into(),
+            ));
+        }
     }
 
     Ok(())
@@ -1220,6 +1321,23 @@ mod tests {
     fn validate_required_uuid_accepts_non_nil() {
         let result = validate_required_uuid("id", Uuid::new_v4());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_email_accepts_common_production_formats() {
+        assert!(validate_email("user@example.com").is_ok());
+        assert!(validate_email("user.name+tag@example.co.uk").is_ok());
+        assert!(validate_email("ops_team-42@xn--bcher-kva.example").is_ok());
+    }
+
+    #[test]
+    fn validate_email_rejects_common_invalid_formats() {
+        assert!(validate_email("alice..bob@example.com").is_err());
+        assert!(validate_email(".alice@example.com").is_err());
+        assert!(validate_email("alice@example..com").is_err());
+        assert!(validate_email("alice@-example.com").is_err());
+        assert!(validate_email("alice@example-.com").is_err());
+        assert!(validate_email("alice@[127.0.0.1]").is_err());
     }
 
     // ====================================================================

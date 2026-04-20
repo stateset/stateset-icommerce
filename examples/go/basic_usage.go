@@ -7,7 +7,8 @@
 // - Order processing
 // - Analytics
 //
-// Run with: go run basic_usage.go
+// Build the Rust library first: cargo build --release -p stateset-go
+// Then run with: go run basic_usage.go
 package main
 
 import (

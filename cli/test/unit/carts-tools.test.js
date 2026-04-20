@@ -2,10 +2,8 @@
  * Cart Tools — Comprehensive Test Suite
  *
  * Tests every tool exported from src/tools/carts.js:
- *   list_carts, get_cart, create_cart, add_cart_item, update_cart_item,
- *   remove_cart_item, set_cart_shipping_address, set_cart_payment,
- *   apply_cart_discount, get_shipping_rates, complete_checkout,
- *   cancel_cart, abandon_cart, get_abandoned_carts
+ *   full cart lifecycle including cart state, items, addresses, discounts,
+ *   shipping, payment, inventory reservation, and checkout transitions.
  */
 
 import { describe, it } from 'node:test';
@@ -62,6 +60,9 @@ function makeCommerce(overrides = {}) {
       get: async (id) => (id === 'nonexistent' ? null : makeCart({ id })),
       getByNumber: async (num) => makeCart({ cartNumber: num }),
       create: async (data) => makeCart({ ...data, id: 'cart_new' }),
+      update: async (id, data) => makeCart({ id, ...data }),
+      forCustomer: async (customerId) => [makeCart({ customerId })],
+      delete: async () => {},
       addItem: async (_cartId, item) => ({
         id: 'item_new',
         sku: item.sku,
@@ -77,12 +78,26 @@ function makeCommerce(overrides = {}) {
         total: data.quantity * 29.99,
       }),
       removeItem: async () => {},
+      getItems: async () => makeCart().items,
+      clearItems: async () => {},
       setShippingAddress: async (cartId, address) => makeCart({ id: cartId, shippingAddress: address }),
+      setShipping: async (cartId, input) =>
+        makeCart({
+          id: cartId,
+          shippingAddress: input.shippingAddress,
+          shippingMethod: input.shippingMethod,
+          shippingCarrier: input.shippingCarrier,
+          shippingAmount: input.shippingAmount ?? 0,
+        }),
+      setBillingAddress: async (cartId, address) => makeCart({ id: cartId, billingAddress: address }),
       setPayment: async (cartId, payment) => makeCart({ id: cartId, ...payment }),
       applyDiscount: async (cartId, code) => makeCart({ id: cartId, couponCode: code, discountAmount: 10, grandTotal: 59.78 }),
+      removeDiscount: async (cartId) => makeCart({ id: cartId, couponCode: null, discountAmount: 0, grandTotal: 69.78 }),
       getShippingRates: async () => [
         { id: 'rate_001', carrier: 'USPS', service: 'Priority', price: 7.99, currency: 'USD', estimatedDays: 3 },
       ],
+      markReadyForPayment: async (cartId) => makeCart({ id: cartId, status: 'ready_for_payment' }),
+      beginCheckout: async (cartId) => makeCart({ id: cartId, status: 'checkout_started' }),
       complete: async (cartId) => ({
         orderId: 'ord_001',
         orderNumber: 'ORD-100001',
@@ -93,7 +108,13 @@ function makeCommerce(overrides = {}) {
       }),
       cancel: async (cartId) => makeCart({ id: cartId, status: 'cancelled' }),
       abandon: async (cartId) => makeCart({ id: cartId, status: 'abandoned' }),
+      expire: async (cartId) => makeCart({ id: cartId, status: 'expired' }),
+      reserveInventory: async (cartId) => makeCart({ id: cartId, inventoryReserved: true }),
+      releaseInventory: async (cartId) => makeCart({ id: cartId, inventoryReserved: false }),
+      recalculate: async (cartId) => makeCart({ id: cartId }),
+      setTax: async (cartId, taxAmount) => makeCart({ id: cartId, taxAmount }),
       getAbandoned: async () => [makeCart({ status: 'abandoned' })],
+      getExpired: async () => [makeCart({ status: 'expired' })],
       ...overrides,
     },
   };
@@ -104,9 +125,9 @@ function makeCommerce(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Cart Tools — structure', () => {
-  it('exports an array of 14 tools', () => {
+  it('exports an array of 30 tools', () => {
     assert.ok(Array.isArray(cartTools));
-    assert.strictEqual(cartTools.length, 14);
+    assert.strictEqual(cartTools.length, 30);
   });
 
   it('every tool has name, handler, permission, and inputSchema', () => {
@@ -528,5 +549,243 @@ describe('get_abandoned_carts', () => {
     const result = await tool.handler({ commerce, params: {} });
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.count, 0);
+  });
+});
+
+describe('update_cart', () => {
+  const tool = findTool('update_cart');
+  const params = { cartId: 'cart_001', customerName: 'Alice Updated' };
+
+  it('has write permission', () => {
+    assert.strictEqual(tool.permission, 'write');
+  });
+
+  it('updates cart when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.customerName, 'Alice Updated');
+  });
+});
+
+describe('list_customer_carts', () => {
+  const tool = findTool('list_customer_carts');
+
+  it('has read permission', () => {
+    assert.strictEqual(tool.permission, 'read');
+  });
+
+  it('returns carts for a customer', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { customerId: 'cust_001' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.count, 1);
+  });
+});
+
+describe('delete_cart', () => {
+  const tool = findTool('delete_cart');
+
+  it('has delete permission', () => {
+    assert.strictEqual(tool.permission, 'delete');
+  });
+
+  it('returns preview when allowApply is false', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+      allowApply: false,
+    });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+  });
+});
+
+describe('list_cart_items', () => {
+  const tool = findTool('list_cart_items');
+
+  it('returns cart items', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.count, 1);
+  });
+});
+
+describe('clear_cart_items', () => {
+  const tool = findTool('clear_cart_items');
+
+  it('has delete permission', () => {
+    assert.strictEqual(tool.permission, 'delete');
+  });
+});
+
+describe('set_cart_shipping', () => {
+  const tool = findTool('set_cart_shipping');
+  const params = {
+    cartId: 'cart_001',
+    firstName: 'Alice',
+    lastName: 'Smith',
+    line1: '123 Main St',
+    city: 'Springfield',
+    postalCode: '62701',
+    country: 'US',
+    shippingMethod: 'ground',
+    shippingCarrier: 'UPS',
+    shippingAmount: 9.99,
+  };
+
+  it('sets shipping when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.shippingMethod, 'ground');
+  });
+});
+
+describe('set_cart_billing_address', () => {
+  const tool = findTool('set_cart_billing_address');
+  const params = {
+    cartId: 'cart_001',
+    firstName: 'Alice',
+    lastName: 'Smith',
+    line1: '123 Main St',
+    city: 'Springfield',
+    postalCode: '62701',
+    country: 'US',
+  };
+
+  it('sets billing address when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.ok(result.cart.billingAddress);
+  });
+});
+
+describe('remove_cart_discount', () => {
+  const tool = findTool('remove_cart_discount');
+
+  it('has delete permission', () => {
+    assert.strictEqual(tool.permission, 'delete');
+  });
+
+  it('removes discount when allowApply is true', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.discountAmount, 0);
+  });
+});
+
+describe('mark_cart_ready_for_payment', () => {
+  const tool = findTool('mark_cart_ready_for_payment');
+
+  it('marks cart ready for payment', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.status, 'ready_for_payment');
+  });
+});
+
+describe('begin_cart_checkout', () => {
+  const tool = findTool('begin_cart_checkout');
+
+  it('begins checkout', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.status, 'checkout_started');
+  });
+});
+
+describe('expire_cart', () => {
+  const tool = findTool('expire_cart');
+
+  it('expires cart', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.status, 'expired');
+  });
+});
+
+describe('reserve_cart_inventory', () => {
+  const tool = findTool('reserve_cart_inventory');
+
+  it('reserves inventory', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.inventoryReserved, true);
+  });
+});
+
+describe('release_cart_inventory', () => {
+  const tool = findTool('release_cart_inventory');
+
+  it('releases inventory', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.inventoryReserved, false);
+  });
+});
+
+describe('recalculate_cart', () => {
+  const tool = findTool('recalculate_cart');
+
+  it('recalculates cart totals', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001' },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.ok(typeof result.cart.grandTotal === 'number');
+  });
+});
+
+describe('set_cart_tax', () => {
+  const tool = findTool('set_cart_tax');
+
+  it('sets tax amount', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cartId: 'cart_001', taxAmount: 12.34 },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.cart.taxAmount, 12.34);
+  });
+});
+
+describe('get_expired_carts', () => {
+  const tool = findTool('get_expired_carts');
+
+  it('returns expired carts array', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params: {} });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.count, 1);
   });
 });

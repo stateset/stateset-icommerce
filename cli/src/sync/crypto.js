@@ -173,7 +173,9 @@ function messageFromError(error) {
 }
 
 try {
-  _native = /** @type {NativeCryptoCompat} */ (/** @type {unknown} */ (await import('@stateset/embedded')));
+  _native = /** @type {NativeCryptoCompat} */ (
+    /** @type {unknown} */ (await import('@stateset/embedded'))
+  );
 } catch (nativeErr) {
   console.debug(
     'native crypto module not available, using JS fallback:',
@@ -211,9 +213,7 @@ function getNativeMerkleRoot() {
 
 function getNativeHybridGenerateSigningKeypair() {
   return (
-    _native?.vesHybridGenerateSigningKeypair ||
-    _native?.ves_hybrid_generate_signing_keypair ||
-    null
+    _native?.vesHybridGenerateSigningKeypair || _native?.ves_hybrid_generate_signing_keypair || null
   );
 }
 
@@ -223,9 +223,7 @@ function getNativeHybridSignEventHash() {
 
 function getNativeHybridVerifyEventSignature() {
   return (
-    _native?.vesHybridVerifyEventSignature ||
-    _native?.ves_hybrid_verify_event_signature ||
-    null
+    _native?.vesHybridVerifyEventSignature || _native?.ves_hybrid_verify_event_signature || null
   );
 }
 
@@ -247,9 +245,7 @@ function getNativeHybridDecryptPayload() {
 
 function getNativeStrictGenerateSigningKeypair() {
   return (
-    _native?.vesStrictGenerateSigningKeypair ||
-    _native?.ves_strict_generate_signing_keypair ||
-    null
+    _native?.vesStrictGenerateSigningKeypair || _native?.ves_strict_generate_signing_keypair || null
   );
 }
 
@@ -259,9 +255,7 @@ function getNativeStrictSignEventHash() {
 
 function getNativeStrictVerifyEventSignature() {
   return (
-    _native?.vesStrictVerifyEventSignature ||
-    _native?.ves_strict_verify_event_signature ||
-    null
+    _native?.vesStrictVerifyEventSignature || _native?.ves_strict_verify_event_signature || null
   );
 }
 
@@ -282,35 +276,19 @@ function getNativeStrictDecryptPayload() {
 }
 
 function getNativeHybridGenerateSigningPop() {
-  return (
-    _native?.vesHybridGenerateSigningPop ||
-    _native?.ves_hybrid_generate_signing_pop ||
-    null
-  );
+  return _native?.vesHybridGenerateSigningPop || _native?.ves_hybrid_generate_signing_pop || null;
 }
 
 function getNativeHybridVerifySigningPop() {
-  return (
-    _native?.vesHybridVerifySigningPop ||
-    _native?.ves_hybrid_verify_signing_pop ||
-    null
-  );
+  return _native?.vesHybridVerifySigningPop || _native?.ves_hybrid_verify_signing_pop || null;
 }
 
 function getNativeStrictGenerateSigningPop() {
-  return (
-    _native?.vesStrictGenerateSigningPop ||
-    _native?.ves_strict_generate_signing_pop ||
-    null
-  );
+  return _native?.vesStrictGenerateSigningPop || _native?.ves_strict_generate_signing_pop || null;
 }
 
 function getNativeStrictVerifySigningPop() {
-  return (
-    _native?.vesStrictVerifySigningPop ||
-    _native?.ves_strict_verify_signing_pop ||
-    null
-  );
+  return _native?.vesStrictVerifySigningPop || _native?.ves_strict_verify_signing_pop || null;
 }
 
 /**
@@ -740,9 +718,9 @@ export function verifyEventSignature(eventSigningHash, signature, publicKey) {
 export function hasNativeHybridPqcSupport() {
   return Boolean(
     getNativeHybridGenerateSigningKeypair() &&
-      getNativeHybridSignEventHash() &&
-      getNativeHybridGenerateRecipientKeypair() &&
-      getNativeHybridEncryptPayload(),
+    getNativeHybridSignEventHash() &&
+    getNativeHybridGenerateRecipientKeypair() &&
+    getNativeHybridEncryptPayload(),
   );
 }
 
@@ -783,9 +761,7 @@ export function generateHybridSigningKeypair() {
     ed25519PrivateKey: toBuffer(
       readHybridField(result, 'ed25519PrivateKey', 'ed25519_private_key'),
     ),
-    mlDsa65PublicKey: toBuffer(
-      readHybridField(result, 'mlDsa65PublicKey', 'ml_dsa_65_public_key'),
-    ),
+    mlDsa65PublicKey: toBuffer(readHybridField(result, 'mlDsa65PublicKey', 'ml_dsa_65_public_key')),
     mlDsa65Seed: toBuffer(readHybridField(result, 'mlDsa65Seed', 'ml_dsa_65_seed')),
   };
 }
@@ -808,12 +784,8 @@ export function signEventHashHybrid(eventSigningHash, privateKeyBundle) {
     privateKeyBundle.mlDsa65Seed,
   );
   return {
-    ed25519Signature: toBuffer(
-      readHybridField(result, 'ed25519Signature', 'ed25519_signature'),
-    ),
-    mlDsa65Signature: toBuffer(
-      readHybridField(result, 'mlDsa65Signature', 'ml_dsa_65_signature'),
-    ),
+    ed25519Signature: toBuffer(readHybridField(result, 'ed25519Signature', 'ed25519_signature')),
+    mlDsa65Signature: toBuffer(readHybridField(result, 'mlDsa65Signature', 'ml_dsa_65_signature')),
   };
 }
 
@@ -878,18 +850,16 @@ export function verifyEventSignatureHybrid(eventSigningHash, signatureBundle, pu
 export function generateHybridRecipientKeypair(kid) {
   const nativeFn = getNativeHybridGenerateRecipientKeypair();
   if (!nativeFn) {
-    throw new Error('Hybrid PQC recipient key generation requires native @stateset/embedded support');
+    throw new Error(
+      'Hybrid PQC recipient key generation requires native @stateset/embedded support',
+    );
   }
 
   const result = nativeFn(kid);
   return {
     kid: result.kid ?? kid,
-    x25519PublicKey: toBuffer(
-      readHybridField(result, 'x25519PublicKey', 'x25519_public_key'),
-    ),
-    x25519PrivateKey: toBuffer(
-      readHybridField(result, 'x25519PrivateKey', 'x25519_private_key'),
-    ),
+    x25519PublicKey: toBuffer(readHybridField(result, 'x25519PublicKey', 'x25519_public_key')),
+    x25519PrivateKey: toBuffer(readHybridField(result, 'x25519PrivateKey', 'x25519_private_key')),
     mlKem768PublicKey: toBuffer(
       readHybridField(result, 'mlKem768PublicKey', 'ml_kem_768_public_key'),
     ),
@@ -948,13 +918,13 @@ export function encryptPayloadHybrid(payload, aadParams, recipientKeys) {
     aead: 'AES-256-GCM',
   };
   payloadEncrypted.recipientWraps = recipientEntries.map((recipient) => ({
-        recipientKid: recipient.recipient_kid,
-        wrapScheme: 3,
-        x25519Enc: recipient.x25519_enc_b64u ?? null,
-        mlKemCiphertext: recipient.mlkem_ct_b64u ?? null,
-        wrapNonce: recipient.wrap_nonce_b64u ?? null,
-        wrappedKey: recipient.ct_b64u ?? null,
-      }));
+    recipientKid: recipient.recipient_kid,
+    wrapScheme: 3,
+    x25519Enc: recipient.x25519_enc_b64u ?? null,
+    mlKemCiphertext: recipient.mlkem_ct_b64u ?? null,
+    wrapNonce: recipient.wrap_nonce_b64u ?? null,
+    wrappedKey: recipient.ct_b64u ?? null,
+  }));
 
   return {
     payloadEncrypted,
@@ -1029,9 +999,7 @@ export function generateStrictSigningKeypair() {
   }
   const result = nativeFn();
   return {
-    mlDsa65PublicKey: toBuffer(
-      readHybridField(result, 'mlDsa65PublicKey', 'ml_dsa_65_public_key'),
-    ),
+    mlDsa65PublicKey: toBuffer(readHybridField(result, 'mlDsa65PublicKey', 'ml_dsa_65_public_key')),
     mlDsa65Seed: toBuffer(readHybridField(result, 'mlDsa65Seed', 'ml_dsa_65_seed')),
   };
 }
@@ -1077,7 +1045,9 @@ export function verifyEventSignatureStrict(eventSigningHash, mlDsa65Signature, p
 export function generateStrictRecipientKeypair(kid) {
   const nativeFn = getNativeStrictGenerateRecipientKeypair();
   if (!nativeFn) {
-    throw new Error('PQC-strict recipient key generation requires native @stateset/embedded support');
+    throw new Error(
+      'PQC-strict recipient key generation requires native @stateset/embedded support',
+    );
   }
   const result = nativeFn(kid);
   return {
@@ -1139,12 +1109,12 @@ export function encryptPayloadStrict(payload, aadParams, recipientKeys) {
     aead: 'AES-256-GCM',
   };
   payloadEncrypted.recipientWraps = recipientEntries.map((recipient) => ({
-        recipientKid: recipient.recipient_kid,
-        wrapScheme: 2,
-        mlKemCiphertext: recipient.mlkem_ct_b64u ?? null,
-        wrapNonce: recipient.wrap_nonce_b64u ?? null,
-        wrappedKey: recipient.ct_b64u ?? null,
-      }));
+    recipientKid: recipient.recipient_kid,
+    wrapScheme: 2,
+    mlKemCiphertext: recipient.mlkem_ct_b64u ?? null,
+    wrapNonce: recipient.wrap_nonce_b64u ?? null,
+    wrappedKey: recipient.ct_b64u ?? null,
+  }));
 
   return {
     payloadEncrypted,
@@ -1212,12 +1182,8 @@ export function generateHybridSigningPop(keyMaterial) {
     keyMaterial.mlDsa65PublicKey,
   );
   return {
-    ed25519Signature: toBuffer(
-      readHybridField(result, 'ed25519Signature', 'ed25519_signature'),
-    ),
-    mlDsa65Signature: toBuffer(
-      readHybridField(result, 'mlDsa65Signature', 'ml_dsa_65_signature'),
-    ),
+    ed25519Signature: toBuffer(readHybridField(result, 'ed25519Signature', 'ed25519_signature')),
+    mlDsa65Signature: toBuffer(readHybridField(result, 'mlDsa65Signature', 'ml_dsa_65_signature')),
   };
 }
 

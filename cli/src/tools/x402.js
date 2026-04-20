@@ -129,6 +129,7 @@ const TREASURY_MODULE = ['..', 'treasury', 'index.js'].join('/');
  *   markSettled: (intentId: string, txHash: string, blockNumber: number) => Promise<JsonRecord>,
  *   getNextNonce: (payerAddress: string) => Promise<unknown>,
  *   getCreditBalance: (params: JsonRecord) => Promise<unknown>,
+ *   getCreditAccount: (params: JsonRecord) => Promise<JsonRecord | null>,
  *   creditAccount: (params: JsonRecord) => Promise<JsonRecord>,
  *   debitAccount: (params: JsonRecord) => Promise<JsonRecord>,
  *   listCreditTransactions: (params: JsonRecord) => Promise<JsonRecord[]>,
@@ -1245,7 +1246,9 @@ export const x402Tools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const x402 = getX402Api(commerce);
-      const intents = /** @type {JsonRecord[]} */ (await x402.listIntents(buildListIntentsInput(params)));
+      const intents = /** @type {JsonRecord[]} */ (
+        await x402.listIntents(buildListIntentsInput(params))
+      );
       return {
         success: true,
         count: intents.length,
@@ -1886,6 +1889,33 @@ export const x402Tools = [
       };
     },
   },
+  {
+    name: 'x402_get_credit_account',
+    description: 'Get the x402 credit account record for a payer address.',
+    inputSchema: {
+      payerAddress: z.string().min(1).describe('Payer wallet address'),
+      asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
+      network: z
+        .string()
+        .optional()
+        .describe('Network: set_chain, base, ethereum, arbitrum (default: set_chain)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const x402 = getX402Api(commerce);
+      const account = await x402.getCreditAccount(
+        buildCreditBalanceInput({
+          payerAddress: params.payerAddress,
+          asset: params.asset,
+          network: params.network,
+        }),
+      );
+      if (!account) {
+        return { success: false, error: 'Credit account not found' };
+      }
+      return { success: true, account };
+    },
+  },
 
   {
     name: 'x402_credit_deposit',
@@ -1916,7 +1946,15 @@ export const x402Tools = [
       const x402 = getX402Api(commerce);
       const txn = normalizeCreditTransaction(
         await x402.creditAccount(
-          buildCreditMutationInput({ payerAddress, amount, asset, network, reason, referenceId, metadata }),
+          buildCreditMutationInput({
+            payerAddress,
+            amount,
+            asset,
+            network,
+            reason,
+            referenceId,
+            metadata,
+          }),
         ),
       );
       return {
@@ -1963,7 +2001,15 @@ export const x402Tools = [
       const x402 = getX402Api(commerce);
       const txn = normalizeCreditTransaction(
         await x402.debitAccount(
-          buildCreditMutationInput({ payerAddress, amount, asset, network, reason, referenceId, metadata }),
+          buildCreditMutationInput({
+            payerAddress,
+            amount,
+            asset,
+            network,
+            reason,
+            referenceId,
+            metadata,
+          }),
         ),
       );
       return {

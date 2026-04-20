@@ -92,28 +92,16 @@ function normalizeRecipientWraps(payloadEncrypted) {
   return wraps.map((wrap) => ({
     recipientKid: Number(wrap.recipientKid ?? wrap.recipient_kid ?? 0),
     wrapScheme: Number(wrap.wrapScheme ?? wrap.wrap_scheme ?? 0),
-    x25519Enc:
-      wrap.x25519Enc ??
-      wrap.x25519_enc ??
-      wrap.x25519_enc_b64u ??
-      null,
+    x25519Enc: wrap.x25519Enc ?? wrap.x25519_enc ?? wrap.x25519_enc_b64u ?? null,
     mlKemCiphertext:
       wrap.mlKemCiphertext ??
       wrap.ml_kem_ciphertext ??
       wrap.ml_kem_ciphertext_b64u ??
       wrap.mlkem_ct_b64u ??
       null,
-    wrapNonce:
-      wrap.wrapNonce ??
-      wrap.wrap_nonce ??
-      wrap.wrap_nonce_b64u ??
-      null,
+    wrapNonce: wrap.wrapNonce ?? wrap.wrap_nonce ?? wrap.wrap_nonce_b64u ?? null,
     wrappedKey:
-      wrap.wrappedKey ??
-      wrap.wrapped_key ??
-      wrap.wrapped_key_b64u ??
-      wrap.ct_b64u ??
-      null,
+      wrap.wrappedKey ?? wrap.wrapped_key ?? wrap.wrapped_key_b64u ?? wrap.ct_b64u ?? null,
   }));
 }
 
@@ -140,7 +128,10 @@ export function getPayloadWrapScheme(payloadEncrypted) {
 
 function assertHybridSignatureBundle(event) {
   const bundle = normalizeSignatureBundle(event.agentSignatureBundle);
-  if (Number(event.agentSignatureScheme ?? SIGNATURE_SCHEME_UNSPECIFIED) !== SIGNATURE_SCHEME_ED25519_ML_DSA_65) {
+  if (
+    Number(event.agentSignatureScheme ?? SIGNATURE_SCHEME_UNSPECIFIED) !==
+    SIGNATURE_SCHEME_ED25519_ML_DSA_65
+  ) {
     throw new Error('Hybrid profile requires SIGNATURE_SCHEME_ED25519_ML_DSA_65');
   }
   if (!hasMaterial(bundle?.ed25519Signature) || !hasMaterial(bundle?.mlDsa65Signature)) {
@@ -150,7 +141,10 @@ function assertHybridSignatureBundle(event) {
 
 function assertStrictSignatureBundle(event) {
   const bundle = normalizeSignatureBundle(event.agentSignatureBundle);
-  if (Number(event.agentSignatureScheme ?? SIGNATURE_SCHEME_UNSPECIFIED) !== SIGNATURE_SCHEME_ML_DSA_65) {
+  if (
+    Number(event.agentSignatureScheme ?? SIGNATURE_SCHEME_UNSPECIFIED) !==
+    SIGNATURE_SCHEME_ML_DSA_65
+  ) {
     throw new Error('pqc-strict profile requires SIGNATURE_SCHEME_ML_DSA_65');
   }
   if (!hasMaterial(bundle?.mlDsa65Signature)) {
@@ -171,7 +165,11 @@ function assertHybridEncryptedPayload(payloadEncrypted) {
     if (wrap.wrapScheme !== KEY_WRAP_SCHEME_X25519_ML_KEM_768) {
       throw new Error('Hybrid profile requires every recipient wrap to use X25519+ML-KEM-768');
     }
-    if (!hasMaterial(wrap.x25519Enc) || !hasMaterial(wrap.mlKemCiphertext) || !hasMaterial(wrap.wrappedKey)) {
+    if (
+      !hasMaterial(wrap.x25519Enc) ||
+      !hasMaterial(wrap.mlKemCiphertext) ||
+      !hasMaterial(wrap.wrappedKey)
+    ) {
       throw new Error('Hybrid profile requires x25519, ml-kem, and wrapped-key material');
     }
   }
@@ -213,7 +211,9 @@ function assertHybridKeyRegistration(keyRegistration) {
 
   if (keyType === KEY_TYPE_ENCRYPTION) {
     if (keyAlgorithm !== KEY_ALGORITHM_X25519_ML_KEM_768) {
-      throw new Error('Hybrid profile requires KEY_ALGORITHM_X25519_ML_KEM_768 for encryption keys');
+      throw new Error(
+        'Hybrid profile requires KEY_ALGORITHM_X25519_ML_KEM_768 for encryption keys',
+      );
     }
     if (!hasMaterial(bundle?.x25519PublicKey) || !hasMaterial(bundle?.mlKem768PublicKey)) {
       throw new Error('Hybrid profile requires X25519 and ML-KEM-768 encryption public keys');
@@ -259,7 +259,9 @@ function assertStrictKeyRegistration(keyRegistration) {
 }
 
 export function resolveSecurityProfile(profile = SECURITY_PROFILE_HYBRID) {
-  const normalized = String(profile ?? SECURITY_PROFILE_HYBRID).trim().toLowerCase();
+  const normalized = String(profile ?? SECURITY_PROFILE_HYBRID)
+    .trim()
+    .toLowerCase();
   if (!SECURITY_PROFILES.has(normalized)) {
     throw new Error(
       `Unsupported sync security profile: ${profile}. Expected legacy, hybrid, or pqc-strict`,
@@ -356,7 +358,9 @@ export function assertReceiptMatchesSecurityProfile(receipt, profile) {
       throw new Error('Hybrid profile requires SIGNATURE_SCHEME_ED25519_ML_DSA_65 for receipts');
     }
     if (!hasMaterial(bundle?.ed25519Signature) || !hasMaterial(bundle?.mlDsa65Signature)) {
-      throw new Error('Hybrid profile requires both Ed25519 and ML-DSA-65 receipt signature components');
+      throw new Error(
+        'Hybrid profile requires both Ed25519 and ML-DSA-65 receipt signature components',
+      );
     }
   } else {
     if (scheme !== SIGNATURE_SCHEME_ML_DSA_65) {

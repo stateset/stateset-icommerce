@@ -98,8 +98,7 @@ export class SyncEngine extends EventEmitter {
     this.outbox = createOutbox(options.db, {
       configDir: options.configDir,
       keyManager: options.keyManager,
-      securityProfile:
-        options.config?.securityProfile ?? options.config?.sync?.securityProfile,
+      securityProfile: options.config?.securityProfile ?? options.config?.sync?.securityProfile,
     });
     this.client = createUnifiedClient(options.config, {
       preferGrpc: options.preferGrpc !== false,
@@ -629,7 +628,10 @@ export class SyncEngine extends EventEmitter {
           `Encryption key ${requestedKeyId} is not listed as a recipient for this event`,
         );
       }
-      const key = await this.outbox.keyManager.getEncryptionKey(this.config.agentId, requestedKeyId);
+      const key = await this.outbox.keyManager.getEncryptionKey(
+        this.config.agentId,
+        requestedKeyId,
+      );
       if (!key) {
         throw new Error(
           `Encryption key ${requestedKeyId} not found for agent ${this.config.agentId}`,
@@ -698,14 +700,16 @@ export class SyncEngine extends EventEmitter {
       entityType: event.entityType,
       entityId: event.entityId,
       eventType: event.eventType,
-      createdAt:
-        event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
+      createdAt: event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
       payloadPlainHash,
     });
 
     const wrapScheme = getPayloadWrapScheme(event.payloadEncrypted);
-    const { key: encryptionKey, keyId: resolvedKeyId, candidateKeyIds } =
-      await this._resolveRecipientDecryptionKey(event.payloadEncrypted, keyId);
+    const {
+      key: encryptionKey,
+      keyId: resolvedKeyId,
+      candidateKeyIds,
+    } = await this._resolveRecipientDecryptionKey(event.payloadEncrypted, keyId);
 
     let payload = null;
     let encryptionProfile = 'legacy';

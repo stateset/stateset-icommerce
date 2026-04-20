@@ -20,7 +20,7 @@ stateset --apply "create agent wallet on Base"
 Or programmatically:
 
 ```javascript
-const wallet = await toolkit.executeTool('create_agent_wallet', {
+const wallet = await toolkit.executeTool('get_agent_wallet', {
     chain: 'base',
     label: 'research-agent-wallet'
 });
@@ -62,7 +62,7 @@ stateset --apply "pay data-agent 0.50 USDC for market data"
 ### Programmatic
 
 ```javascript
-const payment = await toolkit.executeTool('x402_create_intent', {
+const payment = await toolkit.executeTool('x402_create_payment_intent', {
     fromAgent: 'my-agent',
     toAgent: 'data-agent',
     amount: 0.50,

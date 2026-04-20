@@ -1,4 +1,6 @@
 . "$(dirname "$0")/node-env.sh"
+set -e
 
 npm run format:check
-cd cli && npm run lint
+npm --prefix admin run lint
+npm --prefix cli run lint

@@ -17,10 +17,7 @@ import {
   signX402Hash,
   verifyX402Signature,
 } from './crypto.js';
-import {
-  createExactEvmPaymentPayload,
-  isExactEvmRequirement,
-} from './exact-evm.js';
+import { createExactEvmPaymentPayload, isExactEvmRequirement } from './exact-evm.js';
 
 /**
  * @typedef {{
@@ -40,20 +37,20 @@ import {
  *   maxTimeoutSeconds?: number | string,
  *   validity_seconds?: number | string,
  *   validitySeconds?: number | string,
-  *   payee_address?: string,
-  *   payment_address?: string,
-  *   recipient?: string,
-  *   payeeAddress?: string,
-  *   paymentAddress?: string,
-  *   resource_uri?: string,
-  *   resourceUri?: string,
-  *   resource?: string,
-  *   description?: string,
-  *   merchant_id?: string,
-  *   idempotency_key?: string,
-  *   idempotencyKey?: string,
+ *   payee_address?: string,
+ *   payment_address?: string,
+ *   recipient?: string,
+ *   payeeAddress?: string,
+ *   paymentAddress?: string,
+ *   resource_uri?: string,
+ *   resourceUri?: string,
+ *   resource?: string,
+ *   description?: string,
+ *   merchant_id?: string,
+ *   idempotency_key?: string,
+ *   idempotencyKey?: string,
  *   extra?: Record<string, unknown> | null,
-  *   metadata?: Record<string, unknown> | null,
+ *   metadata?: Record<string, unknown> | null,
  * }} PaymentRequirement
  * @typedef {{
  *   requirements?: PaymentRequirement,
@@ -398,7 +395,11 @@ export async function x402Fetch(url, options, config) {
     });
 
     if (resolvedBudgetState && finalResponse.ok) {
-      resolvedBudgetState.recordSpend(amount, { url, scheme: 'exact', network: requirements.network });
+      resolvedBudgetState.recordSpend(amount, {
+        url,
+        scheme: 'exact',
+        network: requirements.network,
+      });
     }
 
     return finalResponse;
@@ -475,7 +476,8 @@ export async function x402Fetch(url, options, config) {
     chainId,
     validUntil,
     nonce,
-    resourceUri: requirements.resource_uri || requirements.resourceUri || requirements.resource || url,
+    resourceUri:
+      requirements.resource_uri || requirements.resourceUri || requirements.resource || url,
     resourceMethod: options?.method || 'GET',
   });
 

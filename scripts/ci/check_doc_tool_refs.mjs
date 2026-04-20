@@ -3,7 +3,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getStaticMcpToolDefinitions } from '../../cli/src/mcp-server.js';
+import { getAllStaticMcpToolDefinitions } from '../../cli/src/mcp-server-registry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,12 +12,19 @@ const rootDir = path.resolve(__dirname, '../..');
 const DOC_PATHS = [
   'README.md',
   'cli/README.md',
+  'bindings/node/README.md',
   'docs/src/getting-started.md',
   'docs/src/ai-agents.md',
+  'docs/src/examples.md',
   'docs/src/guides/agent-toolkit.md',
   'docs/src/guides/mcp-tools.md',
   'docs/src/guides/observability.md',
   'docs/src/guides/operations.md',
+  'docs/src/appendix/troubleshooting.md',
+  'docs/src/payments/base-usdc.md',
+  'docs/src/payments/budget.md',
+  'docs/src/payments/x402.md',
+  'docs/src/a2a/infrastructure.md',
   'docs/src/commerce/customers.md',
   'docs/src/commerce/engagement.md',
   'docs/src/commerce/payments.md',
@@ -25,11 +32,12 @@ const DOC_PATHS = [
   'docs/src/advanced/compliance.md',
   'docs/src/guides/autonomous-engine.md',
   'docs/src/concepts/reasoning-loop.md',
+  'examples/README.md',
 ];
 
 const TABLE_TOOL_HEADINGS = new Set(['MCP Tools']);
 const INLINE_TOOL_LIST_HEADINGS = new Set(['Read Tools', 'Write Tools', 'Admin Tools', 'Quick Reference']);
-const TOOL_NAME_SET = new Set(getStaticMcpToolDefinitions().map((tool) => tool.name));
+const TOOL_NAME_SET = new Set(getAllStaticMcpToolDefinitions().map((tool) => tool.name));
 const NUMBERED_TOOL_STEP_REGEX = /^\d+\.\s+`([^`]+)`/;
 
 const LINE_PATTERNS = [

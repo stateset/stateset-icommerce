@@ -54,6 +54,13 @@ function makePaymentCommerce(overrides = {}) {
       get: async (_id) => mockPayment,
       create: async (data) => ({ ...mockPayment, ...data }),
       markCompleted: async (_id) => ({ ...mockPayment, status: 'completed' }),
+      markFailed: async (_id, reason, code) => ({
+        ...mockPayment,
+        status: 'failed',
+        failureReason: reason,
+        failureCode: code ?? null,
+      }),
+      cancel: async (_id) => ({ ...mockPayment, status: 'cancelled' }),
       createRefund: async (data) => ({ ...mockRefund, ...data }),
       ...overrides,
     },
@@ -73,8 +80,8 @@ describe('Payment Tools — structure', () => {
     assert.ok(Array.isArray(paymentTools));
   });
 
-  it('has at least 11 tools', () => {
-    assert.ok(paymentTools.length >= 11, `Expected >= 11, got ${paymentTools.length}`);
+  it('has at least 13 tools', () => {
+    assert.ok(paymentTools.length >= 13, `Expected >= 13, got ${paymentTools.length}`);
   });
 
   it('every tool has name, handler, and permission', () => {
@@ -293,6 +300,73 @@ describe('complete_payment', () => {
     } catch (err) {
       assert.ok(err.message.includes('Payment already completed'));
     }
+  });
+});
+
+// ============================================================================
+// mark_failed_payment
+// ============================================================================
+
+describe('mark_failed_payment', () => {
+  const tool = findTool(paymentTools, 'mark_failed_payment');
+
+  it('is a write tool', () => {
+    assert.equal(tool.permission, 'write');
+  });
+
+  it('returns preview when allowApply is false (uses applyRequired)', async () => {
+    const result = await tool.handler({
+      commerce: makePaymentCommerce(),
+      params: { paymentId: 'pay_001', reason: 'gateway timeout' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.hint, 'expected hint field from applyRequired');
+  });
+
+  it('marks payment as failed with allowApply: true', async () => {
+    const result = await tool.handler({
+      commerce: makePaymentCommerce(),
+      params: { paymentId: 'pay_001', reason: 'gateway timeout', code: 'TIMEOUT' },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.ok(result.message.toLowerCase().includes('failed'));
+    assert.equal(result.payment.status, 'failed');
+    assert.equal(result.payment.failureCode, 'TIMEOUT');
+  });
+});
+
+// ============================================================================
+// cancel_payment
+// ============================================================================
+
+describe('cancel_payment', () => {
+  const tool = findTool(paymentTools, 'cancel_payment');
+
+  it('is a delete tool', () => {
+    assert.equal(tool.permission, 'delete');
+  });
+
+  it('returns preview when allowApply is false (uses applyRequired)', async () => {
+    const result = await tool.handler({
+      commerce: makePaymentCommerce(),
+      params: { paymentId: 'pay_001' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.hint, 'expected hint field from applyRequired');
+  });
+
+  it('cancels payment with allowApply: true', async () => {
+    const result = await tool.handler({
+      commerce: makePaymentCommerce(),
+      params: { paymentId: 'pay_001' },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.ok(result.message.toLowerCase().includes('cancel'));
+    assert.equal(result.payment.status, 'cancelled');
   });
 });
 

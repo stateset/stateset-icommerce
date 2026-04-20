@@ -8,7 +8,8 @@
  * - Order processing
  * - Analytics
  *
- * Run with: kotlinc BasicUsage.kt -include-runtime -d BasicUsage.jar && java -jar BasicUsage.jar
+ * Run with: ./gradlew run
+ * Or build a jar: ./gradlew jar && java -jar build/libs/kotlin-0.9.9.jar
  */
 package com.stateset.examples
 

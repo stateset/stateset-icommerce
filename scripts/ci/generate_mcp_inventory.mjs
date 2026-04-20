@@ -3,7 +3,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getStaticMcpToolDefinitions } from '../../cli/src/mcp-server.js';
+import { getStaticMcpServerDefinitions, getAllStaticMcpToolDefinitions } from '../../cli/src/mcp-server-registry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +26,7 @@ function renderMarkdownTable(headers, rows) {
 function renderMarkdownInventory(inventory) {
   const summaryRows = [
     ['Total tools', String(inventory.totalTools)],
+    ['MCP servers', String(inventory.serverCount)],
     ['Policy domains', String(inventory.domainCount)],
     ['Read tools', String(inventory.permissionCounts.read ?? 0)],
     ['Write tools', String(inventory.permissionCounts.write ?? 0)],
@@ -34,17 +35,19 @@ function renderMarkdownInventory(inventory) {
     ['Unknown permission', String(inventory.permissionCounts.unknown ?? 0)],
   ];
 
+  const serverRows = inventory.servers.map((entry) => [entry.name, String(entry.count), `\`${entry.source}\``]);
   const domainRows = inventory.domains.map((entry) => [entry.name, String(entry.count)]);
   const permissionRows = inventory.permissions.map((entry) => [entry.name, String(entry.count)]);
   const toolRows = inventory.tools.map((tool) => [
     `\`${tool.name}\``,
+    `\`${tool.serverName}\``,
     `\`${tool.policyDomain}\``,
     `\`${tool.permission}\``,
   ]);
 
   return `# MCP Tool Inventory
 
-This page is generated from the live MCP server export in \`cli/src/mcp-server.js\`.
+This page is generated from the live MCP server registry in \`cli/src/mcp-server-registry.js\`.
 Do not edit it by hand. Regenerate it with:
 
 \`\`\`bash
@@ -57,6 +60,10 @@ Machine-readable output lives at \`artifacts/compatibility/mcp-tool-inventory.js
 
 ${renderMarkdownTable(['Metric', 'Value'], summaryRows)}
 
+## MCP Server Counts
+
+${renderMarkdownTable(['MCP server', 'Tools', 'Source'], serverRows)}
+
 ## Policy Domain Counts
 
 ${renderMarkdownTable(['Policy domain', 'Tools'], domainRows)}
@@ -67,27 +74,44 @@ ${renderMarkdownTable(['Permission', 'Tools'], permissionRows)}
 
 ## Tool Registry
 
-${renderMarkdownTable(['Tool', 'Policy domain', 'Permission'], toolRows)}
+${renderMarkdownTable(['Tool', 'MCP server', 'Policy domain', 'Permission'], toolRows)}
 `;
 }
 
 async function buildInventory() {
-  const tools = getStaticMcpToolDefinitions()
+  const serverDefinitions = getStaticMcpServerDefinitions();
+  const tools = getAllStaticMcpToolDefinitions()
     .map((tool) => ({
       name: tool.name,
       description: tool.description,
+      serverName: tool.serverName,
+      source: tool.source,
+      qualifiedName: tool.qualifiedName,
       policyDomain: tool.policyDomain ?? 'commerce',
       permission: tool.permission ?? 'unspecified',
     }))
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .sort(
+      (left, right) =>
+        left.serverName.localeCompare(right.serverName) || left.name.localeCompare(right.name),
+    );
 
+  const serverCounts = new Map();
   const domainCounts = new Map();
   const permissionCounts = new Map();
 
   for (const tool of tools) {
+    serverCounts.set(tool.serverName, (serverCounts.get(tool.serverName) ?? 0) + 1);
     domainCounts.set(tool.policyDomain, (domainCounts.get(tool.policyDomain) ?? 0) + 1);
     permissionCounts.set(tool.permission, (permissionCounts.get(tool.permission) ?? 0) + 1);
   }
+
+  const servers = serverDefinitions
+    .map((server) => ({
+      name: server.name,
+      source: server.source,
+      count: serverCounts.get(server.name) ?? 0,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
 
   const domains = [...domainCounts.entries()]
     .sort((left, right) => left[0].localeCompare(right[0]))
@@ -98,8 +122,10 @@ async function buildInventory() {
     .map(([name, count]) => ({ name, count }));
 
   return {
-    source: 'cli/src/mcp-server.js',
+    source: 'cli/src/mcp-server-registry.js',
     totalTools: tools.length,
+    serverCount: servers.length,
+    servers,
     domainCount: domains.length,
     domains,
     permissions,

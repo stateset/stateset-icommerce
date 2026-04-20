@@ -14,20 +14,24 @@ const byName = Object.fromEntries(supplierTools.map((t) => [t.name, t]));
 // ---------------------------------------------------------------------------
 
 describe('supplierTools — module exports', () => {
-  it('exports an array of 6 tools', () => {
+  it('exports an array of 10 tools', () => {
     assert.ok(Array.isArray(supplierTools));
-    assert.equal(supplierTools.length, 6);
+    assert.equal(supplierTools.length, 10);
   });
 
   it('exports expected tool names', () => {
     const names = supplierTools.map((t) => t.name);
     assert.deepStrictEqual(names, [
       'list_suppliers',
+      'get_supplier',
       'create_supplier',
       'list_purchase_orders',
+      'get_purchase_order',
       'create_purchase_order',
+      'submit_purchase_order',
       'approve_purchase_order',
       'send_purchase_order',
+      'cancel_purchase_order',
     ]);
   });
 
@@ -61,14 +65,18 @@ describe('supplierTools — module exports', () => {
 describe('supplierTools — permissions', () => {
   it('read tools have read permission', () => {
     assert.equal(byName['list_suppliers'].permission, 'read');
+    assert.equal(byName['get_supplier'].permission, 'read');
     assert.equal(byName['list_purchase_orders'].permission, 'read');
+    assert.equal(byName['get_purchase_order'].permission, 'read');
   });
 
   it('write tools have write permission', () => {
     assert.equal(byName['create_supplier'].permission, 'write');
     assert.equal(byName['create_purchase_order'].permission, 'write');
+    assert.equal(byName['submit_purchase_order'].permission, 'write');
     assert.equal(byName['approve_purchase_order'].permission, 'write');
     assert.equal(byName['send_purchase_order'].permission, 'write');
+    assert.equal(byName['cancel_purchase_order'].permission, 'write');
   });
 });
 
@@ -81,14 +89,26 @@ describe('supplierTools — input schemas', () => {
     assert.deepStrictEqual(byName['list_suppliers'].inputSchema, {});
   });
 
+  it('get_supplier has supplierId', () => {
+    assert.ok(byName['get_supplier'].inputSchema.supplierId);
+  });
+
   it('create_supplier has name field', () => {
     assert.ok(byName['create_supplier'].inputSchema.name);
+  });
+
+  it('get_purchase_order has purchaseOrderId', () => {
+    assert.ok(byName['get_purchase_order'].inputSchema.purchaseOrderId);
   });
 
   it('create_purchase_order has supplierId and items', () => {
     const schema = byName['create_purchase_order'].inputSchema;
     assert.ok(schema.supplierId);
     assert.ok(schema.items);
+  });
+
+  it('submit_purchase_order has purchaseOrderId', () => {
+    assert.ok(byName['submit_purchase_order'].inputSchema.purchaseOrderId);
   });
 
   it('approve_purchase_order has purchaseOrderId and approvedBy', () => {
@@ -99,6 +119,10 @@ describe('supplierTools — input schemas', () => {
 
   it('send_purchase_order has purchaseOrderId', () => {
     assert.ok(byName['send_purchase_order'].inputSchema.purchaseOrderId);
+  });
+
+  it('cancel_purchase_order has purchaseOrderId', () => {
+    assert.ok(byName['cancel_purchase_order'].inputSchema.purchaseOrderId);
   });
 });
 
@@ -127,6 +151,16 @@ describe('supplierTools — apply guards', () => {
     assert.ok(result.error.includes('--apply'));
   });
 
+  it('submit_purchase_order requires --apply', async () => {
+    const result = await byName['submit_purchase_order'].handler({
+      commerce: {},
+      params: { purchaseOrderId: 'po-1' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+  });
+
   it('approve_purchase_order requires --apply', async () => {
     const result = await byName['approve_purchase_order'].handler({
       commerce: {},
@@ -139,6 +173,16 @@ describe('supplierTools — apply guards', () => {
 
   it('send_purchase_order requires --apply', async () => {
     const result = await byName['send_purchase_order'].handler({
+      commerce: {},
+      params: { purchaseOrderId: 'po-1' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+  });
+
+  it('cancel_purchase_order requires --apply', async () => {
+    const result = await byName['cancel_purchase_order'].handler({
       commerce: {},
       params: { purchaseOrderId: 'po-1' },
       allowApply: false,

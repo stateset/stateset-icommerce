@@ -37,6 +37,32 @@ export const analyticsTools = [
     },
   },
   {
+    name: 'get_revenue_by_period',
+    description: 'Get revenue broken down by day, week, or month for a selected period.',
+    inputSchema: {
+      period: periodEnum.default('last30days').describe('Time period'),
+      granularity: z
+        .enum(['day', 'week', 'month'])
+        .optional()
+        .default('day')
+        .describe('Breakdown granularity'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const rows = await commerce.analytics.revenueByPeriod({
+        period: params.period,
+        granularity: params.granularity,
+      });
+      return {
+        success: true,
+        period: params.period,
+        granularity: params.granularity,
+        count: rows.length,
+        rows,
+      };
+    },
+  },
+  {
     name: 'get_top_products',
     description: 'Get top selling products by revenue or units sold.',
     inputSchema: {
@@ -65,6 +91,27 @@ export const analyticsTools = [
           revenue: p.revenue,
           orderCount: p.orderCount,
         })),
+      };
+    },
+  },
+  {
+    name: 'get_product_performance',
+    description: 'Get product performance metrics for a time period, optionally filtered by SKU.',
+    inputSchema: {
+      period: periodEnum.default('last30days').describe('Time period'),
+      sku: z.string().optional().describe('Optional SKU filter'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const products = await commerce.analytics.productPerformance({
+        period: params.period,
+        sku: params.sku,
+      });
+      return {
+        success: true,
+        period: params.period,
+        count: products.length,
+        products,
       };
     },
   },
@@ -170,6 +217,27 @@ export const analyticsTools = [
     },
   },
   {
+    name: 'get_inventory_movement',
+    description: 'Get inventory movement history and net change over a selected period.',
+    inputSchema: {
+      period: periodEnum.default('last30days').describe('Time period'),
+      sku: z.string().optional().describe('Optional SKU filter'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const movements = await commerce.analytics.inventoryMovement({
+        period: params.period,
+        sku: params.sku,
+      });
+      return {
+        success: true,
+        period: params.period,
+        count: movements.length,
+        movements,
+      };
+    },
+  },
+  {
     name: 'get_demand_forecast',
     description:
       'Get demand forecast for inventory items based on historical sales. Predicts future demand and days until stockout.',
@@ -252,6 +320,22 @@ export const analyticsTools = [
           cancelled: breakdown.cancelled,
           refunded: breakdown.refunded,
         },
+      };
+    },
+  },
+  {
+    name: 'get_fulfillment_metrics',
+    description: 'Get fulfillment performance metrics for a selected period.',
+    inputSchema: {
+      period: periodEnum.default('last30days').describe('Time period'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const metrics = await commerce.analytics.fulfillmentMetrics({ period: params.period });
+      return {
+        success: true,
+        period: params.period,
+        metrics,
       };
     },
   },

@@ -38,8 +38,8 @@ const PURCHASE_SAGA = {
         },
         {
             name: 'create_payment',
-            execute: async (ctx) => toolkit.executeTool('x402_create_intent', ctx.payment),
-            compensate: async (ctx, result) => toolkit.executeTool('x402_void_intent', { id: result.intentId })
+            execute: async (ctx) => toolkit.executeTool('x402_create_payment_intent', ctx.payment),
+            compensate: async (_ctx, result) => cancelPendingIntent(result.intentId)
         },
         {
             name: 'create_order',

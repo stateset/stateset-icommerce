@@ -49,6 +49,14 @@ Thumbs.db
 
 # Build artifacts
 *.dSYM/
+examples/go/go
+examples/go/go.exe
+bindings/go/example/example
+bindings/go/example/example.exe
+examples/dotnet/bin/
+examples/dotnet/obj/
+examples/swift/.build/
+examples/kotlin/.gradle/
 
 # Docs build outputs
 docs/book/

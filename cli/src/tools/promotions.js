@@ -92,6 +92,34 @@ export const promotionTools = [
     },
   },
   {
+    name: 'update_promotion',
+    description: 'Update an existing promotion. Requires --apply flag.',
+    inputSchema: {
+      promotionId: z.string().min(1).describe('Promotion ID'),
+      updates: z.record(z.string(), z.any()).describe('Partial promotion fields to update'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply)
+        return {
+          success: false,
+          error: 'Update operation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable write operations.',
+          wouldUpdate: { promotionId: params.promotionId, updates: params.updates },
+        };
+      const promotion = await commerce.promotions().update(params.promotionId, params.updates);
+      return {
+        success: true,
+        message: 'Promotion updated',
+        promotion: {
+          id: promotion.id,
+          name: promotion.name,
+          status: promotion.status,
+        },
+      };
+    },
+  },
+  {
     name: 'create_promotion',
     description:
       'Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts.',
@@ -165,6 +193,23 @@ export const promotionTools = [
           status: promotion.status,
         },
       };
+    },
+  },
+  {
+    name: 'delete_promotion',
+    description: 'Delete a promotion. Requires --apply flag.',
+    inputSchema: { promotionId: z.string().min(1).describe('Promotion ID to delete') },
+    permission: 'delete',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply)
+        return {
+          success: false,
+          error: 'Delete operation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable write operations.',
+          wouldDelete: params.promotionId,
+        };
+      await commerce.promotions().delete(params.promotionId);
+      return { success: true, message: 'Promotion deleted', promotionId: params.promotionId };
     },
   },
   {
@@ -254,6 +299,30 @@ export const promotionTools = [
     },
   },
   {
+    name: 'get_coupon',
+    description: 'Get a coupon by ID or code.',
+    inputSchema: {
+      identifier: z.string().min(1).describe('Coupon ID or coupon code'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      let coupon;
+      try {
+        coupon = await commerce.promotions().getCoupon(params.identifier);
+      } catch (err) {
+        console.debug(
+          '[promotions] Coupon get by ID failed, trying code lookup:',
+          err.message || err,
+        );
+        coupon = await commerce.promotions().getCouponByCode(params.identifier);
+      }
+      if (!coupon) {
+        return { success: false, error: 'Coupon not found' };
+      }
+      return { success: true, coupon };
+    },
+  },
+  {
     name: 'validate_coupon',
     description: 'Check if a coupon code is valid and can be used.',
     inputSchema: { code: z.string().min(1).describe('Coupon code to validate') },
@@ -334,6 +403,18 @@ export const promotionTools = [
     },
   },
   {
+    name: 'check_promotion_validity',
+    description: 'Check whether a promotion is currently valid and eligible to apply.',
+    inputSchema: {
+      promotionId: z.string().min(1).describe('Promotion ID'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const valid = await commerce.promotions().isValid(params.promotionId);
+      return { success: true, promotionId: params.promotionId, valid };
+    },
+  },
+  {
     name: 'apply_cart_promotions',
     description:
       'Calculate and apply all applicable promotions to a cart. Uses coupon codes on the cart and automatic promotions.',
@@ -370,6 +451,41 @@ export const promotionTools = [
             reason: p.rejectionReason,
           })) || [],
       };
+    },
+  },
+  {
+    name: 'record_promotion_usage',
+    description: 'Record promotion usage after checkout completion. Requires --apply flag.',
+    inputSchema: {
+      promotionId: z.string().min(1).describe('Promotion ID'),
+      discountAmount: z.number().min(0).describe('Discount amount applied'),
+      currency: z.string().min(1).describe('Currency code'),
+      couponId: z.string().optional().describe('Optional coupon ID'),
+      customerId: z.string().optional().describe('Optional customer ID'),
+      orderId: z.string().optional().describe('Optional order ID'),
+      cartId: z.string().optional().describe('Optional cart ID'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply)
+        return {
+          success: false,
+          error: 'Record operation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable write operations.',
+          wouldRecord: params,
+        };
+      const usage = await commerce
+        .promotions()
+        .recordUsage(
+          params.promotionId,
+          params.couponId,
+          params.customerId,
+          params.orderId,
+          params.cartId,
+          params.discountAmount,
+          params.currency,
+        );
+      return { success: true, message: 'Promotion usage recorded', usage };
     },
   },
 ];

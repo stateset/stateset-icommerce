@@ -558,7 +558,9 @@ export const syncTools = [
       includePayloads: z
         .boolean()
         .optional()
-        .describe('When reading local history, include plaintext payloads for non-encrypted events'),
+        .describe(
+          'When reading local history, include plaintext payloads for non-encrypted events',
+        ),
       decryptPayloads: z
         .boolean()
         .optional()
@@ -859,7 +861,11 @@ export const syncTools = [
           vesVersion: z.number().int().positive(),
         })
         .describe('VES event envelope with signature fields'),
-      publicKeyHex: z.string().min(1).optional().describe("Agent's Ed25519 public key, hex encoded"),
+      publicKeyHex: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Agent's Ed25519 public key, hex encoded"),
       publicKeyBundle: z
         .object({
           ed25519PublicKey: z.string().optional(),
@@ -902,7 +908,11 @@ export const syncTools = [
         envelope.agentSignatureBundle?.mlDsa65Signature
       ) {
         try {
-          valid = verifyEventSignatureHybrid(signingHash, envelope.agentSignatureBundle, publicKeyBundle);
+          valid = verifyEventSignatureHybrid(
+            signingHash,
+            envelope.agentSignatureBundle,
+            publicKeyBundle,
+          );
         } catch {
           valid = false;
         }

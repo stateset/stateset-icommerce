@@ -325,7 +325,9 @@ export class MemoryStore {
       return sortRowsByRecency(this._fallbackRows(channel, senderId))
         .filter((row) => {
           const facts = row.facts ? JSON.parse(row.facts) : [];
-          return row.summary.includes(entityId) || facts.some((fact) => String(fact).includes(entityId));
+          return (
+            row.summary.includes(entityId) || facts.some((fact) => String(fact).includes(entityId))
+          );
         })
         .slice(0, limit)
         .map((row) => this._deserialize(row))

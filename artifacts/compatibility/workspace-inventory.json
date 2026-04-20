@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "0.9.8",
+    "version": "0.9.9",
     "memberCount": 29,
     "defaultMemberCount": 19,
     "rustCrateCount": 21,
@@ -523,7 +523,11 @@
     "topLevelSourceCounts": [
       {
         "name": "tools",
-        "count": 53
+        "count": 66
+      },
+      {
+        "name": "commands",
+        "count": 61
       },
       {
         "name": "a2a",
@@ -552,10 +556,6 @@
       {
         "name": "x402",
         "count": 9
-      },
-      {
-        "name": "commands",
-        "count": 6
       },
       {
         "name": "knowledge",
@@ -670,6 +670,10 @@
         "count": 1
       },
       {
+        "name": "command-tooling.js",
+        "count": 1
+      },
+      {
         "name": "commerce.js",
         "count": 1
       },
@@ -699,6 +703,10 @@
       },
       {
         "name": "conversation-history.js",
+        "count": 1
+      },
+      {
+        "name": "coverage",
         "count": 1
       },
       {
@@ -783,6 +791,10 @@
       },
       {
         "name": "mcp-schema-validator.js",
+        "count": 1
+      },
+      {
+        "name": "mcp-server-registry.js",
         "count": 1
       },
       {
@@ -906,7 +918,7 @@
         "count": 1
       }
     ],
-    "toolModuleCount": 53,
+    "toolModuleCount": 66,
     "a2aModuleCount": 44
   },
   "admin": {

@@ -103,21 +103,17 @@ Without the key, search falls back to keyword matching only.
 Increase the daily budget:
 
 ```javascript
-await toolkit.executeTool('x402_set_budget', {
+await toolkit.executeTool('agent_set_spending_limits', {
     agentId: 'my-agent',
     dailyLimit: 10.00,
-    currency: 'USD'
+    monthlyLimit: 100.00,
+    perTransactionLimit: 1.00
 });
 ```
 
 ### Circuit breaker is open
 
-The x402 client circuit breaker opens when the sequencer is unreachable:
-
-```javascript
-const status = await toolkit.executeTool('x402_circuit_status', {});
-// → { state: 'open', failureCount: 5, nextRetryAt: '...' }
-```
+The x402 client circuit breaker opens when the sequencer is unreachable.
 
 Wait for the circuit breaker timeout, or check sequencer connectivity.
 
@@ -181,7 +177,7 @@ Quick lookup for common error messages and their solutions.
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `BudgetExceededError: Daily budget exhausted` | Agent spending cap reached | Wait for reset or increase `x402_set_budget` |
+| `BudgetExceededError: Daily budget exhausted` | Agent spending cap reached | Wait for reset or increase `agent_set_spending_limits` |
 | `QuoteExpiredError: Quote expired 2 hours ago` | Past `validUntil` | Request a new quote with `a2a_request_quote` |
 | `MaxRoundsExceededError: 5 counter-offers reached` | Negotiation limit | Accept, reject, or start a new quote |
 | `EscrowExpiredError: Past expiration date` | No conditions fulfilled in time | Funds auto-refunded to payer |

@@ -113,9 +113,7 @@ function getFallbackDatabaseState(dbPath) {
 }
 
 function sortRowsByTimestamp(rows) {
-  return [...rows].sort(
-    (a, b) => b.timestamp.localeCompare(a.timestamp) || b.id - a.id,
-  );
+  return [...rows].sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.id - a.id);
 }
 
 export class AuditStore {

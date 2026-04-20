@@ -24,6 +24,22 @@ export const supplierTools = [
   },
 
   {
+    name: 'get_supplier',
+    description: 'Get a supplier by ID.',
+    inputSchema: {
+      supplierId: z.string().min(1).describe('Supplier ID'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const supplier = await commerce.purchaseOrders.getSupplier(params.supplierId);
+      if (!supplier) {
+        return { success: false, error: 'Supplier not found' };
+      }
+      return { success: true, supplier };
+    },
+  },
+
+  {
     name: 'create_supplier',
     description: 'Create a new supplier.',
     inputSchema: {
@@ -57,6 +73,22 @@ export const supplierTools = [
       const purchaseOrders = await commerce.purchaseOrders.list();
       const count = await commerce.purchaseOrders.count();
       return { success: true, count, purchaseOrders };
+    },
+  },
+
+  {
+    name: 'get_purchase_order',
+    description: 'Get a purchase order by ID.',
+    inputSchema: {
+      purchaseOrderId: z.string().min(1).describe('Purchase order ID'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const purchaseOrder = await commerce.purchaseOrders.get(params.purchaseOrderId);
+      if (!purchaseOrder) {
+        return { success: false, error: 'Purchase order not found' };
+      }
+      return { success: true, purchaseOrder };
     },
   },
 
@@ -96,6 +128,23 @@ export const supplierTools = [
   },
 
   {
+    name: 'submit_purchase_order',
+    description: 'Submit a purchase order for approval.',
+    inputSchema: {
+      purchaseOrderId: z.string().min(1).describe('PO ID'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Submit PO', params);
+      }
+
+      const po = await commerce.purchaseOrders.submit(params.purchaseOrderId);
+      return { success: true, message: 'PO submitted', purchaseOrder: po };
+    },
+  },
+
+  {
     name: 'approve_purchase_order',
     description: 'Approve a purchase order.',
     inputSchema: {
@@ -129,6 +178,23 @@ export const supplierTools = [
 
       const po = await commerce.purchaseOrders.send(purchaseOrderId);
       return { success: true, message: 'PO sent to supplier', purchaseOrder: po };
+    },
+  },
+
+  {
+    name: 'cancel_purchase_order',
+    description: 'Cancel a purchase order.',
+    inputSchema: {
+      purchaseOrderId: z.string().min(1).describe('PO ID'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Cancel PO', params);
+      }
+
+      const po = await commerce.purchaseOrders.cancel(params.purchaseOrderId);
+      return { success: true, message: 'PO cancelled', purchaseOrder: po };
     },
   },
 ];

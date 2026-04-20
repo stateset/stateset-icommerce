@@ -196,21 +196,23 @@ export function buildExactEvmPaymentRequired({
  *   settlePayment?: typeof settleFacilitatedPayment,
  * }>} [options]
  */
-export function createExactEvmResourceServerHandler({
-  paymentRequired,
-  facilitatorPrivateKey = null,
-  checkOnchain = true,
-  onRequest = null,
-  verifyPayment = verifyFacilitatedPayment,
-  settlePayment = settleFacilitatedPayment,
-} = /** @type {Partial<{
+export function createExactEvmResourceServerHandler(
+  {
+    paymentRequired,
+    facilitatorPrivateKey = null,
+    checkOnchain = true,
+    onRequest = null,
+    verifyPayment = verifyFacilitatedPayment,
+    settlePayment = settleFacilitatedPayment,
+  } = /** @type {Partial<{
   paymentRequired: PaymentRequiredLike | ((req: RequestLike) => Promise<PaymentRequiredLike> | PaymentRequiredLike),
   facilitatorPrivateKey?: string | null,
   checkOnchain?: boolean,
   onRequest?: ((input: { req: RequestLike, paymentPayload: unknown, paymentRequirements: unknown, verification: any, settlement: any }) => Promise<unknown> | unknown) | null,
   verifyPayment?: typeof verifyFacilitatedPayment,
   settlePayment?: typeof settleFacilitatedPayment,
-}>} */ ({})) {
+}>} */ ({}),
+) {
   if (!paymentRequired) {
     throw new Error('paymentRequired is required');
   }
@@ -227,7 +229,10 @@ export function createExactEvmResourceServerHandler({
     const paymentHeader = req.headers?.['payment-signature'];
 
     if (!paymentHeader) {
-      const challenge = buildChallengeResponse(resolvedPaymentRequired, resolvedPaymentRequired.error);
+      const challenge = buildChallengeResponse(
+        resolvedPaymentRequired,
+        resolvedPaymentRequired.error,
+      );
       return sendBody(res, 402, challenge, {
         'payment-required': encodeBase64Json(challenge),
       });

@@ -1,9 +1,35 @@
 {
   "name": "@stateset/embedded",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "description": "The SQLite of commerce - embeddable commerce library powered by Rust",
   "main": "index.js",
   "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./agent-toolkit": {
+      "types": "./agent-toolkit.d.ts",
+      "default": "./agent-toolkit.mjs"
+    },
+    "./openai": {
+      "types": "./openai.d.ts",
+      "default": "./openai.mjs"
+    },
+    "./generic": {
+      "types": "./generic.d.ts",
+      "default": "./generic.mjs"
+    },
+    "./langchain": {
+      "types": "./langchain.d.ts",
+      "default": "./langchain.mjs"
+    },
+    "./vercel-ai": {
+      "types": "./vercel-ai.d.ts",
+      "default": "./vercel-ai.mjs"
+    }
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/stateset/stateset-icommerce"
@@ -39,7 +65,8 @@
   },
   "scripts": {
     "check:env": "node ../../scripts/check-node.mjs 20.20.0 10.0.0",
-    "check": "npm run build:debug && npm run test",
+    "check:package": "npm run check:env && node --input-type=module -e \"await import('@stateset/embedded'); await import('@stateset/embedded/agent-toolkit'); await import('@stateset/embedded/openai'); await import('@stateset/embedded/generic'); await import('@stateset/embedded/langchain'); await import('@stateset/embedded/vercel-ai');\" && node ../../scripts/ci/check_node_binding_package.mjs",
+    "check": "npm run build:debug && npm run test && npm run check:package",
     "check:coverage": "npm run build:debug && npm run test:coverage",
     "preartifacts": "npm run check:env",
     "prebuild": "npm run check:env",
@@ -48,6 +75,7 @@
     "pretest:coverage": "npm run check:env",
     "preuniversal": "npm run check:env",
     "preversion": "npm run check:env",
+    "prepublishOnly": "npm run check:package && echo 'Ready to publish @stateset/embedded'",
     "artifacts": "napi artifacts",
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
@@ -59,9 +87,19 @@
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0"
   },
+  "peerDependencies": {
+    "@stateset/cli": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@stateset/cli": {
+      "optional": true
+    }
+  },
   "files": [
     "index.js",
     "index.d.ts",
+    "*.mjs",
+    "*.d.ts",
     "*.node"
   ],
   "publishConfig": {

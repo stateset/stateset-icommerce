@@ -1,0 +1,439 @@
+{
+  "source": {
+    "binding": "bindings/node/index.d.ts",
+    "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
+  },
+  "totalDomainModules": 60,
+  "totalDomainTools": 693,
+  "totalCommerceGetters": 32,
+  "mappedCommerceGetters": 32,
+  "uncoveredCommerceGetters": [],
+  "staleGetterMappings": [],
+  "getters": [
+    {
+      "getter": "accountsPayable",
+      "module": "accounts-payable",
+      "toolCount": 10
+    },
+    {
+      "getter": "accountsReceivable",
+      "module": "accounts-receivable",
+      "toolCount": 8
+    },
+    {
+      "getter": "analytics",
+      "module": "analytics",
+      "toolCount": 14
+    },
+    {
+      "getter": "backorder",
+      "module": "backorders",
+      "toolCount": 9
+    },
+    {
+      "getter": "bom",
+      "module": "manufacturing",
+      "toolCount": 11
+    },
+    {
+      "getter": "carts",
+      "module": "carts",
+      "toolCount": 30
+    },
+    {
+      "getter": "costAccounting",
+      "module": "cost-accounting",
+      "toolCount": 5
+    },
+    {
+      "getter": "credit",
+      "module": "credit",
+      "toolCount": 8
+    },
+    {
+      "getter": "currency",
+      "module": "currency",
+      "toolCount": 12
+    },
+    {
+      "getter": "customObjects",
+      "module": "custom-objects",
+      "toolCount": 12
+    },
+    {
+      "getter": "customers",
+      "module": "customers",
+      "toolCount": 3
+    },
+    {
+      "getter": "fulfillment",
+      "module": "fulfillment",
+      "toolCount": 14
+    },
+    {
+      "getter": "generalLedger",
+      "module": "general-ledger",
+      "toolCount": 12
+    },
+    {
+      "getter": "inventory",
+      "module": "inventory",
+      "toolCount": 6
+    },
+    {
+      "getter": "invoices",
+      "module": "invoices",
+      "toolCount": 7
+    },
+    {
+      "getter": "lots",
+      "module": "lots",
+      "toolCount": 11
+    },
+    {
+      "getter": "orders",
+      "module": "orders",
+      "toolCount": 6
+    },
+    {
+      "getter": "payments",
+      "module": "payments",
+      "toolCount": 19
+    },
+    {
+      "getter": "products",
+      "module": "products",
+      "toolCount": 4
+    },
+    {
+      "getter": "promotions",
+      "module": "promotions",
+      "toolCount": 15
+    },
+    {
+      "getter": "purchaseOrders",
+      "module": "suppliers",
+      "toolCount": 10
+    },
+    {
+      "getter": "quality",
+      "module": "quality",
+      "toolCount": 15
+    },
+    {
+      "getter": "receiving",
+      "module": "receiving",
+      "toolCount": 8
+    },
+    {
+      "getter": "returns",
+      "module": "returns",
+      "toolCount": 5
+    },
+    {
+      "getter": "serials",
+      "module": "serials",
+      "toolCount": 8
+    },
+    {
+      "getter": "shipments",
+      "module": "shipments",
+      "toolCount": 14
+    },
+    {
+      "getter": "subscriptions",
+      "module": "subscriptions",
+      "toolCount": 17
+    },
+    {
+      "getter": "tax",
+      "module": "tax",
+      "toolCount": 29
+    },
+    {
+      "getter": "warehouse",
+      "module": "warehouse",
+      "toolCount": 9
+    },
+    {
+      "getter": "warranties",
+      "module": "warranties",
+      "toolCount": 7
+    },
+    {
+      "getter": "workOrders",
+      "module": "manufacturing",
+      "toolCount": 11
+    },
+    {
+      "getter": "x402",
+      "module": "x402",
+      "toolCount": 14
+    }
+  ],
+  "totalAuditedClasses": 32,
+  "totalAuditedMethods": 354,
+  "mappedAuditedMethods": 354,
+  "uncoveredAuditedMethods": [],
+  "staleAuditedMethodMappings": [],
+  "invalidAuditedToolReferences": [],
+  "auditedClasses": [
+    {
+      "className": "AccountsPayable",
+      "methodCount": 11,
+      "mappedMethodCount": 11,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "AccountsReceivable",
+      "methodCount": 8,
+      "mappedMethodCount": 8,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Analytics",
+      "methodCount": 14,
+      "mappedMethodCount": 14,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Backorders",
+      "methodCount": 10,
+      "mappedMethodCount": 10,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Bom",
+      "methodCount": 7,
+      "mappedMethodCount": 7,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Carts",
+      "methodCount": 32,
+      "mappedMethodCount": 32,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "CostAccounting",
+      "methodCount": 5,
+      "mappedMethodCount": 5,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Credit",
+      "methodCount": 9,
+      "mappedMethodCount": 9,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "CurrencyOperations",
+      "methodCount": 15,
+      "mappedMethodCount": 15,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Customers",
+      "methodCount": 5,
+      "mappedMethodCount": 5,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "CustomObjects",
+      "methodCount": 12,
+      "mappedMethodCount": 12,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Fulfillment",
+      "methodCount": 14,
+      "mappedMethodCount": 14,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "GeneralLedger",
+      "methodCount": 13,
+      "mappedMethodCount": 13,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Inventory",
+      "methodCount": 6,
+      "mappedMethodCount": 6,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Invoices",
+      "methodCount": 8,
+      "mappedMethodCount": 8,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Lots",
+      "methodCount": 12,
+      "mappedMethodCount": 12,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Orders",
+      "methodCount": 7,
+      "mappedMethodCount": 7,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Payments",
+      "methodCount": 8,
+      "mappedMethodCount": 8,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Products",
+      "methodCount": 5,
+      "mappedMethodCount": 5,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Promotions",
+      "methodCount": 17,
+      "mappedMethodCount": 17,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "PurchaseOrders",
+      "methodCount": 11,
+      "mappedMethodCount": 11,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Quality",
+      "methodCount": 15,
+      "mappedMethodCount": 15,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Receiving",
+      "methodCount": 9,
+      "mappedMethodCount": 9,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Returns",
+      "methodCount": 6,
+      "mappedMethodCount": 6,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Serials",
+      "methodCount": 9,
+      "mappedMethodCount": 9,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Shipments",
+      "methodCount": 7,
+      "mappedMethodCount": 7,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Subscriptions",
+      "methodCount": 19,
+      "mappedMethodCount": 19,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Tax",
+      "methodCount": 18,
+      "mappedMethodCount": 18,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Warehouse",
+      "methodCount": 10,
+      "mappedMethodCount": 10,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "Warranties",
+      "methodCount": 8,
+      "mappedMethodCount": 8,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "WorkOrders",
+      "methodCount": 7,
+      "mappedMethodCount": 7,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    },
+    {
+      "className": "X402",
+      "methodCount": 17,
+      "mappedMethodCount": 17,
+      "uncoveredMethods": [],
+      "staleMappedMethods": [],
+      "invalidToolReferences": []
+    }
+  ],
+  "fullyCovered": true
+}

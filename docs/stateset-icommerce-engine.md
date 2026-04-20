@@ -8,7 +8,7 @@
 
 ## Abstract
 
-StateSet iCommerce is a vertically integrated commerce engine that spans from low-level cryptographic primitives in Rust to a natural-language CLI powered by Claude. It embeds a full commerce domain model — orders, inventory, payments, returns, subscriptions, manufacturing, and 40+ other entities — into a single library that compiles to native code, WebAssembly, and Node.js bindings. On top of this core sits a 186-tool MCP server, an 18-agent orchestration layer, an 8-channel messaging fabric, and an agent-to-agent (A2A) commerce protocol with escrow, split payments, and event streaming.
+StateSet iCommerce is a vertically integrated commerce engine that spans from low-level cryptographic primitives in Rust to a natural-language CLI powered by Claude. It embeds a full commerce domain model — orders, inventory, payments, returns, subscriptions, manufacturing, and 40+ other entities — into a single library that compiles to native code, WebAssembly, and Node.js bindings. On top of this core sits a 650+ tool MCP server, an 18-agent orchestration layer, an 8-channel messaging fabric, and an agent-to-agent (A2A) commerce protocol with escrow, split payments, and event streaming.
 
 This paper is a comprehensive technical review of what has been built: the architecture, the design decisions, the security posture, and the quality metrics. It is based on a full audit of the codebase — approximately 50,000 lines of Rust across 7 crates, 25,000 lines of JavaScript across 143 CLI files, and 7,500+ automated tests.
 
@@ -1135,7 +1135,7 @@ A single `npm run check` validates both the Rust and JavaScript codebases.
 |--------|-------|
 | Rust LOC | ~50,000 |
 | JavaScript LOC | ~25,000 |
-| MCP tools | 186 |
+| MCP tools | 652 |
 | Domain models | 48 |
 | Newtype IDs | 27 |
 | Non-exhaustive enums | 171 |

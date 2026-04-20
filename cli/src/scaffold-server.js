@@ -713,6 +713,95 @@ export const SCAFFOLD_TOOL_NAMES = [
   'seed_database',
 ];
 
+const STATIC_SCAFFOLD_TOOL_DEFINITIONS = Object.freeze([
+  {
+    name: 'list_templates',
+    description: 'List available storefront project templates',
+    permission: 'read',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'list_page_templates',
+    description: 'List available page templates',
+    permission: 'read',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'list_component_templates',
+    description: 'List available component templates',
+    permission: 'read',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'create_project',
+    description:
+      'Create a new storefront project with the specified template. This initializes the full project structure.',
+    permission: 'write',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'add_page',
+    description: 'Add a page to the storefront project',
+    permission: 'write',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'add_component',
+    description: 'Add a component to the storefront project',
+    permission: 'write',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'add_hook',
+    description: 'Add a React hook to the storefront project',
+    permission: 'write',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'add_api_route',
+    description: 'Add an API route to the storefront project',
+    permission: 'write',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'write_file',
+    description: 'Write content to a file in the project',
+    permission: 'write',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'read_file',
+    description: 'Read content from a file in the project',
+    permission: 'read',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'list_files',
+    description: 'List files in a directory',
+    permission: 'read',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'run_command',
+    description: 'Run an approved project command in the project directory',
+    permission: 'admin',
+    policyDomain: 'scaffold',
+  },
+  {
+    name: 'seed_database',
+    description: 'Seed the commerce database with sample products and data',
+    permission: 'write',
+    policyDomain: 'scaffold',
+  },
+]);
+
+export function getStaticScaffoldToolDefinitions() {
+  return STATIC_SCAFFOLD_TOOL_DEFINITIONS.map((toolDef) => ({
+    ...toolDef,
+    inputSchema: {},
+  }));
+}
+
 export const SCAFFOLD_MCP_TOOL_NAMES = SCAFFOLD_TOOL_NAMES.map(
   (name) => `mcp__stateset-scaffold__${name}`,
 );

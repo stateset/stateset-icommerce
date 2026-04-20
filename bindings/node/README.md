@@ -89,6 +89,54 @@ const conversion = await commerce.currency.convert({ from: 'USD', to: 'EUR', amo
 console.log(`$100 USD = €${conversion.convertedAmount} EUR`);
 ```
 
+## Agent Framework Embedding
+
+If you need the full advanced runtime for server-side agents, install the CLI
+peer alongside the binding and use the dedicated toolkit entrypoint:
+
+```bash
+npm install @stateset/embedded @stateset/cli
+```
+
+```javascript
+import { createEmbeddedAgentToolkit } from '@stateset/embedded/agent-toolkit';
+
+const toolkit = createEmbeddedAgentToolkit({ dbPath: './store.db' });
+const openaiTools = toolkit.getTools({ format: 'openai' });
+const mcpTools = toolkit.getTools({ format: 'mcp' });
+```
+
+If you want lighter-weight helper entrypoints around an existing `Commerce`
+instance, start with `@stateset/embedded/openai`,
+`@stateset/embedded/generic`, `@stateset/embedded/langchain`, and
+`@stateset/embedded/vercel-ai`.
+
+```javascript
+import { Commerce } from '@stateset/embedded';
+import { createOpenAITools, executeOpenAIToolCall } from '@stateset/embedded/openai';
+import { createToolDescriptors } from '@stateset/embedded/generic';
+
+const commerce = new Commerce('./store.db');
+const openaiTools = createOpenAITools(commerce, {
+  filter: ['list_customers'],
+});
+const execution = await executeOpenAIToolCall(commerce, {
+  call_id: 'demo_call_1',
+  function: {
+    name: 'list_customers',
+    arguments: '{}',
+  },
+});
+const descriptors = createToolDescriptors(commerce, {
+  filter: ['list_customers', 'list_orders', 'get_sales_summary'],
+});
+```
+
+That gives you both OpenAI-compatible tool definitions and a framework-neutral
+`{ name, description, schema, execute }` surface for custom runtimes. The
+binding also ships `@stateset/embedded/langchain` and
+`@stateset/embedded/vercel-ai` helper subpaths for those JS hosts.
+
 ## API Reference
 
 ### Commerce

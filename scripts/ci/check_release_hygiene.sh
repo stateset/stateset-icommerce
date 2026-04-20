@@ -9,6 +9,7 @@ CURRENT_DOC_PATHS=(
   QUICKSTART.md
   comparison_doc.md
   cli/README.md
+  docs/README.md
   docs/src
 )
 
@@ -20,8 +21,8 @@ Validates repo-wide version sync plus release metadata hygiene.
 
 Arguments:
   VERSION_OR_TAG   Optional semantic version or tag name such as:
-                   0.9.3, v0.9.3, cli-v0.9.3, py-v0.9.3, java-v0.9.3,
-                   php-v0.9.3, ruby-v0.9.3
+                   0.9.9, v0.9.9, cli-v0.9.9, py-v0.9.9, java-v0.9.9,
+                   php-v0.9.9, ruby-v0.9.9
 
 Options:
   --github-output PATH   Write version=<normalized-version> to the given file.
@@ -145,8 +146,37 @@ rm -f "$legacy_tool_count_file"
 
 node ./scripts/ci/generate_mcp_inventory.mjs --check >/dev/null
 node ./scripts/ci/generate_agent_inventory.mjs --check >/dev/null
+node ./scripts/ci/generate_api_command_coverage.mjs --check >/dev/null
+node ./scripts/ci/generate_binding_api_inventory.mjs --check >/dev/null
+node ./scripts/ci/generate_http_gateway_inventory.mjs --check >/dev/null
+node ./scripts/ci/generate_mcp_api_coverage.mjs --check >/dev/null
 node ./scripts/ci/generate_workspace_inventory.mjs --check >/dev/null
+node ./scripts/ci/generate_rust_openapi_inventory.mjs --check >/dev/null
 node ./scripts/ci/check_doc_tool_refs.mjs >/dev/null
+node ./scripts/ci/check_workflow_job_refs.mjs >/dev/null
+
+required_release_surface_snippets=(
+  "bindings/python/pyproject.toml|\"Development Status :: 5 - Production/Stable\""
+  ".github/workflows/publish-cli.yml|description: 'Version to release (e.g., ${workspace_version})'"
+  ".github/workflows/publish-python.yml|description: \"Version to release (e.g., ${workspace_version})\""
+  ".github/workflows/publish-rust-crates.yml|description: 'Version to release (e.g., ${workspace_version})'"
+  "scripts/ci/check_release_hygiene.sh|                   ${workspace_version}, v${workspace_version}, cli-v${workspace_version}, py-v${workspace_version}, java-v${workspace_version},"
+  "scripts/ci/check_release_hygiene.sh|                   php-v${workspace_version}, ruby-v${workspace_version}"
+)
+
+for entry in "${required_release_surface_snippets[@]}"; do
+  file="${entry%%|*}"
+  snippet="${entry#*|}"
+  if ! grep -Fq -- "$snippet" "$file"; then
+    echo "::error file=${file}::Missing release-hygiene snippet: $snippet" >&2
+    exit 1
+  fi
+done
+
+if grep -Fq '"Development Status :: 4 - Beta"' bindings/python/pyproject.toml; then
+  echo "::error file=bindings/python/pyproject.toml::Python binding still advertises Beta status in a 1.0 release line." >&2
+  exit 1
+fi
 
 legacy_arch_count_file="$(mktemp)"
 if grep -RInE '4,000\+ tests|3,477 passing tests|15,300\+ tests|261 tests|41 domain APIs|18 AI agents|41 CLI entry points|41 accessor methods|17 specialized agents|18 specialized agents|90\+ MCP tools|87\+ tools|87 MCP tools|8 specialized agents|37 tests|26 CLI programs|254 types|53 tables|671\+ methods|53\+ REST endpoints|11 language bindings|Eighteen specialized agents' "${CURRENT_DOC_PATHS[@]}" --exclude='mcp-tool-inventory.md' --exclude='workspace-inventory.md' >"$legacy_arch_count_file" 2>/dev/null; then
@@ -156,6 +186,46 @@ if grep -RInE '4,000\+ tests|3,477 passing tests|15,300\+ tests|261 tests|41 dom
   exit 1
 fi
 rm -f "$legacy_arch_count_file"
+
+required_hook_files=(
+  .husky/pre-commit
+  .husky/commit-msg
+  .husky/node-env.sh
+)
+
+for hook_file in "${required_hook_files[@]}"; do
+  if [[ ! -x "$hook_file" ]]; then
+    echo "::error file=${hook_file}::Required Git hook helper is not executable. Restore the executable bit before cutting a release." >&2
+    exit 1
+  fi
+done
+
+disallowed_tracked_artifacts=(
+  examples/go/go
+  examples/go/go.exe
+  bindings/go/example/example
+  bindings/go/example/example.exe
+)
+
+for artifact in "${disallowed_tracked_artifacts[@]}"; do
+  if git ls-files --error-unmatch -- "$artifact" >/dev/null 2>&1; then
+    echo "::error file=${artifact}::Tracked generated artifact detected. Remove it before cutting a release." >&2
+    exit 1
+  fi
+done
+
+if command -v file >/dev/null 2>&1; then
+  tracked_native_artifacts="$(
+    git ls-files -z |
+      xargs -0 file |
+      grep -E 'ELF|Mach-O|PE32' || true
+  )"
+  if [[ -n "$tracked_native_artifacts" ]]; then
+    echo "::error::Tracked native binaries detected in the repo. Remove generated artifacts before cutting a release." >&2
+    printf '%s\n' "$tracked_native_artifacts" >&2
+    exit 1
+  fi
+fi
 
 normalized_release_version="$workspace_version"
 if [[ -n "$raw_release_version" ]]; then

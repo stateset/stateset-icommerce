@@ -148,8 +148,7 @@ function toSnakeCasePublicKeyBundle(bundle) {
     ed25519_public_key: bundle.ed25519PublicKey ?? bundle.ed25519_public_key ?? null,
     ml_dsa_65_public_key: bundle.mlDsa65PublicKey ?? bundle.ml_dsa_65_public_key ?? null,
     x25519_public_key: bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null,
-    ml_kem_768_public_key:
-      bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
+    ml_kem_768_public_key: bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
   };
 }
 
@@ -224,31 +223,19 @@ function toSnakeCaseRecipientWrap(wrap) {
   }
 
   const wrappedKey =
-    wrap.wrappedKey ??
-    wrap.wrapped_key ??
-    wrap.wrapped_key_b64u ??
-    wrap.ct_b64u ??
-    null;
+    wrap.wrappedKey ?? wrap.wrapped_key ?? wrap.wrapped_key_b64u ?? wrap.ct_b64u ?? null;
 
   return {
     recipient_kid: Number(wrap.recipientKid ?? wrap.recipient_kid ?? 0),
     wrap_scheme: Number(wrap.wrapScheme ?? wrap.wrap_scheme ?? 0),
-    x25519_enc_b64u:
-      wrap.x25519Enc ??
-      wrap.x25519_enc ??
-      wrap.x25519_enc_b64u ??
-      null,
+    x25519_enc_b64u: wrap.x25519Enc ?? wrap.x25519_enc ?? wrap.x25519_enc_b64u ?? null,
     ml_kem_ciphertext_b64u:
       wrap.mlKemCiphertext ??
       wrap.ml_kem_ciphertext ??
       wrap.ml_kem_ciphertext_b64u ??
       wrap.mlkem_ct_b64u ??
       null,
-    wrap_nonce_b64u:
-      wrap.wrapNonce ??
-      wrap.wrap_nonce ??
-      wrap.wrap_nonce_b64u ??
-      null,
+    wrap_nonce_b64u: wrap.wrapNonce ?? wrap.wrap_nonce ?? wrap.wrap_nonce_b64u ?? null,
     wrapped_key_b64u: wrappedKey,
   };
 }
@@ -259,11 +246,7 @@ function fromSnakeCaseRecipientWrap(wrap) {
   }
 
   const wrappedKey =
-    wrap.wrapped_key_b64u ??
-    wrap.wrappedKey ??
-    wrap.wrapped_key ??
-    wrap.ct_b64u ??
-    null;
+    wrap.wrapped_key_b64u ?? wrap.wrappedKey ?? wrap.wrapped_key ?? wrap.ct_b64u ?? null;
 
   return {
     recipientKid: Number(wrap.recipient_kid ?? wrap.recipientKid ?? 0),
@@ -285,9 +268,7 @@ function toSnakeCaseRecipientWraps(recipientWraps) {
     return null;
   }
 
-  return recipientWraps
-    .map((wrap) => toSnakeCaseRecipientWrap(wrap))
-    .filter(Boolean);
+  return recipientWraps.map((wrap) => toSnakeCaseRecipientWrap(wrap)).filter(Boolean);
 }
 
 function fromSnakeCaseRecipientWraps(recipientWraps) {
@@ -295,9 +276,7 @@ function fromSnakeCaseRecipientWraps(recipientWraps) {
     return null;
   }
 
-  return recipientWraps
-    .map((wrap) => fromSnakeCaseRecipientWrap(wrap))
-    .filter(Boolean);
+  return recipientWraps.map((wrap) => fromSnakeCaseRecipientWrap(wrap)).filter(Boolean);
 }
 
 function deriveKeyWrapParams(payloadEncrypted) {
@@ -320,17 +299,11 @@ function deriveRecipientWrapsFromLegacyRecipients(payloadEncrypted) {
   return payloadEncrypted.recipients.map((recipient) => ({
     recipient_kid: Number(recipient.recipient_kid ?? recipient.recipientKid ?? 0),
     wrap_scheme: KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
-    x25519_enc_b64u:
-      recipient.enc_b64u ??
-      recipient.encB64u ??
-      null,
+    x25519_enc_b64u: recipient.enc_b64u ?? recipient.encB64u ?? null,
     ml_kem_ciphertext_b64u: null,
     wrap_nonce_b64u: null,
     wrapped_key_b64u:
-      recipient.wrapped_key_b64u ??
-      recipient.wrappedKeyB64u ??
-      recipient.ct_b64u ??
-      null,
+      recipient.wrapped_key_b64u ?? recipient.wrappedKeyB64u ?? recipient.ct_b64u ?? null,
   }));
 }
 
@@ -344,8 +317,9 @@ function normalizePayloadEncryptedForWire(payloadEncrypted) {
     toSnakeCaseKeyWrapParams(payloadEncrypted.keyWrapParams ?? payloadEncrypted.key_wrap_params) ??
     deriveKeyWrapParams(payloadEncrypted);
   const recipientWraps =
-    toSnakeCaseRecipientWraps(payloadEncrypted.recipientWraps ?? payloadEncrypted.recipient_wraps) ??
-    deriveRecipientWrapsFromLegacyRecipients(payloadEncrypted);
+    toSnakeCaseRecipientWraps(
+      payloadEncrypted.recipientWraps ?? payloadEncrypted.recipient_wraps,
+    ) ?? deriveRecipientWrapsFromLegacyRecipients(payloadEncrypted);
 
   if (keyWrapParams) {
     normalized.key_wrap_params = keyWrapParams;
@@ -841,14 +815,16 @@ export class SequencerClient {
       try {
         return verifyEventSignatureHybrid(eventSigningHash, signatureBundle, publicKeyBundle);
       } catch (error) {
-        console.debug('[sync-client] Hybrid signature verification failed:', error?.message || error);
+        console.debug(
+          '[sync-client] Hybrid signature verification failed:',
+          error?.message || error,
+        );
       }
     }
 
     // Fall back to verifying the classical Ed25519 component when a full
     // hybrid bundle is unavailable to the caller.
-    const signatureHex =
-      envelope.agentSignature || signatureBundle?.ed25519Signature || null;
+    const signatureHex = envelope.agentSignature || signatureBundle?.ed25519Signature || null;
     if (!signatureHex) {
       return false;
     }
@@ -878,9 +854,10 @@ export class SequencerClient {
    * @returns {boolean} True if the receipt signature is valid.
    */
   verifyReceiptSignature(receipt, sequencerPublicKey) {
-    const receiptHash = typeof receipt.receiptHash === 'string'
-      ? hexToBuffer(receipt.receiptHash)
-      : receipt.receiptHash;
+    const receiptHash =
+      typeof receipt.receiptHash === 'string'
+        ? hexToBuffer(receipt.receiptHash)
+        : receipt.receiptHash;
     if (!receiptHash || receiptHash.length !== 32) {
       return false;
     }
@@ -905,11 +882,17 @@ export class SequencerClient {
     const publicKeyBundle = normalizeVerificationPublicKeyBundle(sequencerPublicKey);
 
     // PQC-strict: ML-DSA-65 only
-    if (scheme === SIGNATURE_SCHEME_ML_DSA_65 && bundle?.mlDsa65Signature && publicKeyBundle?.mlDsa65PublicKey) {
+    if (
+      scheme === SIGNATURE_SCHEME_ML_DSA_65 &&
+      bundle?.mlDsa65Signature &&
+      publicKeyBundle?.mlDsa65PublicKey
+    ) {
       try {
         return verifyEventSignatureStrict(
           receiptHash,
-          typeof bundle.mlDsa65Signature === 'string' ? hexToBuffer(bundle.mlDsa65Signature) : bundle.mlDsa65Signature,
+          typeof bundle.mlDsa65Signature === 'string'
+            ? hexToBuffer(bundle.mlDsa65Signature)
+            : bundle.mlDsa65Signature,
           publicKeyBundle,
         );
       } catch {
@@ -918,7 +901,12 @@ export class SequencerClient {
     }
 
     // Hybrid: Ed25519 + ML-DSA-65
-    if (scheme === SIGNATURE_SCHEME_ED25519_ML_DSA_65 && bundle && publicKeyBundle?.ed25519PublicKey && publicKeyBundle?.mlDsa65PublicKey) {
+    if (
+      scheme === SIGNATURE_SCHEME_ED25519_ML_DSA_65 &&
+      bundle &&
+      publicKeyBundle?.ed25519PublicKey &&
+      publicKeyBundle?.mlDsa65PublicKey
+    ) {
       try {
         return verifyEventSignatureHybrid(receiptHash, bundle, publicKeyBundle);
       } catch {

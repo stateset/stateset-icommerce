@@ -3,8 +3,9 @@
  *
  * Tests every tool exported from src/tools/subscriptions.js:
  *   list_subscription_plans, get_subscription_plan, create_subscription_plan,
- *   activate_subscription_plan, archive_subscription_plan, list_subscriptions,
- *   get_subscription, create_subscription, pause_subscription, resume_subscription,
+ *   activate_subscription_plan, update_subscription_plan, archive_subscription_plan,
+ *   list_subscriptions, get_subscription, create_subscription, pause_subscription,
+ *   update_subscription, resume_subscription,
  *   cancel_subscription, skip_billing_cycle, list_billing_cycles,
  *   get_billing_cycle, get_subscription_events
  */
@@ -83,13 +84,21 @@ function makeCommerce(overrides = {}) {
   return {
     listSubscriptionPlans: async () => [makePlan()],
     getSubscriptionPlan: async (id) => (id === 'nonexistent' ? null : makePlan({ id })),
+    getSubscriptionPlanByCode: async (code) =>
+      code === 'MISSING' || code === 'nonexistent' ? null : makePlan({ code }),
     createSubscriptionPlan: async (data) => makePlan({ id: 'plan_new', ...data }),
     activateSubscriptionPlan: async (id) => makePlan({ id, status: 'active' }),
+    updateSubscriptionPlan: async (id, updates) => makePlan({ id, ...updates }),
     archiveSubscriptionPlan: async (id) => makePlan({ id, status: 'archived' }),
     listSubscriptions: async () => [makeSub()],
     getSubscription: async (id) => (id === 'nonexistent' ? null : makeSub({ id })),
+    getSubscriptionByNumber: async (number) =>
+      number === 'MISSING' || number === 'nonexistent'
+        ? null
+        : makeSub({ subscriptionNumber: number }),
     createSubscription: async (data) => makeSub({ id: 'sub_new', ...data }),
     pauseSubscription: async (id) => makeSub({ id, status: 'paused' }),
+    updateSubscription: async (id, updates) => makeSub({ id, ...updates }),
     resumeSubscription: async (id) => makeSub({ id, status: 'active' }),
     cancelSubscription: async (id) => makeSub({ id, status: 'cancelled' }),
     skipBillingCycle: async (id) => makeSub({ id, nextBillingDate: '2026-04-20T00:00:00Z' }),
@@ -105,9 +114,9 @@ function makeCommerce(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Subscription Tools — structure', () => {
-  it('exports an array of 15 tools', () => {
+  it('exports an array of 17 tools', () => {
     assert.ok(Array.isArray(subscriptionTools));
-    assert.strictEqual(subscriptionTools.length, 15);
+    assert.strictEqual(subscriptionTools.length, 17);
   });
 
   it('every tool has name, handler, permission, and inputSchema', () => {
@@ -176,6 +185,12 @@ describe('get_subscription_plan', () => {
 
   it('returns plan by ID', async () => {
     const result = await tool.handler({ commerce: makeCommerce(), params: { planId: 'plan_001' } });
+    assert.strictEqual(result.success, true);
+    assert.ok(result.plan);
+  });
+
+  it('falls back to plan code lookup when available', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params: { planId: 'COFFEE_MONTHLY' } });
     assert.strictEqual(result.success, true);
     assert.ok(result.plan);
   });
@@ -249,6 +264,27 @@ describe('activate_subscription_plan', () => {
   });
 });
 
+describe('update_subscription_plan', () => {
+  const tool = findTool('update_subscription_plan');
+  const params = { planId: 'plan_001', updates: { name: 'Updated Plan' } };
+
+  it('has write permission', () => {
+    assert.strictEqual(tool.permission, 'write');
+  });
+
+  it('returns preview when allowApply is false', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.wouldUpdate);
+  });
+
+  it('updates plan when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.plan.name, 'Updated Plan');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // archive_subscription_plan
 // ---------------------------------------------------------------------------
@@ -257,8 +293,8 @@ describe('archive_subscription_plan', () => {
   const tool = findTool('archive_subscription_plan');
   const params = { planId: 'plan_001' };
 
-  it('has write permission', () => {
-    assert.strictEqual(tool.permission, 'write');
+  it('has delete permission', () => {
+    assert.strictEqual(tool.permission, 'delete');
   });
 
   it('returns preview when allowApply is false', async () => {
@@ -332,6 +368,14 @@ describe('get_subscription', () => {
     assert.strictEqual(result.success, false);
     assert.ok(result.error.toLowerCase().includes('not found'));
   });
+
+  it('falls back to subscription number lookup when available', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce({ getSubscription: async () => null }),
+      params: { subscriptionId: 'SUB-100001' },
+    });
+    assert.ok(result);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -387,6 +431,27 @@ describe('pause_subscription', () => {
   });
 });
 
+describe('update_subscription', () => {
+  const tool = findTool('update_subscription');
+  const params = { subscriptionId: 'sub_001', updates: { status: 'past_due' } };
+
+  it('has write permission', () => {
+    assert.strictEqual(tool.permission, 'write');
+  });
+
+  it('returns preview when allowApply is false', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.wouldUpdate);
+  });
+
+  it('updates subscription when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.subscription.status, 'past_due');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // resume_subscription
 // ---------------------------------------------------------------------------
@@ -420,8 +485,8 @@ describe('cancel_subscription', () => {
   const tool = findTool('cancel_subscription');
   const params = { subscriptionId: 'sub_001' };
 
-  it('has write permission', () => {
-    assert.strictEqual(tool.permission, 'write');
+  it('has delete permission', () => {
+    assert.strictEqual(tool.permission, 'delete');
   });
 
   it('returns preview when allowApply is false', async () => {

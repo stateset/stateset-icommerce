@@ -14,17 +14,19 @@ const byName = Object.fromEntries(invoiceTools.map((t) => [t.name, t]));
 // ---------------------------------------------------------------------------
 
 describe('invoiceTools — module exports', () => {
-  it('exports an array of 5 tools', () => {
+  it('exports an array of 7 tools', () => {
     assert.ok(Array.isArray(invoiceTools));
-    assert.equal(invoiceTools.length, 5);
+    assert.equal(invoiceTools.length, 7);
   });
 
   it('exports expected tool names', () => {
     const names = invoiceTools.map((t) => t.name);
     assert.deepStrictEqual(names, [
       'list_invoices',
+      'get_invoice',
       'create_invoice',
       'send_invoice',
+      'void_invoice',
       'record_invoice_payment',
       'get_overdue_invoices',
     ]);
@@ -39,7 +41,7 @@ describe('invoiceTools — module exports', () => {
   it('all tools have valid permissions', () => {
     for (const tool of invoiceTools) {
       assert.ok(
-        ['read', 'write', 'admin'].includes(tool.permission),
+        ['read', 'write', 'delete', 'admin'].includes(tool.permission),
         `${tool.name} has invalid permission: ${tool.permission}`,
       );
     }
@@ -60,6 +62,7 @@ describe('invoiceTools — module exports', () => {
 describe('invoiceTools — permissions', () => {
   it('read tools have read permission', () => {
     assert.equal(byName['list_invoices'].permission, 'read');
+    assert.equal(byName['get_invoice'].permission, 'read');
     assert.equal(byName['get_overdue_invoices'].permission, 'read');
   });
 
@@ -67,6 +70,10 @@ describe('invoiceTools — permissions', () => {
     assert.equal(byName['create_invoice'].permission, 'write');
     assert.equal(byName['send_invoice'].permission, 'write');
     assert.equal(byName['record_invoice_payment'].permission, 'write');
+  });
+
+  it('delete tools have delete permission', () => {
+    assert.equal(byName['void_invoice'].permission, 'delete');
   });
 });
 
@@ -85,8 +92,16 @@ describe('invoiceTools — input schemas', () => {
     assert.ok(schema.items);
   });
 
+  it('get_invoice has invoiceId', () => {
+    assert.ok(byName['get_invoice'].inputSchema.invoiceId);
+  });
+
   it('send_invoice has invoiceId', () => {
     assert.ok(byName['send_invoice'].inputSchema.invoiceId);
+  });
+
+  it('void_invoice has invoiceId', () => {
+    assert.ok(byName['void_invoice'].inputSchema.invoiceId);
   });
 
   it('record_invoice_payment has invoiceId and amount', () => {
@@ -125,6 +140,16 @@ describe('invoiceTools — apply guards', () => {
     assert.ok(result.error.includes('--apply'));
   });
 
+  it('void_invoice requires --apply', async () => {
+    const result = await byName['void_invoice'].handler({
+      commerce: {},
+      params: { invoiceId: 'inv-1' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+  });
+
   it('record_invoice_payment requires --apply', async () => {
     const result = await byName['record_invoice_payment'].handler({
       commerce: {},
@@ -141,6 +166,15 @@ describe('invoiceTools — apply guards', () => {
 // ---------------------------------------------------------------------------
 
 describe('invoiceTools — error handling', () => {
+  it('get_invoice returns not found when invoice is missing', async () => {
+    const result = await byName['get_invoice'].handler({
+      commerce: { invoices: { get: async () => null } },
+      params: { invoiceId: 'inv-missing' },
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('not found'));
+  });
+
   it('create_invoice returns error for invalid JSON items', async () => {
     const result = await byName['create_invoice'].handler({
       commerce: {},

@@ -265,6 +265,7 @@ export function buildHttpRouteDiscoveryDocument({
     }
 
     const method = normalizeHttpMethod(route.method);
+    const openapiPath = route.openapiPath || route.path;
     const meta = resolveHttpRouteMeta(route);
     const responses = {
       200: {
@@ -295,12 +296,13 @@ export function buildHttpRouteDiscoveryDocument({
     }
 
     const operation = {
-      operationId: buildHttpOperationId(method, route.path),
+      operationId: buildHttpOperationId(method, openapiPath),
       summary: meta.summary,
       description: meta.description,
       tags: meta.tags,
       responses,
       'x-stateset-plugin-id': route.pluginId || null,
+      'x-stateset-permission-level': route.level || null,
     };
 
     if (!['get', 'head', 'delete'].includes(method)) {
@@ -318,10 +320,10 @@ export function buildHttpRouteDiscoveryDocument({
       operation['x-payment-info'] = meta.paymentInfo;
     }
 
-    if (!paths[route.path]) {
-      paths[route.path] = {};
+    if (!paths[openapiPath]) {
+      paths[openapiPath] = {};
     }
-    paths[route.path][method] = operation;
+    paths[openapiPath][method] = operation;
   }
 
   return {

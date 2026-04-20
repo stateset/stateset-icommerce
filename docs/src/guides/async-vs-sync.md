@@ -90,13 +90,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 [dependencies]
 # SQLite only (default)
-stateset-embedded = "0.2"
+stateset-embedded = "0.9.9"
 
 # PostgreSQL support (enables AsyncCommerce)
-stateset-embedded = { version = "0.2", features = ["postgres"] }
+stateset-embedded = { version = "0.9.9", features = ["postgres"] }
 
 # Both SQLite and PostgreSQL
-stateset-embedded = { version = "0.2", features = ["sqlite", "postgres"] }
+stateset-embedded = { version = "0.9.9", features = ["sqlite", "postgres"] }
 ```
 
 ## Database Backend Comparison

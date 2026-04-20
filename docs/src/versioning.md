@@ -4,21 +4,41 @@ This book represents the **latest** documentation from the main branch.
 
 ## Semantic Versioning
 
-iCommerce follows [Semantic Versioning](https://semver.org/) with an explicit pre-`1.0` policy:
+iCommerce follows [Semantic Versioning](https://semver.org/):
 
-- **Major** (`X.0.0`) after `1.0`: Breaking changes to the public API surface
-- **Minor** (`0.X.0` while pre-`1.0`, `X.Y.0` after `1.0`): New features and backward-compatible additions by project policy
-- **Patch** (`0.0.X` / `X.Y.Z`): Bug fixes, performance improvements, documentation updates
+- **Major** (`X.0.0`): Breaking changes to stable public surfaces
+- **Minor** (`X.Y.0`): Backward-compatible additions and new capabilities
+- **Patch** (`X.Y.Z`): Bug fixes, security fixes, performance work, and documentation updates
 
-## Pre-1.0 Status
+## Current Line
 
-Current releases are still pre-`1.0`.
+The current workspace release line is `v1.0.0`. The `v1` compatibility
+contract is active now, so breaking changes to the documented stable surfaces
+require a future `v2.0.0` release.
 
-The compatibility table below is a project policy commitment, not a claim that every public surface is permanently frozen. If a pre-`1.0` breaking change is unavoidable, it must be called out in release notes and accompanied by migration guidance.
+## Active v1 Contract
+
+The `v1.0.0` contract is active for the published `v1.x` line:
+
+- Patch releases in `v1.x` are non-breaking bug, security, performance, and
+  documentation updates.
+- Minor releases in `v1.x` are additive for the documented stable surfaces.
+- Stable surfaces for `v1.x` are the public Rust API, language binding version
+  line, MCP tool names and schemas, CLI flags, policy YAML, and additive SQLite
+  migrations.
+- Deprecations require runtime warnings and documentation updates, and remain
+  supported for at least two minor releases and 90 days before removal in the
+  next major.
+- `v1.0.x` is the initial stabilization line: critical regressions and security
+  fixes are eligible for backport there until `v1.1.0` ships. After that, the
+  latest `v1.y` and previous `v1.(y-1)` lines receive security and
+  release-blocking bug backports.
 
 ## Current Release
 
-**v0.9.8** — See `RELEASING.md` for the full changelog.
+**v1.0.0** — the first stable OSS compatibility release for the embedded
+commerce engine. See `CHANGELOG.md` and `RELEASE_NOTES_v1.0.0.md` for the
+release narrative.
 
 ## Compatibility Guarantees
 
@@ -65,7 +85,7 @@ stateset "show me all customers"   # triggers any pending migrations
 
 ## Release Snapshots
 
-For each tagged release, a documentation snapshot is created under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v0.9.8/`).
+For each tagged release, a documentation snapshot is created under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v1.0.0/`).
 
 ## Process
 

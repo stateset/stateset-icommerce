@@ -2,9 +2,10 @@
  * Promotions Tools — Comprehensive Test Suite
  *
  * Tests every tool exported from src/tools/promotions.js:
- *   list_promotions, get_promotion, create_promotion, activate_promotion,
- *   deactivate_promotion, create_coupon, validate_coupon, list_coupons,
- *   get_active_promotions, apply_cart_promotions
+ *   list_promotions, get_promotion, update_promotion, create_promotion,
+ *   delete_promotion, activate_promotion, deactivate_promotion, create_coupon,
+ *   get_coupon, validate_coupon, list_coupons, get_active_promotions,
+ *   check_promotion_validity, apply_cart_promotions, record_promotion_usage
  */
 
 import { describe, it } from 'node:test';
@@ -68,13 +69,28 @@ function makeCommerce(overrides = {}) {
     list: async () => [makePromotion()],
     get: async (id) => (id === 'nonexistent' ? null : makePromotion({ id })),
     getByCode: async (code) => (code === 'NONEXISTENT' ? null : makePromotion({ code })),
+    update: async (promotionId, updates) => makePromotion({ id: promotionId, ...updates }),
     create: async (data) => makePromotion({ id: 'promo_new', ...data }),
+    delete: async () => undefined,
     activate: async (id) => makePromotion({ id, status: 'active' }),
     deactivate: async (id) => makePromotion({ id, status: 'paused' }),
     createCoupon: async (data) => makeCoupon({ id: 'coupon_new', ...data }),
+    getCoupon: async (id) => (id === 'missing' ? null : makeCoupon({ id })),
+    getCouponByCode: async (code) => (code === 'MISSING' ? null : makeCoupon({ code })),
     validateCoupon: async (code) => (code === 'INVALID' ? null : makeCoupon({ code })),
     listCoupons: async () => [makeCoupon()],
     getActive: async () => [makePromotion()],
+    isValid: async (promotionId) => promotionId !== 'promo_invalid',
+    recordUsage: async (promotionId, couponId, customerId, orderId, cartId, discountAmount, currency) => ({
+      id: 'usage_001',
+      promotionId,
+      couponId,
+      customerId,
+      orderId,
+      cartId,
+      discountAmount,
+      currency,
+    }),
     ...(overrides.promoMethods || {}),
   };
 
@@ -106,9 +122,9 @@ function makeCommerce(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Promotion Tools — structure', () => {
-  it('exports an array of 10 tools', () => {
+  it('exports an array of 15 tools', () => {
     assert.ok(Array.isArray(promotionTools));
-    assert.strictEqual(promotionTools.length, 10);
+    assert.strictEqual(promotionTools.length, 15);
   });
 
   it('every tool has name, handler, permission, and inputSchema', () => {
@@ -123,6 +139,29 @@ describe('Promotion Tools — structure', () => {
   it('tool names are unique', () => {
     const names = promotionTools.map((t) => t.name);
     assert.strictEqual(new Set(names).size, names.length);
+  });
+
+  it('includes the expected tool names', () => {
+    assert.deepStrictEqual(
+      promotionTools.map((tool) => tool.name),
+      [
+        'list_promotions',
+        'get_promotion',
+        'update_promotion',
+        'create_promotion',
+        'delete_promotion',
+        'activate_promotion',
+        'deactivate_promotion',
+        'create_coupon',
+        'get_coupon',
+        'validate_coupon',
+        'list_coupons',
+        'get_active_promotions',
+        'check_promotion_validity',
+        'apply_cart_promotions',
+        'record_promotion_usage',
+      ],
+    );
   });
 });
 
@@ -230,6 +269,34 @@ describe('get_promotion', () => {
 });
 
 // ---------------------------------------------------------------------------
+// update_promotion
+// ---------------------------------------------------------------------------
+
+describe('update_promotion', () => {
+  const tool = findTool('update_promotion');
+  const params = { promotionId: 'promo_001', updates: { name: 'Updated Sale', status: 'paused' } };
+
+  it('has write permission', () => {
+    assert.strictEqual(tool.permission, 'write');
+  });
+
+  it('returns preview when allowApply is false', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+    assert.deepStrictEqual(result.wouldUpdate, params);
+  });
+
+  it('updates promotion when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.message, 'Promotion updated');
+    assert.strictEqual(result.promotion.id, 'promo_001');
+    assert.strictEqual(result.promotion.name, 'Updated Sale');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // create_promotion
 // ---------------------------------------------------------------------------
 
@@ -276,6 +343,41 @@ describe('create_promotion', () => {
       },
     });
     await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Duplicate code/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// delete_promotion
+// ---------------------------------------------------------------------------
+
+describe('delete_promotion', () => {
+  const tool = findTool('delete_promotion');
+  const params = { promotionId: 'promo_001' };
+
+  it('has delete permission', () => {
+    assert.strictEqual(tool.permission, 'delete');
+  });
+
+  it('returns preview when allowApply is false', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+    assert.strictEqual(result.wouldDelete, 'promo_001');
+  });
+
+  it('deletes promotion when allowApply is true', async () => {
+    let deletedId = null;
+    const commerce = makeCommerce({
+      promoMethods: {
+        delete: async (promotionId) => {
+          deletedId = promotionId;
+        },
+      },
+    });
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.promotionId, 'promo_001');
+    assert.strictEqual(deletedId, 'promo_001');
   });
 });
 
@@ -365,6 +467,57 @@ describe('create_coupon', () => {
     });
     await tool.handler({ commerce, params, allowApply: true });
     assert.strictEqual(calledWith.code, 'SAVE25');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// get_coupon
+// ---------------------------------------------------------------------------
+
+describe('get_coupon', () => {
+  const tool = findTool('get_coupon');
+
+  it('has read permission', () => {
+    assert.strictEqual(tool.permission, 'read');
+  });
+
+  it('returns coupon by ID', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params: { identifier: 'coupon_001' } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.coupon.id, 'coupon_001');
+  });
+
+  it('falls back to code lookup when ID lookup throws', async () => {
+    let usedFallback = false;
+    const commerce = makeCommerce({
+      promoMethods: {
+        getCoupon: async () => {
+          throw new Error('Lookup failed');
+        },
+        getCouponByCode: async (code) => {
+          usedFallback = true;
+          return makeCoupon({ code });
+        },
+      },
+    });
+    const result = await tool.handler({ commerce, params: { identifier: 'SAVE25' } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(usedFallback, true);
+    assert.strictEqual(result.coupon.code, 'SAVE25');
+  });
+
+  it('returns not found when neither lookup succeeds', async () => {
+    const commerce = makeCommerce({
+      promoMethods: {
+        getCoupon: async () => {
+          throw new Error('Lookup failed');
+        },
+        getCouponByCode: async () => null,
+      },
+    });
+    const result = await tool.handler({ commerce, params: { identifier: 'MISSING' } });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.toLowerCase().includes('not found'));
   });
 });
 
@@ -474,6 +627,28 @@ describe('get_active_promotions', () => {
 });
 
 // ---------------------------------------------------------------------------
+// check_promotion_validity
+// ---------------------------------------------------------------------------
+
+describe('check_promotion_validity', () => {
+  const tool = findTool('check_promotion_validity');
+
+  it('has read permission', () => {
+    assert.strictEqual(tool.permission, 'read');
+  });
+
+  it('returns the current validity result', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { promotionId: 'promo_001' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.promotionId, 'promo_001');
+    assert.strictEqual(result.valid, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // apply_cart_promotions
 // ---------------------------------------------------------------------------
 
@@ -514,5 +689,42 @@ describe('apply_cart_promotions', () => {
       applyCartPromotions: async () => { throw new Error('Cart empty'); },
     });
     await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Cart empty/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// record_promotion_usage
+// ---------------------------------------------------------------------------
+
+describe('record_promotion_usage', () => {
+  const tool = findTool('record_promotion_usage');
+  const params = {
+    promotionId: 'promo_001',
+    couponId: 'coupon_001',
+    customerId: 'cust_001',
+    orderId: 'order_001',
+    cartId: 'cart_001',
+    discountAmount: 25,
+    currency: 'USD',
+  };
+
+  it('has write permission', () => {
+    assert.strictEqual(tool.permission, 'write');
+  });
+
+  it('returns preview when allowApply is false', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+    assert.deepStrictEqual(result.wouldRecord, params);
+  });
+
+  it('records promotion usage when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.message, 'Promotion usage recorded');
+    assert.strictEqual(result.usage.promotionId, 'promo_001');
+    assert.strictEqual(result.usage.discountAmount, 25);
+    assert.strictEqual(result.usage.currency, 'USD');
   });
 });

@@ -1,8 +1,9 @@
 """Type stubs for stateset_embedded"""
 
-from typing import List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, TypeVar, Union
 
 __version__: str
+FrameworkToolT = TypeVar("FrameworkToolT")
 
 # ============================================================================
 # Commerce
@@ -107,6 +108,178 @@ class Commerce:
     def vector(self, openai_api_key: str) -> VectorSearch:
         """Get the vector search API for semantic search operations."""
         ...
+
+# ============================================================================
+# Agent Toolkit
+# ============================================================================
+
+class AgentToolDescriptor:
+    name: str
+    description: str
+    schema: Dict[str, Any]
+    input_schema: Dict[str, Any]
+    side_effect: str
+
+    def execute(self, params: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        ...
+
+FrameworkToolFactory = Callable[[AgentToolDescriptor], FrameworkToolT]
+
+class EmbeddedAgentToolkit:
+    commerce: Commerce
+    allow_apply: bool
+
+    def __init__(self, commerce: Commerce, allow_apply: bool = False) -> None:
+        ...
+
+    def get_tools(
+        self,
+        format: str = "generic",
+        filter: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        ...
+
+    def list_tools(
+        self,
+        format: str = "generic",
+        filter: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        ...
+
+    def get_tool(self, tool_name: str, format: str = "generic") -> Optional[Dict[str, Any]]:
+        ...
+
+    def create_tool_descriptors(
+        self,
+        filter: Optional[Sequence[str]] = None,
+    ) -> List[AgentToolDescriptor]:
+        ...
+
+    def create_callable_registry(
+        self,
+        filter: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Callable[[Optional[Mapping[str, Any]]], Dict[str, Any]]]:
+        ...
+
+    def create_langchain_tools(
+        self,
+        filter: Optional[Sequence[str]] = None,
+        tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
+    ) -> List[FrameworkToolT]:
+        ...
+
+    def create_crewai_tools(
+        self,
+        filter: Optional[Sequence[str]] = None,
+        tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
+    ) -> List[FrameworkToolT]:
+        ...
+
+    def create_autogen_tools(
+        self,
+        filter: Optional[Sequence[str]] = None,
+        tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
+    ) -> List[FrameworkToolT]:
+        ...
+
+    def execute_tool(
+        self,
+        tool_name: str,
+        params: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        ...
+
+    def execute_tool_calls(
+        self,
+        tool_calls: Sequence[Mapping[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        ...
+
+    def execute_openai_tool_call(
+        self,
+        tool_call: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        ...
+
+def create_embedded_agent_toolkit(
+    commerce: Commerce,
+    allow_apply: bool = False,
+) -> EmbeddedAgentToolkit:
+    ...
+
+def create_tool_descriptors(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    filter: Optional[Sequence[str]] = None,
+    allow_apply: bool = False,
+) -> List[AgentToolDescriptor]:
+    ...
+
+def create_callable_registry(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    filter: Optional[Sequence[str]] = None,
+    allow_apply: bool = False,
+) -> Dict[str, Callable[[Optional[Mapping[str, Any]]], Dict[str, Any]]]:
+    ...
+
+def execute_tool(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    tool_name: str,
+    params: Optional[Mapping[str, Any]] = None,
+    allow_apply: bool = False,
+) -> Dict[str, Any]:
+    ...
+
+def execute_tool_calls(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    tool_calls: Sequence[Mapping[str, Any]],
+    allow_apply: bool = False,
+) -> List[Mapping[str, Any]]:
+    ...
+
+def create_openai_tools(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    filter: Optional[Sequence[str]] = None,
+    allow_apply: bool = False,
+) -> List[Mapping[str, Any]]:
+    ...
+
+def execute_openai_tool_call(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    tool_call: Mapping[str, Any],
+    allow_apply: bool = False,
+) -> Mapping[str, Any]:
+    ...
+
+def execute_openai_tool_calls(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    tool_calls: Sequence[Mapping[str, Any]],
+    allow_apply: bool = False,
+) -> List[Mapping[str, Any]]:
+    ...
+
+def create_langchain_tools(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    filter: Optional[Sequence[str]] = None,
+    allow_apply: bool = False,
+    tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
+) -> List[FrameworkToolT]:
+    ...
+
+def create_crewai_tools(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    filter: Optional[Sequence[str]] = None,
+    allow_apply: bool = False,
+    tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
+) -> List[FrameworkToolT]:
+    ...
+
+def create_autogen_tools(
+    commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
+    filter: Optional[Sequence[str]] = None,
+    allow_apply: bool = False,
+    tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
+) -> List[FrameworkToolT]:
+    ...
 
 # ============================================================================
 # Sync Runtime

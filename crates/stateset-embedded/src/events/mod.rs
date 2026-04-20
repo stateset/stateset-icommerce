@@ -40,6 +40,7 @@ mod webhook;
 pub use bus::{EventBus, EventReceiver, EventSubscription};
 pub use emitter::EventEmitter;
 pub use store::InMemoryEventStore;
+pub(crate) use webhook::validate_outbound_webhook_target_url;
 pub use webhook::{
     Webhook, WebhookConfig, WebhookDelivery, WebhookManager, WebhookRegistrationError,
 };

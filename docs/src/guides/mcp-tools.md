@@ -4,7 +4,7 @@ StateSet iCommerce exposes a registry-generated tool surface via the Model Conte
 
 ## How MCP Works
 
-The MCP server (`mcp-server.js`) acts as a thin orchestrator:
+The MCP server registry spans multiple entrypoints. The main commerce server (`mcp-server.js`) acts as a thin orchestrator:
 
 ```
 LLM → MCP Client → MCP Server → adaptTool() → Permission Check → Telemetry → Handler → Response
@@ -38,15 +38,19 @@ This registers the MCP server with your client. Tools appear automatically in th
 ### Via Embedded Toolkit
 
 ```javascript
-import { createEmbeddedAgentToolkit } from '@stateset/cli/agent-toolkit';
+import { Commerce } from '@stateset/embedded';
+import { createOpenAITools } from '@stateset/embedded/openai';
+import { executeTool } from '@stateset/embedded/generic';
 
-const toolkit = createEmbeddedAgentToolkit({ commerce, allowApply: false });
+const commerce = new Commerce('./store.db');
 
 // List available tools
-const tools = toolkit.getTools({ format: 'openai' });
+const tools = createOpenAITools(commerce, {
+    filter: ['list_orders']
+});
 
 // Execute a tool
-const result = await toolkit.executeTool('list_orders', { limit: 10 });
+const result = await executeTool(commerce, 'list_orders', { limit: 10 });
 ```
 
 ### Via CLI
@@ -189,11 +193,11 @@ const plan = await toolkit.executePlan({
 
 ### Read Tools (no `--apply` required)
 
-`list_orders`, `get_customer`, `get_sales_summary`, `search_products`, `get_inventory_level`, `list_subscriptions`, `a2a_get_reputation`, `x402_get_budget`
+`list_orders`, `get_customer`, `get_sales_summary`, `search_products`, `get_inventory_level`, `list_subscriptions`, `a2a_get_reputation`, `x402_budget_status`
 
 ### Write Tools (require `--apply`)
 
-`create_order`, `ship_order`, `adjust_inventory`, `create_payment`, `refund_payment`, `create_return`, `create_subscription`, `a2a_create_escrow`, `x402_create_intent`
+`create_order`, `ship_order`, `adjust_inventory`, `create_payment`, `refund_payment`, `create_return`, `create_subscription`, `a2a_create_escrow`, `x402_call`
 
 ### Admin Tools (require explicit approval)
 

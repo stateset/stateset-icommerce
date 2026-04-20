@@ -53,17 +53,33 @@ When the user asks to create, update, or delete something, first explain what wo
       'mcp__stateset-commerce__list_carts',
       'mcp__stateset-commerce__get_cart',
       'mcp__stateset-commerce__create_cart',
+      'mcp__stateset-commerce__update_cart',
+      'mcp__stateset-commerce__list_customer_carts',
+      'mcp__stateset-commerce__delete_cart',
       'mcp__stateset-commerce__add_cart_item',
       'mcp__stateset-commerce__update_cart_item',
       'mcp__stateset-commerce__remove_cart_item',
+      'mcp__stateset-commerce__list_cart_items',
+      'mcp__stateset-commerce__clear_cart_items',
       'mcp__stateset-commerce__set_cart_shipping_address',
+      'mcp__stateset-commerce__set_cart_shipping',
+      'mcp__stateset-commerce__set_cart_billing_address',
       'mcp__stateset-commerce__set_cart_payment',
       'mcp__stateset-commerce__apply_cart_discount',
+      'mcp__stateset-commerce__remove_cart_discount',
       'mcp__stateset-commerce__get_shipping_rates',
+      'mcp__stateset-commerce__mark_cart_ready_for_payment',
+      'mcp__stateset-commerce__begin_cart_checkout',
       'mcp__stateset-commerce__complete_checkout',
       'mcp__stateset-commerce__cancel_cart',
       'mcp__stateset-commerce__abandon_cart',
+      'mcp__stateset-commerce__expire_cart',
+      'mcp__stateset-commerce__reserve_cart_inventory',
+      'mcp__stateset-commerce__release_cart_inventory',
+      'mcp__stateset-commerce__recalculate_cart',
+      'mcp__stateset-commerce__set_cart_tax',
       'mcp__stateset-commerce__get_abandoned_carts',
+      'mcp__stateset-commerce__get_expired_carts',
       // Also need customer lookup for checkout
       'mcp__stateset-commerce__get_customer',
       'mcp__stateset-commerce__list_customers',
@@ -83,16 +99,17 @@ Guide customers through the shopping cart and checkout process.
 7. Complete - complete_checkout to create the order
 
 ## Available Tools
-- list_carts, get_cart - View carts
-- create_cart - Start new cart (requires --apply)
-- add_cart_item, update_cart_item, remove_cart_item - Manage items (requires --apply)
-- set_cart_shipping_address - Set shipping (requires --apply)
-- set_cart_payment - Set payment method (requires --apply)
-- apply_cart_discount - Apply coupon (requires --apply)
+- list_carts, get_cart, list_customer_carts - View carts
+- create_cart, update_cart, delete_cart - Manage cart lifecycle (requires --apply)
+- add_cart_item, update_cart_item, remove_cart_item, list_cart_items, clear_cart_items - Manage items
+- set_cart_shipping_address, set_cart_shipping, set_cart_billing_address - Manage addresses and shipping
+- set_cart_payment, mark_cart_ready_for_payment, begin_cart_checkout - Prepare payment and checkout
+- apply_cart_discount, remove_cart_discount, set_cart_tax, recalculate_cart - Manage totals
 - get_shipping_rates - Get shipping options
+- reserve_cart_inventory, release_cart_inventory - Manage inventory holds
 - complete_checkout - Convert to order (requires --apply)
-- cancel_cart, abandon_cart - End cart (requires --apply)
-- get_abandoned_carts - Recovery campaigns
+- cancel_cart, abandon_cart, expire_cart - End cart lifecycle (requires --apply)
+- get_abandoned_carts, get_expired_carts - Recovery and cleanup views
 
 ## Safety Rules
 1. Preview totals before completing checkout
@@ -231,14 +248,18 @@ If --apply is not set, write operations show a preview instead of executing.`,
     description: 'Business intelligence and forecasting specialist',
     tools: [
       'mcp__stateset-commerce__get_sales_summary',
+      'mcp__stateset-commerce__get_revenue_by_period',
       'mcp__stateset-commerce__get_top_products',
+      'mcp__stateset-commerce__get_product_performance',
       'mcp__stateset-commerce__get_customer_metrics',
       'mcp__stateset-commerce__get_top_customers',
       'mcp__stateset-commerce__get_inventory_health',
       'mcp__stateset-commerce__get_low_stock_items',
+      'mcp__stateset-commerce__get_inventory_movement',
       'mcp__stateset-commerce__get_demand_forecast',
       'mcp__stateset-commerce__get_revenue_forecast',
       'mcp__stateset-commerce__get_order_status_breakdown',
+      'mcp__stateset-commerce__get_fulfillment_metrics',
       'mcp__stateset-commerce__get_return_metrics',
     ],
     systemPrompt: `You are a business intelligence and forecasting specialist for StateSet Commerce.
@@ -254,7 +275,9 @@ Provide insights into sales performance, customer behavior, inventory health, an
 
 ### Sales Analytics
 - get_sales_summary - Revenue, orders, AOV, items sold
+- get_revenue_by_period - Revenue trends by day, week, or month
 - get_top_products - Best sellers by revenue/units
+- get_product_performance - Product conversion and revenue performance
 
 ### Customer Insights
 - get_customer_metrics - Total, new, returning customers
@@ -263,6 +286,7 @@ Provide insights into sales performance, customer behavior, inventory health, an
 ### Inventory Intelligence
 - get_inventory_health - SKUs in stock, low stock, out of stock
 - get_low_stock_items - Items needing attention
+- get_inventory_movement - Stock movement trends over time
 
 ### Forecasting
 - get_demand_forecast - Predict future demand per SKU
@@ -270,6 +294,7 @@ Provide insights into sales performance, customer behavior, inventory health, an
 
 ### Operations
 - get_order_status_breakdown - Orders by status
+- get_fulfillment_metrics - Fulfillment speed and SLA performance
 - get_return_metrics - Return rate and refunds
 
 ## Response Guidelines
@@ -288,14 +313,19 @@ Note: All analytics tools are read-only. No --apply flag needed.`,
     tools: [
       'mcp__stateset-commerce__list_promotions',
       'mcp__stateset-commerce__get_promotion',
+      'mcp__stateset-commerce__update_promotion',
       'mcp__stateset-commerce__create_promotion',
+      'mcp__stateset-commerce__delete_promotion',
       'mcp__stateset-commerce__activate_promotion',
       'mcp__stateset-commerce__deactivate_promotion',
       'mcp__stateset-commerce__create_coupon',
+      'mcp__stateset-commerce__get_coupon',
       'mcp__stateset-commerce__validate_coupon',
       'mcp__stateset-commerce__list_coupons',
       'mcp__stateset-commerce__get_active_promotions',
+      'mcp__stateset-commerce__check_promotion_validity',
       'mcp__stateset-commerce__apply_cart_promotions',
+      'mcp__stateset-commerce__record_promotion_usage',
       // Also need cart access for applying promotions
       'mcp__stateset-commerce__get_cart',
       'mcp__stateset-commerce__apply_cart_discount',
@@ -324,14 +354,19 @@ draft → active → (paused) → expired
 ## Available Tools
 - list_promotions - List all promotions
 - get_promotion - Get promotion details
+- update_promotion - Update campaign details (requires --apply)
 - create_promotion - Create new promotion (requires --apply)
+- delete_promotion - Delete promotion (requires --apply)
 - activate_promotion - Make promotion live (requires --apply)
 - deactivate_promotion - Pause promotion (requires --apply)
 - create_coupon - Create coupon code (requires --apply)
+- get_coupon - Get coupon by ID or code
 - validate_coupon - Check if coupon is valid
 - list_coupons - List all coupon codes
 - get_active_promotions - Get currently running promotions
+- check_promotion_validity - Verify if a promotion can still apply
 - apply_cart_promotions - Apply discounts to cart (requires --apply)
+- record_promotion_usage - Record applied discount usage (requires --apply)
 
 ## Safety Rules
 1. Preview promotions before activating
@@ -352,11 +387,13 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__get_subscription_plan',
       'mcp__stateset-commerce__create_subscription_plan',
       'mcp__stateset-commerce__activate_subscription_plan',
+      'mcp__stateset-commerce__update_subscription_plan',
       'mcp__stateset-commerce__archive_subscription_plan',
       'mcp__stateset-commerce__list_subscriptions',
       'mcp__stateset-commerce__get_subscription',
       'mcp__stateset-commerce__create_subscription',
       'mcp__stateset-commerce__pause_subscription',
+      'mcp__stateset-commerce__update_subscription',
       'mcp__stateset-commerce__resume_subscription',
       'mcp__stateset-commerce__cancel_subscription',
       'mcp__stateset-commerce__skip_billing_cycle',
@@ -404,11 +441,13 @@ pending → trial → active → (paused) → cancelled → expired
 - get_subscription_plan - Get plan details
 - create_subscription_plan - Create new plan (requires --apply)
 - activate_subscription_plan - Make plan available (requires --apply)
+- update_subscription_plan - Update pricing or plan metadata (requires --apply)
 - archive_subscription_plan - Retire a plan (requires --apply)
 - list_subscriptions - List customer subscriptions
 - get_subscription - Get subscription details
 - create_subscription - Subscribe a customer (requires --apply)
 - pause_subscription - Temporarily stop billing (requires --apply)
+- update_subscription - Update subscription metadata or schedule (requires --apply)
 - resume_subscription - Resume paused subscription (requires --apply)
 - cancel_subscription - Cancel subscription (requires --apply)
 - skip_billing_cycle - Skip next billing (requires --apply)
@@ -637,7 +676,21 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__get_payment',
       'mcp__stateset-commerce__create_payment',
       'mcp__stateset-commerce__complete_payment',
+      'mcp__stateset-commerce__mark_failed_payment',
+      'mcp__stateset-commerce__cancel_payment',
       'mcp__stateset-commerce__create_refund',
+      'mcp__stateset-commerce__list_payment_providers',
+      'mcp__stateset-commerce__create_payment_intent',
+      'mcp__stateset-commerce__get_payment_intent',
+      'mcp__stateset-commerce__list_payment_intents',
+      'mcp__stateset-commerce__list_payment_settlements',
+      'mcp__stateset-commerce__list_payment_settlement_batches',
+      'mcp__stateset-commerce__create_payment_settlement_batch',
+      'mcp__stateset-commerce__reconcile_payment_provider',
+      'mcp__stateset-commerce__capture_payment_intent',
+      'mcp__stateset-commerce__cancel_payment_intent',
+      'mcp__stateset-commerce__refund_payment_intent',
+      'mcp__stateset-commerce__ingest_payment_provider_webhook',
       // Also need order context
       'mcp__stateset-commerce__get_order',
       'mcp__stateset-commerce__list_orders',
@@ -659,11 +712,30 @@ pending → processing → completed → refunded
 - invoice: B2B invoicing (net terms)
 
 ## Available Tools
+### Core Payment Records
 - list_payments - List all payments
 - get_payment - Get payment details
 - create_payment - Create payment for order (requires --apply)
 - complete_payment - Mark payment as completed (requires --apply)
+- mark_failed_payment - Mark payment as failed with reason (requires --apply)
+- cancel_payment - Cancel unsettled payment (requires --apply)
 - create_refund - Process refund (requires --apply)
+
+### Provider Payment Intents
+- list_payment_providers - Discover configured payment providers
+- create_payment_intent - Create provider-backed auth/intent (requires --apply)
+- get_payment_intent - Inspect a payment intent
+- list_payment_intents - List payment intents
+- capture_payment_intent - Capture an authorized intent (requires --apply)
+- cancel_payment_intent - Cancel an intent (requires --apply)
+- refund_payment_intent - Refund a captured intent (requires --apply)
+
+### Settlement and Reconciliation
+- list_payment_settlements - List provider settlements
+- list_payment_settlement_batches - List settlement batches
+- create_payment_settlement_batch - Create a batch record (requires --apply)
+- reconcile_payment_provider - Reconcile provider activity
+- ingest_payment_provider_webhook - Ingest provider webhook payload (requires --apply)
 
 ## Safety Rules
 1. Verify order exists before creating payment
@@ -709,8 +781,19 @@ If --apply is not set, payment operations show a preview instead of executing.`,
     description: 'Shipment tracking and delivery management specialist',
     tools: [
       'mcp__stateset-commerce__list_shipments',
+      'mcp__stateset-commerce__get_shipment',
       'mcp__stateset-commerce__create_shipment',
+      'mcp__stateset-commerce__ship_shipment',
       'mcp__stateset-commerce__deliver_shipment',
+      'mcp__stateset-commerce__cancel_shipment',
+      'mcp__stateset-commerce__list_shipping_providers',
+      'mcp__stateset-commerce__quote_shipping_rates',
+      'mcp__stateset-commerce__create_shipping_label',
+      'mcp__stateset-commerce__void_shipping_label',
+      'mcp__stateset-commerce__track_shipping_label',
+      'mcp__stateset-commerce__list_shipping_labels',
+      'mcp__stateset-commerce__ingest_shipping_provider_webhook',
+      'mcp__stateset-commerce__handle_fulfillment_exception',
       // Also need order context
       'mcp__stateset-commerce__get_order',
       'mcp__stateset-commerce__ship_order',
@@ -729,10 +812,24 @@ created → shipped → in_transit → delivered
 - Regional carriers
 
 ## Available Tools
+### Core Shipments
 - list_shipments - List all shipments
+- get_shipment - Get shipment details
 - create_shipment - Create shipment with tracking (requires --apply)
+- ship_shipment - Mark shipment as shipped (requires --apply)
 - deliver_shipment - Mark as delivered (requires --apply)
+- cancel_shipment - Cancel shipment before delivery (requires --apply)
 - ship_order - Ship order with tracking (requires --apply)
+
+### Provider Labels and Exceptions
+- list_shipping_providers - Show configured shipping providers
+- quote_shipping_rates - Get provider-backed rate quotes
+- create_shipping_label - Purchase/create a shipping label (requires --apply)
+- void_shipping_label - Void an unused label (requires --apply)
+- track_shipping_label - Track a label with provider updates
+- list_shipping_labels - List created labels
+- ingest_shipping_provider_webhook - Ingest shipping provider webhook (requires --apply)
+- handle_fulfillment_exception - Resolve delivery exceptions (requires --apply)
 
 ## Safety Rules
 1. Verify tracking number format for carrier
@@ -749,11 +846,15 @@ If --apply is not set, write operations show a preview instead of executing.`,
     description: 'Supplier management and purchase order specialist',
     tools: [
       'mcp__stateset-commerce__list_suppliers',
+      'mcp__stateset-commerce__get_supplier',
       'mcp__stateset-commerce__create_supplier',
       'mcp__stateset-commerce__list_purchase_orders',
+      'mcp__stateset-commerce__get_purchase_order',
       'mcp__stateset-commerce__create_purchase_order',
+      'mcp__stateset-commerce__submit_purchase_order',
       'mcp__stateset-commerce__approve_purchase_order',
       'mcp__stateset-commerce__send_purchase_order',
+      'mcp__stateset-commerce__cancel_purchase_order',
       // Also need inventory context
       'mcp__stateset-commerce__get_stock',
       'mcp__stateset-commerce__get_low_stock_items',
@@ -771,13 +872,17 @@ draft → approved → sent → partially_received → received
 
 ### Supplier Management
 - list_suppliers - List all suppliers
+- get_supplier - Get supplier details by ID
 - create_supplier - Create new supplier (requires --apply)
 
 ### Purchase Orders
 - list_purchase_orders - List all POs
+- get_purchase_order - Get PO details by ID
 - create_purchase_order - Create PO (requires --apply)
+- submit_purchase_order - Submit PO for approval (requires --apply)
 - approve_purchase_order - Approve PO (requires --apply)
 - send_purchase_order - Send to supplier (requires --apply)
+- cancel_purchase_order - Cancel PO (requires --apply)
 
 ### Inventory Context
 - get_stock - Check current stock levels
@@ -798,8 +903,10 @@ If --apply is not set, write operations show a preview instead of executing.`,
     description: 'B2B invoice management and accounts receivable specialist',
     tools: [
       'mcp__stateset-commerce__list_invoices',
+      'mcp__stateset-commerce__get_invoice',
       'mcp__stateset-commerce__create_invoice',
       'mcp__stateset-commerce__send_invoice',
+      'mcp__stateset-commerce__void_invoice',
       'mcp__stateset-commerce__record_invoice_payment',
       'mcp__stateset-commerce__get_overdue_invoices',
       // Also need customer/order context
@@ -822,8 +929,10 @@ draft → sent → viewed → partially_paid → paid
 
 ## Available Tools
 - list_invoices - List all invoices
+- get_invoice - Get invoice details
 - create_invoice - Create B2B invoice (requires --apply)
 - send_invoice - Send to customer (requires --apply)
+- void_invoice - Void invoice (requires --apply)
 - record_invoice_payment - Record payment (requires --apply)
 - get_overdue_invoices - Get overdue invoices
 
@@ -842,9 +951,12 @@ If --apply is not set, write operations show a preview instead of executing.`,
     description: 'Product warranty and claims management specialist',
     tools: [
       'mcp__stateset-commerce__list_warranties',
+      'mcp__stateset-commerce__get_warranty',
       'mcp__stateset-commerce__create_warranty',
       'mcp__stateset-commerce__create_warranty_claim',
       'mcp__stateset-commerce__approve_warranty_claim',
+      'mcp__stateset-commerce__deny_warranty_claim',
+      'mcp__stateset-commerce__complete_warranty_claim',
       // Also need product/order context
       'mcp__stateset-commerce__get_product',
       'mcp__stateset-commerce__get_order',
@@ -864,9 +976,12 @@ pending → approved → processed
 
 ## Available Tools
 - list_warranties - List all warranties
+- get_warranty - Get warranty details by ID
 - create_warranty - Create product warranty (requires --apply)
 - create_warranty_claim - File warranty claim (requires --apply)
 - approve_warranty_claim - Approve claim (requires --apply)
+- deny_warranty_claim - Deny claim with a reason (requires --apply)
+- complete_warranty_claim - Complete claim with resolution (requires --apply)
 
 ## Safety Rules
 1. Verify product is under warranty
@@ -886,9 +1001,13 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__list_exchange_rates',
       'mcp__stateset-commerce__convert_currency',
       'mcp__stateset-commerce__set_exchange_rate',
+      'mcp__stateset-commerce__set_exchange_rates',
+      'mcp__stateset-commerce__delete_exchange_rate',
       'mcp__stateset-commerce__get_currency_settings',
+      'mcp__stateset-commerce__update_currency_settings',
       'mcp__stateset-commerce__set_base_currency',
       'mcp__stateset-commerce__enable_currencies',
+      'mcp__stateset-commerce__check_currency_enabled',
       'mcp__stateset-commerce__format_currency',
     ],
     systemPrompt: `You are a multi-currency management specialist for StateSet Commerce.
@@ -906,6 +1025,8 @@ Manage exchange rates, currency conversions, and multi-currency store settings.
 - get_exchange_rate - Get rate between two currencies
 - list_exchange_rates - List all rates or filter by base
 - set_exchange_rate - Set/update rate (requires --apply)
+- set_exchange_rates - Bulk set rates (requires --apply)
+- delete_exchange_rate - Remove a stored rate (requires --apply)
 
 ### Conversions
 - convert_currency - Convert amount between currencies
@@ -913,8 +1034,10 @@ Manage exchange rates, currency conversions, and multi-currency store settings.
 
 ### Store Settings
 - get_currency_settings - Get store currency settings
+- update_currency_settings - Update currency settings (requires --apply)
 - set_base_currency - Set store base currency (requires --apply)
 - enable_currencies - Enable currencies for store (requires --apply)
+- check_currency_enabled - Check if a currency is enabled
 
 ## Safety Rules
 1. Verify exchange rates are current
@@ -972,6 +1095,21 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__a2a_list_services',
       'mcp__stateset-commerce__a2a_create_split_payment',
       'mcp__stateset-commerce__a2a_subscribe_events',
+      // x402 agent commerce protocol tools (14)
+      'mcp__stateset-commerce__x402_create_payment_intent',
+      'mcp__stateset-commerce__x402_sign_intent',
+      'mcp__stateset-commerce__x402_get_intent',
+      'mcp__stateset-commerce__x402_list_intents',
+      'mcp__stateset-commerce__x402_settle_intent_onchain',
+      'mcp__stateset-commerce__x402_execute_agent_payment',
+      'mcp__stateset-commerce__x402_record_incoming_settlement',
+      'mcp__stateset-commerce__x402_mark_settled',
+      'mcp__stateset-commerce__x402_get_next_nonce',
+      'mcp__stateset-commerce__x402_credit_balance',
+      'mcp__stateset-commerce__x402_get_credit_account',
+      'mcp__stateset-commerce__x402_credit_deposit',
+      'mcp__stateset-commerce__x402_credit_debit',
+      'mcp__stateset-commerce__x402_credit_transactions',
     ],
     systemPrompt: `You are a multi-agent orchestration specialist for StateSet Commerce.
 
@@ -983,6 +1121,7 @@ Create, manage, and coordinate autonomous AI agent runtimes that negotiate, pay,
 - **Agent Card**: An agent's public identity and capabilities in the marketplace
 - **Strategy**: How the agent negotiates (always-accept, budget-gated, negotiator, best-of-n, reputation-aware)
 - **Service**: A capability an agent offers in the marketplace
+- **x402 Intent**: A signed, settleable payment intent for AI-agent commerce
 
 ## Common Workflows
 
@@ -1008,6 +1147,12 @@ Create, manage, and coordinate autonomous AI agent runtimes that negotiate, pay,
 2. agent_rate_counterparty — Rate after transaction
 3. agent_get_reputation — Check trust scores
 
+### x402 Commerce Flow
+1. x402_create_payment_intent — Create an intent for an agent payment
+2. x402_sign_intent — Sign it with manual or local agent keys
+3. x402_settle_intent_onchain or x402_execute_agent_payment — Execute settlement
+4. x402_mark_settled / x402_record_incoming_settlement — Reconcile final state
+
 ## Safety Rules
 1. Always set budget limits when creating runtimes
 2. Start with sandbox trust level for new agents
@@ -1024,14 +1169,34 @@ If --apply is not set, write operations show a preview instead of executing.`,
     description: 'Tax calculation and compliance specialist',
     tools: [
       'mcp__stateset-commerce__calculate_tax',
+      'mcp__stateset-commerce__calculate_item_tax',
       'mcp__stateset-commerce__calculate_cart_tax',
       'mcp__stateset-commerce__get_tax_rate',
+      'mcp__stateset-commerce__get_tax_jurisdiction',
       'mcp__stateset-commerce__list_tax_jurisdictions',
+      'mcp__stateset-commerce__create_tax_jurisdiction',
       'mcp__stateset-commerce__list_tax_rates',
+      'mcp__stateset-commerce__get_tax_rate_record',
+      'mcp__stateset-commerce__create_tax_rate',
       'mcp__stateset-commerce__get_tax_settings',
+      'mcp__stateset-commerce__update_tax_settings',
+      'mcp__stateset-commerce__set_tax_enabled',
+      'mcp__stateset-commerce__check_tax_enabled',
       'mcp__stateset-commerce__get_us_state_tax_info',
       'mcp__stateset-commerce__get_customer_tax_exemptions',
+      'mcp__stateset-commerce__get_tax_exemption',
+      'mcp__stateset-commerce__check_customer_tax_exempt',
       'mcp__stateset-commerce__create_tax_exemption',
+      'mcp__stateset-commerce__list_tax_providers',
+      'mcp__stateset-commerce__validate_tax_jurisdiction_compliance',
+      'mcp__stateset-commerce__calculate_tax_quote',
+      'mcp__stateset-commerce__calculate_tax_quote_with_failover',
+      'mcp__stateset-commerce__get_tax_quote',
+      'mcp__stateset-commerce__commit_tax_transaction',
+      'mcp__stateset-commerce__get_tax_transaction',
+      'mcp__stateset-commerce__list_tax_transactions',
+      'mcp__stateset-commerce__void_tax_transaction',
+      'mcp__stateset-commerce__ingest_tax_provider_webhook',
     ],
     systemPrompt: `You are a tax calculation and compliance specialist for StateSet Commerce.
 
@@ -1048,18 +1213,40 @@ Calculate sales tax for orders, manage tax rates, and handle exemptions.
 
 ### Tax Calculation
 - calculate_tax - Calculate tax for line items
+- calculate_item_tax - Calculate tax for a single line item
 - calculate_cart_tax - Calculate and apply tax to cart
 - get_tax_rate - Get effective rate for jurisdiction
 
 ### Tax Configuration
+- get_tax_jurisdiction - Resolve a jurisdiction by ID or code
 - list_tax_jurisdictions - List tax jurisdictions
+- create_tax_jurisdiction - Create jurisdiction records (requires --apply)
 - list_tax_rates - List all tax rates
+- get_tax_rate_record - Get a stored tax rate record
+- create_tax_rate - Create a stored tax rate (requires --apply)
 - get_tax_settings - Get store tax settings
+- update_tax_settings - Update tax settings (requires --apply)
+- set_tax_enabled - Enable or disable tax calculation (requires --apply)
+- check_tax_enabled - Check whether tax is enabled
 - get_us_state_tax_info - Get US state tax details
 
 ### Exemptions
 - get_customer_tax_exemptions - Get customer's exemptions
+- get_tax_exemption - Get a specific exemption record
+- check_customer_tax_exempt - Check whether a customer is exempt
 - create_tax_exemption - Create tax exemption (requires --apply)
+
+### Provider Workflows
+- list_tax_providers - List provider capabilities
+- validate_tax_jurisdiction_compliance - Validate address/category readiness
+- calculate_tax_quote - Create provider-backed tax quote
+- calculate_tax_quote_with_failover - Quote with provider failover
+- get_tax_quote - Fetch a quote by ID
+- commit_tax_transaction - Commit quoted tax transaction (requires --apply)
+- get_tax_transaction - Fetch committed transaction
+- list_tax_transactions - List committed transactions
+- void_tax_transaction - Void committed transaction (requires --apply)
+- ingest_tax_provider_webhook - Ingest tax provider webhook (requires --apply)
 
 ## Safety Rules
 1. Use correct jurisdiction for shipping address

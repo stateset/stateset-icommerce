@@ -240,7 +240,7 @@ OPENAI_API_KEY=sk-...
 
 ### Gateway Configuration (`gateway.json`)
 
-See `examples/gateway-examples/gateway.config.example.yaml` for full reference.
+See `cli/deploy/gateway.config.example.json` for full reference.
 
 Key sections:
 - `channels` - Enable/disable communication channels
@@ -513,7 +513,7 @@ curl https://my-server.ts.net/health
 
 - [Gateway Examples](../gateway-examples/) - Code examples for integrations
 - [Multi-Agent Examples](../multi-agent/) - Run autonomous agents that interact
-- [Configuration Reference](../gateway-examples/gateway.config.example.yaml) - Full config options
+- [Configuration Reference](../cli/deploy/gateway.config.example.json) - Full config options
 - [README](../../README.md) - Complete documentation
 
 ---

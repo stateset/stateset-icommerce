@@ -3,12 +3,11 @@ name: Publish Python
 on:
   push:
     tags:
-      - "cli-v*"
       - "py-v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g., 0.9.5)"
+        description: "Version to release (e.g., 0.9.9)"
         required: true
 
 env:
@@ -129,6 +128,10 @@ jobs:
       attestations: write
 
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
       - name: Download wheels
         uses: actions/download-artifact@v7
         with:
@@ -176,6 +179,7 @@ jobs:
 
       - name: Validate artifacts
         run: |
+          python ./scripts/ci/check_python_binding_package.py bindings/python python --dist-dir dist
           python -m twine check --strict dist/*
 
       - name: Publish

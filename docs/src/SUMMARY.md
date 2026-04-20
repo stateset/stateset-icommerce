@@ -142,7 +142,12 @@
 
 - [Examples](examples.md)
 - [Agent Inventory](appendix/agent-inventory.md)
+- [API Command Coverage](appendix/api-command-coverage.md)
+- [Binding API Inventory](appendix/binding-api-inventory.md)
+- [MCP API Coverage](appendix/mcp-api-coverage.md)
 - [MCP Tool Inventory](appendix/mcp-tool-inventory.md)
+- [HTTP Gateway Inventory](appendix/http-gateway-inventory.md)
+- [Rust OpenAPI Inventory](appendix/rust-openapi-inventory.md)
 - [Workspace Inventory](appendix/workspace-inventory.md)
 - [Troubleshooting](appendix/troubleshooting.md)
 - [Versioning](versioning.md)

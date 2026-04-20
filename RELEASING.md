@@ -7,9 +7,30 @@ This guide covers publishing Rust crates and language bindings. It also captures
 1. Update version numbers across the workspace and bindings.
 2. Update `README.md` highlights and `CHANGELOG.md`.
 3. Refresh mdBook docs in `docs/src/`.
-4. Create a versioned docs snapshot: `./docs/scripts/snapshot-version.sh vX.Y.Z`.
-5. (Optional) Generate API docs into `docs/api/` with `./docs/scripts/generate-api.sh`.
-6. Tag the release and push tags.
+4. Run the local release preflight: `npm run check:release`.
+   This rebuilds the latest `docs/book/` output and verifies it does not drift from the live engine docs.
+   It also verifies that the versioned docs snapshot flow builds a standalone
+   mdBook with snapshot-specific versioning text.
+   It also validates that GitHub workflow `needs:` edges only reference real jobs.
+5. Push the release commit and require a green `CI Success` job from `.github/workflows/ci.yml` on that exact commit.
+6. Create a versioned docs snapshot: `./docs/scripts/snapshot-version.sh vX.Y.Z`.
+7. (Optional) Generate API docs into `docs/api/` with `./docs/scripts/generate-api.sh`.
+8. Create annotated tags and push them.
+
+## Authoritative Gates
+
+- Local preflight: `npm run check:release`
+- Remote release gate: the `CI Success` aggregate job in `.github/workflows/ci.yml`
+- Git hooks are convenience checks only; they do not replace the local preflight or the protected CI aggregate
+
+## Tag Prefixes
+
+- `vX.Y.Z`: publish Rust crates
+- `cli-vX.Y.Z`: publish the npm CLI and embedded Node package
+- `py-vX.Y.Z`: publish the Python package
+- `java-vX.Y.Z`: publish the Java artifacts
+- `ruby-vX.Y.Z`: publish Ruby gems
+- `php-vX.Y.Z`: publish the PHP release artifacts
 
 ## Prerequisites
 
@@ -45,21 +66,20 @@ Add these secrets to your GitHub repository settings:
 ### Rust Crates Release (crates.io)
 
 ```bash
-# 1) Ensure workspace version, changelog, README, and release tag agree.
-bash ./scripts/ci/check_release_hygiene.sh vX.Y.Z
+# 1) Run the authoritative local release preflight.
+npm run check:release
 
-# 1b) Sanity-check the release helper itself before relying on it in CI.
-bash ./scripts/ci/check_release_hygiene.test.sh
+# 2) Push the release commit and wait for the green CI Success job.
 
-# 2) Validate publishability for all publishable crates.
+# 3) Validate publishability for all publishable crates.
 bash ./scripts/publish-rust-crates.sh --dry-run
 
-# 3) Publish all crates in dependency order.
+# 4) Publish all crates in dependency order.
 export CARGO_REGISTRY_TOKEN=...
 bash ./scripts/publish-rust-crates.sh --publish
 
-# 4) Create and push release tag.
-git tag vX.Y.Z
+# 5) Create and push the annotated release tag.
+git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
@@ -121,14 +141,20 @@ git push origin php-vX.Y.Z
 For releasing both at once:
 
 ```bash
+# Run the authoritative local release preflight
+npm run check:release
+
+# Push the release commit and wait for green CI Success
+
 # Update all version numbers
 git add -A
 git commit -m "chore: release vX.Y.Z"
 
-# Tag both
-git tag ruby-vX.Y.Z
-git tag php-vX.Y.Z
-git push origin ruby-vX.Y.Z php-vX.Y.Z
+# Tag the canonical release plus binding aliases
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git tag -a ruby-vX.Y.Z -m "ruby-vX.Y.Z"
+git tag -a php-vX.Y.Z -m "php-vX.Y.Z"
+git push origin vX.Y.Z ruby-vX.Y.Z php-vX.Y.Z
 ```
 
 ## Manual Publishing

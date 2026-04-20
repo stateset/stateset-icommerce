@@ -5,7 +5,7 @@ The Go binding provides `stateset.New` and the `Commerce` handle for building co
 ## Installation
 
 ```bash
-go get github.com/stateset/stateset-embedded-go
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.9
 ```
 
 ## Quick Start
@@ -17,7 +17,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/stateset/stateset-embedded-go/stateset"
+    "github.com/stateset/stateset-icommerce/bindings/go/stateset"
 )
 
 func main() {
@@ -253,4 +253,4 @@ if err != nil {
 
 ## Examples
 
-- `examples/go/main.go`
+- `examples/go/basic_usage.go`

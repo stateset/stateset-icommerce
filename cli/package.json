@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -73,7 +73,7 @@
     "url": "https://github.com/stateset/stateset-icommerce/issues"
   },
   "scripts": {
-    "check": "npm run check:env && npm run lint && npm run typecheck:supported && npm run test:smoke",
+    "check": "npm run check:env && npm run lint && npm run typecheck:supported && npm run test:api-coverage && npm run test:smoke",
     "check:env": "node ../scripts/check-node.mjs 20.20.0 10.0.0",
     "prelint": "npm run check:env",
     "pretypecheck": "npm run check:env",
@@ -90,10 +90,12 @@
     "pretest:permissions": "npm run check:env",
     "pretest:v031": "npm run check:env",
     "pretest:smoke": "npm run check:env",
+    "pretest:api-coverage": "npm run check:env",
     "pretest:coverage": "npm run check:env",
     "test": "node --test test/*.test.js test/unit/*.test.js test/integration/*.test.js test/e2e/*.test.js test/a2a/*.test.js test/adapters/*.test.js test/x402/*.test.js tests/*.test.js",
     "test:unit": "node --test test/unit/*.test.js",
     "test:integration": "node --test test/integration/*.test.js",
+    "test:api-coverage": "node --test test/integration/mcp-tool-coverage.test.js test/integration/mcp-api-coverage.test.js test/integration/mcp-server-registry.test.js test/integration/tool-domain-registry.test.js test/integration/commands.test.js test/integration/api-command-coverage.test.js test/integration/tool-backed-command-coverage.test.js test/integration/tool-backed-command-dispatch.test.js test/unit/http-gateway-route-registry.test.js",
     "test:e2e": "node --test test/e2e/*.test.js",
     "test:plugins": "node --test tests/plugin-system.test.js",
     "test:skills": "node --test tests/skills-system.test.js",
@@ -183,7 +185,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
-    "@stateset/embedded": "^0.9.8",
+    "@stateset/embedded": "^0.9.9",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ethers": "^6.16.0",

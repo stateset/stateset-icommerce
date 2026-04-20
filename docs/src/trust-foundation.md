@@ -6,8 +6,8 @@ The canonical repo-native inventory lives in `TRUST_FOUNDATION.md` at the reposi
 
 ## Current Posture
 
-- Current workspace release: `0.9.8`
-- Current release status: pre-`1.0`
+- Current workspace release: `0.9.9`
+- Current release status: pre-`1.0`, with the `v0.9.9` compatibility contract frozen in-repo
 - This repo is one layer in a larger documented stack with adjacent `stateset-sequencer`, `stateset-stark`, and `set` repos
 
 ## What Is Implemented Here
@@ -15,7 +15,7 @@ The canonical repo-native inventory lives in `TRUST_FOUNDATION.md` at the reposi
 - embedded commerce engine crates, bindings, CLI, MCP, and A2A primitives
 - observability primitives and deployment assets
 - benchmark harnesses and perf gates
-- versioning and deprecation policy
+- versioning, deprecation, and `v1.0` backport policy
 - vulnerability reporting process
 
 ## What Is Documented But Not Fully Closed
@@ -30,7 +30,6 @@ The canonical repo-native inventory lives in `TRUST_FOUNDATION.md` at the reposi
 - `pq hard finality`
 - public third-party audit reports
 - formal verification artifacts
-- `1.0` stability and LTS guarantees
 - standalone A2A conformance suite
 - public benchmark and SLO evidence
 
@@ -38,7 +37,7 @@ The canonical repo-native inventory lives in `TRUST_FOUNDATION.md` at the reposi
 
 - Treat only code-discoverable or runtime-discoverable interfaces as shipped.
 - Treat hand-maintained tool counts as provisional unless generated from code.
-- Treat pre-`1.0` compatibility as a policy commitment, not a final freeze.
+- Treat `v0.9.9` as a stable OSS API contract, not as shorthand for audit, PQ hard-finality, or hosted-control claims.
 
 ## See Also
 

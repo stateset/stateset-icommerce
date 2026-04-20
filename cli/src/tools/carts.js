@@ -6,6 +6,35 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
+
+const cartAddressInputSchema = {
+  firstName: z.string().min(1).max(100).describe('First name'),
+  lastName: z.string().min(1).max(100).describe('Last name'),
+  line1: z.string().min(1).max(255).describe('Address line 1'),
+  line2: z.string().max(255).optional().describe('Address line 2'),
+  city: z.string().min(1).max(100).describe('City'),
+  state: z.string().max(50).optional().describe('State/Province'),
+  postalCode: z.string().min(1).max(20).describe('Postal/ZIP code'),
+  country: z.string().min(2).max(3).describe('Country code (e.g., US)'),
+  phone: z.string().max(30).optional().describe('Phone number'),
+  email: z.string().email().optional().describe('Email address'),
+};
+
+function buildCartAddress(params) {
+  return {
+    firstName: params.firstName,
+    lastName: params.lastName,
+    line1: params.line1,
+    line2: params.line2,
+    city: params.city,
+    state: params.state,
+    postalCode: params.postalCode,
+    country: params.country,
+    phone: params.phone,
+    email: params.email,
+  };
+}
 
 export const cartTools = [
   {
@@ -135,6 +164,82 @@ export const cartTools = [
   },
 
   {
+    name: 'update_cart',
+    description: 'Update cart customer details, shipping method, coupon code, or notes.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      customerEmail: z.string().email().optional().describe('Updated customer email'),
+      customerPhone: z.string().max(30).optional().describe('Updated customer phone'),
+      customerName: z.string().max(200).optional().describe('Updated customer name'),
+      shippingMethod: z.string().min(1).optional().describe('Shipping method'),
+      couponCode: z.string().min(1).optional().describe('Coupon code'),
+      notes: z.string().max(2000).optional().describe('Cart notes'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      const { cartId, ...updates } = params;
+      if (!allowApply) {
+        return applyRequired('Update cart', { cartId, updates });
+      }
+
+      const cart = await commerce.carts.update(cartId, updates);
+      return {
+        success: true,
+        message: 'Cart updated',
+        cart: {
+          id: cart.id,
+          customerEmail: cart.customerEmail,
+          customerPhone: cart.customerPhone,
+          customerName: cart.customerName,
+          shippingMethod: cart.shippingMethod,
+          couponCode: cart.couponCode,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'list_customer_carts',
+    description: 'List carts for a specific customer.',
+    inputSchema: {
+      customerId: z.string().min(1).describe('Customer ID (UUID)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const carts = await commerce.carts.forCustomer(params.customerId);
+      return {
+        success: true,
+        count: carts.length,
+        carts: carts.map((c) => ({
+          id: c.id,
+          cartNumber: c.cartNumber,
+          status: c.status,
+          grandTotal: c.grandTotal,
+          itemCount: c.itemCount,
+          updatedAt: c.updatedAt,
+        })),
+      };
+    },
+  },
+
+  {
+    name: 'delete_cart',
+    description: 'Delete a cart permanently.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'delete',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Delete cart', params);
+      }
+
+      await commerce.carts.delete(params.cartId);
+      return { success: true, message: 'Cart deleted' };
+    },
+  },
+
+  {
     name: 'add_cart_item',
     description: 'Add an item to a shopping cart.',
     inputSchema: {
@@ -219,7 +324,7 @@ export const cartTools = [
     inputSchema: {
       itemId: z.string().min(1).describe('Cart item ID (UUID)'),
     },
-    permission: 'write',
+    permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
       const { itemId } = params;
       if (!allowApply) {
@@ -236,20 +341,41 @@ export const cartTools = [
   },
 
   {
+    name: 'list_cart_items',
+    description: 'List items currently in a cart.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const items = await commerce.carts.getItems(params.cartId);
+      return { success: true, count: items.length, items };
+    },
+  },
+
+  {
+    name: 'clear_cart_items',
+    description: 'Remove all items from a cart.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'delete',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Clear cart items', params);
+      }
+
+      await commerce.carts.clearItems(params.cartId);
+      return { success: true, message: 'Cart items cleared' };
+    },
+  },
+
+  {
     name: 'set_cart_shipping_address',
     description: 'Set the shipping address for a cart.',
     inputSchema: {
       cartId: z.string().min(1).describe('Cart ID (UUID)'),
-      firstName: z.string().min(1).max(100).describe('First name'),
-      lastName: z.string().min(1).max(100).describe('Last name'),
-      line1: z.string().min(1).max(255).describe('Address line 1'),
-      line2: z.string().max(255).optional().describe('Address line 2'),
-      city: z.string().min(1).max(100).describe('City'),
-      state: z.string().max(50).optional().describe('State/Province'),
-      postalCode: z.string().min(1).max(20).describe('Postal/ZIP code'),
-      country: z.string().min(2).max(3).describe('Country code (e.g., US)'),
-      phone: z.string().max(30).optional().describe('Phone number'),
-      email: z.string().email().optional().describe('Email address'),
+      ...cartAddressInputSchema,
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -264,12 +390,69 @@ export const cartTools = [
           },
         };
       }
-      const { cartId, ...address } = params;
-      const cart = await commerce.carts.setShippingAddress(cartId, address);
+      const cart = await commerce.carts.setShippingAddress(params.cartId, buildCartAddress(params));
       return {
         success: true,
         message: 'Shipping address set',
         cart: { id: cart.id, shippingAddress: cart.shippingAddress },
+      };
+    },
+  },
+
+  {
+    name: 'set_cart_shipping',
+    description: 'Set shipping address and shipping selection for a cart.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      ...cartAddressInputSchema,
+      shippingMethod: z.string().min(1).optional().describe('Shipping method'),
+      shippingCarrier: z.string().min(1).optional().describe('Shipping carrier'),
+      shippingAmount: z.number().min(0).optional().describe('Shipping amount'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Set cart shipping', params);
+      }
+
+      const cart = await commerce.carts.setShipping(params.cartId, {
+        shippingAddress: buildCartAddress(params),
+        shippingMethod: params.shippingMethod,
+        shippingCarrier: params.shippingCarrier,
+        shippingAmount: params.shippingAmount,
+      });
+      return {
+        success: true,
+        message: 'Cart shipping updated',
+        cart: {
+          id: cart.id,
+          shippingAddress: cart.shippingAddress,
+          shippingMethod: cart.shippingMethod,
+          shippingCarrier: cart.shippingCarrier,
+          shippingAmount: cart.shippingAmount,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'set_cart_billing_address',
+    description: 'Set the billing address for a cart.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      ...cartAddressInputSchema,
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Set cart billing address', params);
+      }
+
+      const cart = await commerce.carts.setBillingAddress(params.cartId, buildCartAddress(params));
+      return {
+        success: true,
+        message: 'Billing address set',
+        cart: { id: cart.id, billingAddress: cart.billingAddress },
       };
     },
   },
@@ -338,6 +521,32 @@ export const cartTools = [
   },
 
   {
+    name: 'remove_cart_discount',
+    description: 'Remove the coupon or discount from a cart.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'delete',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Remove cart discount', params);
+      }
+
+      const cart = await commerce.carts.removeDiscount(params.cartId);
+      return {
+        success: true,
+        message: 'Cart discount removed',
+        cart: {
+          id: cart.id,
+          couponCode: cart.couponCode,
+          discountAmount: cart.discountAmount,
+          grandTotal: cart.grandTotal,
+        },
+      };
+    },
+  },
+
+  {
     name: 'get_shipping_rates',
     description: 'Get available shipping rates for a cart based on contents and address.',
     inputSchema: {
@@ -357,6 +566,48 @@ export const cartTools = [
           currency: r.currency,
           estimatedDays: r.estimatedDays,
         })),
+      };
+    },
+  },
+
+  {
+    name: 'mark_cart_ready_for_payment',
+    description: 'Mark a cart as ready for payment processing.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Mark cart ready for payment', params);
+      }
+
+      const cart = await commerce.carts.markReadyForPayment(params.cartId);
+      return {
+        success: true,
+        message: 'Cart marked ready for payment',
+        cart: { id: cart.id, status: cart.status, paymentStatus: cart.paymentStatus },
+      };
+    },
+  },
+
+  {
+    name: 'begin_cart_checkout',
+    description: 'Begin the checkout process for a cart.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Begin cart checkout', params);
+      }
+
+      const cart = await commerce.carts.beginCheckout(params.cartId);
+      return {
+        success: true,
+        message: 'Cart checkout started',
+        cart: { id: cart.id, status: cart.status, paymentStatus: cart.paymentStatus },
       };
     },
   },
@@ -462,12 +713,148 @@ export const cartTools = [
   },
 
   {
+    name: 'expire_cart',
+    description: 'Mark a cart as expired.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Expire cart', params);
+      }
+
+      const cart = await commerce.carts.expire(params.cartId);
+      return {
+        success: true,
+        message: 'Cart expired',
+        cart: { id: cart.id, cartNumber: cart.cartNumber, status: cart.status },
+      };
+    },
+  },
+
+  {
+    name: 'reserve_cart_inventory',
+    description: 'Reserve inventory for all cart items.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Reserve cart inventory', params);
+      }
+
+      const cart = await commerce.carts.reserveInventory(params.cartId);
+      return {
+        success: true,
+        message: 'Cart inventory reserved',
+        cart: { id: cart.id, inventoryReserved: cart.inventoryReserved },
+      };
+    },
+  },
+
+  {
+    name: 'release_cart_inventory',
+    description: 'Release reserved inventory for all cart items.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Release cart inventory', params);
+      }
+
+      const cart = await commerce.carts.releaseInventory(params.cartId);
+      return {
+        success: true,
+        message: 'Cart inventory released',
+        cart: { id: cart.id, inventoryReserved: cart.inventoryReserved },
+      };
+    },
+  },
+
+  {
+    name: 'recalculate_cart',
+    description: 'Recalculate cart totals after pricing or address changes.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Recalculate cart', params);
+      }
+
+      const cart = await commerce.carts.recalculate(params.cartId);
+      return {
+        success: true,
+        message: 'Cart recalculated',
+        cart: {
+          id: cart.id,
+          subtotal: cart.subtotal,
+          taxAmount: cart.taxAmount,
+          shippingAmount: cart.shippingAmount,
+          discountAmount: cart.discountAmount,
+          grandTotal: cart.grandTotal,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'set_cart_tax',
+    description: 'Set the tax amount for a cart explicitly.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      taxAmount: z.number().min(0).describe('Tax amount'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Set cart tax', params);
+      }
+
+      const cart = await commerce.carts.setTax(params.cartId, params.taxAmount);
+      return {
+        success: true,
+        message: 'Cart tax updated',
+        cart: { id: cart.id, taxAmount: cart.taxAmount, grandTotal: cart.grandTotal },
+      };
+    },
+  },
+
+  {
     name: 'get_abandoned_carts',
     description: 'Get all abandoned carts for recovery campaigns.',
     inputSchema: {},
     permission: 'read',
     handler: async ({ commerce }) => {
       const carts = await commerce.carts.getAbandoned();
+      return {
+        success: true,
+        count: carts.length,
+        carts: carts.map((c) => ({
+          id: c.id,
+          cartNumber: c.cartNumber,
+          customerEmail: c.customerEmail,
+          grandTotal: c.grandTotal,
+          itemCount: c.itemCount,
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+        })),
+      };
+    },
+  },
+
+  {
+    name: 'get_expired_carts',
+    description: 'Get all expired carts.',
+    inputSchema: {},
+    permission: 'read',
+    handler: async ({ commerce }) => {
+      const carts = await commerce.carts.getExpired();
       return {
         success: true,
         count: carts.length,

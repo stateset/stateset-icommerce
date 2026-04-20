@@ -13,7 +13,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `0.9.8` |
+| Workspace version | `0.9.9` |
 | Workspace members | 29 |
 | Default members | 19 |
 | Rust crates in workspace | 21 |
@@ -80,8 +80,8 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 96 |
-| Tool modules | 53 |
+| Top-level source groups | 99 |
+| Tool modules | 66 |
 | A2A modules | 44 |
 | JS dependencies | 12 |
 | Optional integrations | 13 |
@@ -90,7 +90,8 @@ workspace membership because they require host runtimes or headers.
 
 | Group | Files |
 | --- | --- |
-| `tools` | 53 |
+| `tools` | 66 |
+| `commands` | 61 |
 | `a2a` | 44 |
 | `channels` | 29 |
 | `adapters` | 20 |
@@ -98,7 +99,6 @@ workspace membership because they require host runtimes or headers.
 | `utils` | 14 |
 | `chains` | 9 |
 | `x402` | 9 |
-| `commands` | 6 |
 | `knowledge` | 6 |
 | `memory` | 6 |
 | `skills` | 5 |
@@ -127,6 +127,7 @@ workspace membership because they require host runtimes or headers.
 | `claude-harness.js` | 1 |
 | `cli-schema.js` | 1 |
 | `command-queue.js` | 1 |
+| `command-tooling.js` | 1 |
 | `commerce.js` | 1 |
 | `compliance` | 1 |
 | `config` | 1 |
@@ -135,6 +136,7 @@ workspace membership because they require host runtimes or headers.
 | `context-guard.js` | 1 |
 | `context.js` | 1 |
 | `conversation-history.js` | 1 |
+| `coverage` | 1 |
 | `credentials.js` | 1 |
 | `database.js` | 1 |
 | `discord` | 1 |
@@ -156,6 +158,7 @@ workspace membership because they require host runtimes or headers.
 | `mcp-conversation-context.js` | 1 |
 | `mcp-event-streamer.js` | 1 |
 | `mcp-schema-validator.js` | 1 |
+| `mcp-server-registry.js` | 1 |
 | `mcp-server.js` | 1 |
 | `mcp-tool-composer.js` | 1 |
 | `mcp-tool-discovery.js` | 1 |

@@ -102,8 +102,28 @@ from stateset_embedded.stateset_embedded import (
     CustomerSearchResult,
     EmbeddingStats,
 )
+from stateset_embedded.agent_toolkit import (
+    AgentToolDescriptor,
+    EmbeddedAgentToolkit,
+    FrameworkToolFactory,
+    create_embedded_agent_toolkit,
+)
+from stateset_embedded.autogen import create_autogen_tools
+from stateset_embedded.crewai import create_crewai_tools
+from stateset_embedded.generic import (
+    create_callable_registry,
+    create_tool_descriptors,
+    execute_tool,
+    execute_tool_calls,
+)
+from stateset_embedded.langchain import create_langchain_tools
+from stateset_embedded.openai import (
+    create_openai_tools,
+    execute_openai_tool_call,
+    execute_openai_tool_calls,
+)
 
-__version__ = "0.9.8"
+__version__ = "0.9.9"
 
 __all__ = [
     # Main entry point
@@ -208,6 +228,21 @@ __all__ = [
     "ProductSearchResult",
     "CustomerSearchResult",
     "EmbeddingStats",
+    # Agent toolkit
+    "AgentToolDescriptor",
+    "EmbeddedAgentToolkit",
+    "FrameworkToolFactory",
+    "create_embedded_agent_toolkit",
+    "create_tool_descriptors",
+    "create_callable_registry",
+    "execute_tool",
+    "execute_tool_calls",
+    "create_openai_tools",
+    "execute_openai_tool_call",
+    "execute_openai_tool_calls",
+    "create_langchain_tools",
+    "create_crewai_tools",
+    "create_autogen_tools",
     # Version
     "__version__",
 ]

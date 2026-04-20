@@ -24,7 +24,17 @@ describe('Tax provider tools — structure', () => {
   it('contains expected provider tools', () => {
     const names = taxTools.map((tool) => tool.name);
     for (const expected of [
+      'calculate_item_tax',
+      'get_tax_jurisdiction',
+      'create_tax_jurisdiction',
+      'get_tax_rate_record',
+      'create_tax_rate',
+      'get_tax_exemption',
+      'check_customer_tax_exempt',
       'list_tax_providers',
+      'update_tax_settings',
+      'set_tax_enabled',
+      'check_tax_enabled',
       'validate_tax_jurisdiction_compliance',
       'calculate_tax_quote',
       'calculate_tax_quote_with_failover',
@@ -37,6 +47,112 @@ describe('Tax provider tools — structure', () => {
     ]) {
       assert.ok(names.includes(expected), `missing tool: ${expected}`);
     }
+  });
+});
+
+function createCommerceTaxApi(overrides = {}) {
+  return {
+    tax: {
+      calculateForItem: async () => 7.5,
+      getJurisdiction: async (jurisdictionId) => ({ id: jurisdictionId, code: 'CA', name: 'California' }),
+      getJurisdictionByCode: async (code) => ({ id: 'jur_001', code, name: 'California' }),
+      createJurisdiction: async (params) => ({ id: 'jur_new', ...params }),
+      getRate: async (rateId) => ({ id: rateId, rate: 0.0725, name: 'CA state rate' }),
+      createRate: async (params) => ({ id: 'rate_new', ...params }),
+      getExemption: async (exemptionId) => ({ id: exemptionId, customerId: 'cust_001' }),
+      customerIsExempt: async (customerId) => customerId === 'cust_exempt',
+      updateSettings: async (params) => ({ id: 'settings_001', ...params }),
+      setEnabled: async (enabled) => ({ enabled }),
+      isEnabled: async () => true,
+      ...overrides,
+    },
+  };
+}
+
+describe('non-provider tax MCP tools', () => {
+  it('calculate_item_tax delegates to commerce.tax.calculateForItem', async () => {
+    const tool = findTool('calculate_item_tax');
+    let calledWith = null;
+    const commerce = createCommerceTaxApi({
+      calculateForItem: async (...args) => {
+        calledWith = args;
+        return 8.25;
+      },
+    });
+
+    const result = await tool.handler({
+      commerce,
+      params: {
+        unitPrice: 55,
+        quantity: 2,
+        category: 'standard',
+        shippingAddress: { country: 'US', state: 'CA', postalCode: '94105' },
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.taxAmount, 8.25);
+    assert.deepEqual(calledWith, [55, 2, 'standard', { country: 'US', state: 'CA', postalCode: '94105' }]);
+  });
+
+  it('get_tax_jurisdiction can resolve by code', async () => {
+    const tool = findTool('get_tax_jurisdiction');
+    const result = await tool.handler({
+      commerce: createCommerceTaxApi(),
+      params: { code: 'CA' },
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.jurisdiction.code, 'CA');
+  });
+
+  it('create_tax_jurisdiction requires --apply', async () => {
+    const tool = findTool('create_tax_jurisdiction');
+    const result = await tool.handler({
+      commerce: createCommerceTaxApi(),
+      params: {
+        code: 'CA-SF',
+        name: 'San Francisco',
+        level: 'city',
+        countryCode: 'US',
+        stateCode: 'CA',
+      },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+  });
+
+  it('update_tax_settings persists settings with --apply', async () => {
+    const tool = findTool('update_tax_settings');
+    const result = await tool.handler({
+      commerce: createCommerceTaxApi(),
+      params: { enabled: true, taxProvider: 'avalara' },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.settings.enabled, true);
+    assert.equal(result.settings.taxProvider, 'avalara');
+  });
+
+  it('set_tax_enabled and check_tax_enabled reflect the commerce binding', async () => {
+    const setTool = findTool('set_tax_enabled');
+    const checkTool = findTool('check_tax_enabled');
+    const commerce = createCommerceTaxApi({
+      setEnabled: async (enabled) => ({ enabled }),
+      isEnabled: async () => false,
+    });
+
+    const setResult = await setTool.handler({
+      commerce,
+      params: { enabled: false },
+      allowApply: true,
+    });
+    const checkResult = await checkTool.handler({ commerce });
+
+    assert.equal(setResult.success, true);
+    assert.equal(setResult.settings.enabled, false);
+    assert.equal(checkResult.success, true);
+    assert.equal(checkResult.enabled, false);
   });
 });
 

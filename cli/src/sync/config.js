@@ -265,7 +265,7 @@ export function createSyncConfig(options, cwd = process.cwd()) {
   if (securityProfile !== SECURITY_PROFILE_LEGACY && !hasNativeHybridPqcSupport()) {
     throw new Error(
       `Security profile "${securityProfile}" requires native @stateset/embedded module with PQC support. ` +
-      'Install @stateset/embedded or use the "legacy" profile.',
+        'Install @stateset/embedded or use the "legacy" profile.',
     );
   }
 
@@ -355,8 +355,8 @@ export function updateSyncConfig(updates, cwd = process.cwd()) {
     auditProfileDowngradeBlocked(currentProfile, securityProfile);
     throw new Error(
       `Security profile downgrade from "${currentProfile}" to "${securityProfile}" is not allowed. ` +
-      'Downgrading removes post-quantum protection from future events. ' +
-      'Pass _forceProfileDowngrade: true to override.',
+        'Downgrading removes post-quantum protection from future events. ' +
+        'Pass _forceProfileDowngrade: true to override.',
     );
   }
 

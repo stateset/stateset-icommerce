@@ -42,8 +42,12 @@ function makeCommerce(overrides = {}) {
     shipments: {
       list: async () => [makeShipment()],
       count: async () => 1,
+      get: async (id) => makeShipment({ id }),
       create: async (data) => makeShipment({ id: 'ship_new', ...data }),
+      ship: async (id, trackingNumber) =>
+        makeShipment({ id, status: 'shipped', trackingNumber: trackingNumber || 'FDX-UPDATED' }),
       deliver: async (id) => makeShipment({ id, status: 'delivered' }),
+      cancel: async (id) => makeShipment({ id, status: 'cancelled' }),
       ...overrides,
     },
     returns: {
@@ -102,8 +106,11 @@ describe('Shipment Tools — structure', () => {
     const names = shipmentTools.map((t) => t.name);
     const expected = [
       'list_shipments',
+      'get_shipment',
       'create_shipment',
+      'ship_shipment',
       'deliver_shipment',
+      'cancel_shipment',
       'list_shipping_providers',
       'quote_shipping_rates',
       'create_shipping_label',
@@ -148,6 +155,34 @@ describe('list_shipments', () => {
 });
 
 // ---------------------------------------------------------------------------
+// get_shipment
+// ---------------------------------------------------------------------------
+
+describe('get_shipment', () => {
+  const tool = findTool('get_shipment');
+
+  it('has read permission', () => {
+    assert.strictEqual(tool.permission, 'read');
+  });
+
+  it('returns shipment details when found', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { shipmentId: 'ship_001' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.shipment.id, 'ship_001');
+  });
+
+  it('returns not found when shipment does not exist', async () => {
+    const commerce = makeCommerce({ get: async () => null });
+    const result = await tool.handler({ commerce, params: { shipmentId: 'missing' } });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('not found'));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // create_shipment
 // ---------------------------------------------------------------------------
 
@@ -175,6 +210,33 @@ describe('create_shipment', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ship_shipment
+// ---------------------------------------------------------------------------
+
+describe('ship_shipment', () => {
+  const tool = findTool('ship_shipment');
+  const params = { shipmentId: 'ship_001', trackingNumber: 'FDX-999' };
+
+  it('has write permission', () => {
+    assert.strictEqual(tool.permission, 'write');
+  });
+
+  it('returns preview from applyRequired when allowApply is false', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+    assert.ok(result.wouldDo);
+  });
+
+  it('ships shipment when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.shipment.status, 'shipped');
+    assert.strictEqual(result.shipment.trackingNumber, 'FDX-999');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // deliver_shipment
 // ---------------------------------------------------------------------------
 
@@ -197,6 +259,32 @@ describe('deliver_shipment', () => {
     const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.shipment.status, 'delivered');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cancel_shipment
+// ---------------------------------------------------------------------------
+
+describe('cancel_shipment', () => {
+  const tool = findTool('cancel_shipment');
+  const params = { shipmentId: 'ship_001' };
+
+  it('has delete permission', () => {
+    assert.strictEqual(tool.permission, 'delete');
+  });
+
+  it('returns preview from applyRequired when allowApply is false', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+    assert.ok(result.wouldDo);
+  });
+
+  it('cancels shipment when allowApply is true', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.shipment.status, 'cancelled');
   });
 });
 

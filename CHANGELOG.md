@@ -6,6 +6,44 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-04-20
+
+Pre-1.0 consolidation release. Bundles the agent-toolkit expansion, CLI
+rewrite, and docs refresh that accumulated since 0.9.8 on the
+`feat/x402-agent-demo-flows` branch. Labelled 0.9.9 rather than 1.0.0 so
+the real 1.0.0 cut can be a deliberate polish + `stateset-acp-handler`
+pair release.
+
+### Added
+- Engine-first agent toolkit helpers, adapter modules, and runnable
+  examples across the Node and Python bindings so OpenAI, LangChain,
+  generic tool runtimes, CrewAI, and AutoGen-style integrations can embed
+  the commerce runtime directly.
+- Stronger release guards: version sync, docs/example path validity,
+  package-shape checks, release hygiene regression coverage, and tracked
+  native-binary detection.
+- CLI command surface expansion across the full commerce domain (a2a,
+  accounts payable/receivable, carts, catalog, checkout, circuit-breaker,
+  compliance, connectors, cost-accounting, credit, currency, custom
+  objects, erc8004, fraud, fulfillment, general-ledger, gift cards,
+  invoices, lots, loyalty, manufacturing, payments, policies, promotions,
+  proofs, quality, receiving, reviews, segments, serials, shipments,
+  shipping-zones, stablecoin, store-credits, subscriptions, suppliers,
+  sync, tax, treasury, vector, warehouse, warranties, wishlists, x402).
+- x402 agent demo flows end-to-end.
+
+### Changed
+- Promoted the workspace, bindings, admin app, CLI, examples, templates,
+  lockfiles, docs, and release metadata from `0.9.8` to `0.9.9`.
+- Documentation refresh across API references and getting-started guides.
+
+### Fixed
+- Corrected stale release references across install snippets, examples,
+  daemon guidance, API docs, and versioned metadata so the shipped repo
+  surfaces match the `0.9.9` line.
+- Removed tracked native example artifacts (`bindings/go/example/example`,
+  `examples/go/go`) and enforced repo-level hygiene checks.
+
 ## [0.9.8] - 2026-04-08
 
 ### Added

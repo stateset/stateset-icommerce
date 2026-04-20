@@ -21,11 +21,7 @@ import {
   generateStrictSigningPop,
   hexToBuffer,
 } from './crypto.js';
-import {
-  auditKeyGenerated,
-  auditEncryptionKeyGenerated,
-  auditKeyRotated,
-} from './pqc-audit.js';
+import { auditKeyGenerated, auditEncryptionKeyGenerated, auditKeyRotated } from './pqc-audit.js';
 import {
   KEY_ALGORITHM_ED25519,
   KEY_ALGORITHM_ED25519_ML_DSA_65,
@@ -77,7 +73,9 @@ function serializeBundle(bundle) {
   return Object.fromEntries(
     Object.entries(bundle).map(([key, value]) => [
       key,
-      Buffer.isBuffer(value) || value instanceof Uint8Array ? bufferToHex(Buffer.from(value)) : value,
+      Buffer.isBuffer(value) || value instanceof Uint8Array
+        ? bufferToHex(Buffer.from(value))
+        : value,
     ]),
   );
 }
@@ -259,26 +257,26 @@ export class AgentKeyManager {
           createdAt: new Date().toISOString(),
         };
       } else {
-      // Generate Ed25519 key pair (legacy)
-      const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+        // Generate Ed25519 key pair (legacy)
+        const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
 
-      // Extract raw bytes
-      const pubDer = publicKey.export({ type: 'spki', format: 'der' });
-      const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
+        // Extract raw bytes
+        const pubDer = publicKey.export({ type: 'spki', format: 'der' });
+        const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
 
-      // Ed25519 public key is last 32 bytes of SPKI DER
-      const pubKey32 = pubDer.subarray(-32);
-      // Ed25519 private key (seed) is last 32 bytes of PKCS#8 DER
-      const privKey32 = privDer.subarray(-32);
+        // Ed25519 public key is last 32 bytes of SPKI DER
+        const pubKey32 = pubDer.subarray(-32);
+        // Ed25519 private key (seed) is last 32 bytes of PKCS#8 DER
+        const privKey32 = privDer.subarray(-32);
 
-      keyPair = {
-        keyId,
-        publicKey: pubKey32,
-        privateKey: privKey32,
-        keyAlgorithm: KEY_ALGORITHM_ED25519,
-        securityProfile,
-        createdAt: new Date().toISOString(),
-      };
+        keyPair = {
+          keyId,
+          publicKey: pubKey32,
+          privateKey: privKey32,
+          keyAlgorithm: KEY_ALGORITHM_ED25519,
+          securityProfile,
+          createdAt: new Date().toISOString(),
+        };
       }
     }
 
@@ -287,7 +285,12 @@ export class AgentKeyManager {
     keys.push(keyPair);
     await this._saveKeys(agentId, 'signing', keys);
 
-    auditKeyGenerated(agentId, keyId, keyPair.securityProfile ?? 'legacy', keyPair.keyAlgorithm ?? 1);
+    auditKeyGenerated(
+      agentId,
+      keyId,
+      keyPair.securityProfile ?? 'legacy',
+      keyPair.keyAlgorithm ?? 1,
+    );
 
     return keyPair;
   }
@@ -403,25 +406,25 @@ export class AgentKeyManager {
           createdAt: new Date().toISOString(),
         };
       } else {
-      // Generate X25519 key pair (legacy)
-      const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519');
+        // Generate X25519 key pair (legacy)
+        const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519');
 
-      // Extract raw bytes
-      const pubDer = publicKey.export({ type: 'spki', format: 'der' });
-      const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
+        // Extract raw bytes
+        const pubDer = publicKey.export({ type: 'spki', format: 'der' });
+        const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
 
-      // X25519 keys are last 32 bytes of DER encoding
-      const pubKey32 = pubDer.subarray(-32);
-      const privKey32 = privDer.subarray(-32);
+        // X25519 keys are last 32 bytes of DER encoding
+        const pubKey32 = pubDer.subarray(-32);
+        const privKey32 = privDer.subarray(-32);
 
-      keyPair = {
-        keyId,
-        publicKey: pubKey32,
-        privateKey: privKey32,
-        keyAlgorithm: KEY_ALGORITHM_X25519,
-        securityProfile,
-        createdAt: new Date().toISOString(),
-      };
+        keyPair = {
+          keyId,
+          publicKey: pubKey32,
+          privateKey: privKey32,
+          keyAlgorithm: KEY_ALGORITHM_X25519,
+          securityProfile,
+          createdAt: new Date().toISOString(),
+        };
       }
     }
 
@@ -430,7 +433,12 @@ export class AgentKeyManager {
     keys.push(keyPair);
     await this._saveKeys(agentId, 'encryption', keys);
 
-    auditEncryptionKeyGenerated(agentId, keyId, keyPair.securityProfile ?? 'legacy', keyPair.keyAlgorithm ?? 2);
+    auditEncryptionKeyGenerated(
+      agentId,
+      keyId,
+      keyPair.securityProfile ?? 'legacy',
+      keyPair.keyAlgorithm ?? 2,
+    );
 
     return keyPair;
   }

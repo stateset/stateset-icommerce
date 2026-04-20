@@ -1,10 +1,17 @@
 # Versioning
 
-This book represents the **latest** documentation from the main branch.
+This book represents the **v0.7.1** documentation snapshot.
+
+## Snapshot scope
+
+This snapshot is frozen to the **v0.7.1** release line. For the latest docs
+from the main branch, use the root `docs/` book.
 
 ## Release snapshots
 
-For each tagged release, create a snapshot under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v0.7.1/`).
+For each tagged release, a documentation snapshot is created under
+`docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook that can be
+built and hosted under a stable path (for example, `/docs/v0.7.1/`).
 
 ## Process
 

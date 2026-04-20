@@ -232,6 +232,53 @@ export const taxTools = [
     },
   },
   {
+    name: 'calculate_item_tax',
+    description: 'Calculate tax for a single line item and destination address.',
+    inputSchema: {
+      unitPrice: z.number().positive().describe('Unit price'),
+      quantity: z.number().int().positive().describe('Quantity'),
+      category: z.string().optional().describe('Optional product tax category'),
+      shippingAddress: z
+        .object({
+          country: z.string().min(1).describe('Country code'),
+          state: z.string().optional().describe('State/province code'),
+          city: z.string().optional().describe('City'),
+          postalCode: z.string().optional().describe('Postal/ZIP code'),
+        })
+        .describe('Shipping address'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const taxAmount = await commerce.tax.calculateForItem(
+        params.unitPrice,
+        params.quantity,
+        params.category,
+        params.shippingAddress,
+      );
+      return { success: true, taxAmount };
+    },
+  },
+  {
+    name: 'get_tax_jurisdiction',
+    description: 'Get a tax jurisdiction by ID or code.',
+    inputSchema: {
+      jurisdictionId: z.string().optional().describe('Jurisdiction ID'),
+      code: z.string().optional().describe('Jurisdiction code'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const jurisdiction = params.jurisdictionId
+        ? await commerce.tax.getJurisdiction(params.jurisdictionId)
+        : params.code
+          ? await commerce.tax.getJurisdictionByCode(params.code)
+          : null;
+      if (!jurisdiction) {
+        return { success: false, error: 'Tax jurisdiction not found' };
+      }
+      return { success: true, jurisdiction };
+    },
+  },
+  {
     name: 'list_tax_jurisdictions',
     description: 'List tax jurisdictions with optional filtering by country or level.',
     inputSchema: {
@@ -261,6 +308,25 @@ export const taxTools = [
           stateCode: j.stateCode,
         })),
       };
+    },
+  },
+  {
+    name: 'create_tax_jurisdiction',
+    description: 'Create a tax jurisdiction. Requires --apply flag.',
+    inputSchema: {
+      code: z.string().min(1).describe('Jurisdiction code'),
+      name: z.string().min(1).describe('Jurisdiction name'),
+      level: z.string().min(1).describe('Jurisdiction level'),
+      countryCode: z.string().min(1).describe('Country code'),
+      stateCode: z.string().optional().describe('State/province code'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Create tax jurisdiction', params);
+      }
+      const jurisdiction = await commerce.tax.createJurisdiction(params);
+      return { success: true, message: 'Tax jurisdiction created', jurisdiction };
     },
   },
   {
@@ -301,6 +367,42 @@ export const taxTools = [
           effectiveFrom: r.effectiveFrom,
         })),
       };
+    },
+  },
+  {
+    name: 'get_tax_rate_record',
+    description: 'Get a tax rate record by ID.',
+    inputSchema: {
+      rateId: z.string().min(1).describe('Tax rate ID'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const rate = await commerce.tax.getRate(params.rateId);
+      if (!rate) {
+        return { success: false, error: 'Tax rate not found' };
+      }
+      return { success: true, rate };
+    },
+  },
+  {
+    name: 'create_tax_rate',
+    description: 'Create a tax rate record. Requires --apply flag.',
+    inputSchema: {
+      jurisdictionId: z.string().min(1).describe('Jurisdiction ID'),
+      taxType: z.string().min(1).describe('Tax type'),
+      productCategory: z.string().optional().describe('Optional product category'),
+      rate: z.number().min(0).describe('Tax rate as decimal'),
+      name: z.string().min(1).describe('Rate name'),
+      isCompound: z.boolean().optional().describe('Whether the rate compounds'),
+      effectiveFrom: z.string().optional().describe('Effective date/time'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Create tax rate', params);
+      }
+      const rate = await commerce.tax.createRate(params);
+      return { success: true, message: 'Tax rate created', rate };
     },
   },
   {
@@ -369,6 +471,21 @@ export const taxTools = [
     },
   },
   {
+    name: 'get_tax_exemption',
+    description: 'Get a tax exemption by ID.',
+    inputSchema: {
+      exemptionId: z.string().min(1).describe('Tax exemption ID'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const exemption = await commerce.tax.getExemption(params.exemptionId);
+      if (!exemption) {
+        return { success: false, error: 'Tax exemption not found' };
+      }
+      return { success: true, exemption };
+    },
+  },
+  {
     name: 'create_tax_exemption',
     description: 'Create a tax exemption certificate for a customer.',
     inputSchema: {
@@ -414,6 +531,18 @@ export const taxTools = [
           effectiveFrom: exemption.effectiveFrom,
         },
       };
+    },
+  },
+  {
+    name: 'check_customer_tax_exempt',
+    description: 'Check whether a customer is currently tax exempt.',
+    inputSchema: {
+      customerId: z.string().min(1).describe('Customer ID'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const exempt = await commerce.tax.customerIsExempt(params.customerId);
+      return { success: true, customerId: params.customerId, exempt };
     },
   },
   {
@@ -476,6 +605,54 @@ export const taxTools = [
         count: providers.length,
         providers,
       };
+    },
+  },
+  {
+    name: 'update_tax_settings',
+    description: 'Update store tax settings. Requires --apply flag.',
+    inputSchema: {
+      enabled: z.boolean().optional().describe('Enable tax calculation'),
+      calculationMethod: z.string().optional().describe('Calculation method'),
+      compoundMethod: z.string().optional().describe('Compound method'),
+      taxShipping: z.boolean().optional().describe('Whether shipping is taxable'),
+      taxHandling: z.boolean().optional().describe('Whether handling is taxable'),
+      defaultProductCategory: z.string().optional().describe('Default product tax category'),
+      roundingMode: z.string().optional().describe('Rounding mode'),
+      decimalPlaces: z.number().int().min(0).optional().describe('Decimal places'),
+      taxProvider: z.string().optional().describe('Default tax provider'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Update tax settings', params);
+      }
+      const settings = await commerce.tax.updateSettings(params);
+      return { success: true, message: 'Tax settings updated', settings };
+    },
+  },
+  {
+    name: 'set_tax_enabled',
+    description: 'Enable or disable tax calculation. Requires --apply flag.',
+    inputSchema: {
+      enabled: z.boolean().describe('Whether tax calculation should be enabled'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Set tax enabled', params);
+      }
+      const settings = await commerce.tax.setEnabled(params.enabled);
+      return { success: true, message: 'Tax enabled status updated', settings };
+    },
+  },
+  {
+    name: 'check_tax_enabled',
+    description: 'Check whether tax calculation is currently enabled.',
+    inputSchema: {},
+    permission: 'read',
+    handler: async ({ commerce }) => {
+      const enabled = await commerce.tax.isEnabled();
+      return { success: true, enabled };
     },
   },
   {

@@ -9,7 +9,7 @@ QUICK START (User Mode - No Sudo Required)
 -----------------------------------------------------------------------
 
 1. Install the daemon:
-   node examples/daemon-install.js --user
+   stateset-daemon install --user
 
 2. Add your API keys to the env file:
    nano ~/.config/stateset/env
@@ -30,7 +30,7 @@ QUICK START (System Mode - Requires Root)
 -----------------------------------------------------------------------
 
 1. Install the daemon:
-   sudo node examples/daemon-install.js
+   sudo stateset-daemon install
 
 2. Add your API keys:
    sudo nano /etc/stateset/env

@@ -5,24 +5,24 @@ Budget governance prevents AI agents from overspending. Every agent has configur
 ## Setting Budgets
 
 ```javascript
-await toolkit.executeTool('x402_set_budget', {
+await toolkit.executeTool('agent_set_spending_limits', {
     agentId: 'research-agent',
     dailyLimit: 5.00,
-    currency: 'USD'
+    monthlyLimit: 100.00,
+    perTransactionLimit: 1.00
 });
 ```
 
 ## Checking Budget Status
 
 ```javascript
-const budget = await toolkit.executeTool('x402_get_budget', {
-    agentId: 'research-agent'
-});
+const budget = await toolkit.executeTool('x402_budget_status', {});
 // → {
-//     dailyLimit: 5.00,
-//     spent: 2.34,
-//     remaining: 2.66,
-//     resetAt: '2026-03-17T00:00:00Z'
+//     budget: {
+//         spentToday: 2.34,
+//         dailyBudget: 5.00,
+//         perCallLimit: 1.00
+//     }
 // }
 ```
 
@@ -56,14 +56,14 @@ In a multi-agent system, each agent has its own independent budget:
 
 ```javascript
 // Set different limits for different agents
-await toolkit.executeTool('x402_set_budget', {
-    agentId: 'research-agent', dailyLimit: 5.00, currency: 'USD'
+await toolkit.executeTool('agent_set_spending_limits', {
+    agentId: 'research-agent', dailyLimit: 5.00, monthlyLimit: 100.00, perTransactionLimit: 1.00
 });
-await toolkit.executeTool('x402_set_budget', {
-    agentId: 'fulfillment-agent', dailyLimit: 100.00, currency: 'USD'
+await toolkit.executeTool('agent_set_spending_limits', {
+    agentId: 'fulfillment-agent', dailyLimit: 100.00, monthlyLimit: 1000.00, perTransactionLimit: 25.00
 });
-await toolkit.executeTool('x402_set_budget', {
-    agentId: 'analytics-agent', dailyLimit: 2.00, currency: 'USD'
+await toolkit.executeTool('agent_set_spending_limits', {
+    agentId: 'analytics-agent', dailyLimit: 2.00, monthlyLimit: 50.00, perTransactionLimit: 0.50
 });
 ```
 

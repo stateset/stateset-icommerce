@@ -1,0 +1,564 @@
+{
+  "source": "cli/src/channels/http-gateway.js",
+  "totalRoutes": 44,
+  "tagCount": 12,
+  "permissionCount": 5,
+  "permissions": [
+    {
+      "name": "admin",
+      "count": 7
+    },
+    {
+      "name": "delete",
+      "count": 1
+    },
+    {
+      "name": "none",
+      "count": 4
+    },
+    {
+      "name": "read",
+      "count": 15
+    },
+    {
+      "name": "write",
+      "count": 17
+    }
+  ],
+  "tags": [
+    {
+      "name": "admin",
+      "count": 2
+    },
+    {
+      "name": "agent",
+      "count": 2
+    },
+    {
+      "name": "browser",
+      "count": 9
+    },
+    {
+      "name": "commands",
+      "count": 1
+    },
+    {
+      "name": "discovery",
+      "count": 2
+    },
+    {
+      "name": "heartbeat",
+      "count": 5
+    },
+    {
+      "name": "memory",
+      "count": 8
+    },
+    {
+      "name": "observability",
+      "count": 1
+    },
+    {
+      "name": "plugins",
+      "count": 3
+    },
+    {
+      "name": "skills",
+      "count": 4
+    },
+    {
+      "name": "system",
+      "count": 2
+    },
+    {
+      "name": "voice",
+      "count": 5
+    }
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/.well-known/service-info",
+      "summary": "MPP service info",
+      "description": "Machine Payments Protocol service metadata for the HTTP gateway.",
+      "tags": [
+        "discovery"
+      ],
+      "openapiPath": "/.well-known/service-info",
+      "level": "none"
+    },
+    {
+      "method": "DELETE",
+      "path": "/agent/queue",
+      "summary": "Clear agent queue lanes",
+      "description": "Remove one or more agent queue lanes.",
+      "tags": [
+        "agent"
+      ],
+      "openapiPath": "/agent/queue",
+      "level": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/agent/queue",
+      "summary": "Agent queue stats",
+      "description": "Inspect queue-lane status for the agent runtime.",
+      "tags": [
+        "agent"
+      ],
+      "openapiPath": "/agent/queue",
+      "level": "admin"
+    },
+    {
+      "method": "POST",
+      "path": "/browser/click",
+      "summary": "Browser click",
+      "description": "Click a selector in the browser subsystem.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/click",
+      "level": "write"
+    },
+    {
+      "method": "POST",
+      "path": "/browser/close",
+      "summary": "Close browser",
+      "description": "Close the browser subsystem session.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/close",
+      "level": "write"
+    },
+    {
+      "method": "GET",
+      "path": "/browser/content",
+      "summary": "Browser content",
+      "description": "Return browser page content or HTML.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/content",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/browser/evaluate",
+      "summary": "Evaluate browser expression",
+      "description": "Evaluate a restricted browser expression.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/evaluate",
+      "level": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/browser/links",
+      "summary": "Browser links",
+      "description": "Extract links from the current browser page.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/links",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/browser/navigate",
+      "summary": "Navigate browser",
+      "description": "Navigate the browser subsystem to a URL.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/navigate",
+      "level": "write"
+    },
+    {
+      "method": "POST",
+      "path": "/browser/screenshot",
+      "summary": "Browser screenshot",
+      "description": "Capture a screenshot from the browser subsystem.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/screenshot",
+      "level": "write"
+    },
+    {
+      "method": "GET",
+      "path": "/browser/status",
+      "summary": "Browser status",
+      "description": "Return browser subsystem status.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/status",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/browser/type",
+      "summary": "Browser type",
+      "description": "Type into a selector in the browser subsystem.",
+      "tags": [
+        "browser"
+      ],
+      "openapiPath": "/browser/type",
+      "level": "write"
+    },
+    {
+      "method": "GET",
+      "path": "/commands",
+      "summary": "List commands",
+      "description": "List registered CLI command metadata exposed by the gateway.",
+      "tags": [
+        "commands"
+      ],
+      "openapiPath": "/commands",
+      "level": "read"
+    },
+    {
+      "method": "GET",
+      "path": "/daemon",
+      "summary": "Daemon status",
+      "description": "Return local gateway daemon status and process metadata.",
+      "tags": [
+        "admin"
+      ],
+      "openapiPath": "/daemon",
+      "level": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "summary": "Health check",
+      "description": "Gateway liveness status.",
+      "tags": [
+        "system"
+      ],
+      "openapiPath": "/health",
+      "level": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/heartbeat/checks",
+      "summary": "List heartbeat checks",
+      "description": "List heartbeat checks.",
+      "tags": [
+        "heartbeat"
+      ],
+      "openapiPath": "/heartbeat/checks",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/heartbeat/checks/:id/disable",
+      "summary": "Disable heartbeat check",
+      "description": "Disable one heartbeat check.",
+      "tags": [
+        "heartbeat"
+      ],
+      "openapiPath": "/heartbeat/checks/{id}/disable",
+      "level": "write"
+    },
+    {
+      "method": "POST",
+      "path": "/heartbeat/checks/:id/enable",
+      "summary": "Enable heartbeat check",
+      "description": "Enable one heartbeat check.",
+      "tags": [
+        "heartbeat"
+      ],
+      "openapiPath": "/heartbeat/checks/{id}/enable",
+      "level": "write"
+    },
+    {
+      "method": "POST",
+      "path": "/heartbeat/checks/:id/run",
+      "summary": "Run heartbeat check",
+      "description": "Run one heartbeat check immediately.",
+      "tags": [
+        "heartbeat"
+      ],
+      "openapiPath": "/heartbeat/checks/{id}/run",
+      "level": "write"
+    },
+    {
+      "method": "GET",
+      "path": "/heartbeat/status",
+      "summary": "Heartbeat status",
+      "description": "Return heartbeat subsystem status.",
+      "tags": [
+        "heartbeat"
+      ],
+      "openapiPath": "/heartbeat/status",
+      "level": "read"
+    },
+    {
+      "method": "DELETE",
+      "path": "/memory/:id",
+      "summary": "Delete memory",
+      "description": "Delete one stored memory entry.",
+      "tags": [
+        "memory"
+      ],
+      "openapiPath": "/memory/{id}",
+      "level": "delete"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/backfill",
+      "summary": "Backfill memories",
+      "description": "Backfill conversation history into memory.",
+      "tags": [
+        "memory"
+      ],
+      "openapiPath": "/memory/backfill",
+      "level": "write"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/hybrid-search",
+      "summary": "Hybrid search memory",
+      "description": "Hybrid-search stored memories.",
+      "tags": [
+        "memory"
+      ],
+      "openapiPath": "/memory/hybrid-search",
+      "level": "write"
+    },
+    {
+      "method": "GET",
+      "path": "/memory/recent/:channel/:senderId",
+      "summary": "Recent memories",
+      "description": "List recent memories for one channel and sender.",
+      "tags": [
+        "memory"
+      ],
+      "openapiPath": "/memory/recent/{channel}/{senderId}",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/save",
+      "summary": "Save memory",
+      "description": "Persist a memory entry.",
+      "tags": [
+        "memory"
+      ],
+      "openapiPath": "/memory/save",
+      "level": "write"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/search",
+      "summary": "Search memory",
+      "description": "Search stored memories.",
+      "tags": [
+        "memory"
+      ],
+      "openapiPath": "/memory/search",
+      "level": "write"
+    },
+    {
+      "method": "GET",
+      "path": "/memory/stats",
+      "summary": "Memory stats",
+      "description": "Return memory subsystem statistics.",
+      "tags": [
+        "memory"
+      ],
+      "openapiPath": "/memory/stats",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/vector-search",
+      "summary": "Vector search memory",
+      "description": "Vector-search stored memories.",
+      "tags": [
+        "memory"
+      ],
+      "openapiPath": "/memory/vector-search",
+      "level": "write"
+    },
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "summary": "Metrics summary",
+      "description": "Gateway metrics summary.",
+      "tags": [
+        "observability"
+      ],
+      "openapiPath": "/metrics",
+      "level": "read"
+    },
+    {
+      "method": "GET",
+      "path": "/openapi.json",
+      "summary": "Gateway OpenAPI discovery",
+      "description": "OpenAPI discovery document for built-in and plugin HTTP routes.",
+      "tags": [
+        "discovery"
+      ],
+      "openapiPath": "/openapi.json",
+      "level": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/plugins",
+      "summary": "List plugins",
+      "description": "List registered gateway plugins.",
+      "tags": [
+        "plugins"
+      ],
+      "openapiPath": "/plugins",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/plugins/:id/disable",
+      "summary": "Disable plugin",
+      "description": "Disable a configured gateway plugin.",
+      "tags": [
+        "plugins"
+      ],
+      "openapiPath": "/plugins/{id}/disable",
+      "level": "admin"
+    },
+    {
+      "method": "POST",
+      "path": "/plugins/:id/enable",
+      "summary": "Enable plugin",
+      "description": "Enable a configured gateway plugin.",
+      "tags": [
+        "plugins"
+      ],
+      "openapiPath": "/plugins/{id}/enable",
+      "level": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/ready",
+      "summary": "Readiness check",
+      "description": "Gateway readiness and dependency checks.",
+      "tags": [
+        "system"
+      ],
+      "openapiPath": "/ready",
+      "level": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/remote-access",
+      "summary": "Remote access status",
+      "description": "Return local, Tailscale, and tunnel access metadata.",
+      "tags": [
+        "admin"
+      ],
+      "openapiPath": "/remote-access",
+      "level": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/skills",
+      "summary": "List skills",
+      "description": "List installed skills available to the gateway runtime.",
+      "tags": [
+        "skills"
+      ],
+      "openapiPath": "/skills",
+      "level": "read"
+    },
+    {
+      "method": "GET",
+      "path": "/skills/:name",
+      "summary": "Skill details",
+      "description": "Return metadata for one installed skill.",
+      "tags": [
+        "skills"
+      ],
+      "openapiPath": "/skills/{name}",
+      "level": "read"
+    },
+    {
+      "method": "GET",
+      "path": "/skills/categories",
+      "summary": "Skill categories",
+      "description": "Return skill category statistics.",
+      "tags": [
+        "skills"
+      ],
+      "openapiPath": "/skills/categories",
+      "level": "read"
+    },
+    {
+      "method": "GET",
+      "path": "/skills/marketplace",
+      "summary": "Marketplace catalog",
+      "description": "Return the local skills marketplace catalog.",
+      "tags": [
+        "skills"
+      ],
+      "openapiPath": "/skills/marketplace",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/voice/session/disable/:sessionId",
+      "summary": "Disable voice session",
+      "description": "Disable voice mode for a session.",
+      "tags": [
+        "voice"
+      ],
+      "openapiPath": "/voice/session/disable/{sessionId}",
+      "level": "write"
+    },
+    {
+      "method": "POST",
+      "path": "/voice/session/enable/:sessionId",
+      "summary": "Enable voice session",
+      "description": "Enable voice mode for a session.",
+      "tags": [
+        "voice"
+      ],
+      "openapiPath": "/voice/session/enable/{sessionId}",
+      "level": "write"
+    },
+    {
+      "method": "GET",
+      "path": "/voice/status",
+      "summary": "Voice status",
+      "description": "Return voice subsystem status.",
+      "tags": [
+        "voice"
+      ],
+      "openapiPath": "/voice/status",
+      "level": "read"
+    },
+    {
+      "method": "POST",
+      "path": "/voice/synthesize",
+      "summary": "Synthesize speech",
+      "description": "Synthesize speech for the supplied text.",
+      "tags": [
+        "voice"
+      ],
+      "openapiPath": "/voice/synthesize",
+      "level": "write"
+    },
+    {
+      "method": "POST",
+      "path": "/voice/transcribe",
+      "summary": "Transcribe audio",
+      "description": "Transcribe uploaded audio with the voice subsystem.",
+      "tags": [
+        "voice"
+      ],
+      "openapiPath": "/voice/transcribe",
+      "level": "write"
+    }
+  ]
+}

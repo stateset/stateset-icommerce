@@ -136,6 +136,76 @@ export const currencyTools = [
     },
   },
   {
+    name: 'set_exchange_rates',
+    description: 'Set multiple exchange rates in a single operation.',
+    inputSchema: {
+      rates: z
+        .array(
+          z.object({
+            baseCurrency: z.string().min(1).describe('Base currency code'),
+            quoteCurrency: z.string().min(1).describe('Quote currency code'),
+            rate: z.number().describe('Exchange rate'),
+            source: z.string().optional().default('manual').describe('Rate source'),
+          }),
+        )
+        .min(1)
+        .describe('Exchange rates to upsert'),
+    },
+    permission: 'admin',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Write operations require --apply flag. Would set multiple exchange rates.',
+          preview: {
+            count: params.rates.length,
+            rates: params.rates.map((rate) => ({
+              baseCurrency: rate.baseCurrency.toUpperCase(),
+              quoteCurrency: rate.quoteCurrency.toUpperCase(),
+              rate: rate.rate,
+              source: rate.source || 'manual',
+            })),
+          },
+        };
+      }
+
+      const rates = await commerce.currency.setRates(
+        params.rates.map((rate) => ({
+          baseCurrency: rate.baseCurrency.toUpperCase(),
+          quoteCurrency: rate.quoteCurrency.toUpperCase(),
+          rate: rate.rate,
+          source: rate.source || 'manual',
+        })),
+      );
+      return { success: true, message: 'Exchange rates updated', count: rates.length, rates };
+    },
+  },
+  {
+    name: 'delete_exchange_rate',
+    description: 'Delete an exchange rate by ID.',
+    inputSchema: {
+      rateId: z.string().min(1).describe('Exchange rate ID'),
+    },
+    permission: 'delete',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Delete operations require --apply flag. Would delete exchange rate.',
+          preview: { rateId: params.rateId },
+        };
+      }
+
+      const deleted = await commerce.currency.deleteRate(params.rateId);
+      return {
+        success: Boolean(deleted),
+        deleted: Boolean(deleted),
+        rateId: params.rateId,
+        message: deleted ? 'Exchange rate deleted' : 'Exchange rate not found',
+      };
+    },
+  },
+  {
     name: 'get_currency_settings',
     description: 'Get the store currency settings including base currency and enabled currencies.',
     inputSchema: {},
@@ -151,6 +221,34 @@ export const currencyTools = [
           roundingMode: settings.roundingMode,
         },
       };
+    },
+  },
+  {
+    name: 'update_currency_settings',
+    description:
+      'Update store currency settings including enabled currencies and rounding behavior.',
+    inputSchema: {
+      baseCurrency: z.string().optional().describe('Store base currency'),
+      enabledCurrencies: z.array(z.string().min(1)).optional().describe('Enabled currency codes'),
+      autoConvert: z.boolean().optional().describe('Enable automatic conversion'),
+      roundingMode: z.string().optional().describe('Rounding mode'),
+    },
+    permission: 'admin',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Write operations require --apply flag. Would update currency settings.',
+          preview: params,
+        };
+      }
+
+      const settings = await commerce.currency.updateSettings({
+        ...params,
+        baseCurrency: params.baseCurrency?.toUpperCase(),
+        enabledCurrencies: params.enabledCurrencies?.map((currency) => currency.toUpperCase()),
+      });
+      return { success: true, message: 'Currency settings updated', settings };
     },
   },
   {
@@ -209,6 +307,19 @@ export const currencyTools = [
           enabledCurrencies: settings.enabledCurrencies,
         },
       };
+    },
+  },
+  {
+    name: 'check_currency_enabled',
+    description: 'Check whether a currency is enabled for the store.',
+    inputSchema: {
+      currency: z.string().min(1).describe('Currency code (e.g., USD, EUR)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const currency = params.currency.toUpperCase();
+      const enabled = await commerce.currency.isEnabled(currency);
+      return { success: true, currency, enabled };
     },
   },
   {

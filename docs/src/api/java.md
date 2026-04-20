@@ -9,15 +9,15 @@ The Java binding provides `com.stateset.embedded.Commerce` for building commerce
 ```xml
 <dependency>
     <groupId>com.stateset</groupId>
-    <artifactId>stateset-embedded</artifactId>
-    <version>0.9.8</version>
+    <artifactId>embedded</artifactId>
+    <version>0.9.9</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.stateset:stateset-embedded:0.9.8'
+implementation 'com.stateset:embedded:0.9.9'
 ```
 
 ## Quick Start

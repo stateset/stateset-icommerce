@@ -1,7 +1,7 @@
 # Trust Foundation
 
 Status: active repo policy
-Last reviewed: 2026-04-02
+Last reviewed: 2026-04-08
 Applies to: `stateset-icommerce` and the adjacent trilogy repos referenced from this workspace
 
 This document is the canonical trust inventory for this repository.
@@ -23,7 +23,7 @@ This workspace is the application-layer repo in a larger documented stack:
 - `stateset-stark`: STARK proving and verification
 - `set`: settlement chain, registry contracts, anchor service
 
-The current workspace release line is `0.9.8`.
+The current workspace release line is `0.9.9`.
 
 ## Trust Levels
 
@@ -54,14 +54,29 @@ Do not collapse those into a single "post-quantum" claim.
 
 ## Compatibility Contract
 
-Current releases are still pre-`1.0`.
+The current workspace release line is `0.9.9`, so the published artifacts are
+still pre-`1.0`.
 
-The project has a compatibility policy, but it is not yet a `1.0` stability declaration:
+While the repo remains on `0.x`, the project treats the minor version as the
+compatibility boundary. If a pre-`1.0` breaking change is unavoidable, it must
+be called out in release notes and accompanied by migration guidance.
 
-- patch releases are expected to be non-breaking;
-- the project treats the minor version as the compatibility boundary while it remains in `0.x`;
-- if a pre-`1.0` breaking change is unavoidable, it must be called out in release notes and accompanied by migration guidance;
-- `1.0` stability, LTS cadence, and deprecation windows are still future trust milestones.
+The `v0.9.9` compatibility contract is now frozen and takes effect when that
+tag is cut:
+
+- patch releases in `v1.x` are non-breaking bug, security, performance, and
+  documentation updates;
+- minor releases in `v1.x` are additive for the documented stable surfaces;
+- stable surfaces for `v1.x` are the public Rust API, language binding version
+  line, MCP tool names and schemas, CLI flags, policy YAML, and additive SQLite
+  migrations;
+- deprecations require runtime warnings and documentation updates, and remain
+  supported for at least two minor releases and 90 days before removal in the
+  next major;
+- `v1.0.x` is the initial stabilization/LTS line: critical regressions and
+  security fixes are eligible for backport there until `v1.1.0` ships;
+- after `v1.1.0`, the latest `v1.y` and previous `v1.(y-1)` lines receive
+  security and release-blocking bug backports.
 
 ## Evidence Matrix
 
@@ -72,7 +87,7 @@ The project has a compatibility policy, but it is not yet a `1.0` stability decl
 | Security disclosure process | implemented in this repo | `SECURITY.md` defines reporting channel and response targets | public advisory index, CVE process, bug bounty |
 | Independent security audits | open gap | no public third-party audit reports are linked from this repo | published audit reports and remediation tracking |
 | Formal verification | open gap | no Lean, Coq, or machine-checked proof artifacts were located in this workspace | AIR proofs, ordering proofs, PQ composition proofs |
-| Versioning and deprecation policy | implemented policy | `docs/src/versioning.md` defines compatibility rules | `1.0` release contract, LTS line, backport policy |
+| Versioning and deprecation policy | implemented policy | `docs/src/versioning.md` and `RELEASING.md` define the `v1.0` contract, deprecation window, and backport rules | GitHub branch protection and release permissions live outside this repo |
 | Observability primitives | implemented in this repo | `crates/stateset-observability`, `deploy/grafana`, `deploy/prometheus` | published SLOs, runbooks, correlated production dashboards, chaos results |
 | Bench harness and perf gates | implemented in this repo | `crates/stateset-benches`, `perf-gates.json` | published benchmark report with hardware, workload, and repeatable methodology |
 | A2A discovery and reputation data model | implemented in this repo | agent-card, identity, and reputation traits and models exist in core crates | standalone normative spec, conformance suite, multi-language reference agents |
@@ -103,6 +118,7 @@ These are defensible claims today:
 - documented PQ migration strategy with explicit residual classical dependencies;
 - observability primitives, benchmark harnesses, and deployment assets present in-repo;
 - A2A identity, discovery, and reputation primitives in code;
+- a frozen `v1.0` OSS compatibility contract with documented deprecation and backport rules;
 - a defined vulnerability-reporting process.
 
 These are not yet defensible as shipped, globally trustworthy claims:
@@ -118,10 +134,9 @@ These are not yet defensible as shipped, globally trustworthy claims:
 
 1. Publish third-party audit scope, reports, and remediation history.
 2. Turn benchmark and observability scaffolding into public operating evidence.
-3. Freeze a `1.0` compatibility contract with migration guarantees and LTS policy.
-4. Split A2A into a standalone normative spec with conformance tests.
-5. Define and publish the `pq hard finality` design before making institutional-grade PQ claims.
-6. Replace hand-maintained tool-count marketing with generated inventories.
+3. Split A2A into a standalone normative spec with conformance tests.
+4. Define and publish the `pq hard finality` design before making institutional-grade PQ claims.
+5. Replace hand-maintained tool-count marketing with generated inventories.
 
 ## Non-Negotiable Selling Rules
 

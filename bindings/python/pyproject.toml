@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "stateset-embedded"
-version = "0.9.8"
+version = "0.9.9"
 description = "Local-first embedded commerce library for Python"
 readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
@@ -13,7 +13,7 @@ authors = [
 ]
 keywords = ["commerce", "ecommerce", "embedded", "sqlite", "local-first"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "License :: OSI Approved :: Apache Software License",
@@ -39,6 +39,20 @@ dev = [
     "pytest-asyncio>=0.21",
     "mypy>=1.0",
     "ruff>=0.1",
+]
+langchain = [
+    "langchain-core",
+]
+crewai = [
+    "crewai",
+]
+autogen = [
+    "autogen-core",
+]
+agents = [
+    "langchain-core",
+    "crewai",
+    "autogen-core",
 ]
 
 [tool.maturin]

@@ -1,3 +1,4 @@
 . "$(dirname "$0")/node-env.sh"
+set -e
 
 npx --no -- commitlint --edit "$1"

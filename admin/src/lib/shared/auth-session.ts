@@ -1,11 +1,7 @@
 import { cookies } from 'next/headers';
 import type { NextRequest, NextResponse } from 'next/server';
 import { AppError } from './errors';
-import {
-  ADMIN_AUTH_DISABLE_FLAG,
-  getBypassAdminUser,
-  isAdminAuthDisabled,
-} from './admin-auth-config';
+import { isAdminAuthDisabled } from './admin-auth-config';
 export {
   ADMIN_AUTH_DISABLE_FLAG,
   getBypassAdminUser,

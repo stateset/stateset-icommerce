@@ -1,6 +1,6 @@
 {
   "name": "stateset-admin",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "private": true,
   "engines": {
     "node": ">=20.20.0",
@@ -19,7 +19,7 @@
     "pretest": "npm run check:env",
     "pretest:coverage": "npm run check:env",
     "preanalyze": "npm run check:env",
-    "lint": "next lint",
+    "lint": "next lint --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run",

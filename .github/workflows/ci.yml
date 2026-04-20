@@ -327,17 +327,33 @@ jobs:
   docs:
     name: Docs
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            cli/package-lock.json
+      - name: Install root tooling
+        run: HUSKY=0 npm ci
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm ci
       - name: Install mdBook
         uses: peaceiris/actions-mdbook@v1
         with:
           mdbook-version: "0.4.40"
-      - name: Build docs
-        run: mdbook build docs
+      - name: Validate docs release surfaces
+        run: |
+          npm run check:doc-tool-refs
+          npm run check:docs:book
+          npm run check:docs:snapshot
 
   release-hygiene:
     name: Release Hygiene
@@ -402,7 +418,7 @@ jobs:
   node-bindings:
     name: Node Bindings
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v6
@@ -425,9 +441,16 @@ jobs:
         working-directory: bindings/node
         run: npm ci
 
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm ci
+
       - name: Check binding package
         working-directory: bindings/node
         run: npm run check
+
+      - name: Smoke JS embedded engine examples
+        run: node ./scripts/ci/check_engine_examples.mjs --js-only
 
   python-bindings:
     name: Python Bindings
@@ -460,9 +483,8 @@ jobs:
         working-directory: bindings/python
         run: maturin develop --release
 
-      - name: Test
-        working-directory: bindings/python
-        run: pytest -q
+      - name: Smoke Python bindings and agent examples
+        run: bash scripts/ci/check_python_bindings.sh
 
   postgres:
     name: Postgres Parity (${{ matrix.suite }})
@@ -897,10 +919,27 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+          cache-dependency-path: cli/package-lock.json
+
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm ci
+
       - name: Generate crate compatibility report
         env:
           COMPAT_REPORT_DIR: artifacts/compatibility
         run: ./scripts/ci/generate_compatibility_report.sh
+
+      - name: Check generated release inventories
+        run: |
+          npm run check:agent-inventory
+          npm run check:mcp-inventory
+          npm run check:workspace-inventory
 
       - name: Upload compatibility report
         uses: actions/upload-artifact@v4
@@ -954,12 +993,13 @@ jobs:
       - dependency-review
       - typos
       - shellcheck
+      - actionlint
       - msrv
       - feature-checks
       - miri
       - no-std
       - docs
-      - version-sync
+      - release-hygiene
       - rust
       - node-bindings
       - python-bindings

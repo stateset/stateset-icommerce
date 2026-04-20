@@ -395,19 +395,35 @@ describe('Zod validation constraints', () => {
       expectPass(schema, { customerId: 'c1', warrantyType: 'extended' });
     });
 
-    it('create_warranty_claim uses claimType enum', async () => {
-      const schema = getSchema(tools, 'create_warranty_claim');
-      expectFail(schema, { warrantyId: 'w1', description: 'Broken', claimType: 'invalid' });
+    it('create_warranty accepts additional supported warrantyType values', async () => {
+      const schema = getSchema(tools, 'create_warranty');
+      expectPass(schema, { customerId: 'c1', warrantyType: 'limited' });
     });
 
-    it('create_warranty_claim accepts valid claimType', async () => {
+    it('create_warranty_claim validates contactEmail format', async () => {
       const schema = getSchema(tools, 'create_warranty_claim');
-      expectPass(schema, { warrantyId: 'w1', description: 'Broken', claimType: 'repair' });
+      expectFail(schema, {
+        warrantyId: 'w1',
+        issueDescription: 'Broken',
+        contactEmail: 'not-an-email',
+      });
+    });
+
+    it('create_warranty_claim accepts supported issue description fields', async () => {
+      const schema = getSchema(tools, 'create_warranty_claim');
+      expectPass(schema, { warrantyId: 'w1', issueDescription: 'Broken' });
+      expectPass(schema, { warrantyId: 'w1', description: 'Broken' });
     });
 
     it('create_warranty rejects non-integer durationMonths', async () => {
       const schema = getSchema(tools, 'create_warranty');
       expectFail(schema, { customerId: 'c1', durationMonths: 6.5 });
+    });
+
+    it('complete_warranty_claim restricts resolution to supported values', async () => {
+      const schema = getSchema(tools, 'complete_warranty_claim');
+      expectFail(schema, { claimId: 'claim-1', resolution: 'exchange' });
+      expectPass(schema, { claimId: 'claim-1', resolution: 'store_credit' });
     });
   });
 

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS } from '../../cli/src/agent-definitions.js';
 import { TOOL_NAMES, getStaticMcpToolDefinitions } from '../../cli/src/mcp-server.js';
-import { SCAFFOLD_MCP_TOOL_NAMES } from '../../cli/src/scaffold-server.js';
+import { getAllStaticMcpToolNames, getStaticMcpServerDefinitions } from '../../cli/src/mcp-server-registry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,12 +38,15 @@ function renderToolAccess(agent, inventory) {
 function buildInventory() {
   const commerceTools = getStaticMcpToolDefinitions();
   const commerceToolNames = new Set(TOOL_NAMES);
-  const scaffoldToolNames = new Set(SCAFFOLD_MCP_TOOL_NAMES);
-  const supportedToolNames = new Set([...commerceToolNames, ...scaffoldToolNames]);
-  const supportedServers = [
-    { name: 'stateset-commerce', toolCount: commerceToolNames.size },
-    { name: 'stateset-scaffold', toolCount: scaffoldToolNames.size },
-  ];
+  const allToolNames = getAllStaticMcpToolNames();
+  const supportedToolNames = new Set(allToolNames);
+  const supportedServers = getStaticMcpServerDefinitions()
+    .map((server) => ({
+      name: server.name,
+      toolCount: server.tools.length,
+      source: server.source,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
   const agents = Object.entries(AGENTS)
     .map(([id, config]) => {
       const tools = Array.isArray(config.tools) ? [...config.tools] : [];
@@ -86,12 +89,12 @@ function buildInventory() {
   return {
     source: {
       agents: 'cli/src/agent-definitions.js',
-      mcpServer: 'cli/src/mcp-server.js',
-      scaffoldServer: 'cli/src/scaffold-server.js',
+      registry: 'cli/src/mcp-server-registry.js',
     },
     totalAgents: agents.length,
     totalCommerceTools: commerceTools.length,
-    totalScaffoldTools: scaffoldToolNames.size,
+    totalScaffoldTools: supportedServers.find((server) => server.name === 'stateset-scaffold')?.toolCount ?? 0,
+    totalX402Tools: supportedServers.find((server) => server.name === 'stateset-x402')?.toolCount ?? 0,
     fullAccessAgentCount: fullAccessAgents.length,
     scopedAgentCount: scopedAgents.length,
     totalScopedToolReferences,
@@ -105,12 +108,17 @@ function renderMarkdownInventory(inventory) {
     ['Total agents', String(inventory.totalAgents)],
     ['Commerce MCP tools', String(inventory.totalCommerceTools)],
     ['Scaffold MCP tools', String(inventory.totalScaffoldTools)],
+    ['x402 MCP tools', String(inventory.totalX402Tools)],
     ['Agents with full commerce access', String(inventory.fullAccessAgentCount)],
     ['Agents with scoped tool sets', String(inventory.scopedAgentCount)],
     ['Scoped tool references', String(inventory.totalScopedToolReferences)],
   ];
 
-  const serverRows = inventory.supportedServers.map((server) => [server.name, String(server.toolCount)]);
+  const serverRows = inventory.supportedServers.map((server) => [
+    server.name,
+    String(server.toolCount),
+    `\`${server.source}\``,
+  ]);
   const agentRows = inventory.agents.map((agent) => [
     `\`${agent.id}\``,
     agent.name,
@@ -122,7 +130,7 @@ function renderMarkdownInventory(inventory) {
   return `# Agent Inventory
 
 This page is generated from the live agent definitions in \`cli/src/agent-definitions.js\`
-and validated against the MCP server export in \`cli/src/mcp-server.js\`.
+and validated against the MCP server registry in \`cli/src/mcp-server-registry.js\`.
 Do not edit it by hand. Regenerate it with:
 
 \`\`\`bash
@@ -137,7 +145,7 @@ ${renderMarkdownTable(['Metric', 'Value'], summaryRows)}
 
 ## Supported MCP Servers
 
-${renderMarkdownTable(['MCP server', 'Tools'], serverRows)}
+${renderMarkdownTable(['MCP server', 'Tools', 'Source'], serverRows)}
 
 ## Agent Registry
 
@@ -183,7 +191,7 @@ async function main() {
     }
 
     console.log(
-      `Agent inventory is up to date (${inventory.totalAgents} agents, ${inventory.totalCommerceTools + inventory.totalScaffoldTools} MCP tools across supported servers).`,
+      `Agent inventory is up to date (${inventory.totalAgents} agents, ${inventory.totalCommerceTools + inventory.totalScaffoldTools + inventory.totalX402Tools} MCP tools across supported servers).`,
     );
     return;
   }
@@ -194,7 +202,7 @@ async function main() {
   await writeFile(markdownOutputPath, markdownContent, 'utf8');
 
   console.log(
-    `Generated agent inventory (${inventory.totalAgents} agents, ${inventory.totalCommerceTools + inventory.totalScaffoldTools} MCP tools across supported servers).`,
+    `Generated agent inventory (${inventory.totalAgents} agents, ${inventory.totalCommerceTools + inventory.totalScaffoldTools + inventory.totalX402Tools} MCP tools across supported servers).`,
   );
 }
 

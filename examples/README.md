@@ -1,6 +1,6 @@
 # StateSet iCommerce Examples
 
-Complete examples, guides, and scripts for StateSet Commerce.
+Complete examples, guides, and scripts for the embedded iCommerce engine.
 
 ## Documentation
 
@@ -11,8 +11,48 @@ Complete examples, guides, and scripts for StateSet Commerce.
 | **[Common Workflows](./workflows.md)** | Step-by-step guides (checkout, returns, inventory, etc.) |
 | **[Troubleshooting](./troubleshooting.md)** | Solutions to common problems |
 | **`examples/agents/openai-embedded-toolkit.mjs`** | Minimal embedded agent example using OpenAI-style JSON-schema tools |
+| **`examples/agents/custom-framework-adapter.mjs`** | Framework-neutral `{ name, description, schema, execute }` adapter surface for custom runtimes |
 | **`examples/agents/framework-adapters.mjs`** | Minimal Vercel AI and LangChain adapter example using the embedded toolkit |
+| **`examples/python/agent_toolkit.py`** | Native Python agent-toolkit example for OpenAI-compatible and framework-neutral runtimes |
+| **`examples/python/openai_tools.py`** | Focused OpenAI-compatible Python example using `stateset_embedded.openai` |
+| **`examples/python/generic_tools.py`** | Focused framework-neutral Python example using `stateset_embedded.generic` |
+| **`examples/python/langchain_tools.py`** | Focused LangChain Python adapter example using `stateset_embedded.langchain` |
+| **`examples/python/crewai_tools.py`** | Focused CrewAI Python adapter example using `stateset_embedded.crewai` |
+| **`examples/python/autogen_tools.py`** | Focused AutoGen Python adapter example using `stateset_embedded.autogen` |
+| **`examples/python/framework_adapters.py`** | Native Python framework-module example for LangChain, CrewAI, and AutoGen-style runtimes |
 | **[`examples/agents/README.md`](./agents/README.md)** | Runnable x402 agent demo flows: paid HTTP, local intents, and metered credits |
+
+## Engine-First Examples
+
+If you are trying to make the iCommerce engine the default commerce kernel for
+agents, start here:
+
+1. `examples/agents/openai-embedded-toolkit.mjs`
+2. `examples/agents/custom-framework-adapter.mjs`
+3. `examples/agents/framework-adapters.mjs`
+4. `examples/python/agent_toolkit.py`
+5. `examples/python/openai_tools.py`
+6. `examples/python/generic_tools.py`
+7. `examples/python/langchain_tools.py`
+8. `examples/python/crewai_tools.py`
+9. `examples/python/autogen_tools.py`
+10. `examples/python/framework_adapters.py`
+
+Those examples cover the primary adoption surfaces for agent frameworks:
+OpenAI-style tool loops, framework-neutral adapters, native wrappers for
+Vercel AI SDK and LangChain, direct JS helper modules under
+`@stateset/embedded/openai`, `@stateset/embedded/generic`,
+`@stateset/embedded/langchain`, and `@stateset/embedded/vercel-ai`, and direct Python helper modules for OpenAI,
+framework-neutral runtimes, LangChain, CrewAI, and AutoGen over the
+`stateset-embedded` binding.
+
+When you run them inside this repository, they use workspace modules directly.
+When you copy the snippets into an external app, the same examples resolve the
+published `@stateset/embedded` helper subpaths such as
+`@stateset/embedded/openai`, `@stateset/embedded/generic`,
+`@stateset/embedded/langchain`, and `@stateset/embedded/vercel-ai`. Install
+`@stateset/cli` alongside them for now so the advanced toolkit runtime is
+available too.
 
 ## Scripts
 
@@ -88,18 +128,14 @@ cd examples/kotlin
 ./gradlew run
 # Or build a jar:
 ./gradlew jar
-java -jar build/libs/kotlin-0.8.0.jar
+java -jar build/libs/kotlin-0.9.9.jar
 ```
 
 ### Swift
 
 ```bash
 cd examples/swift
-# Link against the Swift package
 swift run
-# Or compile directly:
-swiftc -I ../bindings/swift/Sources -L ../target/release -lstateset_swift BasicUsage.swift -o basic_usage
-./basic_usage
 ```
 
 ### C# / .NET
@@ -124,8 +160,8 @@ cd examples/java
 # With Maven
 mvn compile exec:java -Dexec.mainClass="com.stateset.examples.BasicUsage"
 # Or compile manually
-javac -cp path/to/stateset-embedded.jar BasicUsage.java
-java -cp .:path/to/stateset-embedded.jar com.stateset.examples.BasicUsage
+javac -d . -cp path/to/stateset-embedded-0.9.9.jar BasicUsage.java
+java -cp .:path/to/stateset-embedded-0.9.9.jar com.stateset.examples.BasicUsage
 ```
 
 ## Example Output

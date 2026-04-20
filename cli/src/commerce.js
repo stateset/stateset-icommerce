@@ -155,42 +155,56 @@ export function adaptCommerceApis(commerce, extraApiNames = []) {
     return accessorCache.get(name);
   };
 
-  return /** @type {T} */ (new Proxy(target, {
-    get(target, prop, receiver) {
-      if (typeof prop === 'string' && compatibleApiNames.has(prop) && hasCommerceApi(target, prop)) {
-        return getAccessor(prop);
-      }
-
-      const value = Reflect.get(target, prop, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-    has(target, prop) {
-      if (typeof prop === 'string' && compatibleApiNames.has(prop) && hasCommerceApi(target, prop)) {
-        return true;
-      }
-      return Reflect.has(target, prop);
-    },
-    ownKeys(target) {
-      const keys = new Set(Reflect.ownKeys(target));
-      for (const name of compatibleApiNames) {
-        if (hasCommerceApi(target, name)) {
-          keys.add(name);
+  return /** @type {T} */ (
+    new Proxy(target, {
+      get(target, prop, receiver) {
+        if (
+          typeof prop === 'string' &&
+          compatibleApiNames.has(prop) &&
+          hasCommerceApi(target, prop)
+        ) {
+          return getAccessor(prop);
         }
-      }
-      return [...keys];
-    },
-    getOwnPropertyDescriptor(target, prop) {
-      if (typeof prop === 'string' && compatibleApiNames.has(prop) && hasCommerceApi(target, prop)) {
-        return {
-          configurable: true,
-          enumerable: true,
-          writable: false,
-          value: getAccessor(prop),
-        };
-      }
-      return Reflect.getOwnPropertyDescriptor(target, prop);
-    },
-  }));
+
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+      has(target, prop) {
+        if (
+          typeof prop === 'string' &&
+          compatibleApiNames.has(prop) &&
+          hasCommerceApi(target, prop)
+        ) {
+          return true;
+        }
+        return Reflect.has(target, prop);
+      },
+      ownKeys(target) {
+        const keys = new Set(Reflect.ownKeys(target));
+        for (const name of compatibleApiNames) {
+          if (hasCommerceApi(target, name)) {
+            keys.add(name);
+          }
+        }
+        return [...keys];
+      },
+      getOwnPropertyDescriptor(target, prop) {
+        if (
+          typeof prop === 'string' &&
+          compatibleApiNames.has(prop) &&
+          hasCommerceApi(target, prop)
+        ) {
+          return {
+            configurable: true,
+            enumerable: true,
+            writable: false,
+            value: getAccessor(prop),
+          };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, prop);
+      },
+    })
+  );
 }
 
 /**

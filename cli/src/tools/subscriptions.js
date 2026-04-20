@@ -50,7 +50,10 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { planId } = params;
-      const plan = await commerce.getSubscriptionPlan(planId);
+      let plan = await commerce.getSubscriptionPlan(planId);
+      if (!plan && typeof commerce.getSubscriptionPlanByCode === 'function') {
+        plan = await commerce.getSubscriptionPlanByCode(planId);
+      }
       if (!plan) return { success: false, error: 'Plan not found' };
       return { success: true, plan };
     },
@@ -106,6 +109,27 @@ export const subscriptionTools = [
         };
       const plan = await commerce.activateSubscriptionPlan(planId);
       return { success: true, message: `Plan "${plan.name}" activated`, plan };
+    },
+  },
+  {
+    name: 'update_subscription_plan',
+    description: 'Update an existing subscription plan. Requires --apply flag.',
+    inputSchema: {
+      planId: z.string().min(1).describe('Plan ID'),
+      updates: z.record(z.string(), z.any()).describe('Partial plan fields to update'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Update operation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable write operations.',
+          wouldUpdate: { planId: params.planId, updates: params.updates },
+        };
+      }
+      const plan = await commerce.updateSubscriptionPlan(params.planId, params.updates);
+      return { success: true, message: `Plan "${plan.name}" updated`, plan };
     },
   },
   {
@@ -165,7 +189,10 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { subscriptionId } = params;
-      const subscription = await commerce.getSubscription(subscriptionId);
+      let subscription = await commerce.getSubscription(subscriptionId);
+      if (!subscription && typeof commerce.getSubscriptionByNumber === 'function') {
+        subscription = await commerce.getSubscriptionByNumber(subscriptionId);
+      }
       if (!subscription) return { success: false, error: 'Subscription not found' };
       return subscription;
     },
@@ -229,6 +256,32 @@ export const subscriptionTools = [
       return {
         success: true,
         message: `Subscription ${subscription.subscriptionNumber} paused`,
+        subscription,
+      };
+    },
+  },
+  {
+    name: 'update_subscription',
+    description:
+      'Update subscription fields such as payment method or metadata. Requires --apply flag.',
+    inputSchema: {
+      subscriptionId: z.string().min(1).describe('Subscription ID'),
+      updates: z.record(z.string(), z.any()).describe('Partial subscription fields to update'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Update operation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable write operations.',
+          wouldUpdate: { subscriptionId: params.subscriptionId, updates: params.updates },
+        };
+      }
+      const subscription = await commerce.updateSubscription(params.subscriptionId, params.updates);
+      return {
+        success: true,
+        message: `Subscription ${subscription.subscriptionNumber} updated`,
         subscription,
       };
     },

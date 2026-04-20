@@ -7,6 +7,7 @@ import {
   createToolRegistry,
 } from '../../src/tools/index.js';
 import { getStaticMcpToolDefinitions } from '../../src/mcp-server.js';
+import { AGENTS } from '../../src/agent-definitions.js';
 
 // ============================================================================
 // ToolRegistry — constructor
@@ -276,19 +277,46 @@ describe('AGENT_TOOL_CATEGORIES', () => {
     assert.ok(AGENT_TOOL_CATEGORIES.checkout.includes('carts'));
   });
 
+  it('checkout agent also loads customers for customer lookup tools', () => {
+    assert.ok(AGENT_TOOL_CATEGORIES.checkout.includes('customers'));
+  });
+
   it('analytics agent includes analytics', () => {
     assert.ok(AGENT_TOOL_CATEGORIES.analytics.includes('analytics'));
+  });
+
+  it('promotions agent includes carts for cart-level promotion operations', () => {
+    assert.ok(AGENT_TOOL_CATEGORIES.promotions.includes('carts'));
   });
 
   it('agents mapping includes multi-agent runtime categories', () => {
     assert.ok(AGENT_TOOL_CATEGORIES.agents.includes('agent-runtime'));
     assert.ok(AGENT_TOOL_CATEGORIES.agents.includes('agent-cards'));
     assert.ok(AGENT_TOOL_CATEGORIES.agents.includes('a2a'));
+    assert.ok(AGENT_TOOL_CATEGORIES.agents.includes('x402'));
   });
 
   it('storefront mapping exists even though scaffold tools are served elsewhere', () => {
     assert.ok('storefront' in AGENT_TOOL_CATEGORIES);
     assert.deepStrictEqual(AGENT_TOOL_CATEGORIES.storefront, []);
+  });
+
+  it('registry categories cover every explicit commerce tool listed on specialized agents', async () => {
+    for (const [agentName, agent] of Object.entries(AGENTS)) {
+      if (agentName === 'customer-service' || agentName === 'storefront') continue;
+
+      const registry = createToolRegistry();
+      await registry.loadForAgent(agentName);
+      const loadedNames = new Set(
+        registry.getAll().map((tool) => `mcp__stateset-commerce__${tool.name}`),
+      );
+
+      const missing = agent.tools.filter(
+        (toolName) => toolName.startsWith('mcp__stateset-commerce__') && !loadedNames.has(toolName),
+      );
+
+      assert.deepStrictEqual(missing, [], `${agentName} has tools not covered by its registry categories`);
+    }
   });
 });
 

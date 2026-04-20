@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.stateset"
-version = "0.8.0"
+version = "0.9.9"
 
 repositories {
     mavenCentral()
@@ -49,6 +49,7 @@ tasks.jar {
 publishing {
     publications {
         create<MavenPublication>("maven") {
+            artifactId = "embedded-kotlin"
             from(components["kotlin"])
 
             pom {

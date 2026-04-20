@@ -105,6 +105,22 @@ export const shipmentTools = [
   },
 
   {
+    name: 'get_shipment',
+    description: 'Get a shipment by ID.',
+    inputSchema: {
+      shipmentId: z.string().min(1).describe('Shipment ID'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const shipment = await commerce.shipments.get(params.shipmentId);
+      if (!shipment) {
+        return { success: false, error: 'Shipment not found' };
+      }
+      return { success: true, shipment };
+    },
+  },
+
+  {
     name: 'create_shipment',
     description: 'Create a shipment for an order.',
     inputSchema: {
@@ -128,6 +144,24 @@ export const shipmentTools = [
   },
 
   {
+    name: 'ship_shipment',
+    description: 'Mark a shipment as shipped with an optional tracking number.',
+    inputSchema: {
+      shipmentId: z.string().min(1).describe('Shipment ID'),
+      trackingNumber: z.string().optional().describe('Carrier tracking number'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Ship shipment', params);
+      }
+
+      const shipment = await commerce.shipments.ship(params.shipmentId, params.trackingNumber);
+      return { success: true, message: 'Shipment marked as shipped', shipment };
+    },
+  },
+
+  {
     name: 'deliver_shipment',
     description: 'Mark a shipment as delivered.',
     inputSchema: {
@@ -142,6 +176,23 @@ export const shipmentTools = [
 
       const shipment = await commerce.shipments.deliver(shipmentId);
       return { success: true, message: 'Shipment delivered', shipment };
+    },
+  },
+
+  {
+    name: 'cancel_shipment',
+    description: 'Cancel a shipment before delivery is completed.',
+    inputSchema: {
+      shipmentId: z.string().min(1).describe('Shipment ID'),
+    },
+    permission: 'delete',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Cancel shipment', params);
+      }
+
+      const shipment = await commerce.shipments.cancel(params.shipmentId);
+      return { success: true, message: 'Shipment cancelled', shipment };
     },
   },
 

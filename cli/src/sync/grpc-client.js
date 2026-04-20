@@ -114,8 +114,7 @@ function toProtoPublicKeyBundle(bundle) {
     ed25519_public_key: bundle.ed25519PublicKey ?? bundle.ed25519_public_key ?? null,
     ml_dsa_65_public_key: bundle.mlDsa65PublicKey ?? bundle.ml_dsa_65_public_key ?? null,
     x25519_public_key: bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null,
-    ml_kem_768_public_key:
-      bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
+    ml_kem_768_public_key: bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
   };
 }
 
@@ -228,11 +227,7 @@ function toProtoRecipientWrap(wrap) {
       wrap.wrapNonce ?? wrap.wrap_nonce ?? wrap.wrap_nonce_b64u ?? null,
     ),
     wrapped_key: fromBase64UrlOrBuffer(
-      wrap.wrappedKey ??
-        wrap.wrapped_key ??
-        wrap.wrapped_key_b64u ??
-        wrap.ct_b64u ??
-        null,
+      wrap.wrappedKey ?? wrap.wrapped_key ?? wrap.wrapped_key_b64u ?? wrap.ct_b64u ?? null,
     ),
   };
 }
@@ -246,8 +241,7 @@ function fromProtoRecipientWrap(wrap) {
     recipientKid: Number(wrap.recipient_kid ?? wrap.recipientKid ?? 0),
     wrapScheme: Number(wrap.wrap_scheme ?? wrap.wrapScheme ?? 0),
     x25519Enc: wrap.x25519_enc?.length ? toBase64Url(wrap.x25519_enc) : null,
-    mlKemCiphertext:
-      wrap.ml_kem_ciphertext?.length ? toBase64Url(wrap.ml_kem_ciphertext) : null,
+    mlKemCiphertext: wrap.ml_kem_ciphertext?.length ? toBase64Url(wrap.ml_kem_ciphertext) : null,
     wrapNonce: wrap.wrap_nonce?.length ? toBase64Url(wrap.wrap_nonce) : null,
     wrappedKey: wrap.wrapped_key?.length ? toBase64Url(wrap.wrapped_key) : null,
   };
@@ -352,7 +346,10 @@ function fromProtoEncryptedPayload(payloadEncrypted) {
     normalized.key_wrap_params = payloadEncrypted.key_wrap_params;
   }
 
-  if (Array.isArray(payloadEncrypted.recipient_wraps) && payloadEncrypted.recipient_wraps.length > 0) {
+  if (
+    Array.isArray(payloadEncrypted.recipient_wraps) &&
+    payloadEncrypted.recipient_wraps.length > 0
+  ) {
     normalized.recipientWraps = payloadEncrypted.recipient_wraps
       .map((wrap) => fromProtoRecipientWrap(wrap))
       .filter(Boolean);
@@ -1212,9 +1209,7 @@ export class GrpcSequencerClient extends EventEmitter {
       public_key: keyInfo.publicKey,
       public_key_bundle: toProtoPublicKeyBundle(keyInfo.publicKeyBundle),
       proof_of_possession: keyInfo.proofOfPossession || Buffer.alloc(0),
-      proof_of_possession_bundle: toProtoProofOfPossessionBundle(
-        keyInfo.proofOfPossessionBundle,
-      ),
+      proof_of_possession_bundle: toProtoProofOfPossessionBundle(keyInfo.proofOfPossessionBundle),
     };
 
     if (keyInfo.validFrom) {
@@ -1336,9 +1331,10 @@ export class GrpcSequencerClient extends EventEmitter {
    * @returns {boolean}
    */
   verifyReceiptSignature(receipt, sequencerPublicKey) {
-    const receiptHash = typeof receipt.receiptHash === 'string'
-      ? hexToBuffer(receipt.receiptHash)
-      : receipt.receiptHash;
+    const receiptHash =
+      typeof receipt.receiptHash === 'string'
+        ? hexToBuffer(receipt.receiptHash)
+        : receipt.receiptHash;
     if (!receiptHash || receiptHash.length !== 32) {
       return false;
     }
@@ -1355,21 +1351,29 @@ export class GrpcSequencerClient extends EventEmitter {
       // Profile mismatch — still attempt verification
     }
 
-    const pk = typeof sequencerPublicKey === 'object' && !Buffer.isBuffer(sequencerPublicKey)
-      ? sequencerPublicKey
-      : { ed25519PublicKey: sequencerPublicKey };
+    const pk =
+      typeof sequencerPublicKey === 'object' && !Buffer.isBuffer(sequencerPublicKey)
+        ? sequencerPublicKey
+        : { ed25519PublicKey: sequencerPublicKey };
 
     if (scheme === SIGNATURE_SCHEME_ML_DSA_65 && bundle?.mlDsa65Signature && pk?.mlDsa65PublicKey) {
       try {
-        const sig = typeof bundle.mlDsa65Signature === 'string'
-          ? hexToBuffer(bundle.mlDsa65Signature) : bundle.mlDsa65Signature;
+        const sig =
+          typeof bundle.mlDsa65Signature === 'string'
+            ? hexToBuffer(bundle.mlDsa65Signature)
+            : bundle.mlDsa65Signature;
         return verifyEventSignatureStrict(receiptHash, sig, pk);
       } catch {
         return false;
       }
     }
 
-    if (scheme === SIGNATURE_SCHEME_ED25519_ML_DSA_65 && bundle && pk?.ed25519PublicKey && pk?.mlDsa65PublicKey) {
+    if (
+      scheme === SIGNATURE_SCHEME_ED25519_ML_DSA_65 &&
+      bundle &&
+      pk?.ed25519PublicKey &&
+      pk?.mlDsa65PublicKey
+    ) {
       try {
         return verifyEventSignatureHybrid(receiptHash, bundle, pk);
       } catch {

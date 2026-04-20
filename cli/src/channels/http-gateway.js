@@ -184,6 +184,329 @@ function validateBrowserUrl(value) {
   return null;
 }
 
+function toOpenapiPath(pathname) {
+  return String(pathname || '/').replace(/:([A-Za-z0-9_]+)/g, '{$1}');
+}
+
+const BUILTIN_HTTP_ROUTE_BLUEPRINTS = Object.freeze([
+  {
+    method: 'GET',
+    path: '/health',
+    summary: 'Health check',
+    description: 'Gateway liveness status.',
+    tags: ['system'],
+  },
+  {
+    method: 'GET',
+    path: '/ready',
+    summary: 'Readiness check',
+    description: 'Gateway readiness and dependency checks.',
+    tags: ['system'],
+  },
+  {
+    method: 'GET',
+    path: '/.well-known/service-info',
+    summary: 'MPP service info',
+    description: 'Machine Payments Protocol service metadata for the HTTP gateway.',
+    tags: ['discovery'],
+  },
+  {
+    method: 'GET',
+    path: '/openapi.json',
+    summary: 'Gateway OpenAPI discovery',
+    description: 'OpenAPI discovery document for built-in and plugin HTTP routes.',
+    tags: ['discovery'],
+  },
+  {
+    method: 'GET',
+    path: '/metrics',
+    summary: 'Metrics summary',
+    description: 'Gateway metrics summary.',
+    tags: ['observability'],
+  },
+  {
+    method: 'GET',
+    path: '/agent/queue',
+    summary: 'Agent queue stats',
+    description: 'Inspect queue-lane status for the agent runtime.',
+    tags: ['agent'],
+  },
+  {
+    method: 'DELETE',
+    path: '/agent/queue',
+    summary: 'Clear agent queue lanes',
+    description: 'Remove one or more agent queue lanes.',
+    tags: ['agent'],
+  },
+  {
+    method: 'GET',
+    path: '/plugins',
+    summary: 'List plugins',
+    description: 'List registered gateway plugins.',
+    tags: ['plugins'],
+  },
+  {
+    method: 'POST',
+    path: '/plugins/:id/enable',
+    summary: 'Enable plugin',
+    description: 'Enable a configured gateway plugin.',
+    tags: ['plugins'],
+  },
+  {
+    method: 'POST',
+    path: '/plugins/:id/disable',
+    summary: 'Disable plugin',
+    description: 'Disable a configured gateway plugin.',
+    tags: ['plugins'],
+  },
+  {
+    method: 'GET',
+    path: '/commands',
+    summary: 'List commands',
+    description: 'List registered CLI command metadata exposed by the gateway.',
+    tags: ['commands'],
+  },
+  {
+    method: 'GET',
+    path: '/skills',
+    summary: 'List skills',
+    description: 'List installed skills available to the gateway runtime.',
+    tags: ['skills'],
+  },
+  {
+    method: 'GET',
+    path: '/skills/marketplace',
+    summary: 'Marketplace catalog',
+    description: 'Return the local skills marketplace catalog.',
+    tags: ['skills'],
+  },
+  {
+    method: 'GET',
+    path: '/skills/categories',
+    summary: 'Skill categories',
+    description: 'Return skill category statistics.',
+    tags: ['skills'],
+  },
+  {
+    method: 'GET',
+    path: '/skills/:name',
+    summary: 'Skill details',
+    description: 'Return metadata for one installed skill.',
+    tags: ['skills'],
+  },
+  {
+    method: 'GET',
+    path: '/daemon',
+    summary: 'Daemon status',
+    description: 'Return local gateway daemon status and process metadata.',
+    tags: ['admin'],
+  },
+  {
+    method: 'GET',
+    path: '/remote-access',
+    summary: 'Remote access status',
+    description: 'Return local, Tailscale, and tunnel access metadata.',
+    tags: ['admin'],
+  },
+  {
+    method: 'GET',
+    path: '/voice/status',
+    summary: 'Voice status',
+    description: 'Return voice subsystem status.',
+    tags: ['voice'],
+  },
+  {
+    method: 'POST',
+    path: '/voice/transcribe',
+    summary: 'Transcribe audio',
+    description: 'Transcribe uploaded audio with the voice subsystem.',
+    tags: ['voice'],
+  },
+  {
+    method: 'POST',
+    path: '/voice/synthesize',
+    summary: 'Synthesize speech',
+    description: 'Synthesize speech for the supplied text.',
+    tags: ['voice'],
+  },
+  {
+    method: 'POST',
+    path: '/voice/session/enable/:sessionId',
+    summary: 'Enable voice session',
+    description: 'Enable voice mode for a session.',
+    tags: ['voice'],
+  },
+  {
+    method: 'POST',
+    path: '/voice/session/disable/:sessionId',
+    summary: 'Disable voice session',
+    description: 'Disable voice mode for a session.',
+    tags: ['voice'],
+  },
+  {
+    method: 'GET',
+    path: '/browser/status',
+    summary: 'Browser status',
+    description: 'Return browser subsystem status.',
+    tags: ['browser'],
+  },
+  {
+    method: 'POST',
+    path: '/browser/navigate',
+    summary: 'Navigate browser',
+    description: 'Navigate the browser subsystem to a URL.',
+    tags: ['browser'],
+  },
+  {
+    method: 'POST',
+    path: '/browser/screenshot',
+    summary: 'Browser screenshot',
+    description: 'Capture a screenshot from the browser subsystem.',
+    tags: ['browser'],
+  },
+  {
+    method: 'POST',
+    path: '/browser/evaluate',
+    summary: 'Evaluate browser expression',
+    description: 'Evaluate a restricted browser expression.',
+    tags: ['browser'],
+  },
+  {
+    method: 'POST',
+    path: '/browser/click',
+    summary: 'Browser click',
+    description: 'Click a selector in the browser subsystem.',
+    tags: ['browser'],
+  },
+  {
+    method: 'POST',
+    path: '/browser/type',
+    summary: 'Browser type',
+    description: 'Type into a selector in the browser subsystem.',
+    tags: ['browser'],
+  },
+  {
+    method: 'GET',
+    path: '/browser/content',
+    summary: 'Browser content',
+    description: 'Return browser page content or HTML.',
+    tags: ['browser'],
+  },
+  {
+    method: 'GET',
+    path: '/browser/links',
+    summary: 'Browser links',
+    description: 'Extract links from the current browser page.',
+    tags: ['browser'],
+  },
+  {
+    method: 'POST',
+    path: '/browser/close',
+    summary: 'Close browser',
+    description: 'Close the browser subsystem session.',
+    tags: ['browser'],
+  },
+  {
+    method: 'GET',
+    path: '/memory/stats',
+    summary: 'Memory stats',
+    description: 'Return memory subsystem statistics.',
+    tags: ['memory'],
+  },
+  {
+    method: 'POST',
+    path: '/memory/save',
+    summary: 'Save memory',
+    description: 'Persist a memory entry.',
+    tags: ['memory'],
+  },
+  {
+    method: 'POST',
+    path: '/memory/search',
+    summary: 'Search memory',
+    description: 'Search stored memories.',
+    tags: ['memory'],
+  },
+  {
+    method: 'POST',
+    path: '/memory/vector-search',
+    summary: 'Vector search memory',
+    description: 'Vector-search stored memories.',
+    tags: ['memory'],
+  },
+  {
+    method: 'POST',
+    path: '/memory/hybrid-search',
+    summary: 'Hybrid search memory',
+    description: 'Hybrid-search stored memories.',
+    tags: ['memory'],
+  },
+  {
+    method: 'GET',
+    path: '/memory/recent/:channel/:senderId',
+    summary: 'Recent memories',
+    description: 'List recent memories for one channel and sender.',
+    tags: ['memory'],
+  },
+  {
+    method: 'POST',
+    path: '/memory/backfill',
+    summary: 'Backfill memories',
+    description: 'Backfill conversation history into memory.',
+    tags: ['memory'],
+  },
+  {
+    method: 'DELETE',
+    path: '/memory/:id',
+    summary: 'Delete memory',
+    description: 'Delete one stored memory entry.',
+    tags: ['memory'],
+  },
+  {
+    method: 'GET',
+    path: '/heartbeat/status',
+    summary: 'Heartbeat status',
+    description: 'Return heartbeat subsystem status.',
+    tags: ['heartbeat'],
+  },
+  {
+    method: 'GET',
+    path: '/heartbeat/checks',
+    summary: 'List heartbeat checks',
+    description: 'List heartbeat checks.',
+    tags: ['heartbeat'],
+  },
+  {
+    method: 'POST',
+    path: '/heartbeat/checks/:id/run',
+    summary: 'Run heartbeat check',
+    description: 'Run one heartbeat check immediately.',
+    tags: ['heartbeat'],
+  },
+  {
+    method: 'POST',
+    path: '/heartbeat/checks/:id/enable',
+    summary: 'Enable heartbeat check',
+    description: 'Enable one heartbeat check.',
+    tags: ['heartbeat'],
+  },
+  {
+    method: 'POST',
+    path: '/heartbeat/checks/:id/disable',
+    summary: 'Disable heartbeat check',
+    description: 'Disable one heartbeat check.',
+    tags: ['heartbeat'],
+  },
+]);
+
+export function getBuiltinHttpRouteDefinitions() {
+  return BUILTIN_HTTP_ROUTE_BLUEPRINTS.map((route) => ({
+    ...route,
+    openapiPath: toOpenapiPath(route.path),
+    level: getRequiredLevel(route.path, route.method) || 'none',
+  }));
+}
+
 /**
  * Parse JSON body from an incoming request.
  * @param {http.IncomingMessage} req
@@ -769,7 +1092,7 @@ export class HttpGateway {
           transportType: 'http',
         });
         const document = buildHttpRouteDiscoveryDocument({
-          routes: getPluginRegistry().getRoutes(),
+          routes: [...getBuiltinHttpRouteDefinitions(), ...getPluginRegistry().getRoutes()],
           serviceInfo,
           serverUrl: origin,
         });

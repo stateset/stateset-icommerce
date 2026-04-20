@@ -78,7 +78,11 @@ export function createProofGenerator(cryptoModule) {
       typeof crypto.verifyEventSignatureHybrid === 'function'
     ) {
       try {
-        return crypto.verifyEventSignatureHybrid(eventSigningHash, signatureBundle, publicKeyBundle);
+        return crypto.verifyEventSignatureHybrid(
+          eventSigningHash,
+          signatureBundle,
+          publicKeyBundle,
+        );
       } catch {
         return false;
       }

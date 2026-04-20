@@ -5,25 +5,31 @@
 ### Rust
 
 ```bash
-cargo add stateset-embedded
+cargo add stateset-sdk --features full
 ```
+
+Use `stateset-sdk` for the recommended Rust entry point. Reach for
+`stateset-embedded` directly when you specifically want the lower-level core
+crate without the facade re-exports.
 
 ### Node.js
 
 ```bash
-npm install @stateset/embedded@0.9.8
+npm install @stateset/embedded@0.9.9
 ```
 
 ### Python
 
 ```bash
-pip install stateset-embedded==0.9.8
+pip install stateset-embedded==0.9.9
+# or install optional framework adapters as well
+pip install "stateset-embedded[agents]==0.9.9"
 ```
 
 ### CLI (global)
 
 ```bash
-npm install -g @stateset/cli@0.9.8
+npm install -g @stateset/cli@0.9.9
 stateset-init --quickstart
 ```
 
@@ -32,7 +38,7 @@ stateset-init --quickstart
 ### Rust
 
 ```rust
-use stateset_embedded::Commerce;
+use stateset_sdk::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let commerce = Commerce::new("./store.db")?;
@@ -111,34 +117,60 @@ stateset "find products similar to wireless earbuds"
 
 ## AI Agents
 
-### Embedded Toolkit (OpenAI, Vercel AI SDK, LangChain)
+### Embedded Toolkit (OpenAI, Vercel AI SDK, LangChain, Python runtimes)
 
 ```bash
-npm install @stateset/cli@0.9.8 @stateset/embedded@0.9.8
+npm install @stateset/cli@0.9.9 @stateset/embedded@0.9.9
 ```
 
 ```javascript
 import { Commerce } from '@stateset/embedded';
-import { createEmbeddedAgentToolkit } from '@stateset/cli/agent-toolkit';
+import { createOpenAITools, executeOpenAIToolCall } from '@stateset/embedded/openai';
+import { createToolDescriptors } from '@stateset/embedded/generic';
 
 const commerce = new Commerce('./store.db');
-const toolkit = createEmbeddedAgentToolkit({
-    commerce,
-    allowApply: false   // Read-only by default
+const tools = createOpenAITools(commerce, {
+    filter: ['list_customers']
 });
-
-// Get tools in OpenAI format
-const tools = toolkit.getTools({ format: 'openai' });
-
-// Execute a tool
-const result = await toolkit.executeTool('list_customers');
-
-// Simulate a write (preview without executing)
-const preview = await toolkit.simulateMutation({
-    tool: 'create_order',
-    params: { customerId: 'cust-001', items: [...] }
+const execution = await executeOpenAIToolCall(commerce, {
+    call_id: 'demo_call_1',
+    function: {
+        name: 'list_customers',
+        arguments: '{}'
+    }
+});
+const descriptors = createToolDescriptors(commerce, {
+    filter: ['list_customers', 'list_orders', 'get_sales_summary']
 });
 ```
+
+Use `@stateset/embedded/agent-toolkit` when you need the full advanced runtime:
+preview-mode write simulation, priced-tool helpers, delegation through
+`autonomousEngine`, or planning/replay APIs.
+
+For Python agent runtimes:
+
+```python
+from stateset_embedded import Commerce, create_embedded_agent_toolkit
+
+commerce = Commerce(":memory:")
+toolkit = create_embedded_agent_toolkit(commerce, allow_apply=False)
+tools = toolkit.get_tools(format="openai")
+```
+
+For framework-first Python hosts:
+
+```python
+from stateset_embedded.generic import create_tool_descriptors, create_callable_registry
+from stateset_embedded.openai import create_openai_tools, execute_openai_tool_call
+from stateset_embedded.langchain import create_langchain_tools
+from stateset_embedded.crewai import create_crewai_tools
+from stateset_embedded.autogen import create_autogen_tools
+```
+
+Runnable examples for those paths live under `examples/python/`:
+`openai_tools.py`, `generic_tools.py`, `langchain_tools.py`, `crewai_tools.py`, and
+`autogen_tools.py`.
 
 If your runtime needs agent-to-agent delegation, pass `autonomousEngine` and turn on `allowApply: true`; `delegate_to_agent` remains preview-only until writes are enabled.
 

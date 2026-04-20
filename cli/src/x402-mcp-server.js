@@ -833,4 +833,44 @@ export const X402_MCP_TOOL_NAMES = [
   'x402_balance',
 ];
 
+const STATIC_X402_TOOL_DEFINITIONS = Object.freeze([
+  {
+    name: 'x402_call',
+    description: 'Pay and call a URL with automatic x402 handling.',
+    permission: 'write',
+    policyDomain: 'x402',
+  },
+  {
+    name: 'x402_budget_status',
+    description: 'Show remaining daily/per-call budget and local balance tracking.',
+    permission: 'read',
+    policyDomain: 'x402',
+  },
+  {
+    name: 'x402_history',
+    description: 'List recent x402 payments recorded locally.',
+    permission: 'read',
+    policyDomain: 'x402',
+  },
+  {
+    name: 'x402_receipt',
+    description: 'Fetch a receipt for a payment intent from the sequencer.',
+    permission: 'read',
+    policyDomain: 'x402',
+  },
+  {
+    name: 'x402_balance',
+    description: 'Check wallet balance for the payer address on a chain (optional).',
+    permission: 'read',
+    policyDomain: 'x402',
+  },
+]);
+
+export function getStaticX402ToolDefinitions() {
+  return STATIC_X402_TOOL_DEFINITIONS.map((toolDef) => ({
+    ...toolDef,
+    inputSchema: {},
+  }));
+}
+
 export default createX402McpServer;

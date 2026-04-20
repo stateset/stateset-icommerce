@@ -669,6 +669,10 @@ describe('HttpGateway plugin payment routes', () => {
     assert.strictEqual(res.body.openapi, '3.1.0');
     assert.strictEqual(res.body['x-service-info'].protocol, 'mpp');
     assert.strictEqual(res.body['x-service-info'].transport.type, 'http');
+    assert.ok(res.body.paths['/health'].get);
+    assert.ok(res.body.paths['/memory/stats'].get);
+    assert.ok(res.body.paths['/heartbeat/checks/{id}/run'].post);
+    assert.strictEqual(res.body.paths['/browser/evaluate'].post['x-stateset-permission-level'], 'admin');
     assert.strictEqual(res.body.paths['/payable'].post['x-payment-info'].amount.asset, 'BTC');
     assert.strictEqual(res.body.paths['/headers'].get['x-payment-info'], undefined);
   });

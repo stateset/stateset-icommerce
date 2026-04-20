@@ -17,7 +17,8 @@
 //! ```rust,ignore
 //! use stateset_embedded::notifications::{NotificationConfig, NotificationService, WebhookEmailBackend};
 //!
-//! let backend = WebhookEmailBackend::new("https://relay.example.com/email", Some("hmac-secret"));
+//! let backend = WebhookEmailBackend::new("https://relay.example.com/email", Some("hmac-secret"))
+//!     .with_outbound_allowlist(["relay.example.com"]);
 //! let config = NotificationConfig {
 //!     from_name: "Acme Store".into(),
 //!     from_email: "orders@acme.com".into(),
@@ -28,10 +29,13 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use stateset_core::CommerceEvent;
+use stateset_core::{CommerceEvent, validate_email};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+
+#[cfg(feature = "events")]
+use crate::events::validate_outbound_webhook_target_url;
 
 /// A function that resolves a commerce event to a recipient email address.
 pub type RecipientResolver = Arc<dyn Fn(&CommerceEvent) -> Option<String> + Send + Sync>;
@@ -131,6 +135,7 @@ pub trait EmailBackend: Send + Sync + fmt::Debug {
 pub struct WebhookEmailBackend {
     url: String,
     secret: Option<String>,
+    outbound_allowlist: Vec<String>,
     #[cfg(feature = "events")]
     client: reqwest::blocking::Client,
 }
@@ -140,6 +145,7 @@ impl fmt::Debug for WebhookEmailBackend {
         f.debug_struct("WebhookEmailBackend")
             .field("url", &self.url)
             .field("has_secret", &self.secret.is_some())
+            .field("outbound_allowlist", &self.outbound_allowlist)
             .finish()
     }
 }
@@ -157,9 +163,31 @@ impl WebhookEmailBackend {
         Self {
             url: url.into(),
             secret,
+            outbound_allowlist: Vec::new(),
             #[cfg(feature = "events")]
             client,
         }
+    }
+
+    /// Restrict outbound webhook delivery to a normalized host allowlist.
+    ///
+    /// Supported entries:
+    /// - `example.com`
+    /// - `*.example.com`
+    #[must_use]
+    pub fn with_outbound_allowlist<I, S>(mut self, entries: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.outbound_allowlist = entries
+            .into_iter()
+            .filter_map(|entry| {
+                let normalized = entry.as_ref().trim().trim_end_matches('.').to_ascii_lowercase();
+                if normalized.is_empty() { None } else { Some(normalized) }
+            })
+            .collect();
+        self
     }
 
     /// Compute HMAC-SHA256 signature for a payload.
@@ -178,11 +206,15 @@ impl WebhookEmailBackend {
 
 impl EmailBackend for WebhookEmailBackend {
     fn deliver(&self, email: &TransactionalEmail) -> Result<(), String> {
+        validate_transactional_email(email)?;
         let payload =
             serde_json::to_vec(email).map_err(|e| format!("Failed to serialize email: {e}"))?;
 
         #[cfg(feature = "events")]
         {
+            validate_outbound_webhook_target_url(&self.url, &self.outbound_allowlist)
+                .map_err(|err| format!("Unsafe webhook delivery URL: {err}"))?;
+
             let mut request = self
                 .client
                 .post(&self.url)
@@ -242,6 +274,7 @@ impl LogEmailBackend {
 
 impl EmailBackend for LogEmailBackend {
     fn deliver(&self, email: &TransactionalEmail) -> Result<(), String> {
+        validate_transactional_email(email)?;
         tracing::info!(
             template = %email.template,
             to = %email.to,
@@ -357,6 +390,7 @@ impl NotificationService {
             return Ok(None);
         };
 
+        validate_transactional_email(&email)?;
         self.backend.deliver(&email)?;
 
         tracing::debug!(
@@ -508,6 +542,14 @@ impl NotificationService {
             _ => None,
         }
     }
+}
+
+fn validate_transactional_email(email: &TransactionalEmail) -> Result<(), String> {
+    validate_email(&email.to)
+        .map_err(|err| format!("Invalid recipient email `{}`: {err}", email.to))?;
+    validate_email(&email.from_email)
+        .map_err(|err| format!("Invalid sender email `{}`: {err}", email.from_email))?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -867,6 +909,67 @@ mod tests {
 
         let collected = backend.emails();
         assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn notification_service_rejects_invalid_sender_email() {
+        let backend = LogEmailBackend::new();
+        let config = NotificationConfig {
+            from_name: "Test Store".into(),
+            from_email: "not-an-email".into(),
+            ..Default::default()
+        };
+        let service = NotificationService::new(config, Box::new(backend))
+            .with_recipient_resolver(Arc::new(|_| Some("customer@example.com".into())));
+
+        let event = CommerceEvent::OrderCreated {
+            order_id: OrderId::new(),
+            customer_id: CustomerId::new(),
+            total_amount: Decimal::new(100, 0),
+            item_count: 1,
+            timestamp: Utc::now(),
+        };
+
+        let error = service.process_event(&event).unwrap_err();
+        assert!(error.contains("Invalid sender email"));
+    }
+
+    #[test]
+    fn notification_service_rejects_invalid_recipient_email() {
+        let backend = LogEmailBackend::new();
+        let service = NotificationService::new(NotificationConfig::default(), Box::new(backend))
+            .with_recipient_resolver(Arc::new(|_| Some("not-an-email".into())));
+
+        let event = CommerceEvent::OrderCreated {
+            order_id: OrderId::new(),
+            customer_id: CustomerId::new(),
+            total_amount: Decimal::new(100, 0),
+            item_count: 1,
+            timestamp: Utc::now(),
+        };
+
+        let error = service.process_event(&event).unwrap_err();
+        assert!(error.contains("Invalid recipient email"));
+    }
+
+    #[cfg(feature = "events")]
+    #[test]
+    fn webhook_backend_rejects_unsafe_delivery_url_before_network_io() {
+        let backend = WebhookEmailBackend::new("http://127.0.0.1:8080/email", None);
+        let email = TransactionalEmail {
+            to: "customer@example.com".into(),
+            from_name: "Store".into(),
+            from_email: "noreply@store.com".into(),
+            subject: "Test".into(),
+            template: EmailTemplate::CustomerWelcome,
+            template_data: HashMap::new(),
+            event_type: "customer_created".into(),
+            event_timestamp: Utc::now(),
+            message_id: uuid::Uuid::new_v4(),
+        };
+
+        let error = backend.deliver(&email).unwrap_err();
+        assert!(error.contains("Unsafe webhook delivery URL"));
     }
 
     #[test]

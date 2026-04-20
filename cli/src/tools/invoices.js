@@ -25,6 +25,22 @@ export const invoiceTools = [
   },
 
   {
+    name: 'get_invoice',
+    description: 'Get an invoice by ID.',
+    inputSchema: {
+      invoiceId: z.string().min(1).describe('Invoice ID'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const invoice = await commerce.invoices.get(params.invoiceId);
+      if (!invoice) {
+        return { success: false, error: 'Invoice not found' };
+      }
+      return { success: true, invoice };
+    },
+  },
+
+  {
     name: 'create_invoice',
     description: 'Create an invoice for a customer.',
     inputSchema: {
@@ -78,6 +94,23 @@ export const invoiceTools = [
 
       const invoice = await commerce.invoices.send(invoiceId);
       return { success: true, message: 'Invoice sent', invoice };
+    },
+  },
+
+  {
+    name: 'void_invoice',
+    description: 'Void an invoice so it can no longer be paid or collected.',
+    inputSchema: {
+      invoiceId: z.string().min(1).describe('Invoice ID'),
+    },
+    permission: 'delete',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Void invoice', params);
+      }
+
+      const invoice = await commerce.invoices.void(params.invoiceId);
+      return { success: true, message: 'Invoice voided', invoice };
     },
   },
 

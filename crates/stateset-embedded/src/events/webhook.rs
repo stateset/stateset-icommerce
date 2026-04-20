@@ -785,6 +785,17 @@ fn is_safe_webhook_url_for_delivery(url: &str, outbound_allowlist: &[String]) ->
     is_safe_webhook_url_with_dns_check(url, true, outbound_allowlist)
 }
 
+pub(crate) fn validate_outbound_webhook_target_url(
+    url: &str,
+    outbound_allowlist: &[String],
+) -> Result<(), String> {
+    if is_safe_webhook_url_for_delivery(url, outbound_allowlist) {
+        Ok(())
+    } else {
+        Err("URL failed outbound webhook safety validation".to_string())
+    }
+}
+
 fn is_safe_webhook_url_with_dns_check(
     url: &str,
     resolve_dns: bool,

@@ -1218,6 +1218,44 @@ describe('Payment Tools', () => {
       assert.strictEqual(tool.permission, 'write');
     });
   });
+
+  describe('mark_failed_payment', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = paymentTools.find(t => t.name === 'mark_failed_payment');
+      const result = await tool.handler({
+        commerce,
+        params: { paymentId: 'pay1', reason: 'gateway timeout' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has write permission', () => {
+      const tool = paymentTools.find(t => t.name === 'mark_failed_payment');
+      assert.strictEqual(tool.permission, 'write');
+    });
+  });
+
+  describe('cancel_payment', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = paymentTools.find(t => t.name === 'cancel_payment');
+      const result = await tool.handler({
+        commerce,
+        params: { paymentId: 'pay1' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has delete permission', () => {
+      const tool = paymentTools.find(t => t.name === 'cancel_payment');
+      assert.strictEqual(tool.permission, 'delete');
+    });
+  });
 });
 
 // ============================================================================
@@ -1242,6 +1280,26 @@ describe('Shipment Tools', () => {
 
     it('has read permission', () => {
       const tool = shipmentTools.find(t => t.name === 'list_shipments');
+      assert.strictEqual(tool.permission, 'read');
+    });
+  });
+
+  describe('get_shipment', () => {
+    it('returns expected shape with shipment object', async () => {
+      const commerce = createMockCommerce({
+        shipments: {
+          get: async (id) => ({ id, orderId: 'o1', carrier: 'FedEx', status: 'created' })
+        }
+      });
+      const tool = shipmentTools.find(t => t.name === 'get_shipment');
+      const result = await tool.handler({ commerce, params: { shipmentId: 'ship1' } });
+
+      assertSuccess(result);
+      assertHasField(result, 'shipment');
+    });
+
+    it('has read permission', () => {
+      const tool = shipmentTools.find(t => t.name === 'get_shipment');
       assert.strictEqual(tool.permission, 'read');
     });
   });
@@ -1279,6 +1337,44 @@ describe('Shipment Tools', () => {
       assert.strictEqual(tool.permission, 'write');
     });
   });
+
+  describe('ship_shipment', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = shipmentTools.find(t => t.name === 'ship_shipment');
+      const result = await tool.handler({
+        commerce,
+        params: { shipmentId: 'ship1', trackingNumber: 'FDX-1' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has write permission', () => {
+      const tool = shipmentTools.find(t => t.name === 'ship_shipment');
+      assert.strictEqual(tool.permission, 'write');
+    });
+  });
+
+  describe('cancel_shipment', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = shipmentTools.find(t => t.name === 'cancel_shipment');
+      const result = await tool.handler({
+        commerce,
+        params: { shipmentId: 'ship1' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has delete permission', () => {
+      const tool = shipmentTools.find(t => t.name === 'cancel_shipment');
+      assert.strictEqual(tool.permission, 'delete');
+    });
+  });
 });
 
 // ============================================================================
@@ -1302,6 +1398,26 @@ describe('Supplier Tools', () => {
 
     it('has read permission', () => {
       const tool = supplierTools.find(t => t.name === 'list_suppliers');
+      assert.strictEqual(tool.permission, 'read');
+    });
+  });
+
+  describe('get_supplier', () => {
+    it('returns expected shape with supplier object', async () => {
+      const commerce = createMockCommerce({
+        purchaseOrders: {
+          getSupplier: async () => ({ id: 'sup1', name: 'Widget Supply Co' })
+        }
+      });
+      const tool = supplierTools.find(t => t.name === 'get_supplier');
+      const result = await tool.handler({ commerce, params: { supplierId: 'sup1' } });
+
+      assertSuccess(result);
+      assertHasField(result, 'supplier');
+    });
+
+    it('has read permission', () => {
+      const tool = supplierTools.find(t => t.name === 'get_supplier');
       assert.strictEqual(tool.permission, 'read');
     });
   });
@@ -1346,6 +1462,26 @@ describe('Supplier Tools', () => {
     });
   });
 
+  describe('get_purchase_order', () => {
+    it('returns expected shape with purchaseOrder object', async () => {
+      const commerce = createMockCommerce({
+        purchaseOrders: {
+          get: async () => ({ id: 'po1', supplierId: 'sup1', status: 'draft' })
+        }
+      });
+      const tool = supplierTools.find(t => t.name === 'get_purchase_order');
+      const result = await tool.handler({ commerce, params: { purchaseOrderId: 'po1' } });
+
+      assertSuccess(result);
+      assertHasField(result, 'purchaseOrder');
+    });
+
+    it('has read permission', () => {
+      const tool = supplierTools.find(t => t.name === 'get_purchase_order');
+      assert.strictEqual(tool.permission, 'read');
+    });
+  });
+
   describe('create_purchase_order', () => {
     it('requires --apply flag', async () => {
       const commerce = createMockCommerce();
@@ -1365,6 +1501,25 @@ describe('Supplier Tools', () => {
     });
   });
 
+  describe('submit_purchase_order', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = supplierTools.find(t => t.name === 'submit_purchase_order');
+      const result = await tool.handler({
+        commerce,
+        params: { purchaseOrderId: 'po1' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has write permission', () => {
+      const tool = supplierTools.find(t => t.name === 'submit_purchase_order');
+      assert.strictEqual(tool.permission, 'write');
+    });
+  });
+
   describe('approve_purchase_order', () => {
     it('requires --apply flag', async () => {
       const commerce = createMockCommerce();
@@ -1380,6 +1535,44 @@ describe('Supplier Tools', () => {
 
     it('has write permission', () => {
       const tool = supplierTools.find(t => t.name === 'approve_purchase_order');
+      assert.strictEqual(tool.permission, 'write');
+    });
+  });
+
+  describe('send_purchase_order', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = supplierTools.find(t => t.name === 'send_purchase_order');
+      const result = await tool.handler({
+        commerce,
+        params: { purchaseOrderId: 'po1' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has write permission', () => {
+      const tool = supplierTools.find(t => t.name === 'send_purchase_order');
+      assert.strictEqual(tool.permission, 'write');
+    });
+  });
+
+  describe('cancel_purchase_order', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = supplierTools.find(t => t.name === 'cancel_purchase_order');
+      const result = await tool.handler({
+        commerce,
+        params: { purchaseOrderId: 'po1' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has write permission', () => {
+      const tool = supplierTools.find(t => t.name === 'cancel_purchase_order');
       assert.strictEqual(tool.permission, 'write');
     });
   });
@@ -1407,6 +1600,26 @@ describe('Invoice Tools', () => {
 
     it('has read permission', () => {
       const tool = invoiceTools.find(t => t.name === 'list_invoices');
+      assert.strictEqual(tool.permission, 'read');
+    });
+  });
+
+  describe('get_invoice', () => {
+    it('returns expected shape with invoice object', async () => {
+      const commerce = createMockCommerce({
+        invoices: {
+          get: async (id) => ({ id, customerId: 'c1', status: 'draft', total: 299.99 })
+        }
+      });
+      const tool = invoiceTools.find(t => t.name === 'get_invoice');
+      const result = await tool.handler({ commerce, params: { invoiceId: 'inv1' } });
+
+      assertSuccess(result);
+      assertHasField(result, 'invoice');
+    });
+
+    it('has read permission', () => {
+      const tool = invoiceTools.find(t => t.name === 'get_invoice');
       assert.strictEqual(tool.permission, 'read');
     });
   });
@@ -1446,6 +1659,21 @@ describe('Invoice Tools', () => {
     it('has write permission', () => {
       const tool = invoiceTools.find(t => t.name === 'send_invoice');
       assert.strictEqual(tool.permission, 'write');
+    });
+  });
+
+  describe('void_invoice', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = invoiceTools.find(t => t.name === 'void_invoice');
+      const result = await tool.handler({ commerce, params: { invoiceId: 'inv1' }, allowApply: false });
+
+      assertError(result, '--apply');
+    });
+
+    it('has delete permission', () => {
+      const tool = invoiceTools.find(t => t.name === 'void_invoice');
+      assert.strictEqual(tool.permission, 'delete');
     });
   });
 
@@ -1515,6 +1743,26 @@ describe('Warranty Tools', () => {
     });
   });
 
+  describe('get_warranty', () => {
+    it('returns expected shape with warranty object', async () => {
+      const commerce = createMockCommerce({
+        warranties: {
+          get: async () => ({ id: 'war1', customerId: 'c1', warrantyType: 'standard' })
+        }
+      });
+      const tool = warrantyTools.find(t => t.name === 'get_warranty');
+      const result = await tool.handler({ commerce, params: { warrantyId: 'war1' } });
+
+      assertSuccess(result);
+      assertHasField(result, 'warranty');
+    });
+
+    it('has read permission', () => {
+      const tool = warrantyTools.find(t => t.name === 'get_warranty');
+      assert.strictEqual(tool.permission, 'read');
+    });
+  });
+
   describe('create_warranty', () => {
     it('requires --apply flag', async () => {
       const commerce = createMockCommerce();
@@ -1540,7 +1788,7 @@ describe('Warranty Tools', () => {
       const tool = warrantyTools.find(t => t.name === 'create_warranty_claim');
       const result = await tool.handler({
         commerce,
-        params: { warrantyId: 'war1', description: 'Product defective', claimType: 'replacement' },
+        params: { warrantyId: 'war1', issueDescription: 'Product defective' },
         allowApply: false
       });
 
@@ -1550,6 +1798,18 @@ describe('Warranty Tools', () => {
     it('has write permission', () => {
       const tool = warrantyTools.find(t => t.name === 'create_warranty_claim');
       assert.strictEqual(tool.permission, 'write');
+    });
+
+    it('rejects missing issueDescription', async () => {
+      const commerce = createMockCommerce();
+      const tool = warrantyTools.find(t => t.name === 'create_warranty_claim');
+      const result = await tool.handler({
+        commerce,
+        params: { warrantyId: 'war1' },
+        allowApply: true
+      });
+
+      assertError(result, 'issueDescription is required');
     });
   });
 
@@ -1564,6 +1824,44 @@ describe('Warranty Tools', () => {
 
     it('has write permission', () => {
       const tool = warrantyTools.find(t => t.name === 'approve_warranty_claim');
+      assert.strictEqual(tool.permission, 'write');
+    });
+  });
+
+  describe('deny_warranty_claim', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = warrantyTools.find(t => t.name === 'deny_warranty_claim');
+      const result = await tool.handler({
+        commerce,
+        params: { claimId: 'claim1', reason: 'Out of warranty window' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has write permission', () => {
+      const tool = warrantyTools.find(t => t.name === 'deny_warranty_claim');
+      assert.strictEqual(tool.permission, 'write');
+    });
+  });
+
+  describe('complete_warranty_claim', () => {
+    it('requires --apply flag', async () => {
+      const commerce = createMockCommerce();
+      const tool = warrantyTools.find(t => t.name === 'complete_warranty_claim');
+      const result = await tool.handler({
+        commerce,
+        params: { claimId: 'claim1', resolution: 'repair' },
+        allowApply: false
+      });
+
+      assertError(result, '--apply');
+    });
+
+    it('has write permission', () => {
+      const tool = warrantyTools.find(t => t.name === 'complete_warranty_claim');
       assert.strictEqual(tool.permission, 'write');
     });
   });

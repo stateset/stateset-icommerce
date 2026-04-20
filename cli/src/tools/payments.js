@@ -99,6 +99,46 @@ export const paymentTools = [
   },
 
   {
+    name: 'mark_failed_payment',
+    description: 'Mark a payment as failed with a required reason and optional failure code.',
+    inputSchema: {
+      paymentId: z.string().min(1).describe('Payment ID'),
+      reason: z.string().min(1).max(500).describe('Failure reason'),
+      code: z.string().max(100).optional().describe('Optional gateway or processor failure code'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Mark payment as failed', params);
+      }
+
+      const payment = await commerce.payments.markFailed(
+        params.paymentId,
+        params.reason,
+        params.code,
+      );
+      return { success: true, message: 'Payment marked as failed', payment };
+    },
+  },
+
+  {
+    name: 'cancel_payment',
+    description: 'Cancel a payment before settlement is finalized.',
+    inputSchema: {
+      paymentId: z.string().min(1).describe('Payment ID'),
+    },
+    permission: 'delete',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Cancel payment', params);
+      }
+
+      const payment = await commerce.payments.cancel(params.paymentId);
+      return { success: true, message: 'Payment cancelled', payment };
+    },
+  },
+
+  {
     name: 'create_refund',
     description: 'Create a refund for a payment.',
     inputSchema: {

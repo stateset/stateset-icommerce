@@ -10,7 +10,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-embedded-swift", from: "0.9.8")
+    .package(url: "https://github.com/stateset/stateset-embedded-swift", from: "0.9.9")
 ]
 ```
 

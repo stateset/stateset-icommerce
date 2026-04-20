@@ -124,9 +124,7 @@ function getFallbackState(dbPath) {
           }
         }
       } catch (error) {
-        console.warn(
-          `[erc8004] Failed to read fallback store ${storagePath}: ${error.message}`,
-        );
+        console.warn(`[erc8004] Failed to read fallback store ${storagePath}: ${error.message}`);
       }
     }
     state = { rows, storagePath };
@@ -221,7 +219,9 @@ export function registerIdentity(dbPath, input, options = {}) {
   const now = new Date().toISOString();
   const active = input.active === undefined ? 1 : input.active ? 1 : 0;
   const proofType = normalizeProofType(input.walletProofType);
-  const existing = store.state ? selectIdentity(store.state, input.agentRegistry, input.agentId) : null;
+  const existing = store.state
+    ? selectIdentity(store.state, input.agentRegistry, input.agentId)
+    : null;
   const id = existing?.id || input.id || randomUUID();
   const createdAt = existing?.created_at || now;
 

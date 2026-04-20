@@ -207,6 +207,105 @@ describe('specialized agent tool scope', () => {
       'sync agent should have sync tools',
     );
   });
+
+  it('analytics agent includes the expanded analytics surface', () => {
+    const tools = AGENTS.analytics.tools;
+    for (const tool of [
+      'mcp__stateset-commerce__get_revenue_by_period',
+      'mcp__stateset-commerce__get_product_performance',
+      'mcp__stateset-commerce__get_inventory_movement',
+      'mcp__stateset-commerce__get_fulfillment_metrics',
+    ]) {
+      assert.ok(tools.includes(tool), `analytics agent missing ${tool}`);
+    }
+  });
+
+  it('promotions agent includes promotion maintenance and coupon lookup tools', () => {
+    const tools = AGENTS.promotions.tools;
+    for (const tool of [
+      'mcp__stateset-commerce__update_promotion',
+      'mcp__stateset-commerce__delete_promotion',
+      'mcp__stateset-commerce__get_coupon',
+      'mcp__stateset-commerce__check_promotion_validity',
+      'mcp__stateset-commerce__record_promotion_usage',
+    ]) {
+      assert.ok(tools.includes(tool), `promotions agent missing ${tool}`);
+    }
+  });
+
+  it('subscriptions agent includes update tools for plans and subscriptions', () => {
+    const tools = AGENTS.subscriptions.tools;
+    for (const tool of [
+      'mcp__stateset-commerce__update_subscription_plan',
+      'mcp__stateset-commerce__update_subscription',
+    ]) {
+      assert.ok(tools.includes(tool), `subscriptions agent missing ${tool}`);
+    }
+  });
+
+  it('payments agent includes provider-backed intent and reconciliation tools', () => {
+    const tools = AGENTS.payments.tools;
+    for (const tool of [
+      'mcp__stateset-commerce__list_payment_providers',
+      'mcp__stateset-commerce__create_payment_intent',
+      'mcp__stateset-commerce__capture_payment_intent',
+      'mcp__stateset-commerce__reconcile_payment_provider',
+    ]) {
+      assert.ok(tools.includes(tool), `payments agent missing ${tool}`);
+    }
+  });
+
+  it('shipments agent includes provider-backed label and exception tools', () => {
+    const tools = AGENTS.shipments.tools;
+    for (const tool of [
+      'mcp__stateset-commerce__list_shipping_providers',
+      'mcp__stateset-commerce__create_shipping_label',
+      'mcp__stateset-commerce__track_shipping_label',
+      'mcp__stateset-commerce__handle_fulfillment_exception',
+    ]) {
+      assert.ok(tools.includes(tool), `shipments agent missing ${tool}`);
+    }
+  });
+
+  it('currency agent includes bulk rate, delete, settings, and enabled checks', () => {
+    const tools = AGENTS.currency.tools;
+    for (const tool of [
+      'mcp__stateset-commerce__set_exchange_rates',
+      'mcp__stateset-commerce__delete_exchange_rate',
+      'mcp__stateset-commerce__update_currency_settings',
+      'mcp__stateset-commerce__check_currency_enabled',
+    ]) {
+      assert.ok(tools.includes(tool), `currency agent missing ${tool}`);
+    }
+  });
+
+  it('tax agent includes provider-backed tax and settings tools', () => {
+    const tools = AGENTS.tax.tools;
+    for (const tool of [
+      'mcp__stateset-commerce__calculate_item_tax',
+      'mcp__stateset-commerce__create_tax_jurisdiction',
+      'mcp__stateset-commerce__create_tax_rate',
+      'mcp__stateset-commerce__update_tax_settings',
+      'mcp__stateset-commerce__list_tax_providers',
+      'mcp__stateset-commerce__calculate_tax_quote',
+      'mcp__stateset-commerce__commit_tax_transaction',
+      'mcp__stateset-commerce__void_tax_transaction',
+    ]) {
+      assert.ok(tools.includes(tool), `tax agent missing ${tool}`);
+    }
+  });
+
+  it('agents agent includes x402 protocol tools', () => {
+    const tools = AGENTS.agents.tools;
+    for (const tool of [
+      'mcp__stateset-commerce__x402_create_payment_intent',
+      'mcp__stateset-commerce__x402_execute_agent_payment',
+      'mcp__stateset-commerce__x402_get_credit_account',
+      'mcp__stateset-commerce__x402_credit_transactions',
+    ]) {
+      assert.ok(tools.includes(tool), `agents agent missing ${tool}`);
+    }
+  });
 });
 
 // ===========================================================================

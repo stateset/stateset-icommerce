@@ -440,8 +440,7 @@ export class TreasuryStore {
     const rows = this._fallbackState
       ? this._fallbackState.rows
           .filter(
-            (row) =>
-              row.agent_id === agentId && (chainId === null || row.chain_id === chainId),
+            (row) => row.agent_id === agentId && (chainId === null || row.chain_id === chainId),
           )
           .map((row) => ({
             chain_id: row.chain_id,

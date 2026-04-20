@@ -8,9 +8,15 @@
 
 ## Why v1.0.0
 
-This release marks API stability. The public types, traits, and error variants are frozen. Applications built against v1.0.0 will compile against any future v1.x release without breaking changes.
+This release starts the stable `v1` OSS compatibility line. The public Rust API,
+binding version line, MCP tool names and schemas, CLI flags, policy YAML, and
+additive SQLite migration direction are frozen for `v1.x`. Applications built
+against `v1.0.0` should keep working across future additive `v1` minors without
+source-breaking changes.
 
-The engine is production-ready for real money: atomic inventory, idempotent checkout, financial rounding, audit logging, and cryptographic settlement via the VES protocol.
+This release note is not a blanket claim about public audit coverage, hosted
+control assurances, or `pq hard finality`. Those trust boundaries remain
+governed by `TRUST_FOUNDATION.md`.
 
 ---
 
@@ -162,20 +168,28 @@ Optimizations: fat LTO, codegen-units=1, target-cpu=native, SHA256 hardware acce
 
 ### 11 Language Bindings
 
-| Language | Package | Install |
-|----------|---------|---------|
-| **Rust** | stateset-sdk | `cargo add stateset-sdk --features full` |
-| **Python** | stateset-embedded | `pip install stateset-embedded` |
-| **Node.js** | @stateset/embedded | `npm install @stateset/embedded` |
-| **CLI** | @stateset/cli | `npm install -g @stateset/cli` |
-| **Go** | stateset-go | `go get github.com/stateset/stateset-icommerce/bindings/go` |
-| **Java** | stateset-java | Maven/Gradle |
-| **Kotlin** | stateset-kotlin | Maven/Gradle |
-| **Swift** | stateset-swift | SwiftPM |
-| **.NET** | stateset-dotnet | NuGet |
-| **Ruby** | stateset_embedded | `gem install stateset_embedded` |
-| **PHP** | stateset-php | Composer |
-| **WASM** | stateset-wasm | `npm install @stateset/wasm` |
+All bindings share the `v1.0.0` version line. Maturity varies by ecosystem, and this table is the authoritative statement of what the `v1.0.0` stability contract covers for each binding. Tier definitions:
+
+- **GA** — Feature-complete surface, extensive test coverage, covered by the `v1.x` stability contract (no source-breaking changes in minors). Framework adapters included where applicable.
+- **Beta** — Core commerce operations implemented and tested, but surface area narrower than the Rust SDK. API is expected to remain stable within `v1.x`, but additional surface may land as minors.
+- **Experimental** — Thin FFI wrappers with smoke-level tests. Suitable for evaluation and early integration; do not assume full parity with the Rust SDK. May receive breaking tweaks within `v1.x` (one exception to the general `v1` stability contract, scoped to these bindings only).
+
+| Language | Package | Tier | Install | Notes |
+|----------|---------|------|---------|-------|
+| **Rust** | `stateset-sdk` | **GA** | `cargo add stateset-sdk --features full` | Native; reference implementation |
+| **CLI** | `@stateset/cli` | **GA** | `npm install -g @stateset/cli` | 4,000+ tests, MCP server, x402 + A2A clients |
+| **Node.js** | `@stateset/embedded` | **GA** | `npm install @stateset/embedded` | OpenAI, Vercel AI, LangChain, generic adapters |
+| **Python** | `stateset-embedded` | **GA** | `pip install stateset-embedded` | OpenAI, LangChain, CrewAI, AutoGen adapters |
+| **WASM** | `@stateset/wasm` | **Beta** | `npm install @stateset/wasm` | Subset of embedded ops; no filesystem persistence |
+| **Ruby** | `stateset_embedded` | **Beta** | `gem install stateset_embedded` | Core commerce ops; no framework adapters |
+| **PHP** | `stateset-php` | **Beta** | Composer | Core commerce ops via FFI extension |
+| **.NET** | `stateset-dotnet` | **Beta** | NuGet | Core commerce ops; tested |
+| **Go** | `stateset-go` | **Experimental** | `go get github.com/stateset/stateset-icommerce/bindings/go` | FFI wrapper; smoke tests only |
+| **Swift** | `stateset-swift` | **Experimental** | SwiftPM | FFI wrapper; SwiftPM integration tested |
+| **Java** | `stateset-java` | **Experimental** | Maven/Gradle | JNI wrapper; single integration test |
+| **Kotlin** | `stateset-kotlin` | **Experimental** | Maven/Gradle | Shares Java JNI layer |
+
+The **GA tier is the surface the `v1.0.0` contract applies to without exception**. Beta and Experimental bindings ship on the same version line for coordinated release, but carry the caveats above. See `TRUST_FOUNDATION.md` for the broader trust boundary discussion.
 
 ---
 

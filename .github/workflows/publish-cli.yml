@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 0.9.5)'
+        description: 'Version to release (e.g., 0.9.9)'
         required: true
 
 env:
@@ -132,6 +132,10 @@ jobs:
         run: |
           npm ci
           npm run artifacts
+
+      - name: Validate assembled package
+        working-directory: bindings/node
+        run: npm run check:package
 
       - name: Generate release checksums
         run: |

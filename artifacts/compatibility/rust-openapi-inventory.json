@@ -1,0 +1,670 @@
+{
+  "source": {
+    "crate": "crates/stateset-http",
+    "exporter": "crates/stateset-http/examples/export_openapi.rs",
+    "specModule": "crates/stateset-http/src/openapi.rs"
+  },
+  "openapiVersion": "3.1.0",
+  "title": "StateSet Commerce API",
+  "version": "1.0.0",
+  "totalPaths": 40,
+  "totalOperations": 57,
+  "totalSchemas": 54,
+  "totalTags": 13,
+  "methods": [
+    {
+      "name": "DELETE",
+      "count": 5
+    },
+    {
+      "name": "GET",
+      "count": 27
+    },
+    {
+      "name": "PATCH",
+      "count": 5
+    },
+    {
+      "name": "POST",
+      "count": 20
+    }
+  ],
+  "tags": [
+    {
+      "name": "customers",
+      "description": "Customer management",
+      "count": 5
+    },
+    {
+      "name": "gift_cards",
+      "description": "Gift card management",
+      "count": 4
+    },
+    {
+      "name": "health",
+      "description": "Health check endpoints",
+      "count": 3
+    },
+    {
+      "name": "inventory",
+      "description": "Stock and inventory management",
+      "count": 3
+    },
+    {
+      "name": "invoices",
+      "description": "Invoice management",
+      "count": 5
+    },
+    {
+      "name": "loyalty",
+      "description": "Loyalty program management",
+      "count": 4
+    },
+    {
+      "name": "orders",
+      "description": "Order lifecycle management",
+      "count": 5
+    },
+    {
+      "name": "payments",
+      "description": "Payment transaction management",
+      "count": 5
+    },
+    {
+      "name": "products",
+      "description": "Product catalog",
+      "count": 5
+    },
+    {
+      "name": "returns",
+      "description": "Return request processing",
+      "count": 4
+    },
+    {
+      "name": "reviews",
+      "description": "Product review management",
+      "count": 4
+    },
+    {
+      "name": "shipments",
+      "description": "Shipment tracking and management",
+      "count": 4
+    },
+    {
+      "name": "wishlists",
+      "description": "Customer wishlist management",
+      "count": 6
+    }
+  ],
+  "schemas": [
+    "AddWishlistItemRequest",
+    "AddressDto",
+    "CreateCustomerRequest",
+    "CreateGiftCardRequest",
+    "CreateInvoiceRequest",
+    "CreateLoyaltyProgramRequest",
+    "CreateOrderItemRequest",
+    "CreateOrderRequest",
+    "CreatePaymentRequest",
+    "CreateProductRequest",
+    "CreateRefundRequest",
+    "CreateReturnItemRequest",
+    "CreateReturnRequest",
+    "CreateReviewRequest",
+    "CreateShipmentRequest",
+    "CreateWishlistRequest",
+    "CustomerListResponse",
+    "CustomerResponse",
+    "EnrollCustomerRequest",
+    "ErrorBody",
+    "ErrorDetail",
+    "GiftCardListResponse",
+    "GiftCardResponse",
+    "HealthResponse",
+    "InventoryAdjustRequest",
+    "InventoryItemResponse",
+    "InventoryListResponse",
+    "InventoryResponse",
+    "InvoiceListResponse",
+    "InvoiceResponse",
+    "LoyaltyAccountResponse",
+    "LoyaltyProgramListResponse",
+    "LoyaltyProgramResponse",
+    "OrderItemResponse",
+    "OrderListResponse",
+    "OrderResponse",
+    "PaymentListResponse",
+    "PaymentResponse",
+    "ProductListResponse",
+    "ProductResponse",
+    "ReadyResponse",
+    "RecordInvoicePaymentRequest",
+    "ReturnListResponse",
+    "ReturnResponse",
+    "ReviewListResponse",
+    "ReviewResponse",
+    "ShipmentListResponse",
+    "ShipmentResponse",
+    "TenantCacheResponse",
+    "UpdateCustomerRequest",
+    "UpdateProductRequest",
+    "WishlistItemResponse",
+    "WishlistListResponse",
+    "WishlistResponse"
+  ],
+  "operations": [
+    {
+      "path": "/api/v1/customers",
+      "method": "GET",
+      "operationId": "list_customers",
+      "tags": [
+        "customers"
+      ],
+      "summary": "`GET /api/v1/customers`"
+    },
+    {
+      "path": "/api/v1/customers",
+      "method": "POST",
+      "operationId": "create_customer",
+      "tags": [
+        "customers"
+      ],
+      "summary": "`POST /api/v1/customers`"
+    },
+    {
+      "path": "/api/v1/customers/{id}",
+      "method": "DELETE",
+      "operationId": "delete_customer",
+      "tags": [
+        "customers"
+      ],
+      "summary": "`DELETE /api/v1/customers/:id`"
+    },
+    {
+      "path": "/api/v1/customers/{id}",
+      "method": "GET",
+      "operationId": "get_customer",
+      "tags": [
+        "customers"
+      ],
+      "summary": "`GET /api/v1/customers/:id`"
+    },
+    {
+      "path": "/api/v1/customers/{id}",
+      "method": "PATCH",
+      "operationId": "update_customer",
+      "tags": [
+        "customers"
+      ],
+      "summary": "`PATCH /api/v1/customers/:id`"
+    },
+    {
+      "path": "/api/v1/gift-cards",
+      "method": "GET",
+      "operationId": "list_gift_cards",
+      "tags": [
+        "gift_cards"
+      ],
+      "summary": "`GET /api/v1/gift-cards`"
+    },
+    {
+      "path": "/api/v1/gift-cards",
+      "method": "POST",
+      "operationId": "create_gift_card",
+      "tags": [
+        "gift_cards"
+      ],
+      "summary": "`POST /api/v1/gift-cards`"
+    },
+    {
+      "path": "/api/v1/gift-cards/{id}",
+      "method": "GET",
+      "operationId": "get_gift_card",
+      "tags": [
+        "gift_cards"
+      ],
+      "summary": "`GET /api/v1/gift-cards/{id}`"
+    },
+    {
+      "path": "/api/v1/gift-cards/{id}/disable",
+      "method": "POST",
+      "operationId": "disable_gift_card",
+      "tags": [
+        "gift_cards"
+      ],
+      "summary": "`POST /api/v1/gift-cards/{id}/disable`"
+    },
+    {
+      "path": "/api/v1/inventory",
+      "method": "GET",
+      "operationId": "list_inventory",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`GET /api/v1/inventory`"
+    },
+    {
+      "path": "/api/v1/inventory/{sku}",
+      "method": "GET",
+      "operationId": "get_stock",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`GET /api/v1/inventory/:sku`"
+    },
+    {
+      "path": "/api/v1/inventory/{sku}/adjust",
+      "method": "POST",
+      "operationId": "adjust_stock",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`POST /api/v1/inventory/:sku/adjust`"
+    },
+    {
+      "path": "/api/v1/invoices",
+      "method": "GET",
+      "operationId": "list_invoices",
+      "tags": [
+        "invoices"
+      ],
+      "summary": "`GET /api/v1/invoices`"
+    },
+    {
+      "path": "/api/v1/invoices",
+      "method": "POST",
+      "operationId": "create_invoice",
+      "tags": [
+        "invoices"
+      ],
+      "summary": "`POST /api/v1/invoices`"
+    },
+    {
+      "path": "/api/v1/invoices/{id}",
+      "method": "GET",
+      "operationId": "get_invoice",
+      "tags": [
+        "invoices"
+      ],
+      "summary": "`GET /api/v1/invoices/:id`"
+    },
+    {
+      "path": "/api/v1/invoices/{id}/payments",
+      "method": "POST",
+      "operationId": "record_invoice_payment",
+      "tags": [
+        "invoices"
+      ],
+      "summary": "`POST /api/v1/invoices/:id/payments`"
+    },
+    {
+      "path": "/api/v1/invoices/{id}/send",
+      "method": "POST",
+      "operationId": "send_invoice",
+      "tags": [
+        "invoices"
+      ],
+      "summary": "`POST /api/v1/invoices/:id/send`"
+    },
+    {
+      "path": "/api/v1/loyalty/accounts/{id}",
+      "method": "GET",
+      "operationId": "get_account",
+      "tags": [
+        "loyalty"
+      ],
+      "summary": "`GET /api/v1/loyalty/accounts/{id}`"
+    },
+    {
+      "path": "/api/v1/loyalty/enroll",
+      "method": "POST",
+      "operationId": "enroll_customer",
+      "tags": [
+        "loyalty"
+      ],
+      "summary": "`POST /api/v1/loyalty/enroll`"
+    },
+    {
+      "path": "/api/v1/loyalty/programs",
+      "method": "GET",
+      "operationId": "list_programs",
+      "tags": [
+        "loyalty"
+      ],
+      "summary": "`GET /api/v1/loyalty/programs`"
+    },
+    {
+      "path": "/api/v1/loyalty/programs",
+      "method": "POST",
+      "operationId": "create_program",
+      "tags": [
+        "loyalty"
+      ],
+      "summary": "`POST /api/v1/loyalty/programs`"
+    },
+    {
+      "path": "/api/v1/orders",
+      "method": "GET",
+      "operationId": "list_orders",
+      "tags": [
+        "orders"
+      ],
+      "summary": "`GET /api/v1/orders`"
+    },
+    {
+      "path": "/api/v1/orders",
+      "method": "POST",
+      "operationId": "create_order",
+      "tags": [
+        "orders"
+      ],
+      "summary": "`POST /api/v1/orders`"
+    },
+    {
+      "path": "/api/v1/orders/{id}",
+      "method": "GET",
+      "operationId": "get_order",
+      "tags": [
+        "orders"
+      ],
+      "summary": "`GET /api/v1/orders/:id`"
+    },
+    {
+      "path": "/api/v1/orders/{id}/cancel",
+      "method": "PATCH",
+      "operationId": "cancel_order",
+      "tags": [
+        "orders"
+      ],
+      "summary": "`PATCH /api/v1/orders/:id/cancel`"
+    },
+    {
+      "path": "/api/v1/orders/{id}/ship",
+      "method": "PATCH",
+      "operationId": "ship_order",
+      "tags": [
+        "orders"
+      ],
+      "summary": "`PATCH /api/v1/orders/:id/ship`"
+    },
+    {
+      "path": "/api/v1/payments",
+      "method": "GET",
+      "operationId": "list_payments",
+      "tags": [
+        "payments"
+      ],
+      "summary": "`GET /api/v1/payments`"
+    },
+    {
+      "path": "/api/v1/payments",
+      "method": "POST",
+      "operationId": "create_payment",
+      "tags": [
+        "payments"
+      ],
+      "summary": "`POST /api/v1/payments`"
+    },
+    {
+      "path": "/api/v1/payments/{id}",
+      "method": "GET",
+      "operationId": "get_payment",
+      "tags": [
+        "payments"
+      ],
+      "summary": "`GET /api/v1/payments/:id`"
+    },
+    {
+      "path": "/api/v1/payments/{id}/complete",
+      "method": "POST",
+      "operationId": "complete_payment",
+      "tags": [
+        "payments"
+      ],
+      "summary": "`POST /api/v1/payments/:id/complete`"
+    },
+    {
+      "path": "/api/v1/payments/{id}/refund",
+      "method": "POST",
+      "operationId": "create_refund",
+      "tags": [
+        "payments"
+      ],
+      "summary": "`POST /api/v1/payments/:id/refund`"
+    },
+    {
+      "path": "/api/v1/products",
+      "method": "GET",
+      "operationId": "list_products",
+      "tags": [
+        "products"
+      ],
+      "summary": "`GET /api/v1/products`"
+    },
+    {
+      "path": "/api/v1/products",
+      "method": "POST",
+      "operationId": "create_product",
+      "tags": [
+        "products"
+      ],
+      "summary": "`POST /api/v1/products`"
+    },
+    {
+      "path": "/api/v1/products/{id}",
+      "method": "DELETE",
+      "operationId": "delete_product",
+      "tags": [
+        "products"
+      ],
+      "summary": "`DELETE /api/v1/products/:id`"
+    },
+    {
+      "path": "/api/v1/products/{id}",
+      "method": "GET",
+      "operationId": "get_product",
+      "tags": [
+        "products"
+      ],
+      "summary": "`GET /api/v1/products/:id`"
+    },
+    {
+      "path": "/api/v1/products/{id}",
+      "method": "PATCH",
+      "operationId": "update_product",
+      "tags": [
+        "products"
+      ],
+      "summary": "`PATCH /api/v1/products/:id`"
+    },
+    {
+      "path": "/api/v1/returns",
+      "method": "GET",
+      "operationId": "list_returns",
+      "tags": [
+        "returns"
+      ],
+      "summary": "`GET /api/v1/returns`"
+    },
+    {
+      "path": "/api/v1/returns",
+      "method": "POST",
+      "operationId": "create_return",
+      "tags": [
+        "returns"
+      ],
+      "summary": "`POST /api/v1/returns`"
+    },
+    {
+      "path": "/api/v1/returns/{id}",
+      "method": "GET",
+      "operationId": "get_return",
+      "tags": [
+        "returns"
+      ],
+      "summary": "`GET /api/v1/returns/:id`"
+    },
+    {
+      "path": "/api/v1/returns/{id}/approve",
+      "method": "PATCH",
+      "operationId": "approve_return",
+      "tags": [
+        "returns"
+      ],
+      "summary": "`PATCH /api/v1/returns/:id/approve`"
+    },
+    {
+      "path": "/api/v1/reviews",
+      "method": "GET",
+      "operationId": "list_reviews",
+      "tags": [
+        "reviews"
+      ],
+      "summary": "`GET /api/v1/reviews`"
+    },
+    {
+      "path": "/api/v1/reviews",
+      "method": "POST",
+      "operationId": "create_review",
+      "tags": [
+        "reviews"
+      ],
+      "summary": "`POST /api/v1/reviews`"
+    },
+    {
+      "path": "/api/v1/reviews/{id}",
+      "method": "DELETE",
+      "operationId": "delete_review",
+      "tags": [
+        "reviews"
+      ],
+      "summary": "`DELETE /api/v1/reviews/{id}`"
+    },
+    {
+      "path": "/api/v1/reviews/{id}",
+      "method": "GET",
+      "operationId": "get_review",
+      "tags": [
+        "reviews"
+      ],
+      "summary": "`GET /api/v1/reviews/{id}`"
+    },
+    {
+      "path": "/api/v1/shipments",
+      "method": "GET",
+      "operationId": "list_shipments",
+      "tags": [
+        "shipments"
+      ],
+      "summary": "`GET /api/v1/shipments`"
+    },
+    {
+      "path": "/api/v1/shipments",
+      "method": "POST",
+      "operationId": "create_shipment",
+      "tags": [
+        "shipments"
+      ],
+      "summary": "`POST /api/v1/shipments`"
+    },
+    {
+      "path": "/api/v1/shipments/{id}",
+      "method": "GET",
+      "operationId": "get_shipment",
+      "tags": [
+        "shipments"
+      ],
+      "summary": "`GET /api/v1/shipments/:id`"
+    },
+    {
+      "path": "/api/v1/shipments/{id}/deliver",
+      "method": "POST",
+      "operationId": "deliver_shipment",
+      "tags": [
+        "shipments"
+      ],
+      "summary": "`POST /api/v1/shipments/:id/deliver`"
+    },
+    {
+      "path": "/api/v1/wishlists",
+      "method": "GET",
+      "operationId": "list_wishlists",
+      "tags": [
+        "wishlists"
+      ],
+      "summary": "`GET /api/v1/wishlists`"
+    },
+    {
+      "path": "/api/v1/wishlists",
+      "method": "POST",
+      "operationId": "create_wishlist",
+      "tags": [
+        "wishlists"
+      ],
+      "summary": "`POST /api/v1/wishlists`"
+    },
+    {
+      "path": "/api/v1/wishlists/{id}",
+      "method": "DELETE",
+      "operationId": "delete_wishlist",
+      "tags": [
+        "wishlists"
+      ],
+      "summary": "`DELETE /api/v1/wishlists/{id}`"
+    },
+    {
+      "path": "/api/v1/wishlists/{id}",
+      "method": "GET",
+      "operationId": "get_wishlist",
+      "tags": [
+        "wishlists"
+      ],
+      "summary": "`GET /api/v1/wishlists/{id}`"
+    },
+    {
+      "path": "/api/v1/wishlists/{id}/items",
+      "method": "POST",
+      "operationId": "add_item",
+      "tags": [
+        "wishlists"
+      ],
+      "summary": "`POST /api/v1/wishlists/{id}/items`"
+    },
+    {
+      "path": "/api/v1/wishlists/{id}/items/{product_id}",
+      "method": "DELETE",
+      "operationId": "remove_item",
+      "tags": [
+        "wishlists"
+      ],
+      "summary": "`DELETE /api/v1/wishlists/{id}/items/{product_id}`"
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "operationId": "health",
+      "tags": [
+        "health"
+      ],
+      "summary": "`GET /health` — simple liveness probe."
+    },
+    {
+      "path": "/health/ready",
+      "method": "GET",
+      "operationId": "readiness",
+      "tags": [
+        "health"
+      ],
+      "summary": "`GET /health/ready` — readiness probe that checks DB connectivity."
+    },
+    {
+      "path": "/metrics",
+      "method": "GET",
+      "operationId": "metrics",
+      "tags": [
+        "health"
+      ],
+      "summary": "`GET /metrics` — Prometheus-compatible operational metrics."
+    }
+  ]
+}

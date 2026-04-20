@@ -261,7 +261,13 @@ export class Outbox {
       await pm.recordUsage(agentId, keyType, keyId);
       const { shouldRotate, reason } = await pm.shouldRotate(agentId, keyId, keyType, keyData);
       if (shouldRotate) {
-        this._lastRotationWarning = { agentId, keyType, keyId, reason, at: new Date().toISOString() };
+        this._lastRotationWarning = {
+          agentId,
+          keyType,
+          keyId,
+          reason,
+          at: new Date().toISOString(),
+        };
       }
     } catch {
       // Rotation tracking is best-effort; don't block event signing
@@ -304,11 +310,7 @@ export class Outbox {
       'agent_signature_scheme',
       'agent_signature_scheme INTEGER NOT NULL DEFAULT 0',
     );
-    this._ensureColumn(
-      '_ves_outbox',
-      'agent_signature_bundle',
-      'agent_signature_bundle TEXT',
-    );
+    this._ensureColumn('_ves_outbox', 'agent_signature_bundle', 'agent_signature_bundle TEXT');
     this._ensureColumn(
       '_ves_pulled_events',
       'agent_signature_scheme',
@@ -469,8 +471,7 @@ export class Outbox {
     }
 
     const recipientPublicKey =
-      typeof options.recipientPublicKey === 'string' &&
-      options.recipientPublicKey.startsWith('0x')
+      typeof options.recipientPublicKey === 'string' && options.recipientPublicKey.startsWith('0x')
         ? hexToBuffer(options.recipientPublicKey)
         : options.recipientPublicKey;
 
@@ -642,7 +643,10 @@ export class Outbox {
 
     // Record key usage for rotation tracking (non-blocking)
     this._recordKeyUsageAndCheckRotation(
-      event.sourceAgent, 'signing', signingKey.keyId, signingKey,
+      event.sourceAgent,
+      'signing',
+      signingKey.keyId,
+      signingKey,
     );
 
     const stmt = this.db.prepare(`

@@ -1,0 +1,3143 @@
+{
+  "source": {
+    "root": "bindings",
+    "generator": "scripts/ci/generate_binding_api_inventory.mjs"
+  },
+  "totalBindings": 10,
+  "detailedBindingCount": 5,
+  "ecosystems": [
+    {
+      "name": "Composer",
+      "count": 1
+    },
+    {
+      "name": "Go modules",
+      "count": 1
+    },
+    {
+      "name": "Maven",
+      "count": 2
+    },
+    {
+      "name": "npm",
+      "count": 2
+    },
+    {
+      "name": "NuGet",
+      "count": 1
+    },
+    {
+      "name": "PyPI",
+      "count": 1
+    },
+    {
+      "name": "RubyGems",
+      "count": 1
+    },
+    {
+      "name": "SwiftPM",
+      "count": 1
+    }
+  ],
+  "bindings": [
+    {
+      "language": ".NET",
+      "ecosystem": "NuGet",
+      "directory": "bindings/dotnet",
+      "manifestPath": "bindings/dotnet/dotnet/StateSet/StateSet.csproj",
+      "readmePath": "bindings/dotnet/README.md",
+      "coverageLevel": "detailed",
+      "packageName": "StateSet.Embedded",
+      "version": "0.9.9",
+      "sourceFiles": [
+        "bindings/dotnet/dotnet/StateSet/StateSetCommerce.cs",
+        "bindings/dotnet/dotnet/StateSet/APIs.cs",
+        "bindings/dotnet/dotnet/StateSet/Models.cs"
+      ],
+      "targetFrameworks": [
+        "net6.0",
+        "net7.0",
+        "net8.0"
+      ],
+      "publicTypeCount": 79,
+      "apiTypeCount": 31,
+      "facadePropertyCount": 31,
+      "apiMethodCount": 233,
+      "publicTypes": [
+        "AccountsPayableApi",
+        "AccountsReceivableApi",
+        "AnalyticsApi",
+        "BackordersApi",
+        "BillOfMaterials",
+        "BomApi",
+        "BomComponent",
+        "BomStatus",
+        "Cart",
+        "CartsApi",
+        "ClaimResolution",
+        "ClaimStatus",
+        "ConversionResult",
+        "CostAccountingApi",
+        "CreditApi",
+        "CurrencyApi",
+        "CurrencyCode",
+        "Customer",
+        "CustomersApi",
+        "ExchangeRate",
+        "FulfillmentApi",
+        "GeneralLedgerApi",
+        "InventoryApi",
+        "InventoryItem",
+        "Invoice",
+        "InvoiceItem",
+        "InvoicesApi",
+        "InvoiceStatus",
+        "LotsApi",
+        "Order",
+        "OrderItem",
+        "OrdersApi",
+        "OrderStatus",
+        "Payment",
+        "PaymentMethod",
+        "PaymentsApi",
+        "Product",
+        "ProductsApi",
+        "ProductVariant",
+        "PromotionsApi",
+        "PurchaseOrder",
+        "PurchaseOrderItem",
+        "PurchaseOrdersApi",
+        "PurchaseOrderStatus",
+        "QualityApi",
+        "ReceivingApi",
+        "Refund",
+        "RefundStatus",
+        "Return",
+        "ReturnReason",
+        "ReturnsApi",
+        "ReturnStatus",
+        "SalesSummary",
+        "SerialsApi",
+        "Shipment",
+        "ShipmentsApi",
+        "ShipmentStatus",
+        "ShippingCarrier",
+        "StateSetCommerce",
+        "StateSetException",
+        "StockLevel",
+        "StoreCurrencySettings",
+        "SubscriptionsApi",
+        "Supplier",
+        "SuppliersApi",
+        "TaxApi",
+        "TimePeriod",
+        "TopCustomer",
+        "TopProduct",
+        "WarehouseApi",
+        "WarrantiesApi",
+        "Warranty",
+        "WarrantyClaim",
+        "WarrantyStatus",
+        "WarrantyType",
+        "WorkOrder",
+        "WorkOrderPriority",
+        "WorkOrdersApi",
+        "WorkOrderStatus"
+      ],
+      "apiTypes": [
+        "AccountsPayableApi",
+        "AccountsReceivableApi",
+        "AnalyticsApi",
+        "BackordersApi",
+        "BomApi",
+        "CartsApi",
+        "CostAccountingApi",
+        "CreditApi",
+        "CurrencyApi",
+        "CustomersApi",
+        "FulfillmentApi",
+        "GeneralLedgerApi",
+        "InventoryApi",
+        "InvoicesApi",
+        "LotsApi",
+        "OrdersApi",
+        "PaymentsApi",
+        "ProductsApi",
+        "PromotionsApi",
+        "PurchaseOrdersApi",
+        "QualityApi",
+        "ReceivingApi",
+        "ReturnsApi",
+        "SerialsApi",
+        "ShipmentsApi",
+        "SubscriptionsApi",
+        "SuppliersApi",
+        "TaxApi",
+        "WarehouseApi",
+        "WarrantiesApi",
+        "WorkOrdersApi"
+      ],
+      "facadeProperties": [
+        {
+          "type": "AccountsPayableApi",
+          "name": "AccountsPayable"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "name": "AccountsReceivable"
+        },
+        {
+          "type": "AnalyticsApi",
+          "name": "Analytics"
+        },
+        {
+          "type": "BackordersApi",
+          "name": "Backorders"
+        },
+        {
+          "type": "BomApi",
+          "name": "Bom"
+        },
+        {
+          "type": "CartsApi",
+          "name": "Carts"
+        },
+        {
+          "type": "CostAccountingApi",
+          "name": "CostAccounting"
+        },
+        {
+          "type": "CreditApi",
+          "name": "Credit"
+        },
+        {
+          "type": "CurrencyApi",
+          "name": "Currency"
+        },
+        {
+          "type": "CustomersApi",
+          "name": "Customers"
+        },
+        {
+          "type": "FulfillmentApi",
+          "name": "Fulfillment"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "name": "GeneralLedger"
+        },
+        {
+          "type": "InventoryApi",
+          "name": "Inventory"
+        },
+        {
+          "type": "InvoicesApi",
+          "name": "Invoices"
+        },
+        {
+          "type": "LotsApi",
+          "name": "Lots"
+        },
+        {
+          "type": "OrdersApi",
+          "name": "Orders"
+        },
+        {
+          "type": "PaymentsApi",
+          "name": "Payments"
+        },
+        {
+          "type": "ProductsApi",
+          "name": "Products"
+        },
+        {
+          "type": "PromotionsApi",
+          "name": "Promotions"
+        },
+        {
+          "type": "PurchaseOrdersApi",
+          "name": "PurchaseOrders"
+        },
+        {
+          "type": "QualityApi",
+          "name": "Quality"
+        },
+        {
+          "type": "ReceivingApi",
+          "name": "Receiving"
+        },
+        {
+          "type": "ReturnsApi",
+          "name": "Returns"
+        },
+        {
+          "type": "SerialsApi",
+          "name": "Serials"
+        },
+        {
+          "type": "ShipmentsApi",
+          "name": "Shipments"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "name": "Subscriptions"
+        },
+        {
+          "type": "SuppliersApi",
+          "name": "Suppliers"
+        },
+        {
+          "type": "TaxApi",
+          "name": "Tax"
+        },
+        {
+          "type": "WarehouseApi",
+          "name": "Warehouse"
+        },
+        {
+          "type": "WarrantiesApi",
+          "name": "Warranties"
+        },
+        {
+          "type": "WorkOrdersApi",
+          "name": "WorkOrders"
+        }
+      ],
+      "apiMethods": [
+        {
+          "type": "AccountsPayableApi",
+          "method": "ApproveBill"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "CancelBill"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "CreateBill"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "GetAgingSummary"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "GetBill"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "GetBillByNumber"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "GetBillsDueSoon"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "GetOverdueBills"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "GetTotalOutstanding"
+        },
+        {
+          "type": "AccountsPayableApi",
+          "method": "ListBills"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "method": "CreateCreditMemo"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "method": "GetAgingSummary"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "method": "GetCreditMemo"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "method": "GetDso"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "method": "GetTotalOutstanding"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "method": "GetUnappliedCredits"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "method": "ListCreditMemos"
+        },
+        {
+          "type": "AccountsReceivableApi",
+          "method": "VoidCreditMemo"
+        },
+        {
+          "type": "AnalyticsApi",
+          "method": "GetSalesSummary"
+        },
+        {
+          "type": "AnalyticsApi",
+          "method": "GetTopCustomers"
+        },
+        {
+          "type": "AnalyticsApi",
+          "method": "GetTopProducts"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "CancelBackorder"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "CountPending"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "CreateBackorder"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "GetBackorder"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "GetBackorderByNumber"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "GetBackordersForOrder"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "GetBackordersForSku"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "GetOverdueBackorders"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "GetSummary"
+        },
+        {
+          "type": "BackordersApi",
+          "method": "ListBackorders"
+        },
+        {
+          "type": "BomApi",
+          "method": "Activate"
+        },
+        {
+          "type": "BomApi",
+          "method": "AddComponent"
+        },
+        {
+          "type": "BomApi",
+          "method": "Create"
+        },
+        {
+          "type": "BomApi",
+          "method": "Get"
+        },
+        {
+          "type": "BomApi",
+          "method": "GetComponents"
+        },
+        {
+          "type": "BomApi",
+          "method": "List"
+        },
+        {
+          "type": "CartsApi",
+          "method": "AddItem"
+        },
+        {
+          "type": "CartsApi",
+          "method": "Create"
+        },
+        {
+          "type": "CartsApi",
+          "method": "Get"
+        },
+        {
+          "type": "CostAccountingApi",
+          "method": "GetItemCost"
+        },
+        {
+          "type": "CostAccountingApi",
+          "method": "GetTotalInventoryValue"
+        },
+        {
+          "type": "CostAccountingApi",
+          "method": "ListItemCosts"
+        },
+        {
+          "type": "CostAccountingApi",
+          "method": "SetItemCost"
+        },
+        {
+          "type": "CostAccountingApi",
+          "method": "UpdateAverageCost"
+        },
+        {
+          "type": "CreditApi",
+          "method": "AdjustCreditLimit"
+        },
+        {
+          "type": "CreditApi",
+          "method": "CheckCredit"
+        },
+        {
+          "type": "CreditApi",
+          "method": "CreateCreditAccount"
+        },
+        {
+          "type": "CreditApi",
+          "method": "GetCreditAccount"
+        },
+        {
+          "type": "CreditApi",
+          "method": "GetCreditAccountByCustomer"
+        },
+        {
+          "type": "CreditApi",
+          "method": "GetOverLimitCustomers"
+        },
+        {
+          "type": "CreditApi",
+          "method": "ListCreditAccounts"
+        },
+        {
+          "type": "CreditApi",
+          "method": "ReactivateCreditAccount"
+        },
+        {
+          "type": "CreditApi",
+          "method": "SuspendCreditAccount"
+        },
+        {
+          "type": "CurrencyApi",
+          "method": "Convert"
+        },
+        {
+          "type": "CurrencyApi",
+          "method": "GetRate"
+        },
+        {
+          "type": "CurrencyApi",
+          "method": "GetSettings"
+        },
+        {
+          "type": "CurrencyApi",
+          "method": "SetRate"
+        },
+        {
+          "type": "CustomersApi",
+          "method": "Count"
+        },
+        {
+          "type": "CustomersApi",
+          "method": "Create"
+        },
+        {
+          "type": "CustomersApi",
+          "method": "Delete"
+        },
+        {
+          "type": "CustomersApi",
+          "method": "Get"
+        },
+        {
+          "type": "CustomersApi",
+          "method": "List"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "AssignPick"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "CancelPick"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "CancelWave"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "CompleteWave"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "CreateWave"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "GetPick"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "GetWave"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "IsOrderReadyToPack"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "IsOrderReadyToShip"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "ListPicks"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "ListWaves"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "ReleaseWave"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "StartPick"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "CreateAccount"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "GetAccount"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "GetAccountBalance"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "GetAccountByNumber"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "GetBalanceSheet"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "GetIncomeStatement"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "GetJournalEntry"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "GetTrialBalance"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "InitializeChartOfAccounts"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "ListAccounts"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "ListJournalEntries"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "PostJournalEntry"
+        },
+        {
+          "type": "GeneralLedgerApi",
+          "method": "VoidJournalEntry"
+        },
+        {
+          "type": "InventoryApi",
+          "method": "Adjust"
+        },
+        {
+          "type": "InventoryApi",
+          "method": "CreateItem"
+        },
+        {
+          "type": "InventoryApi",
+          "method": "GetLevel"
+        },
+        {
+          "type": "InvoicesApi",
+          "method": "Create"
+        },
+        {
+          "type": "InvoicesApi",
+          "method": "Get"
+        },
+        {
+          "type": "InvoicesApi",
+          "method": "GetOverdue"
+        },
+        {
+          "type": "InvoicesApi",
+          "method": "List"
+        },
+        {
+          "type": "InvoicesApi",
+          "method": "RecordPayment"
+        },
+        {
+          "type": "InvoicesApi",
+          "method": "Send"
+        },
+        {
+          "type": "InvoicesApi",
+          "method": "Void"
+        },
+        {
+          "type": "LotsApi",
+          "method": "Create"
+        },
+        {
+          "type": "LotsApi",
+          "method": "Get"
+        },
+        {
+          "type": "LotsApi",
+          "method": "GetActiveLots"
+        },
+        {
+          "type": "LotsApi",
+          "method": "GetByNumber"
+        },
+        {
+          "type": "LotsApi",
+          "method": "GetExpiredLots"
+        },
+        {
+          "type": "LotsApi",
+          "method": "GetExpiringLots"
+        },
+        {
+          "type": "LotsApi",
+          "method": "GetQuarantined"
+        },
+        {
+          "type": "LotsApi",
+          "method": "List"
+        },
+        {
+          "type": "LotsApi",
+          "method": "Quarantine"
+        },
+        {
+          "type": "LotsApi",
+          "method": "ReleaseQuarantine"
+        },
+        {
+          "type": "OrdersApi",
+          "method": "Cancel"
+        },
+        {
+          "type": "OrdersApi",
+          "method": "Create"
+        },
+        {
+          "type": "OrdersApi",
+          "method": "Get"
+        },
+        {
+          "type": "OrdersApi",
+          "method": "List"
+        },
+        {
+          "type": "OrdersApi",
+          "method": "Ship"
+        },
+        {
+          "type": "OrdersApi",
+          "method": "UpdateStatus"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "Complete"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "Create"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "Fail"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "Get"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "List"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "Refund"
+        },
+        {
+          "type": "ProductsApi",
+          "method": "Create"
+        },
+        {
+          "type": "ProductsApi",
+          "method": "Get"
+        },
+        {
+          "type": "ProductsApi",
+          "method": "List"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "Activate"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "Create"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "CreateCoupon"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "Deactivate"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "Delete"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "Get"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "GetActive"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "GetByCode"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "GetCouponByCode"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "List"
+        },
+        {
+          "type": "PromotionsApi",
+          "method": "ValidateCoupon"
+        },
+        {
+          "type": "PurchaseOrdersApi",
+          "method": "Approve"
+        },
+        {
+          "type": "PurchaseOrdersApi",
+          "method": "Cancel"
+        },
+        {
+          "type": "PurchaseOrdersApi",
+          "method": "Create"
+        },
+        {
+          "type": "PurchaseOrdersApi",
+          "method": "Get"
+        },
+        {
+          "type": "PurchaseOrdersApi",
+          "method": "List"
+        },
+        {
+          "type": "PurchaseOrdersApi",
+          "method": "Send"
+        },
+        {
+          "type": "PurchaseOrdersApi",
+          "method": "Submit"
+        },
+        {
+          "type": "QualityApi",
+          "method": "CloseNcr"
+        },
+        {
+          "type": "QualityApi",
+          "method": "CompleteInspection"
+        },
+        {
+          "type": "QualityApi",
+          "method": "CreateHold"
+        },
+        {
+          "type": "QualityApi",
+          "method": "CreateInspection"
+        },
+        {
+          "type": "QualityApi",
+          "method": "CreateNcr"
+        },
+        {
+          "type": "QualityApi",
+          "method": "GetActiveHolds"
+        },
+        {
+          "type": "QualityApi",
+          "method": "GetHold"
+        },
+        {
+          "type": "QualityApi",
+          "method": "GetInspection"
+        },
+        {
+          "type": "QualityApi",
+          "method": "GetNcr"
+        },
+        {
+          "type": "QualityApi",
+          "method": "ListHolds"
+        },
+        {
+          "type": "QualityApi",
+          "method": "ListInspections"
+        },
+        {
+          "type": "QualityApi",
+          "method": "ListNcrs"
+        },
+        {
+          "type": "QualityApi",
+          "method": "ReleaseHold"
+        },
+        {
+          "type": "QualityApi",
+          "method": "StartInspection"
+        },
+        {
+          "type": "ReceivingApi",
+          "method": "CancelReceipt"
+        },
+        {
+          "type": "ReceivingApi",
+          "method": "CompleteReceiving"
+        },
+        {
+          "type": "ReceivingApi",
+          "method": "CreateReceipt"
+        },
+        {
+          "type": "ReceivingApi",
+          "method": "CreateReceiptFromPo"
+        },
+        {
+          "type": "ReceivingApi",
+          "method": "GetReceipt"
+        },
+        {
+          "type": "ReceivingApi",
+          "method": "GetReceiptByNumber"
+        },
+        {
+          "type": "ReceivingApi",
+          "method": "ListReceipts"
+        },
+        {
+          "type": "ReceivingApi",
+          "method": "StartReceiving"
+        },
+        {
+          "type": "ReturnsApi",
+          "method": "Approve"
+        },
+        {
+          "type": "ReturnsApi",
+          "method": "Complete"
+        },
+        {
+          "type": "ReturnsApi",
+          "method": "Create"
+        },
+        {
+          "type": "ReturnsApi",
+          "method": "Get"
+        },
+        {
+          "type": "ReturnsApi",
+          "method": "List"
+        },
+        {
+          "type": "ReturnsApi",
+          "method": "Reject"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "Create"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "Get"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "GetAvailable"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "GetBySerial"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "IsAvailable"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "List"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "MarkSold"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "Quarantine"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "Cancel"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "Create"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "Deliver"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "Get"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "List"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "Ship"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "ActivatePlan"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "ArchivePlan"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "Cancel"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "CreatePlan"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "Get"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "GetPlan"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "List"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "ListPlans"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "Pause"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "Resume"
+        },
+        {
+          "type": "SubscriptionsApi",
+          "method": "Subscribe"
+        },
+        {
+          "type": "SuppliersApi",
+          "method": "Create"
+        },
+        {
+          "type": "SuppliersApi",
+          "method": "Get"
+        },
+        {
+          "type": "SuppliersApi",
+          "method": "List"
+        },
+        {
+          "type": "TaxApi",
+          "method": "Calculate"
+        },
+        {
+          "type": "TaxApi",
+          "method": "CreateExemption"
+        },
+        {
+          "type": "TaxApi",
+          "method": "CreateJurisdiction"
+        },
+        {
+          "type": "TaxApi",
+          "method": "CreateRate"
+        },
+        {
+          "type": "TaxApi",
+          "method": "CustomerIsExempt"
+        },
+        {
+          "type": "TaxApi",
+          "method": "GetCustomerExemptions"
+        },
+        {
+          "type": "TaxApi",
+          "method": "GetEffectiveRate"
+        },
+        {
+          "type": "TaxApi",
+          "method": "GetJurisdiction"
+        },
+        {
+          "type": "TaxApi",
+          "method": "GetRate"
+        },
+        {
+          "type": "TaxApi",
+          "method": "GetSettings"
+        },
+        {
+          "type": "TaxApi",
+          "method": "ListJurisdictions"
+        },
+        {
+          "type": "TaxApi",
+          "method": "ListRates"
+        },
+        {
+          "type": "TaxApi",
+          "method": "SetEnabled"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "CreateLocation"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "CreateWarehouse"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "GetLocation"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "GetPickableLocations"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "GetTotalAvailable"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "GetWarehouse"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "GetWarehouseByCode"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "ListLocations"
+        },
+        {
+          "type": "WarehouseApi",
+          "method": "ListWarehouses"
+        },
+        {
+          "type": "WarrantiesApi",
+          "method": "ApproveClaim"
+        },
+        {
+          "type": "WarrantiesApi",
+          "method": "CompleteClaim"
+        },
+        {
+          "type": "WarrantiesApi",
+          "method": "Create"
+        },
+        {
+          "type": "WarrantiesApi",
+          "method": "CreateClaim"
+        },
+        {
+          "type": "WarrantiesApi",
+          "method": "DenyClaim"
+        },
+        {
+          "type": "WarrantiesApi",
+          "method": "Get"
+        },
+        {
+          "type": "WarrantiesApi",
+          "method": "List"
+        },
+        {
+          "type": "WorkOrdersApi",
+          "method": "Cancel"
+        },
+        {
+          "type": "WorkOrdersApi",
+          "method": "Complete"
+        },
+        {
+          "type": "WorkOrdersApi",
+          "method": "Create"
+        },
+        {
+          "type": "WorkOrdersApi",
+          "method": "Get"
+        },
+        {
+          "type": "WorkOrdersApi",
+          "method": "List"
+        },
+        {
+          "type": "WorkOrdersApi",
+          "method": "Start"
+        }
+      ]
+    },
+    {
+      "language": "Go",
+      "ecosystem": "Go modules",
+      "directory": "bindings/go",
+      "manifestPath": "bindings/go/stateset/go.mod",
+      "readmePath": "bindings/go/README.md",
+      "coverageLevel": "detailed",
+      "packageName": "github.com/stateset/stateset-icommerce/bindings/go/stateset",
+      "version": null,
+      "sourceFiles": [
+        "bindings/go/stateset/stateset.go",
+        "bindings/go/stateset/apis.go",
+        "bindings/go/stateset/models.go"
+      ],
+      "exportedTypeCount": 73,
+      "apiTypeCount": 16,
+      "rootAccessorCount": 16,
+      "apiMethodCount": 80,
+      "exportedTypes": [
+        "AnalyticsAPI",
+        "BillOfMaterials",
+        "BOMAPI",
+        "BOMComponent",
+        "BOMStatus",
+        "Cart",
+        "CartsAPI",
+        "ClaimResolution",
+        "ClaimStatus",
+        "Commerce",
+        "ConversionResult",
+        "Currency",
+        "CurrencyAPI",
+        "Customer",
+        "CustomersAPI",
+        "ExchangeRate",
+        "InventoryAPI",
+        "InventoryItem",
+        "InventoryReservation",
+        "Invoice",
+        "InvoiceItem",
+        "InvoicesAPI",
+        "InvoiceStatus",
+        "InvoiceType",
+        "LocationStock",
+        "Order",
+        "OrderItem",
+        "OrdersAPI",
+        "OrderStatus",
+        "Payment",
+        "PaymentMethod",
+        "PaymentsAPI",
+        "PaymentTerms",
+        "Product",
+        "ProductsAPI",
+        "ProductVariant",
+        "PurchaseOrder",
+        "PurchaseOrderItem",
+        "PurchaseOrdersAPI",
+        "PurchaseOrderStatus",
+        "Refund",
+        "RefundStatus",
+        "ReservationStatus",
+        "Return",
+        "ReturnReason",
+        "ReturnsAPI",
+        "ReturnStatus",
+        "SalesSummary",
+        "Shipment",
+        "ShipmentEvent",
+        "ShipmentItem",
+        "ShipmentsAPI",
+        "ShipmentStatus",
+        "ShippingCarrier",
+        "StockLevel",
+        "StoreCurrencySettings",
+        "Supplier",
+        "SuppliersAPI",
+        "TaskStatus",
+        "TimePeriod",
+        "TopCustomer",
+        "TopProduct",
+        "WarrantiesAPI",
+        "Warranty",
+        "WarrantyClaim",
+        "WarrantyStatus",
+        "WarrantyType",
+        "WorkOrder",
+        "WorkOrderMaterial",
+        "WorkOrderPriority",
+        "WorkOrdersAPI",
+        "WorkOrderStatus",
+        "WorkOrderTask"
+      ],
+      "apiTypes": [
+        "AnalyticsAPI",
+        "BOMAPI",
+        "CartsAPI",
+        "CurrencyAPI",
+        "CustomersAPI",
+        "InventoryAPI",
+        "InvoicesAPI",
+        "OrdersAPI",
+        "PaymentsAPI",
+        "ProductsAPI",
+        "PurchaseOrdersAPI",
+        "ReturnsAPI",
+        "ShipmentsAPI",
+        "SuppliersAPI",
+        "WarrantiesAPI",
+        "WorkOrdersAPI"
+      ],
+      "topLevelFunctions": [
+        "New"
+      ],
+      "rootAccessors": [
+        "Analytics",
+        "BOM",
+        "Carts",
+        "Currency",
+        "Customers",
+        "Inventory",
+        "Invoices",
+        "Orders",
+        "Payments",
+        "Products",
+        "PurchaseOrders",
+        "Returns",
+        "Shipments",
+        "Suppliers",
+        "Warranties",
+        "WorkOrders"
+      ],
+      "apiMethods": [
+        {
+          "receiver": "AnalyticsAPI",
+          "name": "GetSalesSummary"
+        },
+        {
+          "receiver": "AnalyticsAPI",
+          "name": "GetTopCustomers"
+        },
+        {
+          "receiver": "AnalyticsAPI",
+          "name": "GetTopProducts"
+        },
+        {
+          "receiver": "BOMAPI",
+          "name": "Activate"
+        },
+        {
+          "receiver": "BOMAPI",
+          "name": "AddComponent"
+        },
+        {
+          "receiver": "BOMAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "BOMAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "BOMAPI",
+          "name": "GetComponents"
+        },
+        {
+          "receiver": "BOMAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "CartsAPI",
+          "name": "AddItem"
+        },
+        {
+          "receiver": "CartsAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "CartsAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "CurrencyAPI",
+          "name": "Convert"
+        },
+        {
+          "receiver": "CurrencyAPI",
+          "name": "GetRate"
+        },
+        {
+          "receiver": "CurrencyAPI",
+          "name": "GetSettings"
+        },
+        {
+          "receiver": "CurrencyAPI",
+          "name": "SetRate"
+        },
+        {
+          "receiver": "CustomersAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "CustomersAPI",
+          "name": "Delete"
+        },
+        {
+          "receiver": "CustomersAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "CustomersAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "InventoryAPI",
+          "name": "Adjust"
+        },
+        {
+          "receiver": "InventoryAPI",
+          "name": "CreateItem"
+        },
+        {
+          "receiver": "InventoryAPI",
+          "name": "GetLevel"
+        },
+        {
+          "receiver": "InvoicesAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "InvoicesAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "InvoicesAPI",
+          "name": "GetOverdue"
+        },
+        {
+          "receiver": "InvoicesAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "InvoicesAPI",
+          "name": "RecordPayment"
+        },
+        {
+          "receiver": "InvoicesAPI",
+          "name": "Send"
+        },
+        {
+          "receiver": "InvoicesAPI",
+          "name": "Void"
+        },
+        {
+          "receiver": "OrdersAPI",
+          "name": "Cancel"
+        },
+        {
+          "receiver": "OrdersAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "OrdersAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "OrdersAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "OrdersAPI",
+          "name": "Ship"
+        },
+        {
+          "receiver": "OrdersAPI",
+          "name": "UpdateStatus"
+        },
+        {
+          "receiver": "PaymentsAPI",
+          "name": "Complete"
+        },
+        {
+          "receiver": "PaymentsAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "PaymentsAPI",
+          "name": "Fail"
+        },
+        {
+          "receiver": "PaymentsAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "PaymentsAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "PaymentsAPI",
+          "name": "Refund"
+        },
+        {
+          "receiver": "ProductsAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "ProductsAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "ProductsAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "PurchaseOrdersAPI",
+          "name": "Approve"
+        },
+        {
+          "receiver": "PurchaseOrdersAPI",
+          "name": "Cancel"
+        },
+        {
+          "receiver": "PurchaseOrdersAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "PurchaseOrdersAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "PurchaseOrdersAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "PurchaseOrdersAPI",
+          "name": "Send"
+        },
+        {
+          "receiver": "PurchaseOrdersAPI",
+          "name": "Submit"
+        },
+        {
+          "receiver": "ReturnsAPI",
+          "name": "Approve"
+        },
+        {
+          "receiver": "ReturnsAPI",
+          "name": "Complete"
+        },
+        {
+          "receiver": "ReturnsAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "ReturnsAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "ReturnsAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "ReturnsAPI",
+          "name": "Reject"
+        },
+        {
+          "receiver": "ShipmentsAPI",
+          "name": "Cancel"
+        },
+        {
+          "receiver": "ShipmentsAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "ShipmentsAPI",
+          "name": "Deliver"
+        },
+        {
+          "receiver": "ShipmentsAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "ShipmentsAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "ShipmentsAPI",
+          "name": "Ship"
+        },
+        {
+          "receiver": "SuppliersAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "SuppliersAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "SuppliersAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "WarrantiesAPI",
+          "name": "ApproveClaim"
+        },
+        {
+          "receiver": "WarrantiesAPI",
+          "name": "CompleteClaim"
+        },
+        {
+          "receiver": "WarrantiesAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "WarrantiesAPI",
+          "name": "CreateClaim"
+        },
+        {
+          "receiver": "WarrantiesAPI",
+          "name": "DenyClaim"
+        },
+        {
+          "receiver": "WarrantiesAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "WarrantiesAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "WorkOrdersAPI",
+          "name": "Cancel"
+        },
+        {
+          "receiver": "WorkOrdersAPI",
+          "name": "Complete"
+        },
+        {
+          "receiver": "WorkOrdersAPI",
+          "name": "Create"
+        },
+        {
+          "receiver": "WorkOrdersAPI",
+          "name": "Get"
+        },
+        {
+          "receiver": "WorkOrdersAPI",
+          "name": "List"
+        },
+        {
+          "receiver": "WorkOrdersAPI",
+          "name": "Start"
+        }
+      ]
+    },
+    {
+      "language": "Java",
+      "ecosystem": "Maven",
+      "directory": "bindings/java",
+      "manifestPath": "bindings/java/java/build.gradle",
+      "readmePath": "bindings/java/README.md",
+      "coverageLevel": "package-manifest",
+      "packageName": "com.stateset:embedded",
+      "version": "0.9.9",
+      "targetJava": "11"
+    },
+    {
+      "language": "Kotlin",
+      "ecosystem": "Maven",
+      "directory": "bindings/kotlin",
+      "manifestPath": "bindings/kotlin/kotlin/build.gradle.kts",
+      "readmePath": null,
+      "coverageLevel": "package-manifest",
+      "packageName": "com.stateset:embedded-kotlin",
+      "version": "0.9.9",
+      "targetJava": "11"
+    },
+    {
+      "language": "Node.js",
+      "ecosystem": "npm",
+      "directory": "bindings/node",
+      "manifestPath": "bindings/node/package.json",
+      "readmePath": "bindings/node/README.md",
+      "coverageLevel": "detailed",
+      "packageName": "@stateset/embedded",
+      "version": "0.9.9",
+      "runtime": "napi-rs",
+      "entrypointCount": 6,
+      "packedFilePatternCount": 5,
+      "peerDependencies": [
+        "@stateset/cli"
+      ],
+      "entrypoints": [
+        {
+          "subpath": ".",
+          "runtimeEntry": "./index.js",
+          "typesEntry": "./index.d.ts"
+        },
+        {
+          "subpath": "./agent-toolkit",
+          "runtimeEntry": "./agent-toolkit.mjs",
+          "typesEntry": "./agent-toolkit.d.ts"
+        },
+        {
+          "subpath": "./generic",
+          "runtimeEntry": "./generic.mjs",
+          "typesEntry": "./generic.d.ts"
+        },
+        {
+          "subpath": "./langchain",
+          "runtimeEntry": "./langchain.mjs",
+          "typesEntry": "./langchain.d.ts"
+        },
+        {
+          "subpath": "./openai",
+          "runtimeEntry": "./openai.mjs",
+          "typesEntry": "./openai.d.ts"
+        },
+        {
+          "subpath": "./vercel-ai",
+          "runtimeEntry": "./vercel-ai.mjs",
+          "typesEntry": "./vercel-ai.d.ts"
+        }
+      ]
+    },
+    {
+      "language": "PHP",
+      "ecosystem": "Composer",
+      "directory": "bindings/php",
+      "manifestPath": "bindings/php/composer.json",
+      "readmePath": "bindings/php/README.md",
+      "coverageLevel": "package-manifest",
+      "packageName": "stateset/embedded",
+      "version": "0.9.9",
+      "requiresPhp": ">=8.1",
+      "autoloadFiles": [
+        "stubs/StateSet.php"
+      ],
+      "suggestedExtensions": [
+        "ext-stateset_embedded"
+      ]
+    },
+    {
+      "language": "Python",
+      "ecosystem": "PyPI",
+      "directory": "bindings/python",
+      "manifestPath": "bindings/python/pyproject.toml",
+      "readmePath": "bindings/python/README.md",
+      "coverageLevel": "detailed",
+      "packageName": "stateset-embedded",
+      "version": "0.9.9",
+      "requiresPython": ">=3.8",
+      "optionalDependencyGroups": [
+        "agents",
+        "autogen",
+        "crewai",
+        "dev",
+        "langchain"
+      ],
+      "moduleCount": 7,
+      "publicSymbolCount": 99,
+      "helperModules": [
+        "agent_toolkit",
+        "autogen",
+        "crewai",
+        "generic",
+        "langchain",
+        "openai"
+      ],
+      "nativeExtensions": [
+        "stateset_embedded.cpython-310-x86_64-linux-gnu.so"
+      ],
+      "publicSymbols": [
+        "__version__",
+        "AddCartItemInput",
+        "AgentToolDescriptor",
+        "Analytics",
+        "Bom",
+        "BomApi",
+        "BomComponent",
+        "Cart",
+        "CartAddress",
+        "CartItem",
+        "Carts",
+        "CheckoutResult",
+        "Commerce",
+        "ConversionResult",
+        "create_autogen_tools",
+        "create_callable_registry",
+        "create_crewai_tools",
+        "create_embedded_agent_toolkit",
+        "create_langchain_tools",
+        "create_openai_tools",
+        "create_tool_descriptors",
+        "CreateOrderItemInput",
+        "CreateProductVariantInput",
+        "CreateReturnItemInput",
+        "CurrencyOperations",
+        "Customer",
+        "CustomerMetrics",
+        "Customers",
+        "CustomerSearchResult",
+        "CustomFieldDefinition",
+        "CustomFieldDefinitionInput",
+        "CustomObject",
+        "CustomObjectsApi",
+        "CustomObjectType",
+        "DemandForecast",
+        "EmbeddedAgentToolkit",
+        "EmbeddingStats",
+        "ExchangeRate",
+        "execute_openai_tool_call",
+        "execute_openai_tool_calls",
+        "execute_tool",
+        "execute_tool_calls",
+        "FrameworkToolFactory",
+        "FulfillmentMetrics",
+        "Inventory",
+        "InventoryHealth",
+        "InventoryItem",
+        "InventoryMovement",
+        "Invoice",
+        "Invoices",
+        "LowStockItem",
+        "Order",
+        "OrderItem",
+        "Orders",
+        "OrderStatusBreakdown",
+        "Payment",
+        "Payments",
+        "Product",
+        "ProductPerformance",
+        "Products",
+        "ProductSearchResult",
+        "ProductVariant",
+        "PurchaseOrder",
+        "PurchaseOrders",
+        "Refund",
+        "Reservation",
+        "Return",
+        "ReturnMetrics",
+        "Returns",
+        "RevenueByPeriod",
+        "RevenueForecast",
+        "SalesSummary",
+        "SetExchangeRateInput",
+        "Shipment",
+        "Shipments",
+        "ShippingRate",
+        "StockLevel",
+        "StoreCurrencySettings",
+        "Supplier",
+        "SyncAcknowledgement",
+        "SyncConfirmation",
+        "SyncDeadLetter",
+        "SyncEvent",
+        "SyncFullSyncResult",
+        "SyncPullResult",
+        "SyncPushResult",
+        "SyncRejection",
+        "SyncRemoteHead",
+        "SyncRuntime",
+        "SyncSnapshot",
+        "SyncStatus",
+        "TopCustomer",
+        "TopProduct",
+        "VectorSearch",
+        "Warranties",
+        "Warranty",
+        "WarrantyClaim",
+        "WorkOrder",
+        "WorkOrders"
+      ]
+    },
+    {
+      "language": "Ruby",
+      "ecosystem": "RubyGems",
+      "directory": "bindings/ruby",
+      "manifestPath": "bindings/ruby/stateset_embedded.gemspec",
+      "readmePath": "bindings/ruby/README.md",
+      "coverageLevel": "package-manifest",
+      "packageName": "stateset_embedded",
+      "version": "0.9.9",
+      "requiredVersion": ">= 3.0",
+      "nativeExtensions": [
+        "ext/stateset_embedded/extconf.rb"
+      ]
+    },
+    {
+      "language": "Swift",
+      "ecosystem": "SwiftPM",
+      "directory": "bindings/swift",
+      "manifestPath": "bindings/swift/Package.swift",
+      "readmePath": "bindings/swift/README.md",
+      "coverageLevel": "detailed",
+      "packageName": "StateSet",
+      "version": null,
+      "sourceFiles": [
+        "bindings/swift/Sources/StateSet/StateSetCommerce.swift",
+        "bindings/swift/Sources/StateSet/APIs.swift",
+        "bindings/swift/Sources/StateSet/Models.swift"
+      ],
+      "products": [
+        "StateSet"
+      ],
+      "targets": [
+        "StateSet",
+        "StateSetC",
+        "StateSetTests"
+      ],
+      "publicTypeCount": 80,
+      "apiTypeCount": 31,
+      "facadePropertyCount": 31,
+      "apiMethodCount": 232,
+      "publicTypes": [
+        "AccountsPayableAPI",
+        "AccountsReceivableAPI",
+        "AnalyticsAPI",
+        "BackordersAPI",
+        "BillOfMaterials",
+        "BOMAPI",
+        "BOMComponent",
+        "BOMStatus",
+        "Cart",
+        "CartItem",
+        "CartsAPI",
+        "ClaimResolution",
+        "ClaimStatus",
+        "ConversionResult",
+        "CostAccountingAPI",
+        "CreditAPI",
+        "Currency",
+        "CurrencyAPI",
+        "Customer",
+        "CustomersAPI",
+        "ExchangeRate",
+        "FulfillmentAPI",
+        "GeneralLedgerAPI",
+        "InventoryAPI",
+        "InventoryItem",
+        "Invoice",
+        "InvoiceItem",
+        "InvoicesAPI",
+        "InvoiceStatus",
+        "LotsAPI",
+        "Order",
+        "OrderItem",
+        "OrdersAPI",
+        "OrderStatus",
+        "Payment",
+        "PaymentMethod",
+        "PaymentsAPI",
+        "Product",
+        "ProductsAPI",
+        "ProductVariant",
+        "PromotionsAPI",
+        "PurchaseOrder",
+        "PurchaseOrderItem",
+        "PurchaseOrdersAPI",
+        "PurchaseOrderStatus",
+        "QualityAPI",
+        "ReceivingAPI",
+        "Refund",
+        "RefundStatus",
+        "Return",
+        "ReturnReason",
+        "ReturnsAPI",
+        "ReturnStatus",
+        "SalesSummary",
+        "SerialsAPI",
+        "Shipment",
+        "ShipmentsAPI",
+        "ShipmentStatus",
+        "ShippingCarrier",
+        "StateSetCommerce",
+        "StateSetError",
+        "StockLevel",
+        "StoreCurrencySettings",
+        "SubscriptionsAPI",
+        "Supplier",
+        "SuppliersAPI",
+        "TaxAPI",
+        "TimePeriod",
+        "TopCustomer",
+        "TopProduct",
+        "WarehouseAPI",
+        "WarrantiesAPI",
+        "Warranty",
+        "WarrantyClaim",
+        "WarrantyStatus",
+        "WarrantyType",
+        "WorkOrder",
+        "WorkOrderPriority",
+        "WorkOrdersAPI",
+        "WorkOrderStatus"
+      ],
+      "apiTypes": [
+        "AccountsPayableAPI",
+        "AccountsReceivableAPI",
+        "AnalyticsAPI",
+        "BackordersAPI",
+        "BOMAPI",
+        "CartsAPI",
+        "CostAccountingAPI",
+        "CreditAPI",
+        "CurrencyAPI",
+        "CustomersAPI",
+        "FulfillmentAPI",
+        "GeneralLedgerAPI",
+        "InventoryAPI",
+        "InvoicesAPI",
+        "LotsAPI",
+        "OrdersAPI",
+        "PaymentsAPI",
+        "ProductsAPI",
+        "PromotionsAPI",
+        "PurchaseOrdersAPI",
+        "QualityAPI",
+        "ReceivingAPI",
+        "ReturnsAPI",
+        "SerialsAPI",
+        "ShipmentsAPI",
+        "SubscriptionsAPI",
+        "SuppliersAPI",
+        "TaxAPI",
+        "WarehouseAPI",
+        "WarrantiesAPI",
+        "WorkOrdersAPI"
+      ],
+      "facadeProperties": [
+        {
+          "name": "accountsPayable",
+          "type": "AccountsPayableAPI"
+        },
+        {
+          "name": "accountsReceivable",
+          "type": "AccountsReceivableAPI"
+        },
+        {
+          "name": "analytics",
+          "type": "AnalyticsAPI"
+        },
+        {
+          "name": "backorders",
+          "type": "BackordersAPI"
+        },
+        {
+          "name": "bom",
+          "type": "BOMAPI"
+        },
+        {
+          "name": "carts",
+          "type": "CartsAPI"
+        },
+        {
+          "name": "costAccounting",
+          "type": "CostAccountingAPI"
+        },
+        {
+          "name": "credit",
+          "type": "CreditAPI"
+        },
+        {
+          "name": "currency",
+          "type": "CurrencyAPI"
+        },
+        {
+          "name": "customers",
+          "type": "CustomersAPI"
+        },
+        {
+          "name": "fulfillment",
+          "type": "FulfillmentAPI"
+        },
+        {
+          "name": "generalLedger",
+          "type": "GeneralLedgerAPI"
+        },
+        {
+          "name": "inventory",
+          "type": "InventoryAPI"
+        },
+        {
+          "name": "invoices",
+          "type": "InvoicesAPI"
+        },
+        {
+          "name": "lots",
+          "type": "LotsAPI"
+        },
+        {
+          "name": "orders",
+          "type": "OrdersAPI"
+        },
+        {
+          "name": "payments",
+          "type": "PaymentsAPI"
+        },
+        {
+          "name": "products",
+          "type": "ProductsAPI"
+        },
+        {
+          "name": "promotions",
+          "type": "PromotionsAPI"
+        },
+        {
+          "name": "purchaseOrders",
+          "type": "PurchaseOrdersAPI"
+        },
+        {
+          "name": "quality",
+          "type": "QualityAPI"
+        },
+        {
+          "name": "receiving",
+          "type": "ReceivingAPI"
+        },
+        {
+          "name": "returns",
+          "type": "ReturnsAPI"
+        },
+        {
+          "name": "serials",
+          "type": "SerialsAPI"
+        },
+        {
+          "name": "shipments",
+          "type": "ShipmentsAPI"
+        },
+        {
+          "name": "subscriptions",
+          "type": "SubscriptionsAPI"
+        },
+        {
+          "name": "suppliers",
+          "type": "SuppliersAPI"
+        },
+        {
+          "name": "tax",
+          "type": "TaxAPI"
+        },
+        {
+          "name": "warehouse",
+          "type": "WarehouseAPI"
+        },
+        {
+          "name": "warranties",
+          "type": "WarrantiesAPI"
+        },
+        {
+          "name": "workOrders",
+          "type": "WorkOrdersAPI"
+        }
+      ],
+      "apiMethods": [
+        {
+          "type": "AccountsPayableAPI",
+          "method": "approveBill"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "cancelBill"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "createBill"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "getAgingSummary"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "getBill"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "getBillByNumber"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "getBillsDueSoon"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "getOverdueBills"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "getTotalOutstanding"
+        },
+        {
+          "type": "AccountsPayableAPI",
+          "method": "listBills"
+        },
+        {
+          "type": "AccountsReceivableAPI",
+          "method": "createCreditMemo"
+        },
+        {
+          "type": "AccountsReceivableAPI",
+          "method": "getAgingSummary"
+        },
+        {
+          "type": "AccountsReceivableAPI",
+          "method": "getCreditMemo"
+        },
+        {
+          "type": "AccountsReceivableAPI",
+          "method": "getDso"
+        },
+        {
+          "type": "AccountsReceivableAPI",
+          "method": "getTotalOutstanding"
+        },
+        {
+          "type": "AccountsReceivableAPI",
+          "method": "getUnappliedCredits"
+        },
+        {
+          "type": "AccountsReceivableAPI",
+          "method": "listCreditMemos"
+        },
+        {
+          "type": "AccountsReceivableAPI",
+          "method": "voidCreditMemo"
+        },
+        {
+          "type": "AnalyticsAPI",
+          "method": "salesSummary"
+        },
+        {
+          "type": "AnalyticsAPI",
+          "method": "topCustomers"
+        },
+        {
+          "type": "AnalyticsAPI",
+          "method": "topProducts"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "cancelBackorder"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "countPending"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "createBackorder"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "getBackorder"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "getBackorderByNumber"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "getBackordersForOrder"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "getBackordersForSku"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "getOverdueBackorders"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "getSummary"
+        },
+        {
+          "type": "BackordersAPI",
+          "method": "listBackorders"
+        },
+        {
+          "type": "BOMAPI",
+          "method": "activate"
+        },
+        {
+          "type": "BOMAPI",
+          "method": "addComponent"
+        },
+        {
+          "type": "BOMAPI",
+          "method": "create"
+        },
+        {
+          "type": "BOMAPI",
+          "method": "get"
+        },
+        {
+          "type": "BOMAPI",
+          "method": "getComponents"
+        },
+        {
+          "type": "BOMAPI",
+          "method": "list"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "addItem"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "create"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "get"
+        },
+        {
+          "type": "CostAccountingAPI",
+          "method": "getItemCost"
+        },
+        {
+          "type": "CostAccountingAPI",
+          "method": "getTotalInventoryValue"
+        },
+        {
+          "type": "CostAccountingAPI",
+          "method": "listItemCosts"
+        },
+        {
+          "type": "CostAccountingAPI",
+          "method": "setItemCost"
+        },
+        {
+          "type": "CostAccountingAPI",
+          "method": "updateAverageCost"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "adjustCreditLimit"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "checkCredit"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "createCreditAccount"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "getCreditAccount"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "getCreditAccountByCustomer"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "getOverLimitCustomers"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "listCreditAccounts"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "reactivateCreditAccount"
+        },
+        {
+          "type": "CreditAPI",
+          "method": "suspendCreditAccount"
+        },
+        {
+          "type": "CurrencyAPI",
+          "method": "convert"
+        },
+        {
+          "type": "CurrencyAPI",
+          "method": "getRate"
+        },
+        {
+          "type": "CurrencyAPI",
+          "method": "getSettings"
+        },
+        {
+          "type": "CurrencyAPI",
+          "method": "setRate"
+        },
+        {
+          "type": "CustomersAPI",
+          "method": "create"
+        },
+        {
+          "type": "CustomersAPI",
+          "method": "delete"
+        },
+        {
+          "type": "CustomersAPI",
+          "method": "get"
+        },
+        {
+          "type": "CustomersAPI",
+          "method": "list"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "assignPick"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "cancelPick"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "cancelWave"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "completeWave"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "createWave"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "getPick"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "getWave"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "isOrderReadyToPack"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "isOrderReadyToShip"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "listPicks"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "listWaves"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "releaseWave"
+        },
+        {
+          "type": "FulfillmentAPI",
+          "method": "startPick"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "createAccount"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "getAccount"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "getAccountBalance"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "getAccountByNumber"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "getBalanceSheet"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "getIncomeStatement"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "getJournalEntry"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "getTrialBalance"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "initializeChartOfAccounts"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "listAccounts"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "listJournalEntries"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "postJournalEntry"
+        },
+        {
+          "type": "GeneralLedgerAPI",
+          "method": "voidJournalEntry"
+        },
+        {
+          "type": "InventoryAPI",
+          "method": "adjust"
+        },
+        {
+          "type": "InventoryAPI",
+          "method": "createItem"
+        },
+        {
+          "type": "InventoryAPI",
+          "method": "getLevel"
+        },
+        {
+          "type": "InvoicesAPI",
+          "method": "create"
+        },
+        {
+          "type": "InvoicesAPI",
+          "method": "get"
+        },
+        {
+          "type": "InvoicesAPI",
+          "method": "getOverdue"
+        },
+        {
+          "type": "InvoicesAPI",
+          "method": "list"
+        },
+        {
+          "type": "InvoicesAPI",
+          "method": "recordPayment"
+        },
+        {
+          "type": "InvoicesAPI",
+          "method": "send"
+        },
+        {
+          "type": "InvoicesAPI",
+          "method": "void"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "create"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "get"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "getActiveLots"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "getByNumber"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "getExpiredLots"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "getExpiringLots"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "getQuarantined"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "list"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "quarantine"
+        },
+        {
+          "type": "LotsAPI",
+          "method": "releaseQuarantine"
+        },
+        {
+          "type": "OrdersAPI",
+          "method": "cancel"
+        },
+        {
+          "type": "OrdersAPI",
+          "method": "create"
+        },
+        {
+          "type": "OrdersAPI",
+          "method": "get"
+        },
+        {
+          "type": "OrdersAPI",
+          "method": "list"
+        },
+        {
+          "type": "OrdersAPI",
+          "method": "ship"
+        },
+        {
+          "type": "OrdersAPI",
+          "method": "updateStatus"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "complete"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "create"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "fail"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "get"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "list"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "refund"
+        },
+        {
+          "type": "ProductsAPI",
+          "method": "create"
+        },
+        {
+          "type": "ProductsAPI",
+          "method": "get"
+        },
+        {
+          "type": "ProductsAPI",
+          "method": "list"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "activate"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "create"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "createCoupon"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "deactivate"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "delete"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "get"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "getActive"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "getByCode"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "getCouponByCode"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "list"
+        },
+        {
+          "type": "PromotionsAPI",
+          "method": "validateCoupon"
+        },
+        {
+          "type": "PurchaseOrdersAPI",
+          "method": "approve"
+        },
+        {
+          "type": "PurchaseOrdersAPI",
+          "method": "cancel"
+        },
+        {
+          "type": "PurchaseOrdersAPI",
+          "method": "create"
+        },
+        {
+          "type": "PurchaseOrdersAPI",
+          "method": "get"
+        },
+        {
+          "type": "PurchaseOrdersAPI",
+          "method": "list"
+        },
+        {
+          "type": "PurchaseOrdersAPI",
+          "method": "send"
+        },
+        {
+          "type": "PurchaseOrdersAPI",
+          "method": "submit"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "closeNcr"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "completeInspection"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "createHold"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "createInspection"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "createNcr"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "getActiveHolds"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "getHold"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "getInspection"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "getNcr"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "listHolds"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "listInspections"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "listNcrs"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "releaseHold"
+        },
+        {
+          "type": "QualityAPI",
+          "method": "startInspection"
+        },
+        {
+          "type": "ReceivingAPI",
+          "method": "cancelReceipt"
+        },
+        {
+          "type": "ReceivingAPI",
+          "method": "completeReceiving"
+        },
+        {
+          "type": "ReceivingAPI",
+          "method": "createReceipt"
+        },
+        {
+          "type": "ReceivingAPI",
+          "method": "createReceiptFromPo"
+        },
+        {
+          "type": "ReceivingAPI",
+          "method": "getReceipt"
+        },
+        {
+          "type": "ReceivingAPI",
+          "method": "getReceiptByNumber"
+        },
+        {
+          "type": "ReceivingAPI",
+          "method": "listReceipts"
+        },
+        {
+          "type": "ReceivingAPI",
+          "method": "startReceiving"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "approve"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "complete"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "create"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "get"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "list"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "reject"
+        },
+        {
+          "type": "SerialsAPI",
+          "method": "create"
+        },
+        {
+          "type": "SerialsAPI",
+          "method": "get"
+        },
+        {
+          "type": "SerialsAPI",
+          "method": "getAvailable"
+        },
+        {
+          "type": "SerialsAPI",
+          "method": "getBySerial"
+        },
+        {
+          "type": "SerialsAPI",
+          "method": "isAvailable"
+        },
+        {
+          "type": "SerialsAPI",
+          "method": "list"
+        },
+        {
+          "type": "SerialsAPI",
+          "method": "markSold"
+        },
+        {
+          "type": "SerialsAPI",
+          "method": "quarantine"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "cancel"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "create"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "deliver"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "get"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "list"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "ship"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "activatePlan"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "archivePlan"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "cancel"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "createPlan"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "get"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "getPlan"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "list"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "listPlans"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "pause"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "resume"
+        },
+        {
+          "type": "SubscriptionsAPI",
+          "method": "subscribe"
+        },
+        {
+          "type": "SuppliersAPI",
+          "method": "create"
+        },
+        {
+          "type": "SuppliersAPI",
+          "method": "get"
+        },
+        {
+          "type": "SuppliersAPI",
+          "method": "list"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "calculate"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "createExemption"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "createJurisdiction"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "createRate"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "customerIsExempt"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "getCustomerExemptions"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "getEffectiveRate"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "getJurisdiction"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "getRate"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "getSettings"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "listJurisdictions"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "listRates"
+        },
+        {
+          "type": "TaxAPI",
+          "method": "setEnabled"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "createLocation"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "createWarehouse"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "getLocation"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "getPickableLocations"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "getTotalAvailable"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "getWarehouse"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "getWarehouseByCode"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "listLocations"
+        },
+        {
+          "type": "WarehouseAPI",
+          "method": "listWarehouses"
+        },
+        {
+          "type": "WarrantiesAPI",
+          "method": "approveClaim"
+        },
+        {
+          "type": "WarrantiesAPI",
+          "method": "completeClaim"
+        },
+        {
+          "type": "WarrantiesAPI",
+          "method": "create"
+        },
+        {
+          "type": "WarrantiesAPI",
+          "method": "createClaim"
+        },
+        {
+          "type": "WarrantiesAPI",
+          "method": "denyClaim"
+        },
+        {
+          "type": "WarrantiesAPI",
+          "method": "get"
+        },
+        {
+          "type": "WarrantiesAPI",
+          "method": "list"
+        },
+        {
+          "type": "WorkOrdersAPI",
+          "method": "cancel"
+        },
+        {
+          "type": "WorkOrdersAPI",
+          "method": "complete"
+        },
+        {
+          "type": "WorkOrdersAPI",
+          "method": "create"
+        },
+        {
+          "type": "WorkOrdersAPI",
+          "method": "get"
+        },
+        {
+          "type": "WorkOrdersAPI",
+          "method": "list"
+        },
+        {
+          "type": "WorkOrdersAPI",
+          "method": "start"
+        }
+      ]
+    },
+    {
+      "language": "WASM",
+      "ecosystem": "npm",
+      "directory": "bindings/wasm",
+      "manifestPath": "bindings/wasm/package.json",
+      "readmePath": "bindings/wasm/README.md",
+      "coverageLevel": "package-manifest",
+      "packageName": "@stateset/embedded-wasm",
+      "version": "0.9.9",
+      "entrypoints": {
+        "main": "pkg/stateset_embedded.js",
+        "module": "pkg/stateset_embedded.js",
+        "types": "pkg/stateset_embedded.d.ts"
+      }
+    }
+  ]
+}

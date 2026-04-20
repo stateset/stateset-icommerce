@@ -194,7 +194,9 @@ function deriveLocalEvmWalletFromSeed(seed, chainKey) {
  * @returns {string | null}
  */
 export function caip2ToChainId(network) {
-  const value = String(network || '').trim().toLowerCase();
+  const value = String(network || '')
+    .trim()
+    .toLowerCase();
   if (!value.startsWith('eip155:')) return null;
   const reference = Number(value.slice('eip155:'.length));
   if (!Number.isFinite(reference)) return null;
@@ -391,7 +393,9 @@ export function isExactEvmRequirement(requirement) {
 
   return (
     String(requirement?.scheme || '').toLowerCase() === 'exact' &&
-    String(requirement?.network || '').toLowerCase().startsWith('eip155:') &&
+    String(requirement?.network || '')
+      .toLowerCase()
+      .startsWith('eip155:') &&
     isHexAddress(requirement?.asset) &&
     isHexAddress(requirement?.payTo) &&
     (assetTransferMethod === null || assetTransferMethod === 'eip3009')
@@ -494,7 +498,9 @@ export async function verifyExactEvmPaymentPayload({
   try {
     const payload = asObject(paymentPayload);
     const accepted = asObject(payload?.accepted);
-    const schemePayload = /** @type {ExactEvmSchemePayloadLike | null} */ (asObject(payload?.payload));
+    const schemePayload = /** @type {ExactEvmSchemePayloadLike | null} */ (
+      asObject(payload?.payload)
+    );
     const signature = typeof schemePayload?.signature === 'string' ? schemePayload.signature : null;
     const authorization = normalizeAuthorization(schemePayload?.authorization);
     const requirements = paymentRequirements || accepted;
@@ -523,7 +529,10 @@ export async function verifyExactEvmPaymentPayload({
       return { isValid: false, invalidReason: 'invalid_exact_evm_payload_recipient_mismatch' };
     }
     if (String(acceptedRequirement.amount) !== String(requirement.amount)) {
-      return { isValid: false, invalidReason: 'invalid_exact_evm_payload_authorization_value_mismatch' };
+      return {
+        isValid: false,
+        invalidReason: 'invalid_exact_evm_payload_authorization_value_mismatch',
+      };
     }
     const requiredTimeout = resolveMaxTimeoutSeconds(requirement);
     if (Number(acceptedRequirement.maxTimeoutSeconds) !== requiredTimeout) {
@@ -536,7 +545,10 @@ export async function verifyExactEvmPaymentPayload({
       return { isValid: false, invalidReason: 'invalid_exact_evm_payload_recipient_mismatch' };
     }
     if (String(authorization.value) !== String(requirement.amount)) {
-      return { isValid: false, invalidReason: 'invalid_exact_evm_payload_authorization_value_mismatch' };
+      return {
+        isValid: false,
+        invalidReason: 'invalid_exact_evm_payload_authorization_value_mismatch',
+      };
     }
     if (!isHexAddress(authorization.from)) {
       return { isValid: false, invalidReason: 'invalid_payload' };
@@ -750,22 +762,25 @@ export async function settleExactEvmPaymentPayload({
 }
 
 export function getExactEvmSupportedKinds() {
-  const supportedChains = /** @type {Array<{ x402Version: number, scheme: string, network: string, extra: Record<string, string> }>} */ (['base_sepolia', 'base', 'ethereum_sepolia', 'ethereum']
-    .map((chainId) => {
-      const chain = getExactEvmChain(chainId);
-      if (!chain?.chainId || !chain.usdcAddress) return null;
-      return {
-        x402Version: 2,
-        scheme: 'exact',
-        network: `eip155:${chain.chainId}`,
-        extra: {
-          assetTransferMethod: 'eip3009',
-          name: 'USD Coin',
-          version: '2',
-        },
-      };
-    })
-    .filter((chain) => chain !== null));
+  const supportedChains =
+    /** @type {Array<{ x402Version: number, scheme: string, network: string, extra: Record<string, string> }>} */ (
+      ['base_sepolia', 'base', 'ethereum_sepolia', 'ethereum']
+        .map((chainId) => {
+          const chain = getExactEvmChain(chainId);
+          if (!chain?.chainId || !chain.usdcAddress) return null;
+          return {
+            x402Version: 2,
+            scheme: 'exact',
+            network: `eip155:${chain.chainId}`,
+            extra: {
+              assetTransferMethod: 'eip3009',
+              name: 'USD Coin',
+              version: '2',
+            },
+          };
+        })
+        .filter((chain) => chain !== null)
+    );
 
   return supportedChains;
 }

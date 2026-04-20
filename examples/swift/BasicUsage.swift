@@ -1,4 +1,3 @@
-#!/usr/bin/env swift
 /**
  * StateSet iCommerce - Swift Example
  *
@@ -9,7 +8,7 @@
  * - Order processing
  * - Analytics
  *
- * Run with: swift BasicUsage.swift
+ * Run with: swift run
  */
 
 import Foundation

@@ -4,10 +4,11 @@
 
 We release patches for security vulnerabilities in the following versions:
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.9.x   | :white_check_mark: |
-| < 0.9.0 | :x:                |
+| Version | Supported                          |
+| ------- | ---------------------------------- |
+| 1.x     | :white_check_mark: (current)       |
+| 0.9.x   | :white_check_mark: (security only) |
+| < 0.9.0 | :x:                                |
 
 This table tracks the currently maintained release line for this repository and should be updated in the same change that advances the supported release series.
 
@@ -51,6 +52,7 @@ For the current audit, formal-verification, and trust-assumption status of the r
 
 - **SQLite**: Database files should be protected with appropriate file system permissions
 - **PostgreSQL**: Use strong credentials and secure connection strings
+- **MySQL is not supported.** The `sqlx` dependency excludes MySQL at the workspace level (`default-features = false`, features list does not include `mysql`). Do not enable the MySQL driver in downstream crates — see the Vulnerability History entry for RUSTSEC-2023-0071.
 - Never commit database files or credentials to version control
 
 ### API Keys & Credentials
@@ -126,13 +128,24 @@ We minimize dependencies and audit them regularly. Key dependencies:
 | Dependency | Purpose | Security Notes |
 |------------|---------|----------------|
 | `rusqlite` | SQLite bindings | Uses bundled SQLite |
-| `sqlx` | PostgreSQL async | Prepared statements prevent SQL injection |
+| `sqlx` | PostgreSQL async | Prepared statements prevent SQL injection; MySQL driver is disabled at the workspace level |
 | `serde` | Serialization | No unsafe code |
 | `uuid` | ID generation | Cryptographically random UUIDs |
 
+## Known Advisories
+
+### RUSTSEC-2023-0071 — Marvin Attack (rsa crate)
+
+- **Affected crate**: `rsa` (transitive dependency of `sqlx-mysql`)
+- **Severity**: Medium (CVSS 5.9) — timing sidechannel in RSA PKCS#1 v1.5 decryption
+- **Upstream fix**: None available at the time of v1.0.0
+- **Impact on this workspace**: **None at default settings.** `sqlx` is declared with `default-features = false` and the `mysql` feature is not enabled (`Cargo.toml` workspace dependency). The vulnerable code is compiled out.
+- **Mitigation**: MySQL support is not a supported backend for StateSet iCommerce. Downstream crates and bindings must not enable `sqlx`'s `mysql` feature. CI enforces this via `cargo audit --ignore RUSTSEC-2023-0071` (`.github/workflows/ci.yml`) with the ignore justified by non-use rather than acceptance.
+- **Recommended action**: Use SQLite (default) or PostgreSQL. If you need MySQL, evaluate the advisory independently before enabling the feature.
+
 ## Vulnerability History
 
-No security vulnerabilities have been reported to date.
+No security vulnerabilities affecting the supported surface (SQLite/PostgreSQL, default features) have been reported to date. See "Known Advisories" above for non-impacting transitive findings.
 
 ---
 

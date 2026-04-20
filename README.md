@@ -9,15 +9,20 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 [![CI](https://github.com/stateset/stateset-icommerce/actions/workflows/ci.yml/badge.svg)](https://github.com/stateset/stateset-icommerce/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/stateset/stateset-icommerce/graph/badge.svg)](https://codecov.io/gh/stateset/stateset-icommerce)
 
+> **Looking to accept ChatGPT checkout?** iCommerce 1.0 pairs with
+> [`stateset-acp-handler`](https://github.com/stateset/stateset-acp-handler)
+> as the reference implementation of the Agentic Commerce Protocol.
+> One container, 60 seconds: `npx create-acp-commerce@latest my-store`.
+
 ---
 
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==0.9.8     # Python
-npm install @stateset/embedded@0.9.8     # Node.js
-npm install -g @stateset/cli@0.9.8       # CLI
-gem install stateset_embedded -v 0.9.8   # Ruby
+pip install stateset-embedded==0.9.9     # Python
+npm install @stateset/embedded@0.9.9     # Node.js
+npm install -g @stateset/cli@0.9.9       # CLI
+gem install stateset_embedded -v 0.9.9   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -48,6 +53,127 @@ println!("Order {} — ${}", order.order_number, order.total_amount);
 No database setup. No config files. No migrations to run. It just works.
 
 **[10-Minute Quickstart →](./QUICKSTART.md)** | **[API Reference](https://docs.rs/stateset-sdk)** | **[OpenAPI Spec](http://localhost:3000/api/v1/docs)** | **[Trust Foundation](./TRUST_FOUNDATION.md)**
+
+---
+
+## Engine-First Adoption
+
+If the bet is the engine, the primary product surface is the embedded runtime:
+
+- embed `@stateset/embedded` or `stateset-sdk` inside the agent host process
+- expose tools through `@stateset/embedded/openai`, `@stateset/embedded/generic`, `@stateset/embedded/langchain`, or `@stateset/embedded/vercel-ai`
+- integrate with agent frameworks through native adapters or OpenAI-compatible tool schemas
+- treat the MCP server as a distribution path for MCP-native clients, not as the center of the product
+
+Today the embedded toolkit supports:
+
+- OpenAI Responses / Chat Completions style tool loops via `@stateset/embedded/openai`
+- Vercel AI SDK via `@stateset/embedded/vercel-ai`
+- LangChain / LangGraph JS via `@stateset/embedded/langchain`
+- framework-neutral runtimes via `@stateset/embedded/generic`
+- Python agent runtimes via `create_embedded_agent_toolkit()` in `stateset_embedded`
+- Python framework helpers via `create_langchain_tools()`, `create_crewai_tools()`, and `create_autogen_tools()`
+- Python OpenAI helper surface via `create_openai_tools()` and `execute_openai_tool_call()`
+- Python framework-neutral helper surface via `create_tool_descriptors()`, `create_callable_registry()`, and `execute_tool()`
+- Python framework modules via `stateset_embedded.langchain`, `stateset_embedded.crewai`, and `stateset_embedded.autogen`
+- MCP-native clients like Claude Desktop / Cursor / Windsurf via the CLI server
+
+For Python ecosystems such as CrewAI or AutoGen, the native Python toolkit now
+covers core embedded commerce operations with OpenAI-compatible tool schemas,
+framework-neutral descriptors, and framework adapter helpers. Install
+`stateset-embedded[agents]` when you want the optional Python framework
+dependencies in one step. Use the JS toolkit or MCP server when you need the
+full registry-generated CLI surface, policy runtime, or priced-tool helpers.
+The repo also includes dedicated Python example entry points for
+`stateset_embedded.generic`, `stateset_embedded.openai`,
+`stateset_embedded.langchain`, `stateset_embedded.crewai`, and
+`stateset_embedded.autogen` under `examples/python/`, and the shared
+`check:engine-examples` gate now exercises both the JS and Python engine
+examples before release.
+
+---
+
+## Embedded Agent Toolkit (OpenAI / LangGraph / server-side agents)
+
+Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
+
+```bash
+npm install @stateset/embedded@0.9.9 @stateset/cli@0.9.9
+```
+
+```javascript
+import { Commerce } from '@stateset/embedded';
+import { createOpenAITools, executeOpenAIToolCall } from '@stateset/embedded/openai';
+
+const commerce = new Commerce('./store.db');
+const tools = createOpenAITools(commerce, {
+  filter: ['list_customers'],
+});
+const execution = await executeOpenAIToolCall(commerce, {
+  call_id: 'demo_call_1',
+  function: {
+    name: 'list_customers',
+    arguments: '{}',
+  },
+});
+// execution.result.status === 'success'
+```
+
+If your runtime should fan out to specialist agents, pass an `autonomousEngine` and enable writes for delegation:
+
+```javascript
+const delegatedToolkit = createEmbeddedAgentToolkit({
+  commerce,
+  allowApply: true,
+  autonomousEngine,
+});
+
+await delegatedToolkit.executeTool('delegate_to_agent', {
+  agent_name: 'orders',
+  task_description: 'Review pending orders over $500',
+  context: { limit: 10 },
+});
+```
+
+`delegate_to_agent` follows the same safety model as other write tools, so it stays in preview mode until `allowApply` is enabled.
+
+For OpenAI Responses API loops, `executeOpenAIToolCall()` returns a ready-to-send `function_call_output` payload:
+
+```javascript
+const execution = await toolkit.executeOpenAIToolCall(toolCall);
+
+await client.responses.create({
+  model: 'gpt-4.1',
+  previous_response_id: response.id,
+  input: [execution.outputMessage],
+  tools,
+});
+```
+
+For framework-native and framework-neutral adapters:
+
+```javascript
+import { createVercelAITools } from '@stateset/embedded/vercel-ai';
+import { createLangChainTools } from '@stateset/embedded/langchain';
+import { createToolDescriptors } from '@stateset/embedded/generic';
+
+const vercelTools = createVercelAITools(commerce, { tool });
+const langChainTools = createLangChainTools(commerce, { DynamicStructuredTool });
+const genericTools = createToolDescriptors(commerce);
+```
+
+`createToolDescriptors()` is the lowest-common-denominator adapter surface for runtimes that want `{ name, description, schema, execute }` objects instead of a framework-specific wrapper.
+
+For priced tools and remote MPP-enabled HTTP services, the same toolkit also exposes
+payment-aware helpers such as `getPayableToolCatalog()`, `prepareToolPayment()`,
+`executePaidTool()`, `discoverRemotePaymentService()`, and
+`createRemoteHttpToolDescriptors()`.
+
+For contract-aware or replay-aware agents, the toolkit also exposes
+`getRuntimeContract()`, `simulatePlan()`, `executePlan()`, `replayMutation()`,
+and `getReplayLog()`.
+
+Use `simulateMutation()` or `executePlan({ dryRun: true, ... })` before enabling writes, then turn on `allowApply` only for agents that should mutate commerce state.
 
 ---
 
@@ -105,108 +231,40 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 
 ---
 
-## Embedded Agent Toolkit (OpenAI / LangGraph / server-side agents)
-
-Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
-
-```bash
-npm install @stateset/cli@0.9.8 @stateset/embedded@0.9.8
-```
-
-```javascript
-import { Commerce } from '@stateset/embedded';
-import { createEmbeddedAgentToolkit } from '@stateset/cli/agent-toolkit';
-
-const commerce = new Commerce('./store.db');
-const toolkit = createEmbeddedAgentToolkit({
-  commerce,
-  allowApply: false,
-});
-
-const tools = toolkit.getTools({ format: 'openai' });
-const result = await toolkit.executeTool('list_customers');
-// result.status === 'success'
-// result.result contains the tool payload
-```
-
-If your runtime should fan out to specialist agents, pass an `autonomousEngine` and enable writes for delegation:
-
-```javascript
-const delegatedToolkit = createEmbeddedAgentToolkit({
-  commerce,
-  allowApply: true,
-  autonomousEngine,
-});
-
-await delegatedToolkit.executeTool('delegate_to_agent', {
-  agent_name: 'orders',
-  task_description: 'Review pending orders over $500',
-  context: { limit: 10 },
-});
-```
-
-`delegate_to_agent` follows the same safety model as other write tools, so it stays in preview mode until `allowApply` is enabled.
-
-For OpenAI Responses API loops, `executeOpenAIToolCall()` returns a ready-to-send `function_call_output` payload:
-
-```javascript
-const execution = await toolkit.executeOpenAIToolCall(toolCall);
-
-await client.responses.create({
-  model: 'gpt-4.1',
-  previous_response_id: response.id,
-  input: [execution.outputMessage],
-  tools,
-});
-```
-
-For framework-native adapters:
-
-```javascript
-const vercelTools = toolkit.createVercelAITools({ tool });
-const langChainTools = toolkit.createLangChainTools({ DynamicStructuredTool });
-```
-
-For priced tools and remote MPP-enabled HTTP services, the same toolkit also exposes
-payment-aware helpers such as `getPayableToolCatalog()`, `prepareToolPayment()`,
-`executePaidTool()`, `discoverRemotePaymentService()`, and
-`createRemoteHttpToolDescriptors()`.
-
-For contract-aware or replay-aware agents, the toolkit also exposes
-`getRuntimeContract()`, `simulatePlan()`, `executePlan()`, `replayMutation()`,
-and `getReplayLog()`.
-
-Use `simulateMutation()` or `executePlan({ dryRun: true, ... })` before enabling writes, then turn on `allowApply` only for agents that should mutate commerce state.
-
----
-
 **Development toolchain (repo root):**
 ```bash
 nvm use                      # uses .nvmrc / .node-version (20.20.0)
 rustup show active-toolchain # dev toolchain pinned by rust-toolchain.toml (1.90.0)
-npm run check                # root quality checks
+npm run check                # developer gate for the core workspace surfaces
+npm run check:release        # release preflight before cutting a tag
 ```
 
-CI also verifies the workspace MSRV on Rust 1.85 and runs the admin app checks
-under the same pinned Node 20.20.0 runtime.
+The authoritative remote release gate is the GitHub Actions `CI Success` job in
+`.github/workflows/ci.yml`. A release tag should only be cut from a commit that
+passes both `npm run check:release` locally and `CI Success` remotely.
+
+CI also verifies the workspace MSRV on Rust 1.85 and runs the wider binding and
+admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.9.8
+## What's New in v0.9.9
 
-**Quality and Release Hardening Update** - `0.9.8` tightens the admin/runtime surfaces, makes the CLI and Node binding release gates green again, and hardens the repo-wide release pipeline.
+**Stable Engine Release** - `0.9.9` starts the stable `v1` line for the embedded commerce engine. The public Rust API, language binding version line, MCP tool names and schemas, CLI flags, policy YAML, and additive SQLite migration direction are now treated as stable within `v1.x`.
 
-### Admin Runtime Hardening
+### Agent Framework Embedding
+- Added engine-first toolkit helpers and documented adapters for OpenAI, LangChain, generic tool runtimes, CrewAI, and AutoGen across the Node and Python binding surfaces
+- Expanded agent examples so framework users can embed the runtime directly instead of standing up a separate commerce service
+
+### Runtime and Release Hardening
 - Fixed protected admin API access so bearer-token requests are accepted consistently through middleware and route handlers
 - Enforced request-size limits against actual streamed bodies and preserved gateway query strings during proxying
-
-### CLI and x402 Stability
 - Cleared the CLI typecheck and lint blockers across the x402 and sync surfaces so the published quality gate passes end to end
-- Added explicit x402 intent signature-scheme configuration in the Node binding so strict `ml_dsa65` signing works against the intended stored policy
-
-### Release Metadata and Docs
 - Hardened the repo-wide Rust check pipeline against debug-symbol and incremental-cache blowups during release validation
-- Synced workspace versions, install snippets, deployment references, and current-release docs to `0.9.8`
+
+### Versioned 1.0 Cut
+- Synced workspace versions, install snippets, deployment references, and current-release docs to `0.9.9`
+- Kept the release preflight green across bindings, docs, examples, inventories, admin, and CLI surfaces
 
 ---
 
@@ -224,11 +282,21 @@ under the same pinned Node 20.20.0 runtime.
 
 | Tier | What’s Covered | CI Coverage |
 |------|----------------|------------|
-| Tier 1 | Default-workspace Rust crates, Node binding, admin app, CLI | Verified by `npm run check` |
-| Tier 2 | Python plus compiled bindings for Go, .NET, Java, Kotlin, Swift, and WASM | Validate per target toolchain and packaging flow |
-| Tier 3 | Ruby, PHP, and experimental integrations | Explicit/manual validation |
+| Tier 1 | Default-workspace Rust crates, Node binding, admin app, CLI | Verified by `npm run check` locally and required in `CI Success` |
+| Tier 2 | Python, Go, .NET, Java/Kotlin, Swift, and WASM bindings | Dedicated CI jobs are required in `CI Success` before tagging |
+| Tier 3 | Ruby native gem and PHP extension distribution flows | Representative CI jobs plus release-workflow validation on publish commits |
 
-Ruby and PHP are kept in-repo but intentionally excluded from default workspace membership because they require host runtimes or headers that are often unavailable in CI and local dev.
+Ruby and PHP are kept in-repo but intentionally excluded from default workspace
+membership because they require host runtimes or headers that are often
+unavailable in local dev. They are still exercised in dedicated CI lanes and
+must not be released from a commit without a green `CI Success` aggregate.
+
+## Release Gate
+
+- Local preflight: `npm run check:release`
+- Remote tag gate: green `CI Success` in `.github/workflows/ci.yml`
+- Local git hooks are convenience checks only; the release authority is the
+  checked command above plus the protected CI aggregate
 
 Production note: use `config/stateset.production.properties` as the baseline for secure defaults.
 
@@ -293,6 +361,7 @@ admin | cli
 - `cli/` is a large Node 20.20+ runtime with the MCP server, tool registry, sync/x402 logic, agent routing, messaging channels, and scaffolding flows.
 - `admin/` is a Next.js surface that depends on the local Node binding package and loads `@stateset/embedded` at runtime.
 - The root `npm run check` pipeline validates release hygiene, Rust fmt/tests/lints/feature-matrix checks, shell scripts, the Node binding, the admin app, and the CLI.
+- `npm run check:release` is the authoritative local release preflight; it extends `npm run check` with doc-tool validation and generated inventory checks before a tag is cut.
 
 ### Recommended Onboarding Order
 
@@ -312,7 +381,7 @@ For a manifest-grounded dependency walkthrough, see [Dependency Direction](./doc
 ### Rust
 
 ```rust
-use stateset_embedded::Commerce;
+use stateset_sdk::prelude::*;
 use rust_decimal_macros::dec;
 
 // Initialize with a local database file
@@ -978,7 +1047,7 @@ stateset --provider ollama --model llama3 "check inventory"
 stateset "ship order #12345"
 ```
 
-Non-Claude providers in the CLI operate in chat-only mode. For embedded OpenAI, LangGraph, LangChain, or other server-side agents, use `@stateset/cli/agent-toolkit` to expose the same commerce tools as JSON-schema functions.
+Non-Claude providers in the CLI operate in chat-only mode. For embedded OpenAI, LangGraph, LangChain, or other server-side agents, use the `@stateset/embedded/*` helper entrypoints for the engine-first tool surface, and reach for `@stateset/embedded/agent-toolkit` when you need advanced runtime controls.
 
 ### Validation & Errors
 
@@ -1218,7 +1287,7 @@ tool access are generated from code in the
 
 ```toml
 [dependencies]
-stateset-embedded = "0.9.8"
+stateset-embedded = "0.9.9"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1268,14 +1337,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.9.8</version>
+    <version>0.9.9</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.9.8'
+implementation 'com.stateset:embedded:0.9.9'
 ```
 
 ### Kotlin (Gradle)
@@ -1283,7 +1352,7 @@ implementation 'com.stateset:embedded:0.9.8'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.9.8")
+    implementation("com.stateset:embedded-kotlin:0.9.9")
 }
 ```
 
@@ -1292,32 +1361,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.8")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.9")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.9.8'
+pod 'StateSet', '~> 0.9.9'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.9.8
+dotnet add package StateSet.Embedded --version 0.9.9
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.9.8" />
+<PackageReference Include="StateSet.Embedded" Version="0.9.9" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.8
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.9
 ```
 
 ### CLI
@@ -1339,7 +1408,7 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-embedded` | `cargo add stateset-embedded` | [crates.io](https://crates.io/crates/stateset-embedded) |
+| **Rust** | `stateset-sdk` | `cargo add stateset-sdk --features full` | [docs.rs](https://docs.rs/stateset-sdk) |
 | **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
@@ -1350,6 +1419,10 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 | **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
 | **Go** | `stateset` | `go get github.com/stateset/.../stateset` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
+
+For Rust specifically, `stateset-sdk` is the recommended facade crate. Use
+`stateset-embedded` directly when you want the lower-level core commerce API
+without the feature-gated SDK layer.
 
 ### Platform Support
 
