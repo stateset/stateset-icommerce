@@ -632,7 +632,6 @@ jobs:
     name: Admin UI
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: ${{ hashFiles('admin/package.json') != '' }}
 
     steps:
       - uses: actions/checkout@v6
@@ -670,7 +669,6 @@ jobs:
     name: Admin Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: ${{ hashFiles('admin/package.json') != '' }}
 
     steps:
       - uses: actions/checkout@v6

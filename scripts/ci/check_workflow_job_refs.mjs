@@ -32,6 +32,7 @@ function parseWorkflow(filePath) {
   let inJobs = false;
   let currentJob = null;
   let collectingNeeds = false;
+  let collectingJobIf = false;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -48,6 +49,7 @@ function parseWorkflow(filePath) {
       inJobs = false;
       currentJob = null;
       collectingNeeds = false;
+      collectingJobIf = false;
       continue;
     }
 
@@ -55,6 +57,7 @@ function parseWorkflow(filePath) {
     if (jobMatch) {
       currentJob = jobMatch[1];
       collectingNeeds = false;
+      collectingJobIf = false;
       if (jobIds.has(currentJob)) {
         errors.push(
           `${filePath}:${lineNumber} duplicates job id "${currentJob}" (first declared on line ${jobIds.get(currentJob)})`,
@@ -66,6 +69,27 @@ function parseWorkflow(filePath) {
     }
 
     if (!currentJob) {
+      continue;
+    }
+
+    if (collectingJobIf) {
+      if (/^    [A-Za-z0-9_-]+:\s*/.test(line) || /^  [A-Za-z0-9_-]+:\s*/.test(line)) {
+        collectingJobIf = false;
+      } else if (/\bhashFiles\s*\(/.test(line)) {
+        errors.push(
+          `${filePath}:${lineNumber} job "${currentJob}" cannot use hashFiles() in a job-level if expression`,
+        );
+      }
+    }
+
+    const jobIfMatch = line.match(/^    if:\s*(.*)$/);
+    if (jobIfMatch) {
+      collectingJobIf = /^[>|]/.test(jobIfMatch[1].trim());
+      if (/\bhashFiles\s*\(/.test(jobIfMatch[1])) {
+        errors.push(
+          `${filePath}:${lineNumber} job "${currentJob}" cannot use hashFiles() in a job-level if expression`,
+        );
+      }
       continue;
     }
 
