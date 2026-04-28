@@ -9,7 +9,7 @@
  * - Analytics
  *
  * Run with: ./gradlew run
- * Or build a jar: ./gradlew jar && java -jar build/libs/kotlin-0.9.9.jar
+ * Or build a jar: ./gradlew jar && java -jar build/libs/kotlin-1.0.0.jar
  */
 package com.stateset.examples
 

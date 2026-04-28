@@ -14,10 +14,15 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 
 // We import only the class — the module-level require('@stateset/embedded')
 // only fires inside getCommerceCtor(), which is lazy.
 import { DatabaseManager, createDatabaseManager } from '../../src/database.js';
+
+const require = createRequire(import.meta.url);
+const BetterSqlite3 = require('better-sqlite3');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -325,6 +330,63 @@ describe('DatabaseManager', () => {
 
     it('returns false for a path that does not exist on disk', () => {
       assert.strictEqual(mgr.exists('/tmp/__does_not_exist_test__.db'), false);
+    });
+  });
+
+  // =========================================================================
+  // backup / restore
+  // =========================================================================
+
+  describe('backup and restore', () => {
+    let mgr;
+    let tempDir;
+
+    beforeEach(() => {
+      mgr = new DatabaseManager();
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-db-test-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('copies SQLite sidecar files during backup', () => {
+      const sourceDb = path.join(tempDir, 'store.db');
+      const db = new BetterSqlite3(sourceDb);
+      db.pragma('journal_mode = WAL');
+      db.exec('CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)');
+      db.exec(`INSERT INTO test (value) VALUES ('hello')`);
+
+      const sourceWal = `${sourceDb}-wal`;
+      const sourceShm = `${sourceDb}-shm`;
+      assert.ok(fs.existsSync(sourceWal));
+      assert.ok(fs.existsSync(sourceShm));
+
+      const result = mgr.backup(sourceDb, tempDir);
+      db.close();
+
+      assert.ok(fs.existsSync(result.backup));
+      assert.ok(fs.existsSync(`${result.backup}-wal`));
+      assert.ok(fs.existsSync(`${result.backup}-shm`));
+      assert.ok(result.size > 0);
+    });
+
+    it('restores SQLite sidecar files and removes stale target sidecars', () => {
+      const backupDb = path.join(tempDir, 'snapshot.db');
+      const targetDb = path.join(tempDir, 'restored.db');
+
+      fs.writeFileSync(backupDb, 'backup-main');
+      fs.writeFileSync(`${backupDb}-wal`, 'backup-wal');
+      fs.writeFileSync(targetDb, 'old-main');
+      fs.writeFileSync(`${targetDb}-wal`, 'old-wal');
+      fs.writeFileSync(`${targetDb}-shm`, 'stale-shm');
+
+      const result = mgr.restore(backupDb, targetDb);
+
+      assert.strictEqual(fs.readFileSync(targetDb, 'utf8'), 'backup-main');
+      assert.strictEqual(fs.readFileSync(`${targetDb}-wal`, 'utf8'), 'backup-wal');
+      assert.ok(!fs.existsSync(`${targetDb}-shm`));
+      assert.ok(result.size >= 'backup-main'.length + 'backup-wal'.length);
     });
   });
 

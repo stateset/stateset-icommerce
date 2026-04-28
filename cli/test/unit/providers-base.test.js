@@ -21,6 +21,7 @@ let ModelProvider;
 let CircuitBreaker;
 let FallbackChain;
 let getProviderRegistry;
+let ensureProviderRegistry;
 let resetProviderRegistry;
 let getFallbackChain;
 let importError = null;
@@ -31,6 +32,7 @@ try {
   CircuitBreaker = mod.CircuitBreaker;
   FallbackChain = mod.FallbackChain;
   getProviderRegistry = mod.getProviderRegistry;
+  ensureProviderRegistry = mod.ensureProviderRegistry;
   resetProviderRegistry = mod.resetProviderRegistry;
   getFallbackChain = mod.getFallbackChain;
 } catch (err) {
@@ -696,6 +698,12 @@ describe('Provider singletons', { skip: !canImport && `import failed: ${importEr
     const a = getProviderRegistry();
     const b = getProviderRegistry();
     assert.equal(a, b);
+  });
+
+  it('ensureProviderRegistry() resolves to the same singleton instance', async () => {
+    const registry = getProviderRegistry();
+    const readyRegistry = await ensureProviderRegistry();
+    assert.equal(readyRegistry, registry);
   });
 
   it('resetProviderRegistry() causes a new instance on next call', () => {

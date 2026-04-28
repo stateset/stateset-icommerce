@@ -58,11 +58,27 @@ export const DEFAULT_FALLBACK_CHAIN = [
     id: 'gemini-flash',
     provider: 'gemini',
     model: 'gemini-2.0-flash-exp',
-    envKey: 'GOOGLE_API_KEY',
+    envKey: 'GEMINI_API_KEY',
+    envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
     priority: 4,
     capabilities: ['streaming'],
   },
 ];
+
+function getModelEnvKeys(model) {
+  if (Array.isArray(model.envKeys) && model.envKeys.length > 0) {
+    return model.envKeys;
+  }
+  return model.envKey ? [model.envKey] : [];
+}
+
+function hasConfiguredApiKey(model) {
+  const envKeys = getModelEnvKeys(model);
+  if (envKeys.length === 0) {
+    return true;
+  }
+  return envKeys.some((envKey) => Boolean(process.env[envKey]));
+}
 
 /**
  * Error patterns that indicate rate limiting or transient failures
@@ -235,7 +251,7 @@ export class ModelFallback {
       }
 
       // Check API key availability
-      if (model.envKey && !process.env[model.envKey]) {
+      if (!hasConfiguredApiKey(model)) {
         return false;
       }
 
@@ -260,7 +276,7 @@ export class ModelFallback {
 
     if (modelsToTry.length === 0) {
       // Provide helpful error message based on why no models are available
-      const missingKeys = this.chain.filter((m) => m.envKey && !process.env[m.envKey]);
+      const missingKeys = this.chain.filter((m) => !hasConfiguredApiKey(m));
       const inCooldown = this.chain.filter((m) => this.cooldownTracker.isInCooldown(m.id));
 
       let errorMsg = 'No models available.';
@@ -445,7 +461,7 @@ export class ModelFallback {
     return this.chain.map((model) => {
       const inCooldown = this.cooldownTracker.isInCooldown(model.id);
       const cooldownRemaining = this.cooldownTracker.getCooldownRemaining(model.id);
-      const hasApiKey = !model.envKey || !!process.env[model.envKey];
+      const hasApiKey = hasConfiguredApiKey(model);
 
       return {
         id: model.id,

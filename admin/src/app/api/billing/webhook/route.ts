@@ -1,8 +1,12 @@
+import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/shared/logger';
 import { withErrorHandler } from '@/lib/shared/with-error-handler';
 
-const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+function getStripeWebhookSecret(): string | null {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  return secret || null;
+}
 
 /**
  * POST /api/billing/webhook
@@ -14,6 +18,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   try {
     const body = await request.text();
     const signature = request.headers.get('stripe-signature');
+    const webhookSecret = getStripeWebhookSecret();
 
     if (!signature) {
       logger.warn('Billing webhook: missing signature header');
@@ -23,7 +28,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       );
     }
 
-    if (!STRIPE_WEBHOOK_SECRET) {
+    if (!webhookSecret) {
       logger.error('Billing webhook: STRIPE_WEBHOOK_SECRET not configured');
       return NextResponse.json(
         { success: false, error: { message: 'Webhook not configured', code: 'WEBHOOK_CONFIG_ERROR' } },
@@ -33,9 +38,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
     // Verify signature using Stripe's algorithm (HMAC-SHA256)
     const encoder = new TextEncoder();
-    const [, timestamp, sig] = parseSignatureHeader(signature);
+    const { timestamp, signatures } = parseSignatureHeader(signature);
 
-    if (!timestamp || !sig) {
+    if (!timestamp || signatures.length === 0) {
       logger.warn('Billing webhook: malformed signature header');
       return NextResponse.json(
         { success: false, error: { message: 'Malformed signature', code: 'WEBHOOK_INVALID' } },
@@ -56,7 +61,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const signedPayload = `${timestamp}.${body}`;
     const key = await crypto.subtle.importKey(
       'raw',
-      encoder.encode(STRIPE_WEBHOOK_SECRET),
+      encoder.encode(webhookSecret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['sign']
@@ -66,7 +71,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
-    if (expectedHex !== sig) {
+    if (!signatures.some((sig) => constantTimeHexEqual(expectedHex, sig))) {
       logger.warn('Billing webhook: signature mismatch');
       return NextResponse.json(
         { success: false, error: { message: 'Invalid signature', code: 'WEBHOOK_INVALID' } },
@@ -104,11 +109,43 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 });
 
-function parseSignatureHeader(header: string): [string, string | undefined, string | undefined] {
-  const parts: Record<string, string> = {};
+function parseSignatureHeader(header: string): {
+  timestamp?: string;
+  signatures: string[];
+} {
+  const signatures: string[] = [];
+  let timestamp: string | undefined;
+
   header.split(',').forEach((item) => {
     const [key, value] = item.split('=');
-    if (key && value) parts[key.trim()] = value.trim();
+    if (!key || !value) {
+      return;
+    }
+
+    const normalizedKey = key.trim();
+    const normalizedValue = value.trim();
+    if (normalizedKey === 't') {
+      timestamp = normalizedValue;
+      return;
+    }
+    if (normalizedKey === 'v1') {
+      signatures.push(normalizedValue);
+    }
   });
-  return ['stripe', parts['t'], parts['v1']];
+
+  return { timestamp, signatures };
+}
+
+function constantTimeHexEqual(expectedHex: string, candidateHex: string): boolean {
+  if (expectedHex.length !== candidateHex.length) {
+    return false;
+  }
+
+  try {
+    const expected = Buffer.from(expectedHex, 'hex');
+    const candidate = Buffer.from(candidateHex, 'hex');
+    return expected.length === candidate.length && timingSafeEqual(expected, candidate);
+  } catch {
+    return false;
+  }
 }

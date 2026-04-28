@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name        = 'stateset_embedded'
-  s.version      = '0.9.9'
+  s.version      = '1.0.0'
   s.summary     = 'Local-first commerce engine for Ruby'
   s.description = 'Embedded commerce operations with SQLite storage. Provides a complete commerce API including customers, orders, products, inventory, returns, carts, analytics, and more.'
   s.authors     = ['StateSet']

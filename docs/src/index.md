@@ -6,7 +6,7 @@ StateSet iCommerce is a portable, AI-native commerce engine that runs in-process
 
 Think of it as the **SQLite of Commerce**: embed a full commerce engine in any application, in any language, with a single dependency.
 
-Current release: **0.9.9**
+Current release: **1.0.0**
 
 Before depending on this stack for regulated or infrastructure-grade workloads, read the
 [Trust Foundation](trust-foundation.md). It states the current guarantees, residual trust
@@ -135,4 +135,4 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 Current workspace and binding counts live in [Workspace Inventory](appendix/workspace-inventory.md).
 6. [Trust Foundation](trust-foundation.md) — current trust posture and open gaps
 
-Current release: **0.9.9**
+Current release: **1.0.0**

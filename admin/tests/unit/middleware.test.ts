@@ -20,9 +20,9 @@ describe('admin middleware', () => {
     vi.unstubAllEnvs();
   });
 
-  it('redirects anonymous page requests to the root gate', () => {
+  it('redirects anonymous page requests to the root gate', async () => {
     const request = new NextRequest('http://localhost:3000/orders');
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe('http://localhost:3000/');
@@ -30,7 +30,7 @@ describe('admin middleware', () => {
 
   it('rejects anonymous protected API requests', async () => {
     const request = new NextRequest('http://localhost:3000/api/sessions');
-    const response = middleware(request);
+    const response = await middleware(request);
     const body = await response.json();
 
     expect(response.status).toBe(401);
@@ -42,36 +42,36 @@ describe('admin middleware', () => {
     });
   });
 
-  it('allows protected API requests with a bearer token header', () => {
+  it('allows protected API requests with a bearer token header', async () => {
     const request = new NextRequest('http://localhost:3000/api/sessions', {
       headers: {
         Authorization: 'Bearer test-header-token',
       },
     });
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).toBe(200);
   });
 
-  it('allows public auth routes without a session cookie', () => {
+  it('allows public auth routes without a session cookie', async () => {
     const request = new NextRequest('http://localhost:3000/api/auth/login');
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).toBe(200);
   });
 
-  it('allows anonymous page requests when admin auth is disabled', () => {
+  it('allows anonymous page requests when admin auth is disabled', async () => {
     vi.stubEnv('STATESET_ADMIN_DISABLE_AUTH', 'true');
     const request = new NextRequest('http://localhost:3000/orders');
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).toBe(200);
   });
 
-  it('allows anonymous protected API requests when admin auth is disabled', () => {
+  it('allows anonymous protected API requests when admin auth is disabled', async () => {
     vi.stubEnv('STATESET_ADMIN_DISABLE_AUTH', 'true');
     const request = new NextRequest('http://localhost:3000/api/sessions');
-    const response = middleware(request);
+    const response = await middleware(request);
 
     expect(response.status).toBe(200);
   });
@@ -80,7 +80,7 @@ describe('admin middleware', () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('STATESET_ADMIN_DISABLE_AUTH', 'true');
     const request = new NextRequest('http://localhost:3000/api/sessions');
-    const response = middleware(request);
+    const response = await middleware(request);
     const body = await response.json();
 
     expect(response.status).toBe(401);
@@ -104,7 +104,7 @@ describe('admin middleware', () => {
       const request = new NextRequest('http://localhost:3000/api/sessions', {
         headers: { 'x-forwarded-for': ip },
       });
-      const response = middleware(request);
+      const response = await middleware(request);
       const body = await response.json();
 
       expect(response.status).toBe(429);
@@ -117,7 +117,7 @@ describe('admin middleware', () => {
       });
     });
 
-    it('sets Retry-After header on 429 responses', () => {
+    it('sets Retry-After header on 429 responses', async () => {
       const ip = '127.0.0.1';
 
       for (let i = 0; i < 100; i++) {
@@ -127,7 +127,7 @@ describe('admin middleware', () => {
       const request = new NextRequest('http://localhost:3000/api/sessions', {
         headers: { 'x-forwarded-for': ip },
       });
-      const response = middleware(request);
+      const response = await middleware(request);
 
       const retryAfter = response.headers.get('Retry-After');
       expect(retryAfter).toBeTruthy();
@@ -135,7 +135,7 @@ describe('admin middleware', () => {
       expect(Number(retryAfter)).toBeLessThanOrEqual(60);
     });
 
-    it('sets X-RateLimit-Limit and X-RateLimit-Remaining headers on 429', () => {
+    it('sets X-RateLimit-Limit and X-RateLimit-Remaining headers on 429', async () => {
       const ip = '127.0.0.1';
 
       for (let i = 0; i < 100; i++) {
@@ -145,7 +145,7 @@ describe('admin middleware', () => {
       const request = new NextRequest('http://localhost:3000/api/sessions', {
         headers: { 'x-forwarded-for': ip },
       });
-      const response = middleware(request);
+      const response = await middleware(request);
 
       expect(response.headers.get('X-RateLimit-Limit')).toBe('100');
       expect(response.headers.get('X-RateLimit-Remaining')).toBe('0');
@@ -162,7 +162,7 @@ describe('admin middleware', () => {
       const request = new NextRequest('http://localhost:3000/api/auth/login', {
         headers: { 'x-forwarded-for': ip },
       });
-      const response = middleware(request);
+      const response = await middleware(request);
       const body = await response.json();
 
       expect(response.status).toBe(429);

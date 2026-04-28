@@ -6,6 +6,35 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-28
+
+First stable release of the StateSet iCommerce engine. This release starts the
+`v1.x` compatibility line for the curated Rust SDK and embedded preludes, CLI
+flags, MCP tool names and schemas, policy YAML, and additive SQLite migrations.
+
+### Added
+- Added a `stateset_embedded::prelude` module to define the stable direct
+  embedded Rust surface for core commerce flows.
+- Added compile-time coverage that locks the embedded prelude imports and
+  default-constructible create types.
+
+### Changed
+- Promoted the workspace, bindings, admin app, CLI, examples, templates, docs,
+  generated compatibility inventories, and release metadata from `0.9.9` to
+  `1.0.0`.
+- Made the embedded crate's async runtime dependencies optional behind the
+  `async`, `events`, and `postgres` feature gates.
+
+### Fixed
+- Removed the non-Claude provider cold-start race in the CLI by awaiting
+  provider auto-registration before first use.
+- Hardened CLI SQLite backup and restore to handle WAL sidecar files.
+- Allowed Gemini fallback to use the canonical `GEMINI_API_KEY` while retaining
+  legacy `GOOGLE_API_KEY` compatibility.
+- Hardened admin Stripe webhook verification for multiple `v1` signatures.
+- Added distributed Redis-backed admin rate limiting when Upstash is configured,
+  with in-memory fallback for local and single-instance deployments.
+
 ## [0.9.9] - 2026-04-20
 
 Pre-1.0 consolidation release. Bundles the agent-toolkit expansion, CLI

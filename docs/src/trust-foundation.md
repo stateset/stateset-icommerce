@@ -6,8 +6,8 @@ The canonical repo-native inventory lives in `TRUST_FOUNDATION.md` at the reposi
 
 ## Current Posture
 
-- Current workspace release: `0.9.9`
-- Current release status: pre-`1.0`, with the `v0.9.9` compatibility contract frozen in-repo
+- Current workspace release: `1.0.0`
+- Current release status: pre-`1.0`, with the `v1.0.0` compatibility contract frozen in-repo
 - This repo is one layer in a larger documented stack with adjacent `stateset-sequencer`, `stateset-stark`, and `set` repos
 
 ## What Is Implemented Here
@@ -37,7 +37,7 @@ The canonical repo-native inventory lives in `TRUST_FOUNDATION.md` at the reposi
 
 - Treat only code-discoverable or runtime-discoverable interfaces as shipped.
 - Treat hand-maintained tool counts as provisional unless generated from code.
-- Treat `v0.9.9` as a stable OSS API contract, not as shorthand for audit, PQ hard-finality, or hosted-control claims.
+- Treat `v1.0.0` as a stable OSS API contract, not as shorthand for audit, PQ hard-finality, or hosted-control claims.
 
 ## See Also
 

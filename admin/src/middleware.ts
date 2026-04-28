@@ -65,7 +65,7 @@ function applySecurityHeaders(request: NextRequest, response: NextResponse): Nex
   return response;
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const authDisabled = isAdminAuthDisabled();
 
@@ -75,7 +75,7 @@ export function middleware(request: NextRequest) {
     || 'unknown';
 
   const limiter = pathname.startsWith('/api/auth/') ? authRateLimiter : apiRateLimiter;
-  const rateLimitResult = limiter.consume(clientIp);
+  const rateLimitResult = await limiter.consumeAsync(clientIp);
 
   if (!rateLimitResult.allowed) {
     const response = NextResponse.json(

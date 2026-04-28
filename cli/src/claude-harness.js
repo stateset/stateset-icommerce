@@ -1040,11 +1040,12 @@ export async function runAgentLoop({
     // v0.2.8: Non-Claude provider path
     if (effectiveProvider !== 'claude') {
       return __runWithCleanArgv(async () => {
-        const { getProviderRegistry } = await import('./providers/base.js');
-        const providerInstance = getProviderRegistry().get(effectiveProvider);
+        const { ensureProviderRegistry } = await import('./providers/base.js');
+        const providerRegistry = await ensureProviderRegistry();
+        const providerInstance = providerRegistry.get(effectiveProvider);
         if (!providerInstance) {
           throw new Error(
-            `Unknown provider: ${effectiveProvider}. Available: ${getProviderRegistry().list().join(', ')}`,
+            `Unknown provider: ${effectiveProvider}. Available: ${providerRegistry.list().join(', ')}`,
           );
         }
         if (!(await providerInstance.isAvailable())) {

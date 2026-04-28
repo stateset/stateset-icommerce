@@ -154,6 +154,17 @@ describe('RateLimiter', () => {
       const result = limiter.consume('key-1');
       expect(result.allowed).toBe(true);
     });
+
+    it('consumeAsync falls back to in-memory mode when Redis is unavailable', async () => {
+      const limiter = new RateLimiter({ windowMs: 60_000, maxRequests: 2 });
+
+      await limiter.consumeAsync('key-1');
+      await limiter.consumeAsync('key-1');
+      const result = await limiter.consumeAsync('key-1');
+
+      expect(result.allowed).toBe(false);
+      expect(result.remaining).toBe(0);
+    });
   });
 
   describe('reset', () => {

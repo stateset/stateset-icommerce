@@ -70,6 +70,11 @@ describe('DEFAULT_FALLBACK_CHAIN', () => {
       assert.ok(DEFAULT_FALLBACK_CHAIN[i].priority > DEFAULT_FALLBACK_CHAIN[i - 1].priority);
     }
   });
+
+  it('gemini model accepts both current and legacy env var names', () => {
+    const gemini = DEFAULT_FALLBACK_CHAIN.find((model) => model.provider === 'gemini');
+    assert.deepEqual(gemini.envKeys, ['GEMINI_API_KEY', 'GOOGLE_API_KEY']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -134,6 +139,31 @@ describe('ModelFallback.getAvailableModels', () => {
     ];
     const fb = new ModelFallback({ chain });
     assert.equal(fb.getAvailableModels().length, 0);
+  });
+
+  it('treats any configured env alias as satisfying provider auth', () => {
+    const original = process.env.LEGACY_GEMINI_KEY;
+    try {
+      process.env.LEGACY_GEMINI_KEY = 'legacy-key';
+      const chain = [
+        {
+          id: 'gemini',
+          provider: 'gemini',
+          model: 'gemini-test',
+          envKeys: ['PRIMARY_GEMINI_KEY', 'LEGACY_GEMINI_KEY'],
+          priority: 1,
+          capabilities: [],
+        },
+      ];
+      const fb = new ModelFallback({ chain });
+      assert.equal(fb.getAvailableModels().length, 1);
+    } finally {
+      if (original === undefined) {
+        delete process.env.LEGACY_GEMINI_KEY;
+      } else {
+        process.env.LEGACY_GEMINI_KEY = original;
+      }
+    }
   });
 });
 

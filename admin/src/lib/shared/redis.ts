@@ -5,22 +5,32 @@
  * falling back to in-memory Map when Redis is unavailable.
  */
 
-const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-
 interface RedisResponse {
   result: unknown;
 }
 
-async function redisCommand(command: string[]): Promise<unknown> {
-  if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+function getRedisConfig() {
+  return {
+    url: process.env.UPSTASH_REDIS_REST_URL,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  };
+}
+
+export function isRedisConfigured(): boolean {
+  const { url, token } = getRedisConfig();
+  return Boolean(url && token);
+}
+
+export async function redisCommand(command: string[]): Promise<unknown> {
+  const { url, token } = getRedisConfig();
+  if (!url || !token) {
     return null;
   }
 
-  const response = await fetch(`${UPSTASH_REDIS_REST_URL}`, {
+  const response = await fetch(`${url}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(command),
@@ -54,7 +64,7 @@ export class CacheMap<V> {
   constructor(prefix: string, defaultTtlMs: number) {
     this.prefix = prefix;
     this.defaultTtlMs = defaultTtlMs;
-    this.useRedis = Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN);
+    this.useRedis = isRedisConfigured();
   }
 
   private redisKey(key: string): string {

@@ -22,8 +22,14 @@ chrono = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { version = "1.0", features = ["rt-multi-thread", "sync", "time"] }
-futures = "0.3"
+# Async stack — now optional and gated behind the `async` feature. The
+# core SQLite commerce path doesn't touch either (every tokio/futures
+# use in this crate sits inside `#[cfg(feature = "events")]` or
+# `#[cfg(feature = "postgres")]`). Embedders targeting CLI tools, WASM,
+# or minimal binaries can `default-features = false, features = ["sqlite"]`
+# to drop ~3 MB of async runtime from the final artifact.
+tokio = { version = "1.0", features = ["rt-multi-thread", "sync", "time"], optional = true }
+futures = { version = "0.3", optional = true }
 tracing = "0.1"
 # This is only used when the `postgres` feature is enabled (for the async event store).
 # Keep it lean and avoid SQLx default features (notably `any`).
@@ -45,9 +51,15 @@ workspace = true
 
 [features]
 default = ["sqlite", "events"]
+# Pulls in tokio + futures. Implied by every feature that does async
+# work, so direct opt-in is rare — embedders usually only see `async`
+# via `events` or `postgres`. Present as a standalone feature so that
+# a future async-only capability can be added without plumbing a new
+# feature gate.
+async = ["dep:tokio", "dep:futures"]
 sqlite = ["stateset-db/sqlite", "stateset-core/rusqlite"]
-postgres = ["stateset-db/postgres", "sqlx"]
-events = ["reqwest/rustls-tls", "reqwest/blocking", "hmac", "sha2", "hex"]
+postgres = ["stateset-db/postgres", "sqlx", "async"]
+events = ["reqwest/rustls-tls", "reqwest/blocking", "hmac", "sha2", "hex", "async"]
 sqlite-events = ["events", "r2d2", "r2d2_sqlite", "rusqlite"]
 otel = ["stateset-observability/otel"]
 vector = ["stateset-db/vector", "stateset-core/embeddings"]

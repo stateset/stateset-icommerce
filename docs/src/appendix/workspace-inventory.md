@@ -13,7 +13,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `0.9.9` |
+| Workspace version | `1.0.0` |
 | Workspace members | 29 |
 | Default members | 19 |
 | Rust crates in workspace | 21 |

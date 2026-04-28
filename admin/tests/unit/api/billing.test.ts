@@ -485,4 +485,52 @@ describe('POST /api/billing/webhook', () => {
     expect(body.success).toBe(true);
     expect(body.data.received).toBe(true);
   });
+
+  it('accepts any valid v1 signature during secret rotation', async () => {
+    vi.resetModules();
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', 'whsec_test_secret');
+
+    const { POST } = await import('@/app/api/billing/webhook/route');
+
+    const eventBody = JSON.stringify({
+      type: 'invoice.paid',
+      id: 'evt-rotated',
+      data: { object: { id: 'in_1' } },
+    });
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signedPayload = `${timestamp}.${eventBody}`;
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode('whsec_test_secret'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const sigBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(signedPayload));
+    const validSig = Array.from(new Uint8Array(sigBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    const rawRequest = new Request('http://localhost:3000/api/billing/webhook', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'stripe-signature': `t=${timestamp},v1=invalidsig,v1=${validSig}`,
+      },
+      body: eventBody,
+    });
+
+    const { NextRequest } = await import('next/server');
+    const response = await POST(new NextRequest(rawRequest));
+    const body = await parseResponse<{
+      success: boolean;
+      data: { received: boolean };
+    }>(response);
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.received).toBe(true);
+  });
 });

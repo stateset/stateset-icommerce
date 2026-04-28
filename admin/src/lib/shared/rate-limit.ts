@@ -2,8 +2,12 @@
  * In-memory sliding-window rate limiter.
  *
  * Tracks request timestamps per key and enforces a maximum number of
- * requests within a rolling time window.
+ * requests within a rolling time window. When Upstash Redis is configured,
+ * middleware can also use a distributed fixed-window counter so limits apply
+ * across instances.
  */
+
+import { isRedisConfigured, redisCommand } from './redis';
 
 interface RateLimitResult {
   allowed: boolean;
@@ -15,16 +19,19 @@ interface RateLimitResult {
 interface RateLimiterOptions {
   windowMs: number;
   maxRequests: number;
+  bucketPrefix?: string;
 }
 
 export class RateLimiter {
   private readonly windowMs: number;
   private readonly maxRequests: number;
+  private readonly bucketPrefix: string;
   private readonly requests: Map<string, number[]>;
 
   constructor(options: RateLimiterOptions) {
     this.windowMs = options.windowMs;
     this.maxRequests = options.maxRequests;
+    this.bucketPrefix = options.bucketPrefix ?? 'ratelimit';
     this.requests = new Map();
   }
 
@@ -49,6 +56,33 @@ export class RateLimiter {
     return { allowed: true, remaining: remaining - 1, limit: this.maxRequests, resetAt };
   }
 
+  async consumeAsync(key: string): Promise<RateLimitResult> {
+    if (!isRedisConfigured()) {
+      return this.consume(key);
+    }
+
+    const now = Date.now();
+    const bucket = Math.floor(now / this.windowMs);
+    const resetAt = (bucket + 1) * this.windowMs;
+    const redisKey = `${this.bucketPrefix}:${bucket}:${key}`;
+
+    try {
+      const countRaw = await redisCommand(['INCR', redisKey]);
+      const ttlMs = Math.max(1, resetAt - now);
+      await redisCommand(['PEXPIRE', redisKey, String(ttlMs), 'NX']);
+
+      const count = Number(countRaw ?? 0);
+      return {
+        allowed: count <= this.maxRequests,
+        remaining: Math.max(0, this.maxRequests - count),
+        limit: this.maxRequests,
+        resetAt,
+      };
+    } catch {
+      return this.consume(key);
+    }
+  }
+
   reset(key: string): void {
     this.requests.delete(key);
   }
@@ -69,10 +103,18 @@ export class RateLimiter {
 }
 
 /** General API rate limiter: 100 requests per minute */
-export const apiRateLimiter = new RateLimiter({ windowMs: 60_000, maxRequests: 100 });
+export const apiRateLimiter = new RateLimiter({
+  windowMs: 60_000,
+  maxRequests: 100,
+  bucketPrefix: 'api-ratelimit',
+});
 
 /** Auth endpoints: 10 requests per minute (stricter) */
-export const authRateLimiter = new RateLimiter({ windowMs: 60_000, maxRequests: 10 });
+export const authRateLimiter = new RateLimiter({
+  windowMs: 60_000,
+  maxRequests: 10,
+  bucketPrefix: 'auth-ratelimit',
+});
 
 // Periodic cleanup every 5 minutes
 const cleanupInterval = setInterval(() => {

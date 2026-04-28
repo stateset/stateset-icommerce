@@ -23,9 +23,9 @@ The `v1.0.0` contract is active for the published `v1.x` line:
 - Patch releases in `v1.x` are non-breaking bug, security, performance, and
   documentation updates.
 - Minor releases in `v1.x` are additive for the documented stable surfaces.
-- Stable surfaces for `v1.x` are the public Rust API, language binding version
-  line, MCP tool names and schemas, CLI flags, policy YAML, and additive SQLite
-  migrations.
+- Stable surfaces for `v1.x` are the curated Rust SDK and embedded preludes,
+  language binding version line, MCP tool names and schemas, CLI flags, policy
+  YAML, and additive SQLite migrations.
 - Deprecations require runtime warnings and documentation updates, and remain
   supported for at least two minor releases and 90 days before removal in the
   next major.

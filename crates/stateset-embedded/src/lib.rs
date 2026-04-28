@@ -186,6 +186,10 @@ mod async_commerce;
 #[cfg(feature = "events")]
 pub mod events;
 
+/// Curated stable subset of the public API — see [`prelude`] for what
+/// `stateset-embedded` intends to commit to at 1.0.
+pub mod prelude;
+
 // Event system types (feature-gated)
 #[cfg(feature = "events")]
 pub use events::{

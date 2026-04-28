@@ -5,7 +5,7 @@ The Go binding provides `stateset.New` and the `Commerce` handle for building co
 ## Installation
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.9
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.0.0
 ```
 
 ## Quick Start

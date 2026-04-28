@@ -226,6 +226,7 @@ class ProviderRegistry {
 // ============================================================================
 
 let _registry = null;
+let _registryReady = null;
 
 /**
  * Get the global ProviderRegistry singleton.
@@ -236,9 +237,21 @@ export function getProviderRegistry() {
   if (!_registry) {
     _registry = new ProviderRegistry();
     // Auto-register providers on first access
-    _autoRegister();
+    _registryReady = _autoRegister(_registry);
   }
   return _registry;
+}
+
+/**
+ * Ensure the provider registry has finished auto-registration.
+ * @returns {Promise<ProviderRegistry>}
+ */
+export async function ensureProviderRegistry() {
+  const registry = getProviderRegistry();
+  if (_registryReady) {
+    await _registryReady;
+  }
+  return registry;
 }
 
 /**
@@ -246,6 +259,7 @@ export function getProviderRegistry() {
  */
 export function resetProviderRegistry() {
   _registry = null;
+  _registryReady = null;
   _fallbackChain = null;
 }
 
@@ -253,27 +267,35 @@ export function resetProviderRegistry() {
  * Auto-register available providers.
  * @private
  */
-async function _autoRegister() {
+async function _autoRegister(registry) {
   try {
     const { OpenAIProvider } = await import('./openai.js');
-    _registry.register(new OpenAIProvider());
+    if (!registry.has('openai')) {
+      registry.register(new OpenAIProvider());
+    }
   } catch (err) {
     console.debug('[providers] OpenAI provider not available:', err.message || err);
   }
 
   try {
     const { GeminiProvider } = await import('./gemini.js');
-    _registry.register(new GeminiProvider());
+    if (!registry.has('gemini')) {
+      registry.register(new GeminiProvider());
+    }
   } catch (err) {
     console.debug('[providers] Gemini provider not available:', err.message || err);
   }
 
   try {
     const { OllamaProvider } = await import('./ollama.js');
-    _registry.register(new OllamaProvider());
+    if (!registry.has('ollama')) {
+      registry.register(new OllamaProvider());
+    }
   } catch (err) {
     console.debug('[providers] Ollama provider not available:', err.message || err);
   }
+
+  return registry;
 }
 
 // ============================================================================
@@ -388,7 +410,7 @@ class FallbackChain {
    */
   async chat(messages, options = {}) {
     const preferred = options.preferredProvider || this._order[0];
-    const registry = getProviderRegistry();
+    const registry = await ensureProviderRegistry();
     const attempted = [];
 
     // Build provider order: preferred first, then fallback chain

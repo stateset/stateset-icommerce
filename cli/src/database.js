@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
 
 /** @type {any} */
 let _CommerceCtor = null;
+/** @type {any} */
+let _SqliteCtor = undefined;
 
 function getCommerceCtor() {
   if (_CommerceCtor) return _CommerceCtor;
@@ -32,6 +34,71 @@ function getCommerceCtor() {
 
   _CommerceCtor = CommerceCtor;
   return CommerceCtor;
+}
+
+function getSqliteCtor() {
+  if (_SqliteCtor !== undefined) return _SqliteCtor;
+
+  try {
+    const mod = require('better-sqlite3');
+    _SqliteCtor = mod.default || mod;
+  } catch {
+    _SqliteCtor = null;
+  }
+
+  return _SqliteCtor;
+}
+
+function getSqliteArtifactPath(basePath, suffix = '') {
+  return `${basePath}${suffix}`;
+}
+
+function copySqliteArtifacts(sourceBasePath, targetBasePath, { removeStaleSidecars = false } = {}) {
+  const suffixes = ['', '-wal', '-shm'];
+  const copied = [];
+
+  for (const suffix of suffixes) {
+    const sourcePath = getSqliteArtifactPath(sourceBasePath, suffix);
+    const targetPath = getSqliteArtifactPath(targetBasePath, suffix);
+
+    if (!fs.existsSync(sourcePath)) {
+      if (removeStaleSidecars && suffix !== '' && fs.existsSync(targetPath)) {
+        fs.unlinkSync(targetPath);
+      }
+      continue;
+    }
+
+    fs.copyFileSync(sourcePath, targetPath);
+    copied.push(targetPath);
+  }
+
+  return copied;
+}
+
+function totalArtifactSize(paths) {
+  return paths.reduce((total, artifactPath) => total + fs.statSync(artifactPath).size, 0);
+}
+
+function checkpointSqliteDatabase(resolvedPath) {
+  const Database = getSqliteCtor();
+  if (!Database || resolvedPath === ':memory:' || !fs.existsSync(resolvedPath)) {
+    return;
+  }
+
+  let db = null;
+  try {
+    db = new Database(resolvedPath, { fileMustExist: true });
+    db.pragma('busy_timeout = 5000');
+    db.pragma('wal_checkpoint(PASSIVE)');
+  } catch (err) {
+    console.debug('[database] WAL checkpoint skipped:', err.message || err);
+  } finally {
+    try {
+      db?.close();
+    } catch (err) {
+      console.debug('[database] SQLite close failed:', err.message || err);
+    }
+  }
 }
 
 /**
@@ -259,12 +326,13 @@ export class DatabaseManager {
     const basename = path.basename(resolvedPath, '.db');
     const backupPath = path.join(targetDir, `${basename}-${timestamp}.db`);
 
-    fs.copyFileSync(resolvedPath, backupPath);
+    checkpointSqliteDatabase(resolvedPath);
+    const copiedArtifacts = copySqliteArtifacts(resolvedPath, backupPath);
 
     return {
       source: resolvedPath,
       backup: backupPath,
-      size: fs.statSync(backupPath).size,
+      size: totalArtifactSize(copiedArtifacts),
     };
   }
 
@@ -282,13 +350,15 @@ export class DatabaseManager {
     // Close any existing connection
     this.close(target);
 
-    // Copy backup to target
-    fs.copyFileSync(backupPath, resolvedTarget);
+    // Copy the full SQLite artifact set and remove stale sidecars if needed.
+    const copiedArtifacts = copySqliteArtifacts(backupPath, resolvedTarget, {
+      removeStaleSidecars: true,
+    });
 
     return {
       backup: backupPath,
       restored: resolvedTarget,
-      size: fs.statSync(resolvedTarget).size,
+      size: totalArtifactSize(copiedArtifacts),
     };
   }
 

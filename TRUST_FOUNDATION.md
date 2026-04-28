@@ -23,7 +23,7 @@ This workspace is the application-layer repo in a larger documented stack:
 - `stateset-stark`: STARK proving and verification
 - `set`: settlement chain, registry contracts, anchor service
 
-The current workspace release line is `0.9.9`.
+The current workspace release line is `1.0.0`.
 
 ## Trust Levels
 
@@ -54,22 +54,18 @@ Do not collapse those into a single "post-quantum" claim.
 
 ## Compatibility Contract
 
-The current workspace release line is `0.9.9`, so the published artifacts are
-still pre-`1.0`.
+The current workspace release line is `1.0.0`, so the published artifacts are
+on the first stable `v1.x` compatibility line.
 
-While the repo remains on `0.x`, the project treats the minor version as the
-compatibility boundary. If a pre-`1.0` breaking change is unavoidable, it must
-be called out in release notes and accompanied by migration guidance.
-
-The `v0.9.9` compatibility contract is now frozen and takes effect when that
-tag is cut:
+The `v1.0.0` compatibility contract is frozen and takes effect when that tag is
+cut:
 
 - patch releases in `v1.x` are non-breaking bug, security, performance, and
   documentation updates;
 - minor releases in `v1.x` are additive for the documented stable surfaces;
-- stable surfaces for `v1.x` are the public Rust API, language binding version
-  line, MCP tool names and schemas, CLI flags, policy YAML, and additive SQLite
-  migrations;
+- stable surfaces for `v1.x` are the curated Rust SDK and embedded preludes,
+  language binding version line, MCP tool names and schemas, CLI flags, policy
+  YAML, and additive SQLite migrations;
 - deprecations require runtime warnings and documentation updates, and remain
   supported for at least two minor releases and 90 days before removal in the
   next major;

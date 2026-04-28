@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "0.9.9",
+    "version": "1.0.0",
     "memberCount": 29,
     "defaultMemberCount": 19,
     "rustCrateCount": 21,

@@ -19,10 +19,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==0.9.9     # Python
-npm install @stateset/embedded@0.9.9     # Node.js
-npm install -g @stateset/cli@0.9.9       # CLI
-gem install stateset_embedded -v 0.9.9   # Ruby
+pip install stateset-embedded==1.0.0     # Python
+npm install @stateset/embedded@1.0.0     # Node.js
+npm install -g @stateset/cli@1.0.0       # CLI
+gem install stateset_embedded -v 1.0.0   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -98,7 +98,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@0.9.9 @stateset/cli@0.9.9
+npm install @stateset/embedded@1.0.0 @stateset/cli@1.0.0
 ```
 
 ```javascript
@@ -248,9 +248,9 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.9.9
+## What's New in v1.0.0
 
-**Stable Engine Release** - `0.9.9` starts the stable `v1` line for the embedded commerce engine. The public Rust API, language binding version line, MCP tool names and schemas, CLI flags, policy YAML, and additive SQLite migration direction are now treated as stable within `v1.x`.
+**Stable Engine Release** - `1.0.0` starts the stable `v1` line for the embedded commerce engine. The curated Rust SDK and embedded preludes, language binding version line, MCP tool names and schemas, CLI flags, policy YAML, and additive SQLite migration direction are now treated as stable within `v1.x`.
 
 ### Agent Framework Embedding
 - Added engine-first toolkit helpers and documented adapters for OpenAI, LangChain, generic tool runtimes, CrewAI, and AutoGen across the Node and Python binding surfaces
@@ -263,7 +263,7 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 - Hardened the repo-wide Rust check pipeline against debug-symbol and incremental-cache blowups during release validation
 
 ### Versioned 1.0 Cut
-- Synced workspace versions, install snippets, deployment references, and current-release docs to `0.9.9`
+- Synced workspace versions, install snippets, deployment references, and current-release docs to `1.0.0`
 - Kept the release preflight green across bindings, docs, examples, inventories, admin, and CLI surfaces
 
 ---
@@ -1287,7 +1287,7 @@ tool access are generated from code in the
 
 ```toml
 [dependencies]
-stateset-embedded = "0.9.9"
+stateset-embedded = "1.0.0"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1337,14 +1337,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.9.9</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.9.9'
+implementation 'com.stateset:embedded:1.0.0'
 ```
 
 ### Kotlin (Gradle)
@@ -1352,7 +1352,7 @@ implementation 'com.stateset:embedded:0.9.9'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.9.9")
+    implementation("com.stateset:embedded-kotlin:1.0.0")
 }
 ```
 
@@ -1361,32 +1361,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.9")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "1.0.0")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.9.9'
+pod 'StateSet', '~> 1.0.0'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.9.9
+dotnet add package StateSet.Embedded --version 1.0.0
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.9.9" />
+<PackageReference Include="StateSet.Embedded" Version="1.0.0" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.9
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.0.0
 ```
 
 ### CLI
