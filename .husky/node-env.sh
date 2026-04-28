@@ -45,7 +45,7 @@ if ! version_ge "$current_version" "$required_version"; then
   # Try nvm if installed.
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ -s "$NVM_DIR/nvm.sh" ]; then
-    # shellcheck disable=SC1090
+    # shellcheck disable=SC1090,SC1091
     . "$NVM_DIR/nvm.sh"
 
     if command -v nvm >/dev/null 2>&1; then

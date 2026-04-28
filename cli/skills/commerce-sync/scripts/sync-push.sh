@@ -30,7 +30,12 @@ if ! command -v stateset-sync >/dev/null 2>&1; then
   exit 1
 fi
 
-CMD_OUT=$(stateset-sync push --db "$DB_PATH" --batch-size "$BATCH_SIZE" $( [ "$DRY_RUN" = "true" ] && echo "--dry-run" ) 2>&1) || true
+cmd=(stateset-sync push --db "$DB_PATH" --batch-size "$BATCH_SIZE")
+if [ "$DRY_RUN" = "true" ]; then
+  cmd+=(--dry-run)
+fi
+
+CMD_OUT=$("${cmd[@]}" 2>&1) || true
 
 echo "$CMD_OUT" >&2
 

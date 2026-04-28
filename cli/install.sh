@@ -17,7 +17,6 @@ NC='\033[0m' # No Color
 # Configuration
 PACKAGE_NAME="@stateset/cli"
 MIN_NODE_VERSION=18
-GITHUB_REPO="stateset/stateset-icommerce"
 
 print_banner() {
     echo -e "${BLUE}"

@@ -36,7 +36,7 @@ export default function init(api, { config, manifest, runtime }) {
 
 | Concept | Description |
 |---------|-------------|
-| **Plugin API** | Object provded to init function for registration |
+| **Plugin API** | Object provided to init function for registration |
 | **Commands** | Bot commands like `/orders`, `/inventory` |
 | **Hooks** | Event handlers for message lifecycle |
 | **Services** | Background tasks with start/stop lifecycle |

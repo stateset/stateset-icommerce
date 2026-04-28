@@ -253,7 +253,7 @@ export interface SubscriptionSummary {
   churnedMrr?: number;
   newSubscribers?: number;
   upgrades?: number;
-  cancelations?: number;
+  cancellations?: number;
 }
 
 export interface MrrTrendEntry {

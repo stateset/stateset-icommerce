@@ -905,7 +905,7 @@ export async function getSubscriptionAnalyticsData() {
       churnedMrr: Math.round((analytics.mrr || baseMrr) * 0.03),
       newSubscribers: Math.round(subscriptions.length * 0.1),
       upgrades: Math.round(subscriptions.length * 0.02),
-      cancelations: Math.round(subscriptions.length * 0.025),
+      cancellations: Math.round(subscriptions.length * 0.025),
     },
     mrrTrend,
     churnAnalysis: {

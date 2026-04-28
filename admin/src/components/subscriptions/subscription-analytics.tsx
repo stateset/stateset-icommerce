@@ -239,7 +239,7 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
             <Text className="font-medium">Churned MRR</Text>
           </div>
           <Metric className="mt-2">{formatCurrency(summary?.churnedMrr || 1400)}</Metric>
-          <Text className="text-xs text-gray-500">From {summary?.cancelations || 38} cancelations</Text>
+          <Text className="text-xs text-gray-500">From {summary?.cancellations || 38} cancellations</Text>
         </Card>
       </Grid>
     </motion.div>

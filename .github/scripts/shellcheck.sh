@@ -10,8 +10,12 @@ fi
 
 IGNORE_DIRS=(
   "./.git/*"
+  "./.husky/_/*"
+  "./*/.next/*"
   "./target/*"
   "./node_modules/*"
+  "./*/node_modules/*"
+  "./*/node_modules_root_owned_*/*"
 )
 
 ignore_args=()

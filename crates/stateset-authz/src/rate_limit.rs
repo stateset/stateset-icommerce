@@ -475,7 +475,7 @@ mod tests {
         limiter.record_at("tenant:alice", "orders", now);
         limiter.cleanup();
 
-        // If cleanup mis-parses the state key, it drops the entry and this would become allowed.
+        // If cleanup parses the state key incorrectly, it drops the entry and this would become allowed.
         assert!(!limiter.check_at("tenant:alice", "orders", now).is_allowed());
     }
 

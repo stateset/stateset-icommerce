@@ -237,7 +237,7 @@ echo -e "  ${GREEN}✓${NC} Keys ready"
 echo -e "${YELLOW}[5/6] Registering keys with sequencer...${NC}"
 stateset-sync keys:register 2>/dev/null || {
   # Manual registration if needed
-  AGENT_ID=$(cat .stateset/sync.json 2>/dev/null | grep agentId | cut -d'"' -f4)
+  AGENT_ID=$(grep agentId .stateset/sync.json 2>/dev/null | cut -d'"' -f4 || true)
   if [ -n "$AGENT_ID" ]; then
     echo -e "  ${YELLOW}!${NC} Manual key registration may be needed"
     echo "  Agent ID: $AGENT_ID"

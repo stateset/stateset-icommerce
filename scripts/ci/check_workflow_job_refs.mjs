@@ -226,6 +226,36 @@ function validateReleaseWorkflowTags(fileName, filePath) {
   ];
 }
 
+function validateRustToolchainInputs(filePath) {
+  const lines = readFileSync(filePath, 'utf8').split(/\r?\n/);
+  const errors = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/uses:\s*dtolnay\/rust-toolchain@/.test(lines[index])) {
+      continue;
+    }
+
+    const lineNumber = index + 1;
+    let hasToolchain = false;
+
+    for (let next = index + 1; next < lines.length; next += 1) {
+      if (/^\s{6}-\s+/.test(lines[next])) {
+        break;
+      }
+      if (/^\s+toolchain:\s*\S+/.test(lines[next])) {
+        hasToolchain = true;
+        break;
+      }
+    }
+
+    if (!hasToolchain) {
+      errors.push(`${filePath}:${lineNumber} dtolnay/rust-toolchain step must set toolchain`);
+    }
+  }
+
+  return errors;
+}
+
 const workflowFiles = readdirSync(workflowsDir)
   .filter((fileName) => /\.ya?ml$/i.test(fileName))
   .sort();
@@ -242,6 +272,7 @@ for (const fileName of workflowFiles) {
   errors.push(...parseErrors);
   errors.push(...validateCiSuccessCoverage(filePath, jobIds, refs));
   errors.push(...validateReleaseWorkflowTags(fileName, filePath));
+  errors.push(...validateRustToolchainInputs(filePath));
 
   for (const ref of refs) {
     if (ref.jobId === ref.needs) {

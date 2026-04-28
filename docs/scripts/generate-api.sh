@@ -99,7 +99,8 @@ fi
 if have javadoc; then
   log "Java: generating javadoc"
   clean_dir "$OUT/java"
-  if ! javadoc -d "$OUT/java" $(find "$ROOT/bindings/java/java/src/main/java" -name '*.java'); then
+  mapfile -t java_sources < <(find "$ROOT/bindings/java/java/src/main/java" -name '*.java')
+  if ! javadoc -d "$OUT/java" "${java_sources[@]}"; then
     log "Java: failed to generate javadoc"
   fi
 else
