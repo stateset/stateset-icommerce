@@ -24,6 +24,8 @@ flags, MCP tool names and schemas, policy YAML, and additive SQLite migrations.
   `1.0.0`.
 - Made the embedded crate's async runtime dependencies optional behind the
   `async`, `events`, and `postgres` feature gates.
+- Made optional Solana CLI integrations optional dependencies so the default CLI
+  install and audit path stays focused on the core package.
 
 ### Fixed
 - Removed the non-Claude provider cold-start race in the CLI by awaiting
@@ -34,6 +36,10 @@ flags, MCP tool names and schemas, policy YAML, and additive SQLite migrations.
 - Hardened admin Stripe webhook verification for multiple `v1` signatures.
 - Added distributed Redis-backed admin rate limiting when Upstash is configured,
   with in-memory fallback for local and single-instance deployments.
+- Hardened release workflows for action input validation, checksum generation,
+  binding package builds, CLI audit scope, and release hygiene setup.
+- Fixed final binding blockers in .NET model coverage, PHP extension stubs, Ruby
+  package metadata, WASM entropy configuration, and primitives `no_std` support.
 
 ## [0.9.9] - 2026-04-20
 

@@ -1,7 +1,8 @@
 //! Strongly-typed SKU (Stock Keeping Unit) identifier.
 
+use alloc::string::{String, ToString};
+use core::fmt;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 /// A validated product SKU (Stock Keeping Unit).
 ///
@@ -83,16 +84,26 @@ impl From<Sku> for String {
 }
 
 /// Error creating a [`Sku`].
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SkuError {
     /// SKU string was empty or whitespace-only.
-    #[error("SKU cannot be empty")]
     Empty,
     /// SKU string exceeded the maximum length.
-    #[error("SKU too long ({0} chars, max 128)")]
     TooLong(usize),
 }
+
+impl fmt::Display for SkuError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("SKU cannot be empty"),
+            Self::TooLong(len) => write!(f, "SKU too long ({len} chars, max 128)"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for SkuError {}
 
 #[cfg(test)]
 mod tests {

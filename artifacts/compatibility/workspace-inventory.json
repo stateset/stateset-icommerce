@@ -512,14 +512,14 @@
     },
     {
       "directory": "bindings/ruby",
-      "name": "stateset-embedded-ruby",
+      "name": "stateset_embedded",
       "description": "Ruby bindings for StateSet Embedded Commerce"
     }
   ],
   "cli": {
     "binaryCount": 49,
-    "dependencyCount": 12,
-    "optionalDependencyCount": 13,
+    "dependencyCount": 10,
+    "optionalDependencyCount": 15,
     "topLevelSourceCounts": [
       {
         "name": "tools",

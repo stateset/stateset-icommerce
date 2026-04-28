@@ -3912,7 +3912,7 @@ async fn post_not_allowed_on_detail_get_endpoints() {
     let detail_paths = [
         format!("/api/v1/orders/{fake_id}"),
         format!("/api/v1/customers/{fake_id}"),
-        format!("/api/v1/inventory/FAKE-SKU"),
+        "/api/v1/inventory/FAKE-SKU".to_string(),
     ];
     for path in &detail_paths {
         let resp = router

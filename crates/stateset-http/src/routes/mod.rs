@@ -33,7 +33,7 @@ use crate::state::AppState;
 
 /// Default request timeout for all API endpoints (30 seconds).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-/// Default maximum accepted request body size for extractor-based endpoints (1 MiB).
+/// Default maximum accepted request body size for extractor-based endpoints (1 `MiB`).
 pub const DEFAULT_REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 
 /// Build the full API router with all route groups mounted.

@@ -256,6 +256,36 @@ function validateRustToolchainInputs(filePath) {
   return errors;
 }
 
+function validateTaikiInstallActionInputs(filePath) {
+  const lines = readFileSync(filePath, 'utf8').split(/\r?\n/);
+  const errors = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/uses:\s*taiki-e\/install-action@/.test(lines[index])) {
+      continue;
+    }
+
+    const lineNumber = index + 1;
+    let hasTool = false;
+
+    for (let next = index + 1; next < lines.length; next += 1) {
+      if (/^\s{6}-\s+/.test(lines[next])) {
+        break;
+      }
+      if (/^\s+tool:\s*\S+/.test(lines[next])) {
+        hasTool = true;
+        break;
+      }
+    }
+
+    if (!hasTool) {
+      errors.push(`${filePath}:${lineNumber} taiki-e/install-action step must set tool`);
+    }
+  }
+
+  return errors;
+}
+
 const workflowFiles = readdirSync(workflowsDir)
   .filter((fileName) => /\.ya?ml$/i.test(fileName))
   .sort();
@@ -273,6 +303,7 @@ for (const fileName of workflowFiles) {
   errors.push(...validateCiSuccessCoverage(filePath, jobIds, refs));
   errors.push(...validateReleaseWorkflowTags(fileName, filePath));
   errors.push(...validateRustToolchainInputs(filePath));
+  errors.push(...validateTaikiInstallActionInputs(filePath));
 
   for (const ref of refs) {
     if (ref.jobId === ref.needs) {

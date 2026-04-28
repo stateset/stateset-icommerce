@@ -100,6 +100,13 @@ in `TRUST_FOUNDATION.md`.
   `1.0.0`.
 - Updated PHP Composer branch alias to `1.0.x-dev`.
 - Refreshed generated binding and workspace inventories.
+- Hardened GitHub Actions release gates for third-party action inputs, checksum
+  generation, language-binding package builds, CLI audit scope, and release
+  hygiene setup.
+- Fixed final binding release blockers across .NET model coverage, PHP native
+  extension stubs, Ruby `rb_sys` package metadata, and WASM entropy features.
+- Verified the primitives crate on a `no_std` target and kept the default CLI
+  install/audit path lean by making Solana client libraries optional.
 - Kept `Cargo.lock` changes limited to local workspace package version bumps,
   avoiding opportunistic third-party dependency churn.
 

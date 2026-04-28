@@ -1,5 +1,5 @@
 [package]
-name = "stateset-embedded-ruby"
+name = "stateset_embedded"
 version = "1.0.0"
 edition = "2021"
 description = "Ruby bindings for StateSet Embedded Commerce"

@@ -31,7 +31,7 @@ if [[ "${SANITIZER}" == "undefined" ]]; then
 fi
 
 cmd=(
-  cargo test
+  cargo +nightly test
   --locked
   -Zbuild-std
   --target "${SANITIZER_TARGET}"

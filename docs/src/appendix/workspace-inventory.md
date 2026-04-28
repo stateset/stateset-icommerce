@@ -20,7 +20,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
 | CLI binaries | 49 |
-| CLI optional dependencies | 13 |
+| CLI optional dependencies | 15 |
 | Admin local embedded binding | `file:../bindings/node` |
 
 ## Product Graph Layers
@@ -74,7 +74,7 @@ workspace membership because they require host runtimes or headers.
 | Directory | Cargo package | Description |
 | --- | --- | --- |
 | `bindings/php` | `stateset-embedded-php` | PHP bindings for StateSet Embedded Commerce |
-| `bindings/ruby` | `stateset-embedded-ruby` | Ruby bindings for StateSet Embedded Commerce |
+| `bindings/ruby` | `stateset_embedded` | Ruby bindings for StateSet Embedded Commerce |
 
 ## CLI Surface
 
@@ -83,8 +83,8 @@ workspace membership because they require host runtimes or headers.
 | Top-level source groups | 99 |
 | Tool modules | 66 |
 | A2A modules | 44 |
-| JS dependencies | 12 |
-| Optional integrations | 13 |
+| JS dependencies | 10 |
+| Optional integrations | 15 |
 
 ## CLI Top-Level Source Groups
 

@@ -11,6 +11,10 @@
 
 namespace StateSet;
 
+if (\extension_loaded('stateset_embedded')) {
+    return;
+}
+
 /**
  * Main Commerce instance for local commerce operations.
  */

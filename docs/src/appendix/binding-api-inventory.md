@@ -253,7 +253,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Metric | Value |
 | --- | --- |
-| Public types | 79 |
+| Public types | 112 |
 | API types | 31 |
 | Facade properties | 31 |
 | API methods | 233 |
@@ -266,7 +266,13 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `AccountsPayableApi` |
 | `AccountsReceivableApi` |
 | `AnalyticsApi` |
+| `ApAgingSummary` |
+| `ArAgingSummary` |
+| `Backorder` |
 | `BackordersApi` |
+| `BackorderSummary` |
+| `BalanceSheet` |
+| `Bill` |
 | `BillOfMaterials` |
 | `BomApi` |
 | `BomComponent` |
@@ -277,7 +283,11 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `ClaimStatus` |
 | `ConversionResult` |
 | `CostAccountingApi` |
+| `Coupon` |
+| `CreditAccount` |
 | `CreditApi` |
+| `CreditCheck` |
+| `CreditMemo` |
 | `CurrencyApi` |
 | `CurrencyCode` |
 | `Customer` |
@@ -285,13 +295,21 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `ExchangeRate` |
 | `FulfillmentApi` |
 | `GeneralLedgerApi` |
+| `GlAccount` |
+| `IncomeStatement` |
+| `Inspection` |
 | `InventoryApi` |
 | `InventoryItem` |
 | `Invoice` |
 | `InvoiceItem` |
 | `InvoicesApi` |
 | `InvoiceStatus` |
+| `ItemCost` |
+| `JournalEntry` |
+| `Location` |
+| `Lot` |
 | `LotsApi` |
+| `Ncr` |
 | `Order` |
 | `OrderItem` |
 | `OrdersApi` |
@@ -299,15 +317,19 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `Payment` |
 | `PaymentMethod` |
 | `PaymentsApi` |
+| `PickTask` |
 | `Product` |
 | `ProductsApi` |
 | `ProductVariant` |
+| `Promotion` |
 | `PromotionsApi` |
 | `PurchaseOrder` |
 | `PurchaseOrderItem` |
 | `PurchaseOrdersApi` |
 | `PurchaseOrderStatus` |
 | `QualityApi` |
+| `QualityHold` |
+| `Receipt` |
 | `ReceivingApi` |
 | `Refund` |
 | `RefundStatus` |
@@ -316,6 +338,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `ReturnsApi` |
 | `ReturnStatus` |
 | `SalesSummary` |
+| `Serial` |
 | `SerialsApi` |
 | `Shipment` |
 | `ShipmentsApi` |
@@ -325,19 +348,29 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `StateSetException` |
 | `StockLevel` |
 | `StoreCurrencySettings` |
+| `Subscription` |
+| `SubscriptionPlan` |
 | `SubscriptionsApi` |
 | `Supplier` |
 | `SuppliersApi` |
 | `TaxApi` |
+| `TaxCalculation` |
+| `TaxExemption` |
+| `TaxJurisdiction` |
+| `TaxRate` |
+| `TaxSettings` |
 | `TimePeriod` |
 | `TopCustomer` |
 | `TopProduct` |
+| `TrialBalance` |
+| `Warehouse` |
 | `WarehouseApi` |
 | `WarrantiesApi` |
 | `Warranty` |
 | `WarrantyClaim` |
 | `WarrantyStatus` |
 | `WarrantyType` |
+| `Wave` |
 | `WorkOrder` |
 | `WorkOrderPriority` |
 | `WorkOrdersApi` |

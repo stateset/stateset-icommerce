@@ -447,7 +447,7 @@ fn queue_clear_empties_all() {
     let mut q = JobQueue::new(100);
     let now = Utc::now();
     for i in 0..10 {
-        q.enqueue(JobInstance::new_scheduled(&format!("job_{i}"), now)).unwrap();
+        q.enqueue(JobInstance::new_scheduled(format!("job_{i}"), now)).unwrap();
     }
     assert_eq!(q.size(), 10);
 

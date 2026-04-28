@@ -1192,3 +1192,422 @@ public enum ReturnStatus
     Completed,
     Cancelled
 }
+
+// =============================================================================
+// Advanced Operations Models
+// =============================================================================
+
+/// <summary>
+/// Represents a quality inspection.
+/// </summary>
+public record Inspection
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+
+    [JsonPropertyName("sku")]
+    public string? Sku { get; init; }
+}
+
+/// <summary>
+/// Represents a non-conformance report.
+/// </summary>
+public record Ncr
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
+}
+
+/// <summary>
+/// Represents a quality hold.
+/// </summary>
+public record QualityHold
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("sku")]
+    public string Sku { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents an inventory lot.
+/// </summary>
+public record Lot
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("lot_number")]
+    public string LotNumber { get; init; } = string.Empty;
+
+    [JsonPropertyName("sku")]
+    public string Sku { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents a serialized inventory unit.
+/// </summary>
+public record Serial
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("serial_number")]
+    public string SerialNumber { get; init; } = string.Empty;
+
+    [JsonPropertyName("sku")]
+    public string Sku { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents a warehouse.
+/// </summary>
+public record Warehouse
+{
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    [JsonPropertyName("code")]
+    public string Code { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents a warehouse location.
+/// </summary>
+public record Location
+{
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    [JsonPropertyName("warehouse_id")]
+    public int WarehouseId { get; init; }
+
+    [JsonPropertyName("location_type")]
+    public string LocationType { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents an inbound receipt.
+/// </summary>
+public record Receipt
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("receipt_number")]
+    public string ReceiptNumber { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents a fulfillment wave.
+/// </summary>
+public record Wave
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("wave_number")]
+    public string WaveNumber { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents a warehouse picking task.
+/// </summary>
+public record PickTask
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+
+    [JsonPropertyName("assigned_to")]
+    public string? AssignedTo { get; init; }
+}
+
+/// <summary>
+/// Represents an accounts payable bill.
+/// </summary>
+public record Bill
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("bill_number")]
+    public string BillNumber { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents accounts payable aging totals.
+/// </summary>
+public record ApAgingSummary
+{
+    [JsonPropertyName("total_outstanding")]
+    public string TotalOutstanding { get; init; } = "0";
+}
+
+/// <summary>
+/// Represents accounts receivable aging totals.
+/// </summary>
+public record ArAgingSummary
+{
+    [JsonPropertyName("total_outstanding")]
+    public string TotalOutstanding { get; init; } = "0";
+}
+
+/// <summary>
+/// Represents an accounts receivable credit memo.
+/// </summary>
+public record CreditMemo
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("customer_id")]
+    public string CustomerId { get; init; } = string.Empty;
+
+    [JsonPropertyName("amount")]
+    public string Amount { get; init; } = "0";
+}
+
+/// <summary>
+/// Represents item costing.
+/// </summary>
+public record ItemCost
+{
+    [JsonPropertyName("sku")]
+    public string Sku { get; init; } = string.Empty;
+
+    [JsonPropertyName("standard_cost")]
+    public string StandardCost { get; init; } = "0";
+
+    [JsonPropertyName("current_cost")]
+    public string CurrentCost { get; init; } = "0";
+}
+
+/// <summary>
+/// Represents a customer credit account.
+/// </summary>
+public record CreditAccount
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("customer_id")]
+    public string CustomerId { get; init; } = string.Empty;
+
+    [JsonPropertyName("credit_limit")]
+    public string CreditLimit { get; init; } = "0";
+}
+
+/// <summary>
+/// Represents a credit authorization decision.
+/// </summary>
+public record CreditCheck
+{
+    [JsonPropertyName("approved")]
+    public bool Approved { get; init; }
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
+}
+
+/// <summary>
+/// Represents a backorder.
+/// </summary>
+public record Backorder
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("backorder_number")]
+    public string BackorderNumber { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents backorder summary totals.
+/// </summary>
+public record BackorderSummary
+{
+    [JsonPropertyName("pending_count")]
+    public int PendingCount { get; init; }
+}
+
+/// <summary>
+/// Represents a general ledger account.
+/// </summary>
+public record GlAccount
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("account_number")]
+    public string AccountNumber { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents a general ledger journal entry.
+/// </summary>
+public record JournalEntry
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("entry_number")]
+    public string EntryNumber { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents a trial balance report.
+/// </summary>
+public record TrialBalance
+{
+    [JsonPropertyName("as_of_date")]
+    public string AsOfDate { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents a balance sheet report.
+/// </summary>
+public record BalanceSheet
+{
+    [JsonPropertyName("as_of_date")]
+    public string AsOfDate { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Represents an income statement report.
+/// </summary>
+public record IncomeStatement
+{
+    [JsonPropertyName("start_date")]
+    public string StartDate { get; init; } = string.Empty;
+
+    [JsonPropertyName("end_date")]
+    public string EndDate { get; init; } = string.Empty;
+}
+
+// =============================================================================
+// Subscription, Promotion, and Tax Models
+// =============================================================================
+
+public record SubscriptionPlan
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+}
+
+public record Subscription
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+public record Promotion
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+}
+
+public record Coupon
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("code")]
+    public string Code { get; init; } = string.Empty;
+}
+
+public record TaxJurisdiction
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+}
+
+public record TaxRate
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("rate")]
+    public string Rate { get; init; } = "0";
+}
+
+public record TaxExemption
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("customer_id")]
+    public string CustomerId { get; init; } = string.Empty;
+}
+
+public record TaxCalculation
+{
+    [JsonPropertyName("subtotal")]
+    public string Subtotal { get; init; } = "0";
+
+    [JsonPropertyName("tax_amount")]
+    public string TaxAmount { get; init; } = "0";
+
+    [JsonPropertyName("total")]
+    public string Total { get; init; } = "0";
+}
+
+public record TaxSettings
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+}

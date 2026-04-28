@@ -2254,17 +2254,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stateset-embedded-ruby"
-version = "1.0.0"
-dependencies = [
- "chrono",
- "magnus",
- "rust_decimal",
- "stateset-core",
- "stateset-embedded",
-]
-
-[[package]]
 name = "stateset-observability"
 version = "1.0.0"
 dependencies = [
@@ -2291,8 +2280,18 @@ dependencies = [
  "rusqlite",
  "rust_decimal",
  "serde",
- "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "stateset_embedded"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "magnus",
+ "rust_decimal",
+ "stateset-core",
+ "stateset-embedded",
 ]
 
 [[package]]
@@ -2673,7 +2672,17 @@ dependencies = [
  "js-sys",
  "rand 0.10.0",
  "serde_core",
+ "uuid-rng-internal",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "uuid-rng-internal"
+version = "1.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1409d2323564d9b8d01192a77a0604a46bf29eb42e9b535aca34dec65482652b"
+dependencies = [
+ "getrandom 0.4.2",
 ]
 
 [[package]]

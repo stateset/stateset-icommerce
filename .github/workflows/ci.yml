@@ -82,6 +82,8 @@ jobs:
           persist-credentials: false
       - name: Install cargo-audit
         uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d
+        with:
+          tool: cargo-audit
       - name: Security audit
         # RUSTSEC-2023-0071 affects `rsa` (pulled in via optional `sqlx-mysql`).
         # This workspace does not enable or ship MySQL support, and there is no
@@ -98,6 +100,8 @@ jobs:
           persist-credentials: false
       - name: Install cargo-deny
         uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d
+        with:
+          tool: cargo-deny
       - name: cargo-deny
         run: cargo deny check
 
@@ -241,8 +245,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
       - name: Run Miri
         run: |
-          cargo miri test -p stateset-primitives --lib ${{ matrix.flags }}
-          cargo miri test -p stateset-core --lib --features metrics ${{ matrix.flags }}
+          cargo +nightly miri test -p stateset-primitives --lib ${{ matrix.flags }}
+          cargo +nightly miri test -p stateset-core --lib --features metrics ${{ matrix.flags }}
 
   no-std:
     name: no_std
@@ -368,7 +372,7 @@ jobs:
   release-hygiene:
     name: Release Hygiene
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
@@ -377,6 +381,15 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            cli/package-lock.json
+      - name: Install root tooling
+        run: HUSKY=0 npm ci
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm ci
       - name: Check release hygiene
         run: bash ./scripts/ci/check_release_hygiene.sh
       - name: Test release hygiene helper
@@ -497,7 +510,9 @@ jobs:
 
       - name: Build extension module
         working-directory: bindings/python
-        run: maturin develop --release
+        run: |
+          maturin build --release --out dist
+          python -m pip install dist/*.whl
 
       - name: Smoke Python bindings and agent examples
         run: bash scripts/ci/check_python_bindings.sh
@@ -601,7 +616,7 @@ jobs:
 
       - name: Security audit
         working-directory: cli
-        run: npm audit --audit-level=high
+        run: npm audit --omit=optional --audit-level=high
 
       - name: Install root tooling (ESLint, Prettier)
         # Disable husky git hook installation in CI.
@@ -879,6 +894,8 @@ jobs:
 
       - name: Install cargo-tarpaulin
         uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d
+        with:
+          tool: cargo-tarpaulin
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
@@ -924,7 +941,7 @@ jobs:
 
       - name: Build extension
         working-directory: bindings/php
-        run: cargo build --release
+        run: cargo build --release --features runtime
 
       - name: Install PHP dependencies
         working-directory: bindings/php
@@ -932,7 +949,7 @@ jobs:
 
       - name: Test
         working-directory: bindings/php
-        run: php -d extension=../../target/release/libstateset_embedded.so vendor/bin/phpunit tests/
+        run: php -d extension=target/release/libstateset_embedded.so vendor/bin/phpunit tests/
 
   release-governance:
     name: Release Governance

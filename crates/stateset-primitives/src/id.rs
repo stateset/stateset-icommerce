@@ -4,8 +4,8 @@
 //! identifiers from different domains. All ID types are `Copy`, `Eq`, `Hash`, and
 //! support serialization via `serde`.
 
+use core::fmt;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use uuid::Uuid;
 
 /// Generate a strongly-typed ID newtype around `Uuid`.
@@ -33,6 +33,7 @@ macro_rules! define_id {
         impl $name {
             /// Create a new random ID (UUID v4).
             #[inline]
+            #[cfg(feature = "std")]
             pub fn new() -> Self {
                 Self(Uuid::new_v4())
             }
@@ -68,6 +69,7 @@ macro_rules! define_id {
             }
         }
 
+        #[cfg(feature = "std")]
         impl Default for $name {
             #[inline]
             fn default() -> Self {
@@ -87,7 +89,7 @@ macro_rules! define_id {
             }
         }
 
-        impl std::str::FromStr for $name {
+        impl core::str::FromStr for $name {
             type Err = uuid::Error;
 
             #[inline]

@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
@@ -50,6 +51,8 @@
 //! ## Feature Flags
 //!
 //! - `std` (default) — standard library support
+
+extern crate alloc;
 
 mod id;
 mod money;

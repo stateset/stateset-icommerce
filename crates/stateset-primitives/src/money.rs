@@ -3,9 +3,10 @@
 //! The [`Money`] type pairs an amount with a [`CurrencyCode`], preventing
 //! accidental arithmetic between different currencies at the type level.
 
+use alloc::string::String;
+use core::fmt;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 /// A monetary amount paired with its currency.
 ///
@@ -207,7 +208,7 @@ impl CurrencyCode {
     #[inline]
     #[must_use]
     pub const fn as_str(&self) -> &str {
-        match std::str::from_utf8(&self.0) {
+        match core::str::from_utf8(&self.0) {
             Ok(code) => code,
             Err(_) => panic!("CurrencyCode always stores validated ASCII uppercase bytes"),
         }
@@ -226,7 +227,7 @@ impl fmt::Display for CurrencyCode {
     }
 }
 
-impl std::str::FromStr for CurrencyCode {
+impl core::str::FromStr for CurrencyCode {
     type Err = CurrencyCodeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -256,16 +257,28 @@ impl<'de> Deserialize<'de> for CurrencyCode {
 }
 
 /// Error parsing a [`CurrencyCode`].
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum CurrencyCodeError {
     /// Currency code must be exactly 3 characters.
-    #[error("currency code must be exactly 3 characters, got {0}")]
     InvalidLength(usize),
     /// Currency code must contain only ASCII letters.
-    #[error("currency code must contain only ASCII letters")]
     InvalidCharacters,
 }
+
+impl fmt::Display for CurrencyCodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidLength(len) => {
+                write!(f, "currency code must be exactly 3 characters, got {len}")
+            }
+            Self::InvalidCharacters => f.write_str("currency code must contain only ASCII letters"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for CurrencyCodeError {}
 
 // ---------------------------------------------------------------------------
 // rusqlite integration

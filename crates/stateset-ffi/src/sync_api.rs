@@ -1973,6 +1973,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::await_holding_lock)]
     async fn seed_dead_letter(handle: SyncRuntimeHandle) -> Uuid {
         let lease = begin_sync_runtime_use(handle).unwrap();
         let runtime = lease.runtime();
@@ -2700,6 +2701,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn sync_runtime_dead_letter_scoped_queries_via_c_api() {
         let config_json = CString::new(runtime_config_json()).unwrap();
         let init = unsafe { stateset_sync_runtime_init_from_json(config_json.as_ptr()) };

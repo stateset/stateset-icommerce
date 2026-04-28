@@ -141,7 +141,7 @@ jobs:
       - name: Generate release checksums
         run: |
           cd bindings/node/artifacts
-          sha256sum *.node > ../release-checksums.txt
+          sha256sum -- *.node > ../release-checksums.txt
 
       - name: Attest artifacts
         uses: actions/attest-build-provenance@v3
@@ -196,7 +196,7 @@ jobs:
       - name: Generate release checksums
         run: |
           cd cli
-          sha256sum *.tgz > ../cli-release-checksums.txt
+          sha256sum -- *.tgz > ../cli-release-checksums.txt
 
       - name: Attest package
         uses: actions/attest-build-provenance@v3

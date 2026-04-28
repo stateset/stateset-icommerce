@@ -220,7 +220,7 @@ fn audit_log_truncation() {
     let mut log = AuditLog::new(3);
     for i in 0..5 {
         log.record(AuditRecord::new(
-            &format!("actor-{i}"),
+            format!("actor-{i}"),
             Action::Read,
             Resource::new("orders"),
             AccessDecision::Allowed,
@@ -263,7 +263,7 @@ fn audit_log_limit_query() {
     let mut log = AuditLog::new(100);
     for i in 0..10 {
         log.record(AuditRecord::new(
-            &format!("a-{i}"),
+            format!("a-{i}"),
             Action::Read,
             Resource::new("orders"),
             AccessDecision::Allowed,

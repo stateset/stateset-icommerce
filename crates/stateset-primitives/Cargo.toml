@@ -15,10 +15,9 @@ categories = ["data-structures"]
 workspace = true
 
 [dependencies]
-serde = { workspace = true }
-uuid = { workspace = true }
-rust_decimal = { workspace = true }
-thiserror = { workspace = true }
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+uuid = { version = "1.4", default-features = false, features = ["serde"] }
+rust_decimal = { version = "1.36", default-features = false, features = ["serde"] }
 proptest = { version = "1.4", optional = true }
 sqlx = { workspace = true, optional = true, default-features = false, features = ["postgres", "uuid"] }
 rusqlite = { workspace = true, optional = true }
@@ -31,7 +30,7 @@ proptest-derive = "0.5"
 
 [features]
 default = ["std"]
-std = []
+std = ["serde/std", "uuid/rng-getrandom", "uuid/std", "uuid/v4", "rust_decimal/std"]
 arbitrary = ["dep:proptest"]
 sqlx-postgres = ["dep:sqlx"]
 rusqlite = ["dep:rusqlite"]

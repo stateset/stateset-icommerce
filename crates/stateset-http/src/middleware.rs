@@ -88,7 +88,7 @@ impl AuthzConfig {
         Self { engine: Arc::new(Mutex::new(engine)), trust_actor_headers: false }
     }
 
-    pub(crate) fn with_trusted_actor_headers(mut self) -> Self {
+    pub(crate) const fn with_trusted_actor_headers(mut self) -> Self {
         self.trust_actor_headers = true;
         self
     }
@@ -259,10 +259,9 @@ async fn require_bearer_auth(
             .bindings
             .iter()
             .enumerate()
-            .filter(|(_, binding)| constant_time_eq(provided, binding.token.as_ref()))
-            .map(|(index, _)| index)
-            .last()
-            .and_then(|index| auth.bindings.get(index)),
+            .rev()
+            .find(|(_, binding)| constant_time_eq(provided, binding.token.as_ref()))
+            .map(|(_, binding)| binding),
         _ => {
             return HttpError::Unauthorized("missing or invalid bearer token".to_string())
                 .into_response();

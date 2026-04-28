@@ -247,6 +247,34 @@ export function resolveCommerceApi(commerce, name) {
   throw new Error(`commerce.${name} API resolved to an empty value`);
 }
 
-export const Commerce = getCommerceCtor();
+export const Commerce = /** @type {CommerceConstructor} */ (
+  /** @type {unknown} */ (
+    new Proxy(function CommerceProxy() {}, {
+      construct(_target, args) {
+        const CommerceCtor = getCommerceCtor();
+        return /** @type {object} */ (adaptCommerceApis(Reflect.construct(CommerceCtor, args)));
+      },
+      apply(_target, _thisArg, args) {
+        const CommerceCtor = getCommerceCtor();
+        return adaptCommerceApis(Reflect.construct(CommerceCtor, args));
+      },
+      get(_target, prop, receiver) {
+        const CommerceCtor = getCommerceCtor();
+        const value = Reflect.get(CommerceCtor, prop, receiver);
+        return typeof value === 'function' ? value.bind(CommerceCtor) : value;
+      },
+      has(_target, prop) {
+        return prop in getCommerceCtor();
+      },
+      ownKeys() {
+        return Reflect.ownKeys(getCommerceCtor());
+      },
+      getOwnPropertyDescriptor(_target, prop) {
+        const descriptor = Object.getOwnPropertyDescriptor(getCommerceCtor(), prop);
+        return descriptor ? { ...descriptor, configurable: true } : undefined;
+      },
+    })
+  )
+);
 
 export default Commerce;

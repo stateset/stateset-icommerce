@@ -1,6 +1,6 @@
-//! Comprehensive OpenAPI specification validation tests.
+//! Comprehensive `OpenAPI` specification validation tests.
 //!
-//! These tests validate the auto-generated OpenAPI 3.1 specification produced by
+//! These tests validate the auto-generated `OpenAPI` 3.1 specification produced by
 //! the `utoipa`-based [`ApiDoc`] to ensure completeness, correctness, and
 //! consistency with the actual HTTP routes.
 
@@ -8,7 +8,7 @@ use serde_json::Value;
 use stateset_http::openapi::ApiDoc;
 use utoipa::OpenApi;
 
-/// Generate the OpenAPI spec as a [`serde_json::Value`] for inspection.
+/// Generate the `OpenAPI` spec as a [`serde_json::Value`] for inspection.
 fn spec_json() -> Value {
     serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI spec should serialize to JSON")
 }
@@ -58,8 +58,8 @@ fn info_has_license() {
 // 2. Path Coverage — every registered route has a corresponding OpenAPI path
 // ============================================================================
 
-/// All v1 API paths that should appear in the OpenAPI spec (these correspond to
-/// the utoipa::path macros on route handlers).
+/// All v1 API paths that should appear in the `OpenAPI` spec (these correspond to
+/// the `utoipa::path` macros on route handlers).
 const EXPECTED_V1_PATHS: &[&str] = &[
     // Orders
     "/api/v1/orders",

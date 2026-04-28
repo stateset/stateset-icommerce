@@ -38,7 +38,11 @@ struct AdditionalApiBearerBinding {
 }
 
 impl AdditionalApiBearerBinding {
-    fn new(token: String, bound_tenant_id: Option<String>, bound_actor_id: Option<String>) -> Self {
+    const fn new(
+        token: String,
+        bound_tenant_id: Option<String>,
+        bound_actor_id: Option<String>,
+    ) -> Self {
         Self { token, bound_tenant_id, bound_actor_id }
     }
 }
@@ -167,9 +171,7 @@ impl ServerBuilder {
     }
 
     fn tenant_routing_auth_error(&self) -> Option<&'static str> {
-        if self.state.tenant_db_dir().is_none() {
-            return None;
-        }
+        self.state.tenant_db_dir()?;
         let bindings = self.api_bearer_bindings();
         if bindings.is_empty() {
             return Some("per-tenant database routing requires API auth to remain enabled");
