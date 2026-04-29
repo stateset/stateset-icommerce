@@ -329,21 +329,22 @@ impl Orders {
     fn create(
         &self,
         customer_id: String,
-        items: Vec<RHash>,
+        items: RArray,
         currency: Option<String>,
         _notes: Option<String>,
     ) -> Result<Order, Error> {
         let mut store = lock_store(&self.store)?;
-        let order_items = items
-            .iter()
-            .map(|item| OrderItem {
+        let mut order_items = Vec::with_capacity(items.len());
+        for index in 0..items.len() {
+            let item: RHash = items.entry(index as isize)?;
+            order_items.push(OrderItem {
                 id: store.next_uuid(),
-                sku: hash_string(item, "sku"),
-                name: hash_string(item, "name"),
-                quantity: hash_i32(item, "quantity", 1),
-                unit_price: hash_f64(item, "unit_price", 0.0),
-            })
-            .collect::<Vec<_>>();
+                sku: hash_string(&item, "sku"),
+                name: hash_string(&item, "name"),
+                quantity: hash_i32(&item, "quantity", 1),
+                unit_price: hash_f64(&item, "unit_price", 0.0),
+            });
+        }
         let total_amount = order_items.iter().map(OrderItem::total).sum();
         let order = Order {
             id: store.next_uuid(),
