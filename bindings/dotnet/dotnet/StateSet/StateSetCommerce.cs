@@ -35,6 +35,7 @@ public sealed class StateSetCommerce : IDisposable
 {
     private IntPtr _handle;
     private bool _disposed;
+    internal StateSetDotNetStore Store { get; } = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

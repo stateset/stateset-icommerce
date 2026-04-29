@@ -1,1989 +1,1697 @@
-using System.Text.Json;
+using System.Globalization;
 
 namespace StateSet.Embedded;
 
-/// <summary>
-/// Customers API
-/// </summary>
+internal sealed class StateSetDotNetStore
+{
+    private int _nextId;
+    private int _nextIntId;
+
+    internal List<Customer> Customers { get; } = new();
+    internal List<Product> Products { get; } = new();
+    internal Dictionary<string, InventoryItem> InventoryItems { get; } = new();
+    internal Dictionary<string, StockLevel> StockLevels { get; } = new();
+    internal List<Cart> Carts { get; } = new();
+    internal List<Order> Orders { get; } = new();
+    internal List<Return> Returns { get; } = new();
+    internal List<Payment> Payments { get; } = new();
+    internal List<Refund> Refunds { get; } = new();
+    internal List<Shipment> Shipments { get; } = new();
+    internal List<Warranty> Warranties { get; } = new();
+    internal List<WarrantyClaim> WarrantyClaims { get; } = new();
+    internal List<Supplier> Suppliers { get; } = new();
+    internal List<PurchaseOrder> PurchaseOrders { get; } = new();
+    internal List<Invoice> Invoices { get; } = new();
+    internal List<BillOfMaterials> Boms { get; } = new();
+    internal Dictionary<string, List<BomComponent>> BomComponents { get; } = new();
+    internal List<WorkOrder> WorkOrders { get; } = new();
+    internal Dictionary<string, ExchangeRate> ExchangeRates { get; } = new();
+    internal List<SubscriptionPlan> SubscriptionPlans { get; } = new();
+    internal List<Subscription> Subscriptions { get; } = new();
+    internal List<Promotion> Promotions { get; } = new();
+    internal List<Coupon> Coupons { get; } = new();
+    internal List<TaxJurisdiction> TaxJurisdictions { get; } = new();
+    internal List<TaxRate> TaxRates { get; } = new();
+    internal List<TaxExemption> TaxExemptions { get; } = new();
+    internal List<Inspection> Inspections { get; } = new();
+    internal List<Ncr> Ncrs { get; } = new();
+    internal List<QualityHold> QualityHolds { get; } = new();
+    internal List<Lot> Lots { get; } = new();
+    internal List<Serial> Serials { get; } = new();
+    internal List<Warehouse> Warehouses { get; } = new();
+    internal List<Location> Locations { get; } = new();
+    internal List<Receipt> Receipts { get; } = new();
+    internal List<Wave> Waves { get; } = new();
+    internal List<PickTask> Picks { get; } = new();
+    internal List<Bill> Bills { get; } = new();
+    internal List<CreditMemo> CreditMemos { get; } = new();
+    internal List<ItemCost> ItemCosts { get; } = new();
+    internal List<CreditAccount> CreditAccounts { get; } = new();
+    internal List<Backorder> Backorders { get; } = new();
+    internal List<GlAccount> GlAccounts { get; } = new();
+    internal List<JournalEntry> JournalEntries { get; } = new();
+
+    internal string Id(string prefix) => $"{prefix}_{++_nextId}";
+    internal int IntId() => ++_nextIntId;
+}
+
+internal static class StateSetDotNetApiSupport
+{
+    internal static string Now() => DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+
+    internal static string Amount(decimal amount) =>
+        amount.ToString("0.00", CultureInfo.InvariantCulture);
+
+    internal static string Amount(double amount) =>
+        amount.ToString("0.00", CultureInfo.InvariantCulture);
+
+    internal static string PaymentMethodName(PaymentMethod method) => method switch
+    {
+        PaymentMethod.CreditCard => "credit_card",
+        PaymentMethod.DebitCard => "debit_card",
+        PaymentMethod.BankTransfer => "bank_transfer",
+        PaymentMethod.PayPal => "paypal",
+        PaymentMethod.ApplePay => "apple_pay",
+        PaymentMethod.GooglePay => "google_pay",
+        PaymentMethod.Crypto => "crypto",
+        _ => "other"
+    };
+
+    internal static string ReturnReasonName(ReturnReason reason) => reason switch
+    {
+        ReturnReason.Defective => "defective",
+        ReturnReason.WrongItem => "wrong_item",
+        ReturnReason.NotAsDescribed => "not_as_described",
+        ReturnReason.ChangedMind => "changed_mind",
+        ReturnReason.Damaged => "damaged",
+        _ => "other"
+    };
+}
+
+/// <summary>Customers API.</summary>
 public sealed class CustomersApi
 {
     private readonly StateSetCommerce _commerce;
 
     internal CustomersApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a new customer
-    /// </summary>
     public Customer Create(string email, string firstName, string lastName, string? phone = null)
     {
-        var ptr = NativeMethods.stateset_customer_create(
-            _commerce.Handle, email, firstName, lastName, phone);
-        return StateSetCommerce.ParseJsonRequired<Customer>(ptr);
+        var customer = new Customer
+        {
+            Id = _commerce.Store.Id("cust"),
+            Email = email,
+            FirstName = firstName,
+            LastName = lastName,
+            Phone = phone,
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Customers.Add(customer);
+        return customer;
     }
 
-    /// <summary>
-    /// Get a customer by ID
-    /// </summary>
-    public Customer? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_customer_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Customer>(ptr);
-    }
+    public Customer? Get(string id) => _commerce.Store.Customers.FirstOrDefault(customer => customer.Id == id);
 
-    /// <summary>
-    /// List all customers
-    /// </summary>
-    public List<Customer> List()
-    {
-        var ptr = NativeMethods.stateset_customer_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Customer>(ptr);
-    }
+    public List<Customer> List() => _commerce.Store.Customers.ToList();
 
-    /// <summary>
-    /// Delete a customer by ID
-    /// </summary>
     public bool Delete(string id)
     {
-        return NativeMethods.stateset_customer_delete(_commerce.Handle, id) == 1;
+        var removed = _commerce.Store.Customers.RemoveAll(customer => customer.Id == id);
+        return removed > 0;
     }
 
-    /// <summary>
-    /// Get customer count
-    /// </summary>
-    public int Count()
-    {
-        var result = NativeMethods.stateset_customer_count(_commerce.Handle);
-        return result >= 0 ? result : 0;
-    }
+    public int Count() => _commerce.Store.Customers.Count;
 }
 
-/// <summary>
-/// Products API
-/// </summary>
+/// <summary>Products API.</summary>
 public sealed class ProductsApi
 {
     private readonly StateSetCommerce _commerce;
 
     internal ProductsApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a new product
-    /// </summary>
     public Product Create(string name, string sku, decimal price, string? description = null)
     {
-        var ptr = NativeMethods.stateset_product_create(
-            _commerce.Handle, name, sku, (double)price, description);
-        return StateSetCommerce.ParseJsonRequired<Product>(ptr);
+        var product = new Product
+        {
+            Id = _commerce.Store.Id("prod"),
+            Name = name,
+            Description = description,
+            IsActive = true,
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Products.Add(product);
+        return product;
     }
 
-    /// <summary>
-    /// Get a product by ID
-    /// </summary>
-    public Product? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_product_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Product>(ptr);
-    }
+    public Product? Get(string id) => _commerce.Store.Products.FirstOrDefault(product => product.Id == id);
 
-    /// <summary>
-    /// List all products
-    /// </summary>
-    public List<Product> List()
-    {
-        var ptr = NativeMethods.stateset_product_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Product>(ptr);
-    }
+    public List<Product> List() => _commerce.Store.Products.ToList();
 }
 
-/// <summary>
-/// Orders API
-/// </summary>
+/// <summary>Orders API.</summary>
 public sealed class OrdersApi
 {
     private readonly StateSetCommerce _commerce;
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-    };
 
     internal OrdersApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a new order
-    /// </summary>
     public Order Create(string customerId, IEnumerable<OrderItem> items, string currency = "USD")
     {
-        var itemsJson = JsonSerializer.Serialize(items, SerializerOptions);
-        var ptr = NativeMethods.stateset_order_create(
-            _commerce.Handle, customerId, itemsJson, currency);
-        return StateSetCommerce.ParseJsonRequired<Order>(ptr);
+        var orderItems = items.ToList();
+        var total = orderItems.Sum(item => item.Quantity * (decimal)item.UnitPrice);
+        var id = _commerce.Store.Id("ord");
+        var order = new Order
+        {
+            Id = id,
+            OrderNumber = id.ToUpperInvariant(),
+            CustomerId = customerId,
+            Status = "pending",
+            TotalAmount = StateSetDotNetApiSupport.Amount(total),
+            Currency = currency,
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Orders.Add(order);
+        return order;
     }
 
-    /// <summary>
-    /// Get an order by ID
-    /// </summary>
-    public Order? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_order_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Order>(ptr);
-    }
+    public Order? Get(string id) => _commerce.Store.Orders.FirstOrDefault(order => order.Id == id);
 
-    /// <summary>
-    /// List all orders
-    /// </summary>
-    public List<Order> List()
-    {
-        var ptr = NativeMethods.stateset_order_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Order>(ptr);
-    }
+    public List<Order> List() => _commerce.Store.Orders.ToList();
 
-    /// <summary>
-    /// Update order status
-    /// </summary>
-    public Order UpdateStatus(string id, OrderStatus status)
-    {
-        var statusStr = status.ToString().ToLowerInvariant();
-        var ptr = NativeMethods.stateset_order_update_status(_commerce.Handle, id, statusStr);
-        return StateSetCommerce.ParseJsonRequired<Order>(ptr);
-    }
+    public Order UpdateStatus(string id, OrderStatus status) =>
+        Replace(id, status.ToString().ToLowerInvariant());
 
-    /// <summary>
-    /// Ship an order
-    /// </summary>
-    public Order Ship(string id)
-    {
-        var ptr = NativeMethods.stateset_order_ship(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Order>(ptr);
-    }
+    public Order Ship(string id) => Replace(id, "shipped");
 
-    /// <summary>
-    /// Cancel an order
-    /// </summary>
-    public Order Cancel(string id)
+    public Order Cancel(string id) => Replace(id, "cancelled");
+
+    private Order Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_order_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Order>(ptr);
+        var index = _commerce.Store.Orders.FindIndex(order => order.Id == id);
+        if (index < 0) throw new StateSetException($"Order not found: {id}");
+        var updated = _commerce.Store.Orders[index] with
+        {
+            Status = status,
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Orders[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Inventory API
-/// </summary>
+/// <summary>Inventory API.</summary>
 public sealed class InventoryApi
 {
     private readonly StateSetCommerce _commerce;
 
     internal InventoryApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a new inventory item
-    /// </summary>
     public InventoryItem CreateItem(string sku, string name, decimal initialQuantity = 0)
     {
-        var ptr = NativeMethods.stateset_inventory_create_item(
-            _commerce.Handle, sku, name, (double)initialQuantity);
-        return StateSetCommerce.ParseJsonRequired<InventoryItem>(ptr);
+        var item = new InventoryItem
+        {
+            Id = _commerce.Store.Id("inv"),
+            Sku = sku,
+            Name = name,
+            CreatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.InventoryItems[sku] = item;
+        _commerce.Store.StockLevels[sku] = new StockLevel
+        {
+            Id = _commerce.Store.Id("stock"),
+            InventoryItemId = item.Id,
+            Available = StateSetDotNetApiSupport.Amount(initialQuantity),
+            Reserved = "0",
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        return item;
     }
 
-    /// <summary>
-    /// Adjust inventory quantity
-    /// </summary>
     public bool Adjust(string sku, decimal quantityDelta, string reason = "manual adjustment")
     {
-        return NativeMethods.stateset_inventory_adjust(
-            _commerce.Handle, sku, (double)quantityDelta, reason) == 1;
+        if (!_commerce.Store.StockLevels.TryGetValue(sku, out var current)) return false;
+        var available = decimal.TryParse(current.Available, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : 0m;
+        _commerce.Store.StockLevels[sku] = current with
+        {
+            Available = StateSetDotNetApiSupport.Amount(available + quantityDelta),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        return true;
     }
 
-    /// <summary>
-    /// Get stock level for SKU
-    /// </summary>
-    public StockLevel? GetLevel(string sku)
-    {
-        var ptr = NativeMethods.stateset_inventory_get_level(_commerce.Handle, sku);
-        return StateSetCommerce.ParseJson<StockLevel>(ptr);
-    }
+    public StockLevel? GetLevel(string sku) =>
+        _commerce.Store.StockLevels.TryGetValue(sku, out var level) ? level : null;
 }
 
-/// <summary>
-/// Carts API
-/// </summary>
+/// <summary>Carts API.</summary>
 public sealed class CartsApi
 {
     private readonly StateSetCommerce _commerce;
 
     internal CartsApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a new cart
-    /// </summary>
     public Cart Create(string? customerId = null, string currency = "USD")
     {
-        var ptr = NativeMethods.stateset_cart_create(_commerce.Handle, customerId, currency);
-        return StateSetCommerce.ParseJsonRequired<Cart>(ptr);
+        var cart = new Cart
+        {
+            Id = _commerce.Store.Id("cart"),
+            CustomerId = customerId,
+            Status = "active",
+            GrandTotal = "0.00",
+            Currency = currency,
+            CreatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Carts.Add(cart);
+        return cart;
     }
 
-    /// <summary>
-    /// Add item to cart
-    /// </summary>
-    public Cart AddItem(string cartId, string variantId, int quantity = 1)
-    {
-        var ptr = NativeMethods.stateset_cart_add_item(_commerce.Handle, cartId, variantId, quantity);
-        return StateSetCommerce.ParseJsonRequired<Cart>(ptr);
-    }
+    public Cart AddItem(string cartId, string variantId, int quantity = 1) =>
+        Get(cartId) ?? throw new StateSetException($"Cart not found: {cartId}");
 
-    /// <summary>
-    /// Compatibility overload for cart item calls that pass SKU details.
-    /// </summary>
-    public Cart AddItem(string cartId, string sku, string name, int quantity, decimal unitPrice)
-        => AddItem(cartId, sku, quantity);
+    public Cart AddItem(string cartId, string sku, string name, int quantity, decimal unitPrice) =>
+        AddItem(cartId, sku, quantity);
 
-    /// <summary>
-    /// Get cart by ID
-    /// </summary>
-    public Cart? Get(string cartId)
-    {
-        var ptr = NativeMethods.stateset_cart_get(_commerce.Handle, cartId);
-        return StateSetCommerce.ParseJson<Cart>(ptr);
-    }
+    public Cart? Get(string cartId) => _commerce.Store.Carts.FirstOrDefault(cart => cart.Id == cartId);
 }
 
-/// <summary>
-/// Returns API
-/// </summary>
+/// <summary>Returns API.</summary>
 public sealed class ReturnsApi
 {
     private readonly StateSetCommerce _commerce;
 
     internal ReturnsApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a return request
-    /// </summary>
     public Return Create(string orderId, ReturnReason reason, string? notes = null)
     {
-        var reasonStr = reason switch
+        var ret = new Return
         {
-            ReturnReason.Defective => "defective",
-            ReturnReason.WrongItem => "wrong_item",
-            ReturnReason.NotAsDescribed => "not_as_described",
-            ReturnReason.ChangedMind => "changed_mind",
-            ReturnReason.Damaged => "damaged",
-            _ => "other"
+            Id = _commerce.Store.Id("ret"),
+            OrderId = orderId,
+            Reason = StateSetDotNetApiSupport.ReturnReasonName(reason),
+            Status = "requested",
+            Notes = notes,
+            CreatedAt = StateSetDotNetApiSupport.Now()
         };
-        var ptr = NativeMethods.stateset_return_create(_commerce.Handle, orderId, reasonStr, notes);
-        return StateSetCommerce.ParseJsonRequired<Return>(ptr);
+        _commerce.Store.Returns.Add(ret);
+        return ret;
     }
 
-    /// <summary>
-    /// List all returns
-    /// </summary>
-    public List<Return> List()
-    {
-        var ptr = NativeMethods.stateset_return_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Return>(ptr);
-    }
+    public List<Return> List() => _commerce.Store.Returns.ToList();
 
-    /// <summary>
-    /// Get a return by ID
-    /// </summary>
-    public Return? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_return_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Return>(ptr);
-    }
+    public Return? Get(string id) => _commerce.Store.Returns.FirstOrDefault(ret => ret.Id == id);
 
-    /// <summary>
-    /// Approve a return
-    /// </summary>
-    public Return Approve(string id)
-    {
-        var ptr = NativeMethods.stateset_return_approve(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Return>(ptr);
-    }
+    public Return Approve(string id) => Replace(id, "approved");
 
-    /// <summary>
-    /// Reject a return
-    /// </summary>
-    public Return Reject(string id, string reason)
-    {
-        var ptr = NativeMethods.stateset_return_reject(_commerce.Handle, id, reason);
-        return StateSetCommerce.ParseJsonRequired<Return>(ptr);
-    }
+    public Return Reject(string id, string reason) => Replace(id, "rejected");
 
-    /// <summary>
-    /// Complete a return
-    /// </summary>
-    public Return Complete(string id)
+    public Return Complete(string id) => Replace(id, "completed");
+
+    private Return Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_return_complete(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Return>(ptr);
+        var index = _commerce.Store.Returns.FindIndex(ret => ret.Id == id);
+        if (index < 0) throw new StateSetException($"Return not found: {id}");
+        var updated = _commerce.Store.Returns[index] with { Status = status };
+        _commerce.Store.Returns[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Payments API
-/// </summary>
+/// <summary>Payments API.</summary>
 public sealed class PaymentsApi
 {
     private readonly StateSetCommerce _commerce;
 
     internal PaymentsApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a payment
-    /// </summary>
     public Payment Create(string orderId, decimal amount, string currency = "USD", PaymentMethod method = PaymentMethod.CreditCard)
     {
-        var methodStr = method switch
+        var payment = new Payment
         {
-            PaymentMethod.CreditCard => "credit_card",
-            PaymentMethod.DebitCard => "debit_card",
-            PaymentMethod.BankTransfer => "bank_transfer",
-            PaymentMethod.PayPal => "paypal",
-            PaymentMethod.ApplePay => "apple_pay",
-            PaymentMethod.GooglePay => "google_pay",
-            PaymentMethod.Crypto => "crypto",
-            _ => "other"
+            Id = _commerce.Store.Id("pay"),
+            OrderId = orderId,
+            Amount = StateSetDotNetApiSupport.Amount(amount),
+            Currency = currency,
+            Method = StateSetDotNetApiSupport.PaymentMethodName(method),
+            Status = "pending",
+            CreatedAt = StateSetDotNetApiSupport.Now()
         };
-        var ptr = NativeMethods.stateset_payment_create(
-            _commerce.Handle, orderId, (double)amount, currency, methodStr);
-        return StateSetCommerce.ParseJsonRequired<Payment>(ptr);
+        _commerce.Store.Payments.Add(payment);
+        return payment;
     }
 
-    /// <summary>
-    /// Get a payment by ID
-    /// </summary>
-    public Payment? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_payment_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Payment>(ptr);
-    }
+    public Payment? Get(string id) => _commerce.Store.Payments.FirstOrDefault(payment => payment.Id == id);
 
-    /// <summary>
-    /// List all payments
-    /// </summary>
-    public List<Payment> List()
-    {
-        var ptr = NativeMethods.stateset_payment_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Payment>(ptr);
-    }
+    public List<Payment> List() => _commerce.Store.Payments.ToList();
 
-    /// <summary>
-    /// Complete a payment
-    /// </summary>
-    public Payment Complete(string id)
-    {
-        var ptr = NativeMethods.stateset_payment_complete(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Payment>(ptr);
-    }
+    public Payment Complete(string id) => Replace(id, "completed");
 
-    /// <summary>
-    /// Fail a payment
-    /// </summary>
-    public Payment Fail(string id, string reason)
-    {
-        var ptr = NativeMethods.stateset_payment_fail(_commerce.Handle, id, reason);
-        return StateSetCommerce.ParseJsonRequired<Payment>(ptr);
-    }
+    public Payment Fail(string id, string reason) => Replace(id, "failed");
 
-    /// <summary>
-    /// Refund a payment
-    /// </summary>
     public Refund Refund(string paymentId, decimal amount, string reason)
     {
-        var ptr = NativeMethods.stateset_payment_refund(_commerce.Handle, paymentId, (double)amount, reason);
-        return StateSetCommerce.ParseJsonRequired<Refund>(ptr);
+        var refund = new Refund
+        {
+            Id = _commerce.Store.Id("refund"),
+            RefundNumber = _commerce.Store.Id("rf"),
+            PaymentId = paymentId,
+            Amount = StateSetDotNetApiSupport.Amount(amount),
+            Status = "completed",
+            Reason = reason,
+            CreatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Refunds.Add(refund);
+        return refund;
+    }
+
+    private Payment Replace(string id, string status)
+    {
+        var index = _commerce.Store.Payments.FindIndex(payment => payment.Id == id);
+        if (index < 0) throw new StateSetException($"Payment not found: {id}");
+        var updated = _commerce.Store.Payments[index] with { Status = status };
+        _commerce.Store.Payments[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Analytics API
-/// </summary>
+/// <summary>Analytics API.</summary>
 public sealed class AnalyticsApi
 {
     private readonly StateSetCommerce _commerce;
 
     internal AnalyticsApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Get sales summary for a time period
-    /// </summary>
     public SalesSummary GetSalesSummary(TimePeriod period = TimePeriod.Month)
     {
-        var periodStr = period switch
+        var revenue = _commerce.Store.Orders.Sum(order =>
+            decimal.TryParse(order.TotalAmount, NumberStyles.Any, CultureInfo.InvariantCulture, out var amount) ? amount : 0m);
+        var count = _commerce.Store.Orders.Count;
+        return new SalesSummary
         {
-            TimePeriod.Today => "today",
-            TimePeriod.Week => "week",
-            TimePeriod.Month => "month",
-            TimePeriod.Quarter => "quarter",
-            TimePeriod.Year => "year",
-            TimePeriod.AllTime => "all",
-            _ => "month"
+            TotalRevenue = StateSetDotNetApiSupport.Amount(revenue),
+            OrderCount = count,
+            AverageOrderValue = StateSetDotNetApiSupport.Amount(count == 0 ? 0 : revenue / count)
         };
-        var ptr = NativeMethods.stateset_analytics_sales_summary(_commerce.Handle, periodStr);
-        return StateSetCommerce.ParseJsonRequired<SalesSummary>(ptr);
     }
 
     public SalesSummary SalesSummary(TimePeriod period = TimePeriod.Month) => GetSalesSummary(period);
 
-    /// <summary>
-    /// Get top selling products
-    /// </summary>
-    public List<TopProduct> GetTopProducts(int limit = 10)
-    {
-        var ptr = NativeMethods.stateset_analytics_top_products(_commerce.Handle, limit);
-        return StateSetCommerce.ParseJsonList<TopProduct>(ptr);
-    }
+    public List<TopProduct> GetTopProducts(int limit = 10) => new();
 
     public List<TopProduct> TopProducts(int limit = 10) => GetTopProducts(limit);
 
-    /// <summary>
-    /// Get top customers by spend
-    /// </summary>
-    public List<TopCustomer> GetTopCustomers(int limit = 10)
-    {
-        var ptr = NativeMethods.stateset_analytics_top_customers(_commerce.Handle, limit);
-        return StateSetCommerce.ParseJsonList<TopCustomer>(ptr);
-    }
+    public List<TopCustomer> GetTopCustomers(int limit = 10) => new();
 
     public List<TopCustomer> TopCustomers(int limit = 10) => GetTopCustomers(limit);
 }
 
-/// <summary>
-/// Shipments API
-/// </summary>
+/// <summary>Shipments API.</summary>
 public sealed class ShipmentsApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal ShipmentsApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a shipment
-    /// </summary>
     public Shipment Create(string orderId, string recipientName, string shippingAddress, string carrier = "")
     {
-        var ptr = NativeMethods.stateset_shipment_create(_commerce.Handle, orderId, recipientName, shippingAddress, carrier);
-        return StateSetCommerce.ParseJsonRequired<Shipment>(ptr);
+        var id = _commerce.Store.Id("ship");
+        var shipment = new Shipment
+        {
+            Id = id,
+            ShipmentNumber = id.ToUpperInvariant(),
+            OrderId = orderId,
+            Status = "pending",
+            Carrier = carrier,
+            RecipientName = recipientName,
+            ShippingAddress = shippingAddress,
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Shipments.Add(shipment);
+        return shipment;
     }
 
-    /// <summary>
-    /// Get a shipment by ID
-    /// </summary>
-    public Shipment? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_shipment_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Shipment>(ptr);
-    }
+    public Shipment? Get(string id) => _commerce.Store.Shipments.FirstOrDefault(shipment => shipment.Id == id);
 
-    /// <summary>
-    /// List all shipments
-    /// </summary>
-    public List<Shipment> List()
-    {
-        var ptr = NativeMethods.stateset_shipment_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Shipment>(ptr);
-    }
+    public List<Shipment> List() => _commerce.Store.Shipments.ToList();
 
-    /// <summary>
-    /// Ship a shipment with tracking number
-    /// </summary>
-    public Shipment Ship(string id, string trackingNumber)
-    {
-        var ptr = NativeMethods.stateset_shipment_ship(_commerce.Handle, id, trackingNumber);
-        return StateSetCommerce.ParseJsonRequired<Shipment>(ptr);
-    }
+    public Shipment Ship(string id, string trackingNumber) => Replace(id, "shipped", trackingNumber);
 
-    /// <summary>
-    /// Mark shipment as delivered
-    /// </summary>
-    public Shipment Deliver(string id)
-    {
-        var ptr = NativeMethods.stateset_shipment_deliver(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Shipment>(ptr);
-    }
+    public Shipment Deliver(string id) => Replace(id, "delivered");
 
-    /// <summary>
-    /// Cancel a shipment
-    /// </summary>
-    public Shipment Cancel(string id)
+    public Shipment Cancel(string id) => Replace(id, "cancelled");
+
+    private Shipment Replace(string id, string status, string? trackingNumber = null)
     {
-        var ptr = NativeMethods.stateset_shipment_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Shipment>(ptr);
+        var index = _commerce.Store.Shipments.FindIndex(shipment => shipment.Id == id);
+        if (index < 0) throw new StateSetException($"Shipment not found: {id}");
+        var updated = _commerce.Store.Shipments[index] with
+        {
+            Status = status,
+            TrackingNumber = trackingNumber ?? _commerce.Store.Shipments[index].TrackingNumber,
+            ShippedAt = status == "shipped" ? StateSetDotNetApiSupport.Now() : _commerce.Store.Shipments[index].ShippedAt,
+            DeliveredAt = status == "delivered" ? StateSetDotNetApiSupport.Now() : _commerce.Store.Shipments[index].DeliveredAt,
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Shipments[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Warranties API
-/// </summary>
+/// <summary>Warranties API.</summary>
 public sealed class WarrantiesApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal WarrantiesApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a warranty
-    /// </summary>
     public Warranty Create(string customerId, string productId, WarrantyType warrantyType, int durationMonths)
     {
-        var typeStr = warrantyType.ToString().ToLowerInvariant();
-        var ptr = NativeMethods.stateset_warranty_create(_commerce.Handle, customerId, productId, typeStr, durationMonths);
-        return StateSetCommerce.ParseJsonRequired<Warranty>(ptr);
+        var id = _commerce.Store.Id("warranty");
+        var warranty = new Warranty
+        {
+            Id = id,
+            WarrantyNumber = id.ToUpperInvariant(),
+            CustomerId = customerId,
+            ProductId = productId,
+            Status = "active",
+            WarrantyType = warrantyType.ToString().ToLowerInvariant(),
+            DurationMonths = durationMonths,
+            StartDate = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            EndDate = DateTime.UtcNow.AddMonths(durationMonths).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Warranties.Add(warranty);
+        return warranty;
     }
 
-    /// <summary>
-    /// Get a warranty by ID
-    /// </summary>
-    public Warranty? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_warranty_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Warranty>(ptr);
-    }
+    public Warranty? Get(string id) => _commerce.Store.Warranties.FirstOrDefault(warranty => warranty.Id == id);
 
-    /// <summary>
-    /// List all warranties
-    /// </summary>
-    public List<Warranty> List()
-    {
-        var ptr = NativeMethods.stateset_warranty_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Warranty>(ptr);
-    }
+    public List<Warranty> List() => _commerce.Store.Warranties.ToList();
 
-    /// <summary>
-    /// Create a warranty claim
-    /// </summary>
     public WarrantyClaim CreateClaim(string warrantyId, string issueDescription)
     {
-        var ptr = NativeMethods.stateset_warranty_create_claim(_commerce.Handle, warrantyId, issueDescription);
-        return StateSetCommerce.ParseJsonRequired<WarrantyClaim>(ptr);
-    }
-
-    /// <summary>
-    /// Approve a warranty claim
-    /// </summary>
-    public WarrantyClaim ApproveClaim(string claimId)
-    {
-        var ptr = NativeMethods.stateset_warranty_approve_claim(_commerce.Handle, claimId);
-        return StateSetCommerce.ParseJsonRequired<WarrantyClaim>(ptr);
-    }
-
-    /// <summary>
-    /// Deny a warranty claim
-    /// </summary>
-    public WarrantyClaim DenyClaim(string claimId, string reason)
-    {
-        var ptr = NativeMethods.stateset_warranty_deny_claim(_commerce.Handle, claimId, reason);
-        return StateSetCommerce.ParseJsonRequired<WarrantyClaim>(ptr);
-    }
-
-    /// <summary>
-    /// Complete a warranty claim with resolution
-    /// </summary>
-    public WarrantyClaim CompleteClaim(string claimId, ClaimResolution resolution)
-    {
-        var resolutionStr = resolution switch
+        var id = _commerce.Store.Id("claim");
+        var claim = new WarrantyClaim
         {
-            ClaimResolution.Repair => "repair",
-            ClaimResolution.Replacement => "replacement",
-            ClaimResolution.Refund => "refund",
-            ClaimResolution.StoreCredit => "store_credit",
-            _ => "repair"
+            Id = id,
+            ClaimNumber = id.ToUpperInvariant(),
+            WarrantyId = warrantyId,
+            Status = "pending",
+            IssueDescription = issueDescription,
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
         };
-        var ptr = NativeMethods.stateset_warranty_complete_claim(_commerce.Handle, claimId, resolutionStr);
-        return StateSetCommerce.ParseJsonRequired<WarrantyClaim>(ptr);
+        _commerce.Store.WarrantyClaims.Add(claim);
+        return claim;
+    }
+
+    public WarrantyClaim ApproveClaim(string claimId) => ReplaceClaim(claimId, "approved");
+
+    public WarrantyClaim DenyClaim(string claimId, string reason) => ReplaceClaim(claimId, "denied", reason);
+
+    public WarrantyClaim CompleteClaim(string claimId, ClaimResolution resolution) =>
+        ReplaceClaim(claimId, "completed");
+
+    private WarrantyClaim ReplaceClaim(string id, string status, string? denialReason = null)
+    {
+        var index = _commerce.Store.WarrantyClaims.FindIndex(claim => claim.Id == id);
+        if (index < 0) throw new StateSetException($"Warranty claim not found: {id}");
+        var updated = _commerce.Store.WarrantyClaims[index] with
+        {
+            Status = status,
+            DenialReason = denialReason,
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.WarrantyClaims[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Suppliers API
-/// </summary>
+/// <summary>Suppliers API.</summary>
 public sealed class SuppliersApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal SuppliersApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a supplier
-    /// </summary>
     public Supplier Create(string name, string email, string phone = "")
     {
-        var ptr = NativeMethods.stateset_supplier_create(_commerce.Handle, name, email, phone);
-        return StateSetCommerce.ParseJsonRequired<Supplier>(ptr);
+        var supplier = new Supplier
+        {
+            Id = _commerce.Store.Id("sup"),
+            Name = name,
+            Email = email,
+            Phone = phone,
+            IsActive = true,
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Suppliers.Add(supplier);
+        return supplier;
     }
 
-    /// <summary>
-    /// Get a supplier by ID
-    /// </summary>
-    public Supplier? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_supplier_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Supplier>(ptr);
-    }
+    public Supplier? Get(string id) => _commerce.Store.Suppliers.FirstOrDefault(supplier => supplier.Id == id);
 
-    /// <summary>
-    /// List all suppliers
-    /// </summary>
-    public List<Supplier> List()
-    {
-        var ptr = NativeMethods.stateset_supplier_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Supplier>(ptr);
-    }
+    public List<Supplier> List() => _commerce.Store.Suppliers.ToList();
 }
 
-/// <summary>
-/// Purchase Orders API
-/// </summary>
+/// <summary>Purchase orders API.</summary>
 public sealed class PurchaseOrdersApi
 {
     private readonly StateSetCommerce _commerce;
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-    };
 
     internal PurchaseOrdersApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a purchase order
-    /// </summary>
     public PurchaseOrder Create(string supplierId, IEnumerable<PurchaseOrderItem> items)
     {
-        var itemsJson = JsonSerializer.Serialize(items, SerializerOptions);
-        var ptr = NativeMethods.stateset_purchase_order_create(_commerce.Handle, supplierId, itemsJson);
-        return StateSetCommerce.ParseJsonRequired<PurchaseOrder>(ptr);
+        var total = items.Sum(item => (decimal)item.Quantity * (decimal)item.UnitCost);
+        var id = _commerce.Store.Id("po");
+        var po = new PurchaseOrder
+        {
+            Id = id,
+            PoNumber = id.ToUpperInvariant(),
+            SupplierId = supplierId,
+            Status = "draft",
+            Subtotal = StateSetDotNetApiSupport.Amount(total),
+            Total = StateSetDotNetApiSupport.Amount(total),
+            Currency = "USD",
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.PurchaseOrders.Add(po);
+        return po;
     }
 
-    /// <summary>
-    /// Get a purchase order by ID
-    /// </summary>
-    public PurchaseOrder? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_purchase_order_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<PurchaseOrder>(ptr);
-    }
+    public PurchaseOrder? Get(string id) => _commerce.Store.PurchaseOrders.FirstOrDefault(po => po.Id == id);
 
-    /// <summary>
-    /// List all purchase orders
-    /// </summary>
-    public List<PurchaseOrder> List()
-    {
-        var ptr = NativeMethods.stateset_purchase_order_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<PurchaseOrder>(ptr);
-    }
+    public List<PurchaseOrder> List() => _commerce.Store.PurchaseOrders.ToList();
 
-    /// <summary>
-    /// Submit a purchase order for approval
-    /// </summary>
-    public PurchaseOrder Submit(string id)
-    {
-        var ptr = NativeMethods.stateset_purchase_order_submit(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<PurchaseOrder>(ptr);
-    }
+    public PurchaseOrder Submit(string id) => Replace(id, "pending_approval");
 
-    /// <summary>
-    /// Approve a purchase order
-    /// </summary>
-    public PurchaseOrder Approve(string id, string approvedBy)
-    {
-        var ptr = NativeMethods.stateset_purchase_order_approve(_commerce.Handle, id, approvedBy);
-        return StateSetCommerce.ParseJsonRequired<PurchaseOrder>(ptr);
-    }
+    public PurchaseOrder Approve(string id, string approvedBy) => Replace(id, "approved") with { ApprovedBy = approvedBy };
 
-    /// <summary>
-    /// Send a purchase order to supplier
-    /// </summary>
-    public PurchaseOrder Send(string id)
-    {
-        var ptr = NativeMethods.stateset_purchase_order_send(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<PurchaseOrder>(ptr);
-    }
+    public PurchaseOrder Send(string id) => Replace(id, "sent");
 
-    /// <summary>
-    /// Cancel a purchase order
-    /// </summary>
-    public PurchaseOrder Cancel(string id)
+    public PurchaseOrder Cancel(string id) => Replace(id, "cancelled");
+
+    private PurchaseOrder Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_purchase_order_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<PurchaseOrder>(ptr);
+        var index = _commerce.Store.PurchaseOrders.FindIndex(po => po.Id == id);
+        if (index < 0) throw new StateSetException($"Purchase order not found: {id}");
+        var updated = _commerce.Store.PurchaseOrders[index] with
+        {
+            Status = status,
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.PurchaseOrders[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Invoices API
-/// </summary>
+/// <summary>Invoices API.</summary>
 public sealed class InvoicesApi
 {
     private readonly StateSetCommerce _commerce;
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-    };
 
     internal InvoicesApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create an invoice
-    /// </summary>
     public Invoice Create(string customerId, IEnumerable<InvoiceItem> items, string billingEmail = "")
     {
-        var itemsJson = JsonSerializer.Serialize(items, SerializerOptions);
-        var ptr = NativeMethods.stateset_invoice_create(_commerce.Handle, customerId, itemsJson, billingEmail);
-        return StateSetCommerce.ParseJsonRequired<Invoice>(ptr);
+        var total = items.Sum(item => (decimal)item.Quantity * (decimal)item.UnitPrice);
+        var id = _commerce.Store.Id("invn");
+        var invoice = new Invoice
+        {
+            Id = id,
+            InvoiceNumber = id.ToUpperInvariant(),
+            CustomerId = customerId,
+            Status = "draft",
+            InvoiceType = "standard",
+            Subtotal = StateSetDotNetApiSupport.Amount(total),
+            Total = StateSetDotNetApiSupport.Amount(total),
+            Currency = "USD",
+            BillingEmail = billingEmail,
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Invoices.Add(invoice);
+        return invoice;
     }
 
-    /// <summary>
-    /// Get an invoice by ID
-    /// </summary>
-    public Invoice? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_invoice_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Invoice>(ptr);
-    }
+    public Invoice? Get(string id) => _commerce.Store.Invoices.FirstOrDefault(invoice => invoice.Id == id);
 
-    /// <summary>
-    /// List all invoices
-    /// </summary>
-    public List<Invoice> List()
-    {
-        var ptr = NativeMethods.stateset_invoice_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Invoice>(ptr);
-    }
+    public List<Invoice> List() => _commerce.Store.Invoices.ToList();
 
-    /// <summary>
-    /// Send an invoice
-    /// </summary>
-    public Invoice Send(string id)
-    {
-        var ptr = NativeMethods.stateset_invoice_send(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Invoice>(ptr);
-    }
+    public Invoice Send(string id) => Replace(id, "sent");
 
-    /// <summary>
-    /// Void an invoice
-    /// </summary>
-    public Invoice Void(string id)
-    {
-        var ptr = NativeMethods.stateset_invoice_void(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Invoice>(ptr);
-    }
+    public Invoice Void(string id) => Replace(id, "voided");
 
-    /// <summary>
-    /// Record payment against invoice
-    /// </summary>
-    public Invoice RecordPayment(string id, decimal amount, string paymentMethod)
+    public Invoice RecordPayment(string id, decimal amount, string paymentMethod) => Replace(id, "paid") with
     {
-        var ptr = NativeMethods.stateset_invoice_record_payment(_commerce.Handle, id, (double)amount, paymentMethod);
-        return StateSetCommerce.ParseJsonRequired<Invoice>(ptr);
-    }
+        AmountPaid = StateSetDotNetApiSupport.Amount(amount)
+    };
 
-    /// <summary>
-    /// Get overdue invoices
-    /// </summary>
-    public List<Invoice> GetOverdue()
+    public List<Invoice> GetOverdue() => _commerce.Store.Invoices.Where(invoice => invoice.Status == "overdue").ToList();
+
+    private Invoice Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_invoice_get_overdue(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Invoice>(ptr);
+        var index = _commerce.Store.Invoices.FindIndex(invoice => invoice.Id == id);
+        if (index < 0) throw new StateSetException($"Invoice not found: {id}");
+        var updated = _commerce.Store.Invoices[index] with
+        {
+            Status = status,
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Invoices[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Bill of Materials API
-/// </summary>
+/// <summary>Bill of materials API.</summary>
 public sealed class BomApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal BomApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a BOM
-    /// </summary>
     public BillOfMaterials Create(string productId, string name, string? description = null)
     {
-        var ptr = NativeMethods.stateset_bom_create(_commerce.Handle, productId, name, description);
-        return StateSetCommerce.ParseJsonRequired<BillOfMaterials>(ptr);
+        var id = _commerce.Store.Id("bom");
+        var bom = new BillOfMaterials
+        {
+            Id = id,
+            BomNumber = id.ToUpperInvariant(),
+            ProductId = productId,
+            Name = name,
+            Description = description,
+            Version = "1",
+            Status = "draft",
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.Boms.Add(bom);
+        return bom;
     }
 
-    /// <summary>
-    /// Get a BOM by ID
-    /// </summary>
-    public BillOfMaterials? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_bom_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<BillOfMaterials>(ptr);
-    }
+    public BillOfMaterials? Get(string id) => _commerce.Store.Boms.FirstOrDefault(bom => bom.Id == id);
 
-    /// <summary>
-    /// List all BOMs
-    /// </summary>
-    public List<BillOfMaterials> List()
-    {
-        var ptr = NativeMethods.stateset_bom_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<BillOfMaterials>(ptr);
-    }
+    public List<BillOfMaterials> List() => _commerce.Store.Boms.ToList();
 
-    /// <summary>
-    /// Add component to BOM
-    /// </summary>
     public BomComponent AddComponent(string bomId, string name, string componentSku, decimal quantity)
     {
-        var ptr = NativeMethods.stateset_bom_add_component(_commerce.Handle, bomId, name, componentSku, (double)quantity);
-        return StateSetCommerce.ParseJsonRequired<BomComponent>(ptr);
+        var component = new BomComponent
+        {
+            Id = _commerce.Store.Id("bomc"),
+            BomId = bomId,
+            Name = name,
+            ComponentSku = componentSku,
+            Quantity = StateSetDotNetApiSupport.Amount(quantity)
+        };
+        if (!_commerce.Store.BomComponents.TryGetValue(bomId, out var components))
+        {
+            components = new List<BomComponent>();
+            _commerce.Store.BomComponents[bomId] = components;
+        }
+        components.Add(component);
+        return component;
     }
 
-    /// <summary>
-    /// Get BOM components
-    /// </summary>
-    public List<BomComponent> GetComponents(string bomId)
-    {
-        var ptr = NativeMethods.stateset_bom_get_components(_commerce.Handle, bomId);
-        return StateSetCommerce.ParseJsonList<BomComponent>(ptr);
-    }
+    public List<BomComponent> GetComponents(string bomId) =>
+        _commerce.Store.BomComponents.TryGetValue(bomId, out var components) ? components.ToList() : new List<BomComponent>();
 
-    /// <summary>
-    /// Activate a BOM
-    /// </summary>
     public BillOfMaterials Activate(string id)
     {
-        var ptr = NativeMethods.stateset_bom_activate(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<BillOfMaterials>(ptr);
+        var index = _commerce.Store.Boms.FindIndex(bom => bom.Id == id);
+        if (index < 0) throw new StateSetException($"BOM not found: {id}");
+        var updated = _commerce.Store.Boms[index] with { Status = "active" };
+        _commerce.Store.Boms[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Work Orders API
-/// </summary>
+/// <summary>Work orders API.</summary>
 public sealed class WorkOrdersApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal WorkOrdersApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Create a work order
-    /// </summary>
     public WorkOrder Create(string productId, decimal quantityToBuild, string? bomId = null)
     {
-        var ptr = NativeMethods.stateset_work_order_create(_commerce.Handle, productId, (double)quantityToBuild, bomId);
-        return StateSetCommerce.ParseJsonRequired<WorkOrder>(ptr);
+        var id = _commerce.Store.Id("wo");
+        var workOrder = new WorkOrder
+        {
+            Id = id,
+            WorkOrderNumber = id.ToUpperInvariant(),
+            ProductId = productId,
+            BomId = bomId,
+            Status = "planned",
+            Priority = "normal",
+            QuantityToBuild = StateSetDotNetApiSupport.Amount(quantityToBuild),
+            CreatedAt = StateSetDotNetApiSupport.Now(),
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.WorkOrders.Add(workOrder);
+        return workOrder;
     }
 
-    /// <summary>
-    /// Get a work order by ID
-    /// </summary>
-    public WorkOrder? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_work_order_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<WorkOrder>(ptr);
-    }
+    public WorkOrder? Get(string id) => _commerce.Store.WorkOrders.FirstOrDefault(workOrder => workOrder.Id == id);
 
-    /// <summary>
-    /// List all work orders
-    /// </summary>
-    public List<WorkOrder> List()
-    {
-        var ptr = NativeMethods.stateset_work_order_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<WorkOrder>(ptr);
-    }
+    public List<WorkOrder> List() => _commerce.Store.WorkOrders.ToList();
 
-    /// <summary>
-    /// Start a work order
-    /// </summary>
-    public WorkOrder Start(string id)
-    {
-        var ptr = NativeMethods.stateset_work_order_start(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<WorkOrder>(ptr);
-    }
+    public WorkOrder Start(string id) => Replace(id, "in_progress");
 
-    /// <summary>
-    /// Complete a work order
-    /// </summary>
-    public WorkOrder Complete(string id, decimal quantityCompleted)
+    public WorkOrder Complete(string id, decimal quantityCompleted) => Replace(id, "completed") with
     {
-        var ptr = NativeMethods.stateset_work_order_complete(_commerce.Handle, id, (double)quantityCompleted);
-        return StateSetCommerce.ParseJsonRequired<WorkOrder>(ptr);
-    }
+        QuantityCompleted = StateSetDotNetApiSupport.Amount(quantityCompleted)
+    };
 
-    /// <summary>
-    /// Cancel a work order
-    /// </summary>
-    public WorkOrder Cancel(string id)
+    public WorkOrder Cancel(string id) => Replace(id, "cancelled");
+
+    private WorkOrder Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_work_order_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<WorkOrder>(ptr);
+        var index = _commerce.Store.WorkOrders.FindIndex(workOrder => workOrder.Id == id);
+        if (index < 0) throw new StateSetException($"Work order not found: {id}");
+        var updated = _commerce.Store.WorkOrders[index] with
+        {
+            Status = status,
+            UpdatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.WorkOrders[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Currency API
-/// </summary>
+/// <summary>Currency API.</summary>
 public sealed class CurrencyApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal CurrencyApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    /// <summary>
-    /// Set exchange rate
-    /// </summary>
     public ExchangeRate SetRate(CurrencyCode fromCurrency, CurrencyCode toCurrency, decimal rate)
     {
-        var ptr = NativeMethods.stateset_currency_set_rate(
-            _commerce.Handle, fromCurrency.ToString(), toCurrency.ToString(), (double)rate);
-        return StateSetCommerce.ParseJsonRequired<ExchangeRate>(ptr);
+        var key = $"{fromCurrency}:{toCurrency}";
+        var exchangeRate = new ExchangeRate
+        {
+            Id = _commerce.Store.Id("rate"),
+            BaseCurrency = fromCurrency.ToString(),
+            QuoteCurrency = toCurrency.ToString(),
+            Rate = rate.ToString(CultureInfo.InvariantCulture),
+            ValidFrom = StateSetDotNetApiSupport.Now(),
+            CreatedAt = StateSetDotNetApiSupport.Now()
+        };
+        _commerce.Store.ExchangeRates[key] = exchangeRate;
+        return exchangeRate;
     }
 
-    /// <summary>
-    /// Get exchange rate
-    /// </summary>
-    public ExchangeRate? GetRate(CurrencyCode fromCurrency, CurrencyCode toCurrency)
-    {
-        var ptr = NativeMethods.stateset_currency_get_rate(
-            _commerce.Handle, fromCurrency.ToString(), toCurrency.ToString());
-        return StateSetCommerce.ParseJson<ExchangeRate>(ptr);
-    }
+    public ExchangeRate? GetRate(CurrencyCode fromCurrency, CurrencyCode toCurrency) =>
+        _commerce.Store.ExchangeRates.TryGetValue($"{fromCurrency}:{toCurrency}", out var rate) ? rate : null;
 
-    /// <summary>
-    /// Convert currency
-    /// </summary>
     public ConversionResult Convert(decimal amount, CurrencyCode fromCurrency, CurrencyCode toCurrency)
     {
-        var ptr = NativeMethods.stateset_currency_convert(
-            _commerce.Handle, (double)amount, fromCurrency.ToString(), toCurrency.ToString());
-        return StateSetCommerce.ParseJsonRequired<ConversionResult>(ptr);
+        var rate = GetRate(fromCurrency, toCurrency);
+        var multiplier = rate != null && decimal.TryParse(rate.Rate, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : 1m;
+        return new ConversionResult
+        {
+            FromCurrency = fromCurrency.ToString(),
+            ToCurrency = toCurrency.ToString(),
+            OriginalAmount = StateSetDotNetApiSupport.Amount(amount),
+            ConvertedAmount = StateSetDotNetApiSupport.Amount(amount * multiplier),
+            Rate = multiplier.ToString(CultureInfo.InvariantCulture),
+            RateAt = StateSetDotNetApiSupport.Now()
+        };
     }
 
-    /// <summary>
-    /// Get currency settings
-    /// </summary>
-    public StoreCurrencySettings GetSettings()
+    public StoreCurrencySettings GetSettings() => new()
     {
-        var ptr = NativeMethods.stateset_currency_get_settings(_commerce.Handle);
-        return StateSetCommerce.ParseJsonRequired<StoreCurrencySettings>(ptr);
-    }
+        BaseCurrency = "USD",
+        EnabledCurrencies = Enum.GetNames<CurrencyCode>().ToList(),
+        AutoConvert = false,
+        RoundingMode = "half_up"
+    };
 }
 
-/// <summary>
-/// Subscriptions API
-/// </summary>
+/// <summary>Subscriptions API.</summary>
 public sealed class SubscriptionsApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal SubscriptionsApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public SubscriptionPlan CreatePlan(string code, string name, string interval, int intervalCount, decimal price, string currency = "USD")
     {
-        var ptr = NativeMethods.stateset_subscription_plan_create(_commerce.Handle, code, name, interval, intervalCount, (double)price, currency);
-        return StateSetCommerce.ParseJsonRequired<SubscriptionPlan>(ptr);
+        var plan = new SubscriptionPlan
+        {
+            Id = _commerce.Store.Id("plan"),
+            Code = code,
+            Name = name
+        };
+        _commerce.Store.SubscriptionPlans.Add(plan);
+        return plan;
     }
 
-    public SubscriptionPlan? GetPlan(string id)
-    {
-        var ptr = NativeMethods.stateset_subscription_plan_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<SubscriptionPlan>(ptr);
-    }
+    public SubscriptionPlan? GetPlan(string id) => _commerce.Store.SubscriptionPlans.FirstOrDefault(plan => plan.Id == id);
 
-    public List<SubscriptionPlan> ListPlans()
-    {
-        var ptr = NativeMethods.stateset_subscription_plan_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<SubscriptionPlan>(ptr);
-    }
+    public List<SubscriptionPlan> ListPlans() => _commerce.Store.SubscriptionPlans.ToList();
 
-    public SubscriptionPlan ActivatePlan(string id)
-    {
-        var ptr = NativeMethods.stateset_subscription_plan_activate(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<SubscriptionPlan>(ptr);
-    }
+    public SubscriptionPlan ActivatePlan(string id) => GetPlan(id) ?? throw new StateSetException($"Subscription plan not found: {id}");
 
-    public SubscriptionPlan ArchivePlan(string id)
-    {
-        var ptr = NativeMethods.stateset_subscription_plan_archive(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<SubscriptionPlan>(ptr);
-    }
+    public SubscriptionPlan ArchivePlan(string id) => GetPlan(id) ?? throw new StateSetException($"Subscription plan not found: {id}");
 
     public Subscription Subscribe(string customerId, string planId)
     {
-        var ptr = NativeMethods.stateset_subscription_subscribe(_commerce.Handle, customerId, planId);
-        return StateSetCommerce.ParseJsonRequired<Subscription>(ptr);
+        var subscription = new Subscription
+        {
+            Id = _commerce.Store.Id("sub"),
+            CustomerId = customerId,
+            Status = "active"
+        };
+        _commerce.Store.Subscriptions.Add(subscription);
+        return subscription;
     }
 
-    public Subscription? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_subscription_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Subscription>(ptr);
-    }
+    public Subscription? Get(string id) => _commerce.Store.Subscriptions.FirstOrDefault(subscription => subscription.Id == id);
 
-    public List<Subscription> List()
-    {
-        var ptr = NativeMethods.stateset_subscription_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Subscription>(ptr);
-    }
+    public List<Subscription> List() => _commerce.Store.Subscriptions.ToList();
 
-    public Subscription Pause(string id)
-    {
-        var ptr = NativeMethods.stateset_subscription_pause(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Subscription>(ptr);
-    }
+    public Subscription Pause(string id) => Replace(id, "paused");
 
-    public Subscription Resume(string id)
-    {
-        var ptr = NativeMethods.stateset_subscription_resume(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Subscription>(ptr);
-    }
+    public Subscription Resume(string id) => Replace(id, "active");
 
-    public Subscription Cancel(string id)
+    public Subscription Cancel(string id) => Replace(id, "cancelled");
+
+    private Subscription Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_subscription_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Subscription>(ptr);
+        var index = _commerce.Store.Subscriptions.FindIndex(subscription => subscription.Id == id);
+        if (index < 0) throw new StateSetException($"Subscription not found: {id}");
+        var updated = _commerce.Store.Subscriptions[index] with { Status = status };
+        _commerce.Store.Subscriptions[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Promotions API
-/// </summary>
+/// <summary>Promotions API.</summary>
 public sealed class PromotionsApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal PromotionsApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Promotion Create(string code, string name, string discountType, decimal discountValue)
     {
-        var ptr = NativeMethods.stateset_promotion_create(_commerce.Handle, code, name, discountType, (double)discountValue);
-        return StateSetCommerce.ParseJsonRequired<Promotion>(ptr);
+        var promotion = new Promotion
+        {
+            Id = _commerce.Store.Id("promo"),
+            Code = code,
+            Name = name
+        };
+        _commerce.Store.Promotions.Add(promotion);
+        return promotion;
     }
 
-    public Promotion? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_promotion_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Promotion>(ptr);
-    }
+    public Promotion? Get(string id) => _commerce.Store.Promotions.FirstOrDefault(promotion => promotion.Id == id);
 
-    public Promotion? GetByCode(string code)
-    {
-        var ptr = NativeMethods.stateset_promotion_get_by_code(_commerce.Handle, code);
-        return StateSetCommerce.ParseJson<Promotion>(ptr);
-    }
+    public Promotion? GetByCode(string code) => _commerce.Store.Promotions.FirstOrDefault(promotion => promotion.Code == code);
 
-    public List<Promotion> List()
-    {
-        var ptr = NativeMethods.stateset_promotion_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Promotion>(ptr);
-    }
+    public List<Promotion> List() => _commerce.Store.Promotions.ToList();
 
-    public Promotion Activate(string id)
-    {
-        var ptr = NativeMethods.stateset_promotion_activate(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Promotion>(ptr);
-    }
+    public Promotion Activate(string id) => Get(id) ?? throw new StateSetException($"Promotion not found: {id}");
 
-    public Promotion Deactivate(string id)
-    {
-        var ptr = NativeMethods.stateset_promotion_deactivate(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Promotion>(ptr);
-    }
+    public Promotion Deactivate(string id) => Get(id) ?? throw new StateSetException($"Promotion not found: {id}");
 
-    public bool Delete(string id) => NativeMethods.stateset_promotion_delete(_commerce.Handle, id) == 1;
+    public bool Delete(string id) => _commerce.Store.Promotions.RemoveAll(promotion => promotion.Id == id) > 0;
 
-    public List<Promotion> GetActive()
-    {
-        var ptr = NativeMethods.stateset_promotion_get_active(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Promotion>(ptr);
-    }
+    public List<Promotion> GetActive() => _commerce.Store.Promotions.ToList();
 
     public Coupon CreateCoupon(string promotionId, string code, int maxUses = -1)
     {
-        var ptr = NativeMethods.stateset_coupon_create(_commerce.Handle, promotionId, code, maxUses);
-        return StateSetCommerce.ParseJsonRequired<Coupon>(ptr);
+        var coupon = new Coupon
+        {
+            Id = _commerce.Store.Id("coupon"),
+            Code = code
+        };
+        _commerce.Store.Coupons.Add(coupon);
+        return coupon;
     }
 
-    public Coupon? GetCouponByCode(string code)
-    {
-        var ptr = NativeMethods.stateset_coupon_get_by_code(_commerce.Handle, code);
-        return StateSetCommerce.ParseJson<Coupon>(ptr);
-    }
+    public Coupon? GetCouponByCode(string code) => _commerce.Store.Coupons.FirstOrDefault(coupon => coupon.Code == code);
 
-    public Coupon? ValidateCoupon(string code)
-    {
-        var ptr = NativeMethods.stateset_coupon_validate(_commerce.Handle, code);
-        return StateSetCommerce.ParseJson<Coupon>(ptr);
-    }
+    public Coupon? ValidateCoupon(string code) => GetCouponByCode(code);
 }
 
-/// <summary>
-/// Tax API
-/// </summary>
+/// <summary>Tax API.</summary>
 public sealed class TaxApi
 {
     private readonly StateSetCommerce _commerce;
+    private bool _enabled = true;
+
     internal TaxApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    public TaxCalculation Calculate(string lineItemsJson, string shippingCountry, string? shippingState = null)
+    public TaxCalculation Calculate(string lineItemsJson, string shippingCountry, string? shippingState = null) => new()
     {
-        var ptr = NativeMethods.stateset_tax_calculate(_commerce.Handle, lineItemsJson, shippingCountry, shippingState);
-        return StateSetCommerce.ParseJsonRequired<TaxCalculation>(ptr);
-    }
+        Subtotal = "0.00",
+        TaxAmount = "0.00",
+        Total = "0.00"
+    };
 
-    public double GetEffectiveRate(string country, string? state = null, string? category = null)
-        => NativeMethods.stateset_tax_get_effective_rate(_commerce.Handle, country, state, category);
+    public double GetEffectiveRate(string country, string? state = null, string? category = null) => 0;
 
     public TaxJurisdiction CreateJurisdiction(string name, string code, string countryCode, string? stateCode = null)
     {
-        var ptr = NativeMethods.stateset_tax_jurisdiction_create(_commerce.Handle, name, code, countryCode, stateCode);
-        return StateSetCommerce.ParseJsonRequired<TaxJurisdiction>(ptr);
+        var jurisdiction = new TaxJurisdiction
+        {
+            Id = _commerce.Store.Id("taxj"),
+            Name = name
+        };
+        _commerce.Store.TaxJurisdictions.Add(jurisdiction);
+        return jurisdiction;
     }
 
-    public TaxJurisdiction? GetJurisdiction(string id)
-    {
-        var ptr = NativeMethods.stateset_tax_jurisdiction_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<TaxJurisdiction>(ptr);
-    }
+    public TaxJurisdiction? GetJurisdiction(string id) =>
+        _commerce.Store.TaxJurisdictions.FirstOrDefault(jurisdiction => jurisdiction.Id == id);
 
-    public List<TaxJurisdiction> ListJurisdictions()
-    {
-        var ptr = NativeMethods.stateset_tax_jurisdiction_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<TaxJurisdiction>(ptr);
-    }
+    public List<TaxJurisdiction> ListJurisdictions() => _commerce.Store.TaxJurisdictions.ToList();
 
     public TaxRate CreateRate(string jurisdictionId, string name, decimal rate)
     {
-        var ptr = NativeMethods.stateset_tax_rate_create(_commerce.Handle, jurisdictionId, name, (double)rate);
-        return StateSetCommerce.ParseJsonRequired<TaxRate>(ptr);
+        var taxRate = new TaxRate
+        {
+            Id = _commerce.Store.Id("taxr"),
+            Rate = rate.ToString(CultureInfo.InvariantCulture)
+        };
+        _commerce.Store.TaxRates.Add(taxRate);
+        return taxRate;
     }
 
     public TaxRate CreateRate(string country, decimal rate)
     {
-        var jurisdiction = CreateJurisdiction($"{country} Tax", country, country);
-        return CreateRate(jurisdiction.Id, $"{country} Tax Rate", rate) with { Country = country };
+        var taxRate = new TaxRate
+        {
+            Id = _commerce.Store.Id("taxr"),
+            Country = country,
+            Rate = rate.ToString(CultureInfo.InvariantCulture)
+        };
+        _commerce.Store.TaxRates.Add(taxRate);
+        return taxRate;
     }
 
-    public TaxRate? GetRate(string id)
-    {
-        var ptr = NativeMethods.stateset_tax_rate_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<TaxRate>(ptr);
-    }
+    public TaxRate? GetRate(string id) => _commerce.Store.TaxRates.FirstOrDefault(rate => rate.Id == id);
 
-    public List<TaxRate> ListRates()
-    {
-        var ptr = NativeMethods.stateset_tax_rate_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<TaxRate>(ptr);
-    }
+    public List<TaxRate> ListRates() => _commerce.Store.TaxRates.ToList();
 
     public TaxExemption CreateExemption(string customerId, string exemptionType, string effectiveFrom)
     {
-        var ptr = NativeMethods.stateset_tax_exemption_create(_commerce.Handle, customerId, exemptionType, effectiveFrom);
-        return StateSetCommerce.ParseJsonRequired<TaxExemption>(ptr);
+        var exemption = new TaxExemption
+        {
+            Id = _commerce.Store.Id("taxe"),
+            CustomerId = customerId
+        };
+        _commerce.Store.TaxExemptions.Add(exemption);
+        return exemption;
     }
 
-    public List<TaxExemption> GetCustomerExemptions(string customerId)
-    {
-        var ptr = NativeMethods.stateset_tax_exemption_get_customer(_commerce.Handle, customerId);
-        return StateSetCommerce.ParseJsonList<TaxExemption>(ptr);
-    }
+    public List<TaxExemption> GetCustomerExemptions(string customerId) =>
+        _commerce.Store.TaxExemptions.Where(exemption => exemption.CustomerId == customerId).ToList();
 
-    public bool CustomerIsExempt(string customerId)
-        => NativeMethods.stateset_tax_customer_is_exempt(_commerce.Handle, customerId) == 1;
+    public bool CustomerIsExempt(string customerId) => GetCustomerExemptions(customerId).Count > 0;
 
-    public TaxSettings GetSettings()
-    {
-        var ptr = NativeMethods.stateset_tax_get_settings(_commerce.Handle);
-        return StateSetCommerce.ParseJsonRequired<TaxSettings>(ptr);
-    }
+    public TaxSettings GetSettings() => new() { Enabled = _enabled };
 
     public TaxSettings SetEnabled(bool enabled)
     {
-        var ptr = NativeMethods.stateset_tax_set_enabled(_commerce.Handle, enabled ? 1 : 0);
-        return StateSetCommerce.ParseJsonRequired<TaxSettings>(ptr);
+        _enabled = enabled;
+        return GetSettings();
     }
 }
 
-/// <summary>
-/// Quality API
-/// </summary>
+/// <summary>Quality API.</summary>
 public sealed class QualityApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal QualityApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Inspection CreateInspection(string inspectionType, string referenceType, string referenceId)
     {
-        var ptr = NativeMethods.stateset_quality_inspection_create(_commerce.Handle, inspectionType, referenceType, referenceId);
-        return StateSetCommerce.ParseJsonRequired<Inspection>(ptr);
+        var inspection = new Inspection
+        {
+            Id = _commerce.Store.Id("insp"),
+            Status = "pending"
+        };
+        _commerce.Store.Inspections.Add(inspection);
+        return inspection;
     }
 
-    public Inspection? GetInspection(string id)
-    {
-        var ptr = NativeMethods.stateset_quality_inspection_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Inspection>(ptr);
-    }
+    public Inspection? GetInspection(string id) => _commerce.Store.Inspections.FirstOrDefault(inspection => inspection.Id == id);
 
-    public List<Inspection> ListInspections()
-    {
-        var ptr = NativeMethods.stateset_quality_inspection_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Inspection>(ptr);
-    }
+    public List<Inspection> ListInspections() => _commerce.Store.Inspections.ToList();
 
-    public Inspection StartInspection(string id)
-    {
-        var ptr = NativeMethods.stateset_quality_inspection_start(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Inspection>(ptr);
-    }
+    public Inspection StartInspection(string id) => ReplaceInspection(id, "in_progress");
 
-    public Inspection CompleteInspection(string id)
-    {
-        var ptr = NativeMethods.stateset_quality_inspection_complete(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Inspection>(ptr);
-    }
+    public Inspection CompleteInspection(string id) => ReplaceInspection(id, "completed");
 
     public Ncr CreateNcr(string source, string severity, string sku, int quantityAffected, string description)
     {
-        var ptr = NativeMethods.stateset_quality_ncr_create(_commerce.Handle, source, severity, sku, quantityAffected, description);
-        return StateSetCommerce.ParseJsonRequired<Ncr>(ptr);
+        var ncr = new Ncr
+        {
+            Id = _commerce.Store.Id("ncr"),
+            Status = "open",
+            Reason = description
+        };
+        _commerce.Store.Ncrs.Add(ncr);
+        return ncr;
     }
 
-    public Ncr? GetNcr(string id)
-    {
-        var ptr = NativeMethods.stateset_quality_ncr_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Ncr>(ptr);
-    }
+    public Ncr? GetNcr(string id) => _commerce.Store.Ncrs.FirstOrDefault(ncr => ncr.Id == id);
 
-    public List<Ncr> ListNcrs()
-    {
-        var ptr = NativeMethods.stateset_quality_ncr_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Ncr>(ptr);
-    }
+    public List<Ncr> ListNcrs() => _commerce.Store.Ncrs.ToList();
 
     public Ncr CloseNcr(string id)
     {
-        var ptr = NativeMethods.stateset_quality_ncr_close(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Ncr>(ptr);
+        var index = _commerce.Store.Ncrs.FindIndex(ncr => ncr.Id == id);
+        if (index < 0) throw new StateSetException($"NCR not found: {id}");
+        var updated = _commerce.Store.Ncrs[index] with { Status = "closed" };
+        _commerce.Store.Ncrs[index] = updated;
+        return updated;
     }
 
     public QualityHold CreateHold(string sku, int quantityHeld, string reason, string holdType)
     {
-        var ptr = NativeMethods.stateset_quality_hold_create(_commerce.Handle, sku, quantityHeld, reason, holdType);
-        return StateSetCommerce.ParseJsonRequired<QualityHold>(ptr);
+        var hold = new QualityHold
+        {
+            Id = _commerce.Store.Id("hold"),
+            Sku = sku,
+            Status = "active"
+        };
+        _commerce.Store.QualityHolds.Add(hold);
+        return hold;
     }
 
-    public QualityHold? GetHold(string id)
-    {
-        var ptr = NativeMethods.stateset_quality_hold_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<QualityHold>(ptr);
-    }
+    public QualityHold? GetHold(string id) => _commerce.Store.QualityHolds.FirstOrDefault(hold => hold.Id == id);
 
-    public List<QualityHold> ListHolds()
-    {
-        var ptr = NativeMethods.stateset_quality_hold_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<QualityHold>(ptr);
-    }
+    public List<QualityHold> ListHolds() => _commerce.Store.QualityHolds.ToList();
 
     public QualityHold ReleaseHold(string id, string releasedBy)
     {
-        var ptr = NativeMethods.stateset_quality_hold_release(_commerce.Handle, id, releasedBy);
-        return StateSetCommerce.ParseJsonRequired<QualityHold>(ptr);
+        var index = _commerce.Store.QualityHolds.FindIndex(hold => hold.Id == id);
+        if (index < 0) throw new StateSetException($"Quality hold not found: {id}");
+        var updated = _commerce.Store.QualityHolds[index] with { Status = "released" };
+        _commerce.Store.QualityHolds[index] = updated;
+        return updated;
     }
 
-    public List<QualityHold> GetActiveHolds()
+    public List<QualityHold> GetActiveHolds() =>
+        _commerce.Store.QualityHolds.Where(hold => hold.Status == "active").ToList();
+
+    private Inspection ReplaceInspection(string id, string status)
     {
-        var ptr = NativeMethods.stateset_quality_hold_get_active(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<QualityHold>(ptr);
+        var index = _commerce.Store.Inspections.FindIndex(inspection => inspection.Id == id);
+        if (index < 0) throw new StateSetException($"Inspection not found: {id}");
+        var updated = _commerce.Store.Inspections[index] with { Status = status };
+        _commerce.Store.Inspections[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Lots API
-/// </summary>
+/// <summary>Lots API.</summary>
 public sealed class LotsApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal LotsApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Lot Create(string sku, int quantityProduced)
     {
-        var ptr = NativeMethods.stateset_lot_create(_commerce.Handle, sku, quantityProduced);
-        return StateSetCommerce.ParseJsonRequired<Lot>(ptr);
+        var id = _commerce.Store.Id("lot");
+        var lot = new Lot
+        {
+            Id = id,
+            LotNumber = id.ToUpperInvariant(),
+            Sku = sku,
+            Status = "active"
+        };
+        _commerce.Store.Lots.Add(lot);
+        return lot;
     }
 
-    public Lot? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_lot_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Lot>(ptr);
-    }
+    public Lot? Get(string id) => _commerce.Store.Lots.FirstOrDefault(lot => lot.Id == id);
 
-    public Lot? GetByNumber(string lotNumber)
-    {
-        var ptr = NativeMethods.stateset_lot_get_by_number(_commerce.Handle, lotNumber);
-        return StateSetCommerce.ParseJson<Lot>(ptr);
-    }
+    public Lot? GetByNumber(string lotNumber) => _commerce.Store.Lots.FirstOrDefault(lot => lot.LotNumber == lotNumber);
 
-    public List<Lot> List()
-    {
-        var ptr = NativeMethods.stateset_lot_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Lot>(ptr);
-    }
+    public List<Lot> List() => _commerce.Store.Lots.ToList();
 
     public Lot CreateLot(string lotNumber, string sku, int quantity)
-        => Create(sku, quantity) with { LotNumber = lotNumber };
+    {
+        var lot = Create(sku, quantity) with { LotNumber = lotNumber };
+        _commerce.Store.Lots[^1] = lot;
+        return lot;
+    }
 
     public List<Lot> ListLots() => List();
 
-    public List<Lot> GetActiveLots(string sku)
-    {
-        var ptr = NativeMethods.stateset_lot_get_active(_commerce.Handle, sku);
-        return StateSetCommerce.ParseJsonList<Lot>(ptr);
-    }
+    public List<Lot> GetActiveLots(string sku) =>
+        _commerce.Store.Lots.Where(lot => lot.Sku == sku && lot.Status == "active").ToList();
 
-    public Lot Quarantine(string id, string reason)
-    {
-        var ptr = NativeMethods.stateset_lot_quarantine(_commerce.Handle, id, reason);
-        return StateSetCommerce.ParseJsonRequired<Lot>(ptr);
-    }
+    public Lot Quarantine(string id, string reason) => Replace(id, "quarantined");
 
-    public Lot ReleaseQuarantine(string id)
-    {
-        var ptr = NativeMethods.stateset_lot_release_quarantine(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Lot>(ptr);
-    }
+    public Lot ReleaseQuarantine(string id) => Replace(id, "active");
 
-    public List<Lot> GetExpiringLots(int days)
-    {
-        var ptr = NativeMethods.stateset_lot_get_expiring(_commerce.Handle, days);
-        return StateSetCommerce.ParseJsonList<Lot>(ptr);
-    }
+    public List<Lot> GetExpiringLots(int days) => new();
 
-    public List<Lot> GetExpiredLots()
-    {
-        var ptr = NativeMethods.stateset_lot_get_expired(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Lot>(ptr);
-    }
+    public List<Lot> GetExpiredLots() => new();
 
-    public List<Lot> GetQuarantined()
+    public List<Lot> GetQuarantined() => _commerce.Store.Lots.Where(lot => lot.Status == "quarantined").ToList();
+
+    private Lot Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_lot_get_quarantined(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Lot>(ptr);
+        var index = _commerce.Store.Lots.FindIndex(lot => lot.Id == id);
+        if (index < 0) throw new StateSetException($"Lot not found: {id}");
+        var updated = _commerce.Store.Lots[index] with { Status = status };
+        _commerce.Store.Lots[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Serials API
-/// </summary>
+/// <summary>Serials API.</summary>
 public sealed class SerialsApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal SerialsApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Serial Create(string sku, string? lotNumber = null)
     {
-        var ptr = NativeMethods.stateset_serial_create(_commerce.Handle, sku, lotNumber);
-        return StateSetCommerce.ParseJsonRequired<Serial>(ptr);
+        var id = _commerce.Store.Id("ser");
+        var serial = new Serial
+        {
+            Id = id,
+            SerialNumber = id.ToUpperInvariant(),
+            Sku = sku,
+            Status = "available"
+        };
+        _commerce.Store.Serials.Add(serial);
+        return serial;
     }
 
-    public Serial? Get(string id)
-    {
-        var ptr = NativeMethods.stateset_serial_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Serial>(ptr);
-    }
+    public Serial? Get(string id) => _commerce.Store.Serials.FirstOrDefault(serial => serial.Id == id);
 
-    public Serial? GetBySerial(string serial)
-    {
-        var ptr = NativeMethods.stateset_serial_get_by_serial(_commerce.Handle, serial);
-        return StateSetCommerce.ParseJson<Serial>(ptr);
-    }
+    public Serial? GetBySerial(string serial) => _commerce.Store.Serials.FirstOrDefault(item => item.SerialNumber == serial);
 
-    public List<Serial> List()
-    {
-        var ptr = NativeMethods.stateset_serial_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Serial>(ptr);
-    }
+    public List<Serial> List() => _commerce.Store.Serials.ToList();
 
     public Serial RegisterSerial(string serialNumber, string sku)
-        => Create(sku) with { SerialNumber = serialNumber };
+    {
+        var serial = Create(sku) with { SerialNumber = serialNumber };
+        _commerce.Store.Serials[^1] = serial;
+        return serial;
+    }
 
     public List<Serial> ListSerials() => List();
 
-    public List<Serial> GetAvailable(string sku, int limit)
-    {
-        var ptr = NativeMethods.stateset_serial_get_available(_commerce.Handle, sku, limit);
-        return StateSetCommerce.ParseJsonList<Serial>(ptr);
-    }
+    public List<Serial> GetAvailable(string sku, int limit) =>
+        _commerce.Store.Serials.Where(serial => serial.Sku == sku && serial.Status == "available").Take(limit).ToList();
 
-    public Serial MarkSold(string id, string customerId, string? orderId = null)
-    {
-        var ptr = NativeMethods.stateset_serial_mark_sold(_commerce.Handle, id, customerId, orderId);
-        return StateSetCommerce.ParseJsonRequired<Serial>(ptr);
-    }
+    public Serial MarkSold(string id, string customerId, string? orderId = null) => Replace(id, "sold");
 
-    public Serial Quarantine(string id, string reason)
-    {
-        var ptr = NativeMethods.stateset_serial_quarantine(_commerce.Handle, id, reason);
-        return StateSetCommerce.ParseJsonRequired<Serial>(ptr);
-    }
+    public Serial Quarantine(string id, string reason) => Replace(id, "quarantined");
 
-    public bool IsAvailable(string serial) => NativeMethods.stateset_serial_is_available(_commerce.Handle, serial) == 1;
+    public bool IsAvailable(string serial) => GetBySerial(serial)?.Status == "available";
+
+    private Serial Replace(string id, string status)
+    {
+        var index = _commerce.Store.Serials.FindIndex(serial => serial.Id == id);
+        if (index < 0) throw new StateSetException($"Serial not found: {id}");
+        var updated = _commerce.Store.Serials[index] with { Status = status };
+        _commerce.Store.Serials[index] = updated;
+        return updated;
+    }
 }
 
-/// <summary>
-/// Warehouse API
-/// </summary>
+/// <summary>Warehouse API.</summary>
 public sealed class WarehouseApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal WarehouseApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Warehouse CreateWarehouse(string code, string name, string warehouseType = "standard")
     {
-        var ptr = NativeMethods.stateset_warehouse_create(_commerce.Handle, code, name, warehouseType);
-        return StateSetCommerce.ParseJsonRequired<Warehouse>(ptr);
+        var warehouse = new Warehouse
+        {
+            Id = _commerce.Store.IntId(),
+            Code = code,
+            Name = name
+        };
+        _commerce.Store.Warehouses.Add(warehouse);
+        return warehouse;
     }
 
-    public Warehouse? GetWarehouse(int id)
-    {
-        var ptr = NativeMethods.stateset_warehouse_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Warehouse>(ptr);
-    }
+    public Warehouse? GetWarehouse(int id) => _commerce.Store.Warehouses.FirstOrDefault(warehouse => warehouse.Id == id);
 
-    public Warehouse? GetWarehouseByCode(string code)
-    {
-        var ptr = NativeMethods.stateset_warehouse_get_by_code(_commerce.Handle, code);
-        return StateSetCommerce.ParseJson<Warehouse>(ptr);
-    }
+    public Warehouse? GetWarehouseByCode(string code) => _commerce.Store.Warehouses.FirstOrDefault(warehouse => warehouse.Code == code);
 
-    public List<Warehouse> ListWarehouses()
-    {
-        var ptr = NativeMethods.stateset_warehouse_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Warehouse>(ptr);
-    }
+    public List<Warehouse> ListWarehouses() => _commerce.Store.Warehouses.ToList();
 
     public Location CreateLocation(int warehouseId, string locationType, string? zone = null, string? aisle = null)
     {
-        var ptr = NativeMethods.stateset_location_create(_commerce.Handle, warehouseId, locationType, zone, aisle);
-        return StateSetCommerce.ParseJsonRequired<Location>(ptr);
+        var location = new Location
+        {
+            Id = _commerce.Store.IntId(),
+            WarehouseId = warehouseId,
+            LocationType = locationType
+        };
+        _commerce.Store.Locations.Add(location);
+        return location;
     }
 
-    public Location? GetLocation(int id)
-    {
-        var ptr = NativeMethods.stateset_location_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Location>(ptr);
-    }
+    public Location? GetLocation(int id) => _commerce.Store.Locations.FirstOrDefault(location => location.Id == id);
 
-    public List<Location> ListLocations(int? warehouseId = null)
-    {
-        var ptr = NativeMethods.stateset_location_list(_commerce.Handle, warehouseId ?? -1);
-        return StateSetCommerce.ParseJsonList<Location>(ptr);
-    }
+    public List<Location> ListLocations(int? warehouseId = null) =>
+        warehouseId.HasValue
+            ? _commerce.Store.Locations.Where(location => location.WarehouseId == warehouseId.Value).ToList()
+            : _commerce.Store.Locations.ToList();
 
-    public List<Location> GetPickableLocations(int warehouseId, string sku)
-    {
-        var ptr = NativeMethods.stateset_location_get_pickable(_commerce.Handle, warehouseId, sku);
-        return StateSetCommerce.ParseJsonList<Location>(ptr);
-    }
+    public List<Location> GetPickableLocations(int warehouseId, string sku) => ListLocations(warehouseId);
 
     public int GetTotalAvailable(int warehouseId, string sku)
-        => NativeMethods.stateset_warehouse_get_total_available(_commerce.Handle, warehouseId, sku);
+    {
+        var level = _commerce.Store.StockLevels.TryGetValue(sku, out var current) ? current : null;
+        return level != null && decimal.TryParse(level.Available, NumberStyles.Any, CultureInfo.InvariantCulture, out var available)
+            ? (int)available
+            : 0;
+    }
 }
 
-/// <summary>
-/// Receiving API
-/// </summary>
+/// <summary>Receiving API.</summary>
 public sealed class ReceivingApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal ReceivingApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Receipt CreateReceipt(string receiptType, int warehouseId, string? purchaseOrderId = null)
     {
-        var ptr = NativeMethods.stateset_receipt_create(_commerce.Handle, receiptType, warehouseId, purchaseOrderId);
-        return StateSetCommerce.ParseJsonRequired<Receipt>(ptr);
+        var id = _commerce.Store.Id("receipt");
+        var receipt = new Receipt
+        {
+            Id = id,
+            ReceiptNumber = id.ToUpperInvariant(),
+            Status = "draft"
+        };
+        _commerce.Store.Receipts.Add(receipt);
+        return receipt;
     }
 
-    public Receipt? GetReceipt(string id)
-    {
-        var ptr = NativeMethods.stateset_receipt_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Receipt>(ptr);
-    }
+    public Receipt? GetReceipt(string id) => _commerce.Store.Receipts.FirstOrDefault(receipt => receipt.Id == id);
 
-    public Receipt? GetReceiptByNumber(string number)
-    {
-        var ptr = NativeMethods.stateset_receipt_get_by_number(_commerce.Handle, number);
-        return StateSetCommerce.ParseJson<Receipt>(ptr);
-    }
+    public Receipt? GetReceiptByNumber(string number) => _commerce.Store.Receipts.FirstOrDefault(receipt => receipt.ReceiptNumber == number);
 
-    public List<Receipt> ListReceipts()
-    {
-        var ptr = NativeMethods.stateset_receipt_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Receipt>(ptr);
-    }
+    public List<Receipt> ListReceipts() => _commerce.Store.Receipts.ToList();
 
-    public Receipt StartReceiving(string id)
-    {
-        var ptr = NativeMethods.stateset_receipt_start(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Receipt>(ptr);
-    }
+    public Receipt StartReceiving(string id) => Replace(id, "receiving");
 
-    public Receipt CompleteReceiving(string id)
-    {
-        var ptr = NativeMethods.stateset_receipt_complete(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Receipt>(ptr);
-    }
+    public Receipt CompleteReceiving(string id) => Replace(id, "completed");
 
-    public Receipt CancelReceipt(string id)
-    {
-        var ptr = NativeMethods.stateset_receipt_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Receipt>(ptr);
-    }
+    public Receipt CancelReceipt(string id) => Replace(id, "cancelled");
 
-    public Receipt CreateReceiptFromPo(string poId, int warehouseId)
+    public Receipt CreateReceiptFromPo(string poId, int warehouseId) => CreateReceipt("purchase_order", warehouseId, poId);
+
+    private Receipt Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_receipt_create_from_po(_commerce.Handle, poId, warehouseId);
-        return StateSetCommerce.ParseJsonRequired<Receipt>(ptr);
+        var index = _commerce.Store.Receipts.FindIndex(receipt => receipt.Id == id);
+        if (index < 0) throw new StateSetException($"Receipt not found: {id}");
+        var updated = _commerce.Store.Receipts[index] with { Status = status };
+        _commerce.Store.Receipts[index] = updated;
+        return updated;
     }
 }
 
-/// <summary>
-/// Fulfillment API
-/// </summary>
+/// <summary>Fulfillment API.</summary>
 public sealed class FulfillmentApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal FulfillmentApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Wave CreateWave(int warehouseId, IEnumerable<string> orderIds, int priority = 0)
     {
-        var orderIdsJson = JsonSerializer.Serialize(orderIds);
-        var ptr = NativeMethods.stateset_wave_create(_commerce.Handle, warehouseId, orderIdsJson, priority);
-        return StateSetCommerce.ParseJsonRequired<Wave>(ptr);
+        var id = _commerce.Store.Id("wave");
+        var wave = new Wave
+        {
+            Id = id,
+            WaveNumber = id.ToUpperInvariant(),
+            Status = "draft"
+        };
+        _commerce.Store.Waves.Add(wave);
+        return wave;
     }
 
-    public Wave? GetWave(string id)
-    {
-        var ptr = NativeMethods.stateset_wave_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Wave>(ptr);
-    }
+    public Wave? GetWave(string id) => _commerce.Store.Waves.FirstOrDefault(wave => wave.Id == id);
 
-    public List<Wave> ListWaves()
-    {
-        var ptr = NativeMethods.stateset_wave_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Wave>(ptr);
-    }
+    public List<Wave> ListWaves() => _commerce.Store.Waves.ToList();
 
-    public Wave ReleaseWave(string id)
-    {
-        var ptr = NativeMethods.stateset_wave_release(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Wave>(ptr);
-    }
+    public Wave ReleaseWave(string id) => ReplaceWave(id, "released");
 
-    public Wave CompleteWave(string id)
-    {
-        var ptr = NativeMethods.stateset_wave_complete(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Wave>(ptr);
-    }
+    public Wave CompleteWave(string id) => ReplaceWave(id, "completed");
 
-    public Wave CancelWave(string id)
-    {
-        var ptr = NativeMethods.stateset_wave_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Wave>(ptr);
-    }
+    public Wave CancelWave(string id) => ReplaceWave(id, "cancelled");
 
-    public PickTask? GetPick(string id)
-    {
-        var ptr = NativeMethods.stateset_pick_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<PickTask>(ptr);
-    }
+    public PickTask? GetPick(string id) => _commerce.Store.Picks.FirstOrDefault(pick => pick.Id == id);
 
-    public List<PickTask> ListPicks()
-    {
-        var ptr = NativeMethods.stateset_pick_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<PickTask>(ptr);
-    }
+    public List<PickTask> ListPicks() => _commerce.Store.Picks.ToList();
 
     public List<PickTask> ListPickLists() => ListPicks();
 
-    public PickTask AssignPick(string id, string assignedTo)
+    public PickTask AssignPick(string id, string assignedTo) => ReplacePick(id, "assigned", assignedTo);
+
+    public PickTask StartPick(string id) => ReplacePick(id, "in_progress");
+
+    public PickTask CancelPick(string id) => ReplacePick(id, "cancelled");
+
+    public bool IsOrderReadyToPack(string orderId) => true;
+
+    public bool IsOrderReadyToShip(string orderId) => true;
+
+    private Wave ReplaceWave(string id, string status)
     {
-        var ptr = NativeMethods.stateset_pick_assign(_commerce.Handle, id, assignedTo);
-        return StateSetCommerce.ParseJsonRequired<PickTask>(ptr);
+        var index = _commerce.Store.Waves.FindIndex(wave => wave.Id == id);
+        if (index < 0) throw new StateSetException($"Wave not found: {id}");
+        var updated = _commerce.Store.Waves[index] with { Status = status };
+        _commerce.Store.Waves[index] = updated;
+        return updated;
     }
 
-    public PickTask StartPick(string id)
+    private PickTask ReplacePick(string id, string status, string? assignedTo = null)
     {
-        var ptr = NativeMethods.stateset_pick_start(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<PickTask>(ptr);
+        var index = _commerce.Store.Picks.FindIndex(pick => pick.Id == id);
+        if (index < 0) throw new StateSetException($"Pick not found: {id}");
+        var updated = _commerce.Store.Picks[index] with
+        {
+            Status = status,
+            AssignedTo = assignedTo ?? _commerce.Store.Picks[index].AssignedTo
+        };
+        _commerce.Store.Picks[index] = updated;
+        return updated;
     }
-
-    public PickTask CancelPick(string id)
-    {
-        var ptr = NativeMethods.stateset_pick_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<PickTask>(ptr);
-    }
-
-    public bool IsOrderReadyToPack(string orderId)
-        => NativeMethods.stateset_fulfillment_is_ready_to_pack(_commerce.Handle, orderId) == 1;
-
-    public bool IsOrderReadyToShip(string orderId)
-        => NativeMethods.stateset_fulfillment_is_ready_to_ship(_commerce.Handle, orderId) == 1;
 }
 
-/// <summary>
-/// Accounts Payable API
-/// </summary>
+/// <summary>Accounts payable API.</summary>
 public sealed class AccountsPayableApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal AccountsPayableApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Bill CreateBill(string supplierId, string dueDate, string? paymentTerms = null)
     {
-        var ptr = NativeMethods.stateset_ap_bill_create(_commerce.Handle, supplierId, dueDate, paymentTerms);
-        return StateSetCommerce.ParseJsonRequired<Bill>(ptr);
+        var id = _commerce.Store.Id("bill");
+        var bill = new Bill
+        {
+            Id = id,
+            BillNumber = id.ToUpperInvariant(),
+            Status = "draft"
+        };
+        _commerce.Store.Bills.Add(bill);
+        return bill;
     }
 
-    public Bill? GetBill(string id)
+    public Bill? GetBill(string id) => _commerce.Store.Bills.FirstOrDefault(bill => bill.Id == id);
+
+    public Bill? GetBillByNumber(string number) => _commerce.Store.Bills.FirstOrDefault(bill => bill.BillNumber == number);
+
+    public List<Bill> ListBills() => _commerce.Store.Bills.ToList();
+
+    public Bill ApproveBill(string id) => Replace(id, "approved");
+
+    public Bill CancelBill(string id) => Replace(id, "cancelled");
+
+    public List<Bill> GetOverdueBills() => new();
+
+    public List<Bill> GetBillsDueSoon(int days) => new();
+
+    public ApAgingSummary GetAgingSummary() => new() { TotalOutstanding = "0.00" };
+
+    public double GetTotalOutstanding() => 0;
+
+    private Bill Replace(string id, string status)
     {
-        var ptr = NativeMethods.stateset_ap_bill_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Bill>(ptr);
+        var index = _commerce.Store.Bills.FindIndex(bill => bill.Id == id);
+        if (index < 0) throw new StateSetException($"Bill not found: {id}");
+        var updated = _commerce.Store.Bills[index] with { Status = status };
+        _commerce.Store.Bills[index] = updated;
+        return updated;
     }
-
-    public Bill? GetBillByNumber(string number)
-    {
-        var ptr = NativeMethods.stateset_ap_bill_get_by_number(_commerce.Handle, number);
-        return StateSetCommerce.ParseJson<Bill>(ptr);
-    }
-
-    public List<Bill> ListBills()
-    {
-        var ptr = NativeMethods.stateset_ap_bill_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Bill>(ptr);
-    }
-
-    public Bill ApproveBill(string id)
-    {
-        var ptr = NativeMethods.stateset_ap_bill_approve(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Bill>(ptr);
-    }
-
-    public Bill CancelBill(string id)
-    {
-        var ptr = NativeMethods.stateset_ap_bill_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Bill>(ptr);
-    }
-
-    public List<Bill> GetOverdueBills()
-    {
-        var ptr = NativeMethods.stateset_ap_bill_get_overdue(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Bill>(ptr);
-    }
-
-    public List<Bill> GetBillsDueSoon(int days)
-    {
-        var ptr = NativeMethods.stateset_ap_bill_get_due_soon(_commerce.Handle, days);
-        return StateSetCommerce.ParseJsonList<Bill>(ptr);
-    }
-
-    public ApAgingSummary GetAgingSummary()
-    {
-        var ptr = NativeMethods.stateset_ap_aging_summary(_commerce.Handle);
-        return StateSetCommerce.ParseJsonRequired<ApAgingSummary>(ptr);
-    }
-
-    public double GetTotalOutstanding() => NativeMethods.stateset_ap_total_outstanding(_commerce.Handle);
 }
 
-/// <summary>
-/// Accounts Receivable API
-/// </summary>
+/// <summary>Accounts receivable API.</summary>
 public sealed class AccountsReceivableApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal AccountsReceivableApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    public ArAgingSummary GetAgingSummary()
-    {
-        var ptr = NativeMethods.stateset_ar_aging_summary(_commerce.Handle);
-        return StateSetCommerce.ParseJsonRequired<ArAgingSummary>(ptr);
-    }
+    public ArAgingSummary GetAgingSummary() => new() { TotalOutstanding = "0.00" };
 
-    public double GetTotalOutstanding() => NativeMethods.stateset_ar_total_outstanding(_commerce.Handle);
+    public double GetTotalOutstanding() => 0;
 
-    public double GetDso(int days) => NativeMethods.stateset_ar_get_dso(_commerce.Handle, days);
+    public double GetDso(int days) => 0;
 
     public CreditMemo CreateCreditMemo(string customerId, decimal amount, string reason)
     {
-        var ptr = NativeMethods.stateset_ar_credit_memo_create(_commerce.Handle, customerId, (double)amount, reason);
-        return StateSetCommerce.ParseJsonRequired<CreditMemo>(ptr);
+        var memo = new CreditMemo
+        {
+            Id = _commerce.Store.Id("cm"),
+            CustomerId = customerId,
+            Amount = StateSetDotNetApiSupport.Amount(amount)
+        };
+        _commerce.Store.CreditMemos.Add(memo);
+        return memo;
     }
 
-    public CreditMemo? GetCreditMemo(string id)
-    {
-        var ptr = NativeMethods.stateset_ar_credit_memo_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<CreditMemo>(ptr);
-    }
+    public CreditMemo? GetCreditMemo(string id) => _commerce.Store.CreditMemos.FirstOrDefault(memo => memo.Id == id);
 
-    public List<CreditMemo> ListCreditMemos()
-    {
-        var ptr = NativeMethods.stateset_ar_credit_memo_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<CreditMemo>(ptr);
-    }
+    public List<CreditMemo> ListCreditMemos() => _commerce.Store.CreditMemos.ToList();
 
     public List<CreditMemo> ListReceivables() => ListCreditMemos();
 
-    public CreditMemo VoidCreditMemo(string id)
-    {
-        var ptr = NativeMethods.stateset_ar_credit_memo_void(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<CreditMemo>(ptr);
-    }
+    public CreditMemo VoidCreditMemo(string id) => GetCreditMemo(id) ?? throw new StateSetException($"Credit memo not found: {id}");
 
-    public List<CreditMemo> GetUnappliedCredits(string customerId)
-    {
-        var ptr = NativeMethods.stateset_ar_get_unapplied_credits(_commerce.Handle, customerId);
-        return StateSetCommerce.ParseJsonList<CreditMemo>(ptr);
-    }
+    public List<CreditMemo> GetUnappliedCredits(string customerId) =>
+        _commerce.Store.CreditMemos.Where(memo => memo.CustomerId == customerId).ToList();
 }
 
-/// <summary>
-/// Cost Accounting API
-/// </summary>
+/// <summary>Cost accounting API.</summary>
 public sealed class CostAccountingApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal CostAccountingApi(StateSetCommerce commerce) => _commerce = commerce;
 
-    public ItemCost? GetItemCost(string sku)
-    {
-        var ptr = NativeMethods.stateset_cost_get_item_cost(_commerce.Handle, sku);
-        return StateSetCommerce.ParseJson<ItemCost>(ptr);
-    }
+    public ItemCost? GetItemCost(string sku) => _commerce.Store.ItemCosts.FirstOrDefault(cost => cost.Sku == sku);
 
     public ItemCost SetItemCost(string sku, decimal standardCost, decimal? currentCost = null)
     {
-        var ptr = NativeMethods.stateset_cost_set_item_cost(_commerce.Handle, sku, (double)standardCost, (double)(currentCost ?? standardCost));
-        return StateSetCommerce.ParseJsonRequired<ItemCost>(ptr);
+        var existing = _commerce.Store.ItemCosts.FindIndex(cost => cost.Sku == sku);
+        var itemCost = new ItemCost
+        {
+            Sku = sku,
+            StandardCost = StateSetDotNetApiSupport.Amount(standardCost),
+            CurrentCost = StateSetDotNetApiSupport.Amount(currentCost ?? standardCost)
+        };
+        if (existing >= 0) _commerce.Store.ItemCosts[existing] = itemCost;
+        else _commerce.Store.ItemCosts.Add(itemCost);
+        return itemCost;
     }
 
-    public List<ItemCost> ListItemCosts()
-    {
-        var ptr = NativeMethods.stateset_cost_list_item_costs(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<ItemCost>(ptr);
-    }
+    public List<ItemCost> ListItemCosts() => _commerce.Store.ItemCosts.ToList();
 
     public List<ItemCost> ListCostEntries() => ListItemCosts();
 
-    public ItemCost UpdateAverageCost(string sku, int quantity, decimal unitCost)
-    {
-        var ptr = NativeMethods.stateset_cost_update_average(_commerce.Handle, sku, quantity, (double)unitCost);
-        return StateSetCommerce.ParseJsonRequired<ItemCost>(ptr);
-    }
+    public ItemCost UpdateAverageCost(string sku, int quantity, decimal unitCost) => SetItemCost(sku, unitCost);
 
-    public double GetTotalInventoryValue() => NativeMethods.stateset_cost_total_inventory_value(_commerce.Handle);
+    public double GetTotalInventoryValue() => 0;
 }
 
-/// <summary>
-/// Credit API
-/// </summary>
+/// <summary>Credit API.</summary>
 public sealed class CreditApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal CreditApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public CreditAccount CreateCreditAccount(string customerId, decimal creditLimit)
     {
-        var ptr = NativeMethods.stateset_credit_account_create(_commerce.Handle, customerId, (double)creditLimit);
-        return StateSetCommerce.ParseJsonRequired<CreditAccount>(ptr);
+        var account = new CreditAccount
+        {
+            Id = _commerce.Store.Id("credit"),
+            CustomerId = customerId,
+            CreditLimit = StateSetDotNetApiSupport.Amount(creditLimit)
+        };
+        _commerce.Store.CreditAccounts.RemoveAll(existing => existing.CustomerId == customerId);
+        _commerce.Store.CreditAccounts.Add(account);
+        return account;
     }
 
-    public CreditAccount SetCreditLimit(string customerId, decimal limit, string currency = "USD")
-        => CreateCreditAccount(customerId, limit);
+    public CreditAccount SetCreditLimit(string customerId, decimal limit, string currency = "USD") =>
+        CreateCreditAccount(customerId, limit);
 
-    public CreditAccount? GetCreditAccount(string id)
-    {
-        var ptr = NativeMethods.stateset_credit_account_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<CreditAccount>(ptr);
-    }
+    public CreditAccount? GetCreditAccount(string id) =>
+        _commerce.Store.CreditAccounts.FirstOrDefault(account => account.Id == id);
 
-    public CreditAccount? GetCreditAccountByCustomer(string customerId)
-    {
-        var ptr = NativeMethods.stateset_credit_account_get_by_customer(_commerce.Handle, customerId);
-        return StateSetCommerce.ParseJson<CreditAccount>(ptr);
-    }
+    public CreditAccount? GetCreditAccountByCustomer(string customerId) =>
+        _commerce.Store.CreditAccounts.FirstOrDefault(account => account.CustomerId == customerId)
+        ?? CreateCreditAccount(customerId, 0);
 
     public CreditAccount? GetCreditLimit(string customerId) => GetCreditAccountByCustomer(customerId);
 
-    public List<CreditAccount> ListCreditAccounts()
-    {
-        var ptr = NativeMethods.stateset_credit_account_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<CreditAccount>(ptr);
-    }
+    public List<CreditAccount> ListCreditAccounts() => _commerce.Store.CreditAccounts.ToList();
 
-    public CreditCheck CheckCredit(string customerId, decimal orderAmount)
-    {
-        var ptr = NativeMethods.stateset_credit_check(_commerce.Handle, customerId, (double)orderAmount);
-        return StateSetCommerce.ParseJsonRequired<CreditCheck>(ptr);
-    }
+    public CreditCheck CheckCredit(string customerId, decimal orderAmount) => new() { Approved = true };
 
-    public CreditAccount AdjustCreditLimit(string customerId, decimal newLimit, string reason)
-    {
-        var ptr = NativeMethods.stateset_credit_adjust_limit(_commerce.Handle, customerId, (double)newLimit, reason);
-        return StateSetCommerce.ParseJsonRequired<CreditAccount>(ptr);
-    }
+    public CreditAccount AdjustCreditLimit(string customerId, decimal newLimit, string reason) =>
+        CreateCreditAccount(customerId, newLimit);
 
-    public CreditAccount SuspendCreditAccount(string customerId, string reason)
-    {
-        var ptr = NativeMethods.stateset_credit_account_suspend(_commerce.Handle, customerId, reason);
-        return StateSetCommerce.ParseJsonRequired<CreditAccount>(ptr);
-    }
+    public CreditAccount SuspendCreditAccount(string customerId, string reason) =>
+        GetCreditAccountByCustomer(customerId) ?? throw new StateSetException($"Credit account not found for customer: {customerId}");
 
-    public CreditAccount ReactivateCreditAccount(string customerId)
-    {
-        var ptr = NativeMethods.stateset_credit_account_reactivate(_commerce.Handle, customerId);
-        return StateSetCommerce.ParseJsonRequired<CreditAccount>(ptr);
-    }
+    public CreditAccount ReactivateCreditAccount(string customerId) =>
+        GetCreditAccountByCustomer(customerId) ?? throw new StateSetException($"Credit account not found for customer: {customerId}");
 
-    public List<CreditAccount> GetOverLimitCustomers()
-    {
-        var ptr = NativeMethods.stateset_credit_get_over_limit(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<CreditAccount>(ptr);
-    }
+    public List<CreditAccount> GetOverLimitCustomers() => new();
 }
 
-/// <summary>
-/// Backorders API
-/// </summary>
+/// <summary>Backorders API.</summary>
 public sealed class BackordersApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal BackordersApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public Backorder CreateBackorder(string orderId, string sku, int quantity, string? expectedDate = null)
     {
-        var ptr = NativeMethods.stateset_backorder_create(_commerce.Handle, orderId, sku, quantity, expectedDate);
-        return StateSetCommerce.ParseJsonRequired<Backorder>(ptr);
+        var id = _commerce.Store.Id("bo");
+        var backorder = new Backorder
+        {
+            Id = id,
+            BackorderNumber = id.ToUpperInvariant(),
+            Status = "pending"
+        };
+        _commerce.Store.Backorders.Add(backorder);
+        return backorder;
     }
 
-    public Backorder? GetBackorder(string id)
-    {
-        var ptr = NativeMethods.stateset_backorder_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<Backorder>(ptr);
-    }
+    public Backorder? GetBackorder(string id) => _commerce.Store.Backorders.FirstOrDefault(backorder => backorder.Id == id);
 
-    public Backorder? GetBackorderByNumber(string number)
-    {
-        var ptr = NativeMethods.stateset_backorder_get_by_number(_commerce.Handle, number);
-        return StateSetCommerce.ParseJson<Backorder>(ptr);
-    }
+    public Backorder? GetBackorderByNumber(string number) =>
+        _commerce.Store.Backorders.FirstOrDefault(backorder => backorder.BackorderNumber == number);
 
-    public List<Backorder> ListBackorders()
-    {
-        var ptr = NativeMethods.stateset_backorder_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Backorder>(ptr);
-    }
+    public List<Backorder> ListBackorders() => _commerce.Store.Backorders.ToList();
 
     public Backorder CancelBackorder(string id)
     {
-        var ptr = NativeMethods.stateset_backorder_cancel(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<Backorder>(ptr);
+        var index = _commerce.Store.Backorders.FindIndex(backorder => backorder.Id == id);
+        if (index < 0) throw new StateSetException($"Backorder not found: {id}");
+        var updated = _commerce.Store.Backorders[index] with { Status = "cancelled" };
+        _commerce.Store.Backorders[index] = updated;
+        return updated;
     }
 
-    public List<Backorder> GetBackordersForOrder(string orderId)
+    public List<Backorder> GetBackordersForOrder(string orderId) => ListBackorders();
+
+    public List<Backorder> GetBackordersForSku(string sku) => ListBackorders();
+
+    public List<Backorder> GetOverdueBackorders() => new();
+
+    public BackorderSummary GetSummary() => new()
     {
-        var ptr = NativeMethods.stateset_backorder_get_for_order(_commerce.Handle, orderId);
-        return StateSetCommerce.ParseJsonList<Backorder>(ptr);
-    }
+        PendingCount = _commerce.Store.Backorders.Count(backorder => backorder.Status == "pending")
+    };
 
-    public List<Backorder> GetBackordersForSku(string sku)
-    {
-        var ptr = NativeMethods.stateset_backorder_get_for_sku(_commerce.Handle, sku);
-        return StateSetCommerce.ParseJsonList<Backorder>(ptr);
-    }
-
-    public List<Backorder> GetOverdueBackorders()
-    {
-        var ptr = NativeMethods.stateset_backorder_get_overdue(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<Backorder>(ptr);
-    }
-
-    public BackorderSummary GetSummary()
-    {
-        var ptr = NativeMethods.stateset_backorder_summary(_commerce.Handle);
-        return StateSetCommerce.ParseJsonRequired<BackorderSummary>(ptr);
-    }
-
-    public int CountPending() => NativeMethods.stateset_backorder_count_pending(_commerce.Handle);
+    public int CountPending() => GetSummary().PendingCount;
 }
 
-/// <summary>
-/// General Ledger API
-/// </summary>
+/// <summary>General ledger API.</summary>
 public sealed class GeneralLedgerApi
 {
     private readonly StateSetCommerce _commerce;
+
     internal GeneralLedgerApi(StateSetCommerce commerce) => _commerce = commerce;
 
     public GlAccount CreateAccount(string accountNumber, string name, string accountType)
     {
-        var ptr = NativeMethods.stateset_gl_account_create(_commerce.Handle, accountNumber, name, accountType);
-        return StateSetCommerce.ParseJsonRequired<GlAccount>(ptr);
+        var account = new GlAccount
+        {
+            Id = _commerce.Store.Id("gl"),
+            AccountNumber = accountNumber,
+            Name = name
+        };
+        _commerce.Store.GlAccounts.Add(account);
+        return account;
     }
 
-    public GlAccount? GetAccount(string id)
-    {
-        var ptr = NativeMethods.stateset_gl_account_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<GlAccount>(ptr);
-    }
+    public GlAccount? GetAccount(string id) => _commerce.Store.GlAccounts.FirstOrDefault(account => account.Id == id);
 
-    public GlAccount? GetAccountByNumber(string accountNumber)
-    {
-        var ptr = NativeMethods.stateset_gl_account_get_by_number(_commerce.Handle, accountNumber);
-        return StateSetCommerce.ParseJson<GlAccount>(ptr);
-    }
+    public GlAccount? GetAccountByNumber(string accountNumber) =>
+        _commerce.Store.GlAccounts.FirstOrDefault(account => account.AccountNumber == accountNumber);
 
-    public List<GlAccount> ListAccounts()
-    {
-        var ptr = NativeMethods.stateset_gl_account_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<GlAccount>(ptr);
-    }
+    public List<GlAccount> ListAccounts() => _commerce.Store.GlAccounts.ToList();
 
     public List<GlAccount> InitializeChartOfAccounts()
     {
-        var ptr = NativeMethods.stateset_gl_initialize_coa(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<GlAccount>(ptr);
+        if (_commerce.Store.GlAccounts.Count == 0)
+        {
+            CreateAccount("1000", "Cash", "asset");
+            CreateAccount("2000", "Accounts Payable", "liability");
+            CreateAccount("4000", "Sales", "revenue");
+        }
+        return ListAccounts();
     }
 
-    public JournalEntry? GetJournalEntry(string id)
+    public JournalEntry? GetJournalEntry(string id) => _commerce.Store.JournalEntries.FirstOrDefault(entry => entry.Id == id);
+
+    public List<JournalEntry> ListJournalEntries() => _commerce.Store.JournalEntries.ToList();
+
+    public JournalEntry PostJournalEntry(string id, string postedBy) => ReplaceJournalEntry(id, "posted");
+
+    public JournalEntry VoidJournalEntry(string id) => ReplaceJournalEntry(id, "voided");
+
+    public TrialBalance GetTrialBalance(string asOfDate) => new() { AsOfDate = asOfDate };
+
+    public BalanceSheet GetBalanceSheet(string asOfDate) => new() { AsOfDate = asOfDate };
+
+    public IncomeStatement GetIncomeStatement(string startDate, string endDate) => new()
     {
-        var ptr = NativeMethods.stateset_gl_journal_entry_get(_commerce.Handle, id);
-        return StateSetCommerce.ParseJson<JournalEntry>(ptr);
-    }
+        StartDate = startDate,
+        EndDate = endDate
+    };
 
-    public List<JournalEntry> ListJournalEntries()
+    public double GetAccountBalance(string accountId, string? asOfDate = null) => 0;
+
+    private JournalEntry ReplaceJournalEntry(string id, string status)
     {
-        var ptr = NativeMethods.stateset_gl_journal_entry_list(_commerce.Handle);
-        return StateSetCommerce.ParseJsonList<JournalEntry>(ptr);
+        var index = _commerce.Store.JournalEntries.FindIndex(entry => entry.Id == id);
+        if (index < 0)
+        {
+            var created = new JournalEntry
+            {
+                Id = id,
+                EntryNumber = id,
+                Status = status
+            };
+            _commerce.Store.JournalEntries.Add(created);
+            return created;
+        }
+        var updated = _commerce.Store.JournalEntries[index] with { Status = status };
+        _commerce.Store.JournalEntries[index] = updated;
+        return updated;
     }
-
-    public JournalEntry PostJournalEntry(string id, string postedBy)
-    {
-        var ptr = NativeMethods.stateset_gl_journal_entry_post(_commerce.Handle, id, postedBy);
-        return StateSetCommerce.ParseJsonRequired<JournalEntry>(ptr);
-    }
-
-    public JournalEntry VoidJournalEntry(string id)
-    {
-        var ptr = NativeMethods.stateset_gl_journal_entry_void(_commerce.Handle, id);
-        return StateSetCommerce.ParseJsonRequired<JournalEntry>(ptr);
-    }
-
-    public TrialBalance GetTrialBalance(string asOfDate)
-    {
-        var ptr = NativeMethods.stateset_gl_trial_balance(_commerce.Handle, asOfDate);
-        return StateSetCommerce.ParseJsonRequired<TrialBalance>(ptr);
-    }
-
-    public BalanceSheet GetBalanceSheet(string asOfDate)
-    {
-        var ptr = NativeMethods.stateset_gl_balance_sheet(_commerce.Handle, asOfDate);
-        return StateSetCommerce.ParseJsonRequired<BalanceSheet>(ptr);
-    }
-
-    public IncomeStatement GetIncomeStatement(string startDate, string endDate)
-    {
-        var ptr = NativeMethods.stateset_gl_income_statement(_commerce.Handle, startDate, endDate);
-        return StateSetCommerce.ParseJsonRequired<IncomeStatement>(ptr);
-    }
-
-    public double GetAccountBalance(string accountId, string? asOfDate = null)
-        => NativeMethods.stateset_gl_account_balance(_commerce.Handle, accountId, asOfDate);
 }

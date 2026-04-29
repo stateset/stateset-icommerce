@@ -5,8 +5,6 @@ import { join } from 'node:path';
 import { existsSync, unlinkSync } from 'node:fs';
 
 import {
-  __resetClaudeQueryImplForTest,
-  __setClaudeQueryImplForTest,
   createAgentSession,
   createAgentStreamSession,
   runAgentLoop,
@@ -115,7 +113,6 @@ function itSerial(name, fn) {
     try {
       return await fn(t);
     } finally {
-      __resetClaudeQueryImplForTest();
       release();
     }
   });
@@ -127,7 +124,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     const sessionStore = createSessionStore();
     const events = [];
 
-    __setClaudeQueryImplForTest(() =>
+    const queryImpl = () =>
       (async function* () {
         yield {
           sessionId: 'sess-claude-success',
@@ -159,8 +156,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
           total_cost_usd: 0.1234,
           usage: { input_tokens: 11, output_tokens: 7 },
         };
-      })(),
-    );
+      })();
 
     const result = await runAgentLoop({
       request: 'List recent orders',
@@ -171,6 +167,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
       enableMemory: false,
       streaming: true,
       sessionStore,
+      queryImpl,
       privacy: {
         redactLogs: false,
         redactMemory: false,
@@ -220,7 +217,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     const dbPath = newDbPath();
     const delegated = [];
 
-    __setClaudeQueryImplForTest(({ options }) =>
+    const queryImpl = ({ options }) =>
       (async function* () {
         const delegateResult = await options.mcpServers['stateset-commerce'].executeTool(
           'delegate_to_agent',
@@ -242,8 +239,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
           type: 'result',
           result: 'Delegation complete',
         };
-      })(),
-    );
+      })();
 
     const result = await runAgentLoop({
       request: 'Delegate to orders',
@@ -253,6 +249,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
       allowApply: true,
       enableSync: false,
       enableMemory: false,
+      queryImpl,
       autonomousEngine: {
         async executeAgentRequest(agentName, taskDescription, context) {
           delegated.push({ agentName, taskDescription, context });
@@ -278,11 +275,10 @@ describe('Claude harness paths', { concurrency: false }, () => {
     const sessionStore = createSessionStore();
     const events = [];
 
-    __setClaudeQueryImplForTest(({ options }) =>
+    const queryImpl = ({ options }) =>
       (async function* () {
         await waitForAbort(options.abortController.signal);
-      })(),
-    );
+      })();
 
     await assert.rejects(
       () =>
@@ -295,6 +291,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
           enableSync: false,
           enableMemory: false,
           enableFallback: false,
+          queryImpl,
           sessionStore,
           settings: {
             watchdog: {
@@ -333,7 +330,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     const events = [];
     const received = [];
 
-    __setClaudeQueryImplForTest(() =>
+    const queryImpl = () =>
       (async function* () {
         yield {
           sessionId: 'sess-stream-success',
@@ -346,8 +343,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
           type: 'result',
           result: 'Streaming response complete',
         };
-      })(),
-    );
+      })();
 
     for await (const message of runAgentStream({
       request: 'Stream recent orders',
@@ -356,6 +352,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
       dbPath,
       enableSync: false,
       sessionStore,
+      queryImpl,
       privacy: {
         redactLogs: false,
         redactMemory: false,
@@ -395,7 +392,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     const received = [];
     const delegated = [];
 
-    __setClaudeQueryImplForTest(({ options }) =>
+    const queryImpl = ({ options }) =>
       (async function* () {
         const delegateResult = await options.mcpServers['stateset-commerce'].executeTool(
           'delegate_to_agent',
@@ -416,8 +413,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
           type: 'result',
           result: 'Streaming delegation complete',
         };
-      })(),
-    );
+      })();
 
     for await (const message of runAgentStream({
       request: 'Delegate streaming work',
@@ -426,6 +422,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
       dbPath,
       allowApply: true,
       enableSync: false,
+      queryImpl,
       autonomousEngine: {
         async executeAgentRequest(agentName, taskDescription, context) {
           delegated.push({ agentName, taskDescription, context });
@@ -456,7 +453,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     const dbPath = newDbPath();
     const delegated = [];
 
-    __setClaudeQueryImplForTest(({ options }) =>
+    const queryImpl = ({ options }) =>
       (async function* () {
         const delegateResult = await options.mcpServers['stateset-commerce'].executeTool(
           'delegate_to_agent',
@@ -477,8 +474,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
           type: 'result',
           result: 'Query delegation complete',
         };
-      })(),
-    );
+      })();
 
     const session = createAgentSession({
       dbPath,
@@ -487,6 +483,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
       allowApply: true,
       enableSync: false,
       enableMemory: false,
+      queryImpl,
       autonomousEngine: {
         async executeAgentRequest(agentName, taskDescription, context) {
           delegated.push({ agentName, taskDescription, context });
@@ -515,11 +512,10 @@ describe('Claude harness paths', { concurrency: false }, () => {
     const sessionStore = createSessionStore();
     const events = [];
 
-    __setClaudeQueryImplForTest(({ options }) =>
+    const queryImpl = ({ options }) =>
       (async function* () {
         await waitForAbort(options.abortController.signal);
-      })(),
-    );
+      })();
 
     await assert.rejects(
       async () => {
@@ -531,6 +527,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
           resumeSessionId: 'sess-stream-timeout',
           enableSync: false,
           sessionStore,
+          queryImpl,
           settings: {
             watchdog: {
               enabled: true,
@@ -570,7 +567,7 @@ itSerial('keeps interactive sessions idle-safe between turns and persists turn a
   const savedMarkdownMemory = [];
   let queryOptions = null;
 
-  __setClaudeQueryImplForTest(({ prompt, options }) =>
+  const queryImpl = ({ prompt, options }) =>
     (async function* () {
       queryOptions = options;
       const input = prompt[Symbol.asyncIterator]();
@@ -619,8 +616,7 @@ itSerial('keeps interactive sessions idle-safe between turns and persists turn a
       assert.equal(secondTurn.done, false);
       assert.equal(secondTurn.value.message.content[0].text, 'Second interactive turn');
       await waitForAbort(options.abortController.signal);
-    })(),
-  );
+    })();
 
   const session = createAgentStreamSession({
     provider: 'claude',
@@ -630,6 +626,7 @@ itSerial('keeps interactive sessions idle-safe between turns and persists turn a
     maxBudgetUsd: 4.2,
     enableX402: true,
     enableMemory: true,
+    queryImpl,
     memoryStore: {
       save(entry) {
         savedMemory.push(entry);
@@ -782,7 +779,7 @@ itSerial('passes autonomousEngine into interactive session MCP servers', async (
   const received = [];
   const delegated = [];
 
-  __setClaudeQueryImplForTest(({ prompt, options }) =>
+  const queryImpl = ({ prompt, options }) =>
     (async function* () {
       const input = prompt[Symbol.asyncIterator]();
       const firstTurn = await input.next();
@@ -808,8 +805,7 @@ itSerial('passes autonomousEngine into interactive session MCP servers', async (
         type: 'result',
         result: 'Interactive delegation complete',
       };
-    })(),
-  );
+    })();
 
   const session = createAgentStreamSession({
     provider: 'claude',
@@ -817,6 +813,7 @@ itSerial('passes autonomousEngine into interactive session MCP servers', async (
     dbPath,
     allowApply: true,
     enableSync: false,
+    queryImpl,
     autonomousEngine: {
       async executeAgentRequest(agentName, taskDescription, context) {
         delegated.push({ agentName, taskDescription, context });
@@ -856,7 +853,7 @@ itSerial('injects seeded conversation history into a fresh interactive Claude se
   const received = [];
   let firstPromptText = null;
 
-  __setClaudeQueryImplForTest(({ prompt }) =>
+  const queryImpl = ({ prompt }) =>
     (async function* () {
       const input = prompt[Symbol.asyncIterator]();
       const firstTurn = await input.next();
@@ -877,14 +874,14 @@ itSerial('injects seeded conversation history into a fresh interactive Claude se
           output_tokens: 3,
         },
       };
-    })(),
-  );
+    })();
 
   const session = createAgentStreamSession({
     provider: 'claude',
     model: 'claude-test',
     dbPath,
     enableSync: false,
+    queryImpl,
     conversationHistory: [
       { role: 'user', content: 'Earlier question' },
       { role: 'assistant', content: 'Earlier answer' },
@@ -968,7 +965,7 @@ itSerial('records treasury billing for persistent interactive Claude turns', asy
     },
   };
 
-  __setClaudeQueryImplForTest(({ prompt, options }) =>
+  const queryImpl = ({ prompt, options }) =>
     (async function* () {
       queryOptions = options;
       const input = prompt[Symbol.asyncIterator]();
@@ -991,8 +988,7 @@ itSerial('records treasury billing for persistent interactive Claude turns', asy
           output_tokens: 3,
         },
       };
-    })(),
-  );
+    })();
 
   const session = createAgentStreamSession({
     provider: 'claude',
@@ -1006,6 +1002,7 @@ itSerial('records treasury billing for persistent interactive Claude turns', asy
       recordedAt: '2026-03-23T12:34:56.000Z',
     },
     maxBudgetUsd: 10,
+    queryImpl,
     treasury: {
       enabled: true,
       chainId: 'set_chain',

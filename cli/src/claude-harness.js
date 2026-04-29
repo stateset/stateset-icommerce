@@ -91,8 +91,8 @@ export { routeToAgent, routeToAgentWithConfidence } from './agent-router.js';
 let _sdkArgvGate = Promise.resolve();
 let _claudeQueryImpl = query;
 
-function invokeClaudeQuery(args) {
-  return _claudeQueryImpl(args);
+function invokeClaudeQuery(args, queryImpl = null) {
+  return (queryImpl || _claudeQueryImpl)(args);
 }
 
 /**
@@ -193,6 +193,7 @@ async function* __runQueryWithCleanArgv(generatorFactory) {
  * @param {Object} options.autonomousEngine - Optional autonomous engine used by delegate_to_agent
  * @param {string} options.apiKey - Override Claude API key for this run
  * @param {Function} options.getApiKey - Resolve API key dynamically for this run
+ * @param {Function} options.queryImpl - Test-only Claude SDK query implementation override
  * @param {AbortController} options.abortController - Abort controller for cancelling the run
  * @param {AbortSignal} options.signal - Abort signal for cancelling the run
  * @param {Object} options.settings - Settings overrides (merged with defaults)
@@ -244,6 +245,7 @@ export async function runAgentLoop({
   autonomousEngine = null,
   apiKey = null,
   getApiKey = null,
+  queryImpl = null,
   abortController = null,
   signal = null,
   settings = null,
@@ -1306,7 +1308,7 @@ export async function runAgentLoop({
 
       try {
         for await (const message of __runQueryWithCleanArgv(() =>
-          invokeClaudeQuery({ prompt: requestWithHistory, options: queryOptions }),
+          invokeClaudeQuery({ prompt: requestWithHistory, options: queryOptions }, queryImpl),
         )) {
           watchdog?.touch();
           results.usage = mergeUsageCounters(results.usage, message);
@@ -1807,6 +1809,7 @@ export async function* runAgentStream({
   autonomousEngine = null,
   apiKey = null,
   getApiKey = null,
+  queryImpl = null,
   abortController = null,
   signal = null,
   policyEngine = null,
@@ -2182,7 +2185,7 @@ export async function* runAgentStream({
 
     try {
       for await (const message of __runQueryWithCleanArgv(() =>
-        invokeClaudeQuery({ prompt: input, options }),
+        invokeClaudeQuery({ prompt: input, options }, queryImpl),
       )) {
         watchdog?.touch();
 
@@ -2368,6 +2371,7 @@ export function createAgentStreamSession(options = {}) {
     treasuryRuntime = null,
     apiKey = null,
     getApiKey = null,
+    queryImpl = null,
     abortController = null,
     signal = null,
     policyEngine = null,
@@ -3103,7 +3107,7 @@ export function createAgentStreamSession(options = {}) {
     try {
       try {
         for await (const message of __runQueryWithCleanArgv(() =>
-          invokeClaudeQuery({ prompt: inputStream(), options: optionsForQuery }),
+          invokeClaudeQuery({ prompt: inputStream(), options: optionsForQuery }, queryImpl),
         )) {
           activeWatchdog?.touch();
           if (lastTurnResult) {
