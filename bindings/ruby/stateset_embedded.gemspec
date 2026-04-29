@@ -16,7 +16,7 @@ Gem::Specification.new do |s|
 
   s.add_development_dependency 'rake', '~> 13.0'
   s.add_development_dependency 'rake-compiler', '~> 1.2'
-  s.add_development_dependency 'rb_sys', '0.9.50'
+  s.add_development_dependency 'rb_sys', '0.9.127'
   s.add_development_dependency 'rspec', '~> 3.12'
 
   s.metadata = {
