@@ -72,11 +72,20 @@ rows = []
 failures = []
 missing = []
 
+def estimate_path_candidates(bench_id):
+    exact = Path("target/criterion") / bench_id / "new" / "estimates.json"
+    candidates = [exact]
+    sanitized = bench_id.replace("/", "_")
+    if sanitized != bench_id:
+        candidates.append(Path("target/criterion") / sanitized / "new" / "estimates.json")
+    return candidates
+
 for bench in benchmarks:
     bench_id = bench["id"]
     max_median_ns = float(bench["max_median_ns"])
     limit_ns = max_median_ns * multiplier
-    estimate_path = Path("target/criterion") / bench_id / "new" / "estimates.json"
+    candidate_paths = estimate_path_candidates(bench_id)
+    estimate_path = next((path for path in candidate_paths if path.exists()), candidate_paths[0])
     note = bench.get("note", "")
 
     if not estimate_path.exists():
@@ -84,7 +93,8 @@ for bench in benchmarks:
         observed_ns = None
         missing.append(bench_id)
         if not allow_missing:
-            failures.append(f"missing estimate file: {estimate_path}")
+            attempted = ", ".join(str(path) for path in candidate_paths)
+            failures.append(f"missing estimate file for {bench_id}; tried: {attempted}")
     else:
         with estimate_path.open("r", encoding="utf-8") as f:
             estimate = json.load(f)
