@@ -104,7 +104,6 @@ describe('Sync Tools — definitions', () => {
 describe('Sync Tools — permissions', () => {
   const readTools = [
     'sync_status',
-    'sync_pull',
     'sync_outbox',
     'sync_pulled_events',
     'sync_decrypt_event',
@@ -113,7 +112,11 @@ describe('Sync Tools — permissions', () => {
   ];
 
   const writeTools = [
+    'sync_pull',
     'sync_push',
+  ];
+
+  const adminTools = [
     'sync_retry_failed',
     'sync_full',
     'sync_resolve',
@@ -129,6 +132,12 @@ describe('Sync Tools — permissions', () => {
   for (const name of writeTools) {
     it(`${name} has write permission`, () => {
       assert.strictEqual(findTool(name).permission, 'write');
+    });
+  }
+
+  for (const name of adminTools) {
+    it(`${name} has admin permission`, () => {
+      assert.strictEqual(findTool(name).permission, 'admin');
     });
   }
 });

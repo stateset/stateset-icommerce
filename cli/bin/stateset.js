@@ -1064,6 +1064,7 @@ async function main() {
       console.log('Get started by setting up your API key:\n');
       console.log('  stateset-config set-key anthropic');
       console.log('  stateset-setup                     (guided setup)\n');
+      console.log('Usage: stateset "<your request>"');
       console.log('Run stateset --help for all options');
     } else {
       failCli('No request provided', {

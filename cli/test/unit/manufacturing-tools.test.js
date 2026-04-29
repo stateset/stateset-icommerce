@@ -141,7 +141,7 @@ describe('manufacturingTools — module exports', () => {
   it('all tools have valid permissions', () => {
     for (const tool of manufacturingTools) {
       assert.ok(
-        ['read', 'write', 'admin'].includes(tool.permission),
+        ['read', 'write', 'delete', 'admin'].includes(tool.permission),
         `${tool.name} has invalid permission: ${tool.permission}`,
       );
     }
@@ -176,12 +176,13 @@ describe('manufacturingTools — permission assignments', () => {
       'create_work_order',
       'start_work_order',
       'complete_work_order',
-      'cancel_work_order',
     ];
     for (const name of writeToolNames) {
       const tool = findTool(name);
       assert.equal(tool.permission, 'write', `${name} should be write`);
     }
+
+    assert.equal(findTool('cancel_work_order').permission, 'delete');
   });
 });
 

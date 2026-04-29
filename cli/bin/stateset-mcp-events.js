@@ -12,10 +12,6 @@
 
 import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
-import { Commerce } from '@stateset/embedded';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createStatesetMcpServer } from '../src/mcp-server.js';
-import { createMcpEventStreamer } from '../src/mcp-event-streamer.js';
 import { runMain } from '../src/graceful-shutdown.js';
 import { CLI_VERSION } from '../src/config.js';
 
@@ -200,6 +196,18 @@ async function main() {
     console.log(`stateset-mcp-events v${CLI_VERSION}`);
     return;
   }
+
+  const [
+    { Commerce },
+    { StdioServerTransport },
+    { createStatesetMcpServer },
+    { createMcpEventStreamer },
+  ] = await Promise.all([
+    import('@stateset/embedded'),
+    import('@modelcontextprotocol/sdk/server/stdio.js'),
+    import('../src/mcp-server.js'),
+    import('../src/mcp-event-streamer.js'),
+  ]);
 
   const host = values.host || '127.0.0.1';
   const port = normalizePort(values.port, 8081);

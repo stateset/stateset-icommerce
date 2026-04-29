@@ -506,13 +506,27 @@ fn parse_secure_connect_options(url: &str) -> Result<PgConnectOptions, CommerceE
         .map_err(|e| CommerceError::DatabaseError(format!("invalid postgres URL: {e}")))?;
 
     match options.get_ssl_mode() {
+        PgSslMode::Disable | PgSslMode::Allow | PgSslMode::Prefer
+            if is_local_postgres_host(options.get_host()) =>
+        {
+            Ok(options)
+        }
         PgSslMode::Disable | PgSslMode::Allow | PgSslMode::Prefer => {
             Err(CommerceError::DatabaseError(
-                "postgres sslmode must be require, verify-ca, or verify-full".to_string(),
+                "postgres sslmode must be require, verify-ca, or verify-full for non-local hosts"
+                    .to_string(),
             ))
         }
         PgSslMode::Require | PgSslMode::VerifyCa | PgSslMode::VerifyFull => Ok(options),
     }
+}
+
+fn is_local_postgres_host(host: &str) -> bool {
+    let normalized = host.trim().trim_matches(['[', ']']).to_ascii_lowercase();
+    normalized == "localhost"
+        || normalized == "127.0.0.1"
+        || normalized == "::1"
+        || normalized.starts_with('/')
 }
 
 /// Helper function to convert sqlx errors to `CommerceError`
@@ -837,6 +851,32 @@ mod tests {
             pg_transaction_isolation_sql(crate::TransactionIsolation::Serializable),
             "SERIALIZABLE"
         );
+    }
+
+    #[test]
+    fn parse_secure_connect_options_allows_local_ci_postgres() {
+        assert!(
+            parse_secure_connect_options(
+                "postgres://postgres:postgres@localhost:5432/stateset_test"
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_secure_connect_options(
+                "postgres://postgres:postgres@127.0.0.1:5432/stateset_test"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn parse_secure_connect_options_rejects_insecure_remote_postgres() {
+        let err = parse_secure_connect_options(
+            "postgres://postgres:postgres@db.example.com:5432/stateset_test",
+        )
+        .expect_err("remote postgres URLs must opt into TLS");
+
+        assert!(format!("{err}").contains("sslmode must be require"));
     }
 
     #[test]

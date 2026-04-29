@@ -20,7 +20,7 @@ describe('EventCapture', () => {
         const { EventCapture } = await import('../../src/sync/capture.js');
 
         const mockDb = {
-          prepare: () => ({ run: () => {} }),
+          prepare: () => ({ all: () => [], run: () => {} }),
           exec: () => {},
         };
         const config = { identity: { tenantId: 't1', storeId: 's1', agentId: 'a1' } };
@@ -46,7 +46,7 @@ describe('EventCapture', () => {
         const { EventCapture } = await import('../../src/sync/capture.js');
 
         const mockDb = {
-          prepare: () => ({ run: () => {} }),
+          prepare: () => ({ all: () => [], run: () => {} }),
           exec: () => {},
         };
         const config = { identity: { tenantId: 't1', storeId: 's1', agentId: 'a1' } };
@@ -70,7 +70,7 @@ describe('EventCapture', () => {
 
       let outboxCalled = false;
       const mockDb = {
-        prepare: () => ({ run: () => { outboxCalled = true; } }),
+        prepare: () => ({ all: () => [], run: () => { outboxCalled = true; } }),
         exec: () => {},
       };
       const config = { identity: { tenantId: 't1', storeId: 's1', agentId: 'a1' } };

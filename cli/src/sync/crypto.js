@@ -497,6 +497,8 @@ function escapeString(s) {
  * @returns {string}
  */
 export function canonicalizeJson(value) {
+  assertCanonicalizableJson(value);
+
   const nativeJcsCanonicalize = getNativeJcsCanonicalize();
   if (nativeJcsCanonicalize) {
     try {
@@ -524,6 +526,37 @@ export function canonicalizeJson(value) {
     const keys = Object.keys(value).sort();
     const pairs = keys.map((k) => escapeString(k) + ':' + canonicalizeJson(value[k]));
     return '{' + pairs.join(',') + '}';
+  }
+
+  throw new Error(`Cannot canonicalize type: ${type}`);
+}
+
+function assertCanonicalizableJson(value) {
+  if (value === null || value === undefined) return;
+
+  const type = typeof value;
+
+  if (type === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new Error(`Cannot canonicalize non-finite number: ${String(value)}`);
+    }
+    return;
+  }
+
+  if (type === 'boolean' || type === 'string') return;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      assertCanonicalizableJson(item);
+    }
+    return;
+  }
+
+  if (type === 'object') {
+    for (const key of Object.keys(value)) {
+      assertCanonicalizableJson(value[key]);
+    }
+    return;
   }
 
   throw new Error(`Cannot canonicalize type: ${type}`);

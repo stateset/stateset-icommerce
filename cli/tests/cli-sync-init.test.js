@@ -35,7 +35,7 @@ describe('stateset-sync init force reinitialize', () => {
   const initArgs = [
     'init',
     '--sequencer-url',
-    'grpc://127.0.0.1:1',
+    'grpcs://127.0.0.1:1',
     '--tenant-id',
     '00000000-0000-0000-0000-000000000001',
     '--store-id',

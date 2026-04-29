@@ -40,6 +40,7 @@ async function createTempSyncEnv(securityProfile) {
     tenantId: TENANT_ID,
     storeId: STORE_ID,
     securityProfile,
+    allowInsecureTransport: securityProfile === 'legacy',
   });
   saveSyncConfig(config, tempDir);
   return { tempDir, config };

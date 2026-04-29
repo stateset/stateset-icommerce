@@ -23,9 +23,9 @@ describe('agents agent definition', () => {
     assert.ok(agent.systemPrompt.length > 50);
   });
 
-  it('agents entry has 39 tools', () => {
+  it('agents entry has 53 tools', () => {
     const count = AGENTS.agents.tools.length;
-    assert.strictEqual(count, 39, `Expected 39 tools, got ${count}`);
+    assert.strictEqual(count, 53, `Expected 53 tools, got ${count}`);
   });
 
   it('agents tools include agent_create_runtime', () => {
