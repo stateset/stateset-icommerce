@@ -153,7 +153,7 @@ npx vitest
 
 | Layer | Target | Tool |
 |-------|--------|------|
-| Rust workspace | ≥ 80% line coverage | `cargo llvm-cov` |
+| Rust non-storage workspace | ≥ 80% line coverage | `cargo llvm-cov` |
 | CLI | ≥ 75% coverage | `node --experimental-test-coverage` |
 | Admin | ≥ 70% coverage | Vitest coverage |
 
@@ -207,7 +207,7 @@ Tests run on every commit across 10 job types:
 | `audit` | `cargo audit` — no known vulnerabilities |
 | `deny` | `cargo deny check` — license compliance |
 | `rust` | `cargo test --workspace` — all Rust tests |
-| `coverage` | `cargo llvm-cov` — coverage gates |
+| `coverage` | `cargo llvm-cov` — non-storage coverage gates |
 | `benchmarks` | `STATESET_PERF_GATE=1 cargo bench -p stateset-benches` — no performance regressions |
 | `cli` | `node --test cli/test/` — all CLI tests |
 | `admin` | `npx vitest` — admin tests |

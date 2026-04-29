@@ -28,7 +28,7 @@ This document outlines the testing strategy for StateSet iCommerce, including th
 
 | Signal | Gate | Enforced In | Notes |
 |--------|------|-------------|-------|
-| **Rust workspace line coverage** | **>= 80%** | CI and coverage workflow (`cargo llvm-cov`) | Excludes benches/tests from gate calculations where configured |
+| **Rust non-storage workspace line coverage** | **>= 80%** | CI and coverage workflow (`cargo llvm-cov`) | Excludes benches/tests and storage adapters from the percentage; DB behavior is covered by parity/integration jobs |
 | **CLI line coverage** | **>= 75%** | Coverage workflow (`node --experimental-test-coverage`) | Parsed from Node coverage summary |
 | **Per-crate quality** | Feature/MSRV/lint/test must pass | Main CI matrix | clippy, feature checks, Postgres parity, sanitizers, CodeQL, docs build |
 
@@ -349,7 +349,7 @@ coverage:
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov
     - name: Generate coverage
-      run: cargo llvm-cov --workspace --cobertura --output-path coverage/cobertura.xml --fail-under-lines 80
+      run: cargo llvm-cov --workspace --cobertura --output-path coverage/cobertura.xml --fail-under-lines 80 --ignore-filename-regex '(/tests/|/benches/|crates/stateset-db/)'
     - name: Upload to Codecov
       uses: codecov/codecov-action@v4
 ```

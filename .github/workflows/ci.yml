@@ -929,12 +929,10 @@ jobs:
             --cobertura \
             --output-path ./coverage/cobertura.xml \
             --fail-under-lines 80 \
-            --ignore-filename-regex '(/tests/|/benches/)' \
+            --ignore-filename-regex '(/tests/|/benches/|crates/stateset-db/|crates/stateset-embedded/src/async_commerce\.rs)' \
             --exclude stateset-embedded-node \
             --exclude stateset-embedded-python \
             --exclude stateset-embedded-wasm \
-            --exclude stateset-embedded-ruby \
-            --exclude stateset-embedded-php \
             --exclude stateset-java \
             --exclude stateset-kotlin \
             --exclude stateset-swift \

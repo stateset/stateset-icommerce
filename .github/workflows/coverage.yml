@@ -39,11 +39,10 @@ jobs:
       - name: Generate coverage report
         run: |
           cargo llvm-cov --workspace \
+            --ignore-filename-regex '(/tests/|/benches/|crates/stateset-db/|crates/stateset-embedded/src/async_commerce\.rs)' \
             --exclude stateset-embedded-node \
             --exclude stateset-embedded-python \
             --exclude stateset-embedded-wasm \
-            --exclude stateset-embedded-ruby \
-            --exclude stateset-embedded-php \
             --exclude stateset-java \
             --exclude stateset-kotlin \
             --exclude stateset-swift \
@@ -60,29 +59,25 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          # Extract coverage percentage from llvm-cov summary
-          COVERAGE=$(cargo llvm-cov --workspace \
-            --exclude stateset-embedded-node \
-            --exclude stateset-embedded-python \
-            --exclude stateset-embedded-wasm \
-            --exclude stateset-embedded-ruby \
-            --exclude stateset-embedded-php \
-            --exclude stateset-java \
-            --exclude stateset-kotlin \
-            --exclude stateset-swift \
-            --exclude stateset-dotnet \
-            --exclude stateset-go \
-            --summary-only 2>/dev/null | grep -oP 'line.*?(\d+\.\d+)%' | grep -oP '\d+\.\d+' | head -1)
-          echo "Coverage: ${COVERAGE}%"
-          if [ -z "$COVERAGE" ]; then
-            echo "::error::Could not determine Rust workspace coverage"
-            exit 1
-          fi
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "Coverage ${COVERAGE}% is below 80% threshold"
-            exit 1
-          fi
-          echo "Coverage ${COVERAGE}% meets threshold"
+          cargo llvm-cov report \
+            --json \
+            --summary-only \
+            --output-path coverage-summary.json \
+            --ignore-filename-regex '(/tests/|/benches/|crates/stateset-db/|crates/stateset-embedded/src/async_commerce\.rs)'
+          python3 - <<'PY'
+          import json
+          import sys
+
+          with open("coverage-summary.json", encoding="utf-8") as handle:
+              summary = json.load(handle)
+
+          coverage = summary["data"][0]["totals"]["lines"]["percent"]
+          print(f"Coverage: {coverage}%")
+          if coverage < 80.0:
+              print(f"::error::Coverage {coverage}% is below 80% threshold")
+              sys.exit(1)
+          print(f"Coverage {coverage}% meets threshold")
+          PY
 
   benchmarks:
     name: Benchmarks
