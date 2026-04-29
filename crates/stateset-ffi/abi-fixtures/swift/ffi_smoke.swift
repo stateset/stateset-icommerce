@@ -4,13 +4,11 @@ import Glibc
 import Darwin
 #endif
 
-@frozen
 struct FfiMoney {
     var amount_cents: Int64
     var currency: (UInt8, UInt8, UInt8)
 }
 
-@frozen
 struct FfiResultCommerceHandle {
     var code: Int32
     var value: UnsafeMutableRawPointer?
