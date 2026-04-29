@@ -1536,6 +1536,9 @@ public record SubscriptionPlan
     [JsonPropertyName("id")]
     public string Id { get; init; } = string.Empty;
 
+    [JsonPropertyName("code")]
+    public string Code { get; init; } = string.Empty;
+
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
 }
@@ -1545,6 +1548,9 @@ public record Subscription
     [JsonPropertyName("id")]
     public string Id { get; init; } = string.Empty;
 
+    [JsonPropertyName("customer_id")]
+    public string CustomerId { get; init; } = string.Empty;
+
     [JsonPropertyName("status")]
     public string Status { get; init; } = string.Empty;
 }
@@ -1553,6 +1559,9 @@ public record Promotion
 {
     [JsonPropertyName("id")]
     public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("code")]
+    public string Code { get; init; } = string.Empty;
 
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
@@ -1580,6 +1589,9 @@ public record TaxRate
 {
     [JsonPropertyName("id")]
     public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("country")]
+    public string Country { get; init; } = string.Empty;
 
     [JsonPropertyName("rate")]
     public string Rate { get; init; } = "0";

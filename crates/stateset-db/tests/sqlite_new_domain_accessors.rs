@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 use stateset_core::{
     FraudAssessmentFilter, GiftCardFilter, ReviewFilter, RewardFilter, SearchConfigFilter,
     SegmentFilter, ShippingZoneFilter, StoreCreditFilter, WishlistFilter, ZoneShippingMethodFilter,

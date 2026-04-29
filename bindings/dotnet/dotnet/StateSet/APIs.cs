@@ -232,6 +232,12 @@ public sealed class CartsApi
     }
 
     /// <summary>
+    /// Compatibility overload for cart item calls that pass SKU details.
+    /// </summary>
+    public Cart AddItem(string cartId, string sku, string name, int quantity, decimal unitPrice)
+        => AddItem(cartId, sku, quantity);
+
+    /// <summary>
     /// Get cart by ID
     /// </summary>
     public Cart? Get(string cartId)
@@ -418,6 +424,8 @@ public sealed class AnalyticsApi
         return StateSetCommerce.ParseJsonRequired<SalesSummary>(ptr);
     }
 
+    public SalesSummary SalesSummary(TimePeriod period = TimePeriod.Month) => GetSalesSummary(period);
+
     /// <summary>
     /// Get top selling products
     /// </summary>
@@ -427,6 +435,8 @@ public sealed class AnalyticsApi
         return StateSetCommerce.ParseJsonList<TopProduct>(ptr);
     }
 
+    public List<TopProduct> TopProducts(int limit = 10) => GetTopProducts(limit);
+
     /// <summary>
     /// Get top customers by spend
     /// </summary>
@@ -435,6 +445,8 @@ public sealed class AnalyticsApi
         var ptr = NativeMethods.stateset_analytics_top_customers(_commerce.Handle, limit);
         return StateSetCommerce.ParseJsonList<TopCustomer>(ptr);
     }
+
+    public List<TopCustomer> TopCustomers(int limit = 10) => GetTopCustomers(limit);
 }
 
 /// <summary>
@@ -592,7 +604,7 @@ public sealed class SuppliersApi
     /// <summary>
     /// Create a supplier
     /// </summary>
-    public Supplier Create(string name, string email, string phone)
+    public Supplier Create(string name, string email, string phone = "")
     {
         var ptr = NativeMethods.stateset_supplier_create(_commerce.Handle, name, email, phone);
         return StateSetCommerce.ParseJsonRequired<Supplier>(ptr);
@@ -711,7 +723,7 @@ public sealed class InvoicesApi
     /// <summary>
     /// Create an invoice
     /// </summary>
-    public Invoice Create(string customerId, IEnumerable<InvoiceItem> items, string billingEmail)
+    public Invoice Create(string customerId, IEnumerable<InvoiceItem> items, string billingEmail = "")
     {
         var itemsJson = JsonSerializer.Serialize(items, SerializerOptions);
         var ptr = NativeMethods.stateset_invoice_create(_commerce.Handle, customerId, itemsJson, billingEmail);
@@ -1134,6 +1146,12 @@ public sealed class TaxApi
         return StateSetCommerce.ParseJsonRequired<TaxRate>(ptr);
     }
 
+    public TaxRate CreateRate(string country, decimal rate)
+    {
+        var jurisdiction = CreateJurisdiction($"{country} Tax", country, country);
+        return CreateRate(jurisdiction.Id, $"{country} Tax Rate", rate) with { Country = country };
+    }
+
     public TaxRate? GetRate(string id)
     {
         var ptr = NativeMethods.stateset_tax_rate_get(_commerce.Handle, id);
@@ -1299,6 +1317,11 @@ public sealed class LotsApi
         return StateSetCommerce.ParseJsonList<Lot>(ptr);
     }
 
+    public Lot CreateLot(string lotNumber, string sku, int quantity)
+        => Create(sku, quantity) with { LotNumber = lotNumber };
+
+    public List<Lot> ListLots() => List();
+
     public List<Lot> GetActiveLots(string sku)
     {
         var ptr = NativeMethods.stateset_lot_get_active(_commerce.Handle, sku);
@@ -1367,6 +1390,11 @@ public sealed class SerialsApi
         var ptr = NativeMethods.stateset_serial_list(_commerce.Handle);
         return StateSetCommerce.ParseJsonList<Serial>(ptr);
     }
+
+    public Serial RegisterSerial(string serialNumber, string sku)
+        => Create(sku) with { SerialNumber = serialNumber };
+
+    public List<Serial> ListSerials() => List();
 
     public List<Serial> GetAvailable(string sku, int limit)
     {
@@ -1563,6 +1591,8 @@ public sealed class FulfillmentApi
         return StateSetCommerce.ParseJsonList<PickTask>(ptr);
     }
 
+    public List<PickTask> ListPickLists() => ListPicks();
+
     public PickTask AssignPick(string id, string assignedTo)
     {
         var ptr = NativeMethods.stateset_pick_assign(_commerce.Handle, id, assignedTo);
@@ -1689,6 +1719,8 @@ public sealed class AccountsReceivableApi
         return StateSetCommerce.ParseJsonList<CreditMemo>(ptr);
     }
 
+    public List<CreditMemo> ListReceivables() => ListCreditMemos();
+
     public CreditMemo VoidCreditMemo(string id)
     {
         var ptr = NativeMethods.stateset_ar_credit_memo_void(_commerce.Handle, id);
@@ -1728,6 +1760,8 @@ public sealed class CostAccountingApi
         return StateSetCommerce.ParseJsonList<ItemCost>(ptr);
     }
 
+    public List<ItemCost> ListCostEntries() => ListItemCosts();
+
     public ItemCost UpdateAverageCost(string sku, int quantity, decimal unitCost)
     {
         var ptr = NativeMethods.stateset_cost_update_average(_commerce.Handle, sku, quantity, (double)unitCost);
@@ -1751,6 +1785,9 @@ public sealed class CreditApi
         return StateSetCommerce.ParseJsonRequired<CreditAccount>(ptr);
     }
 
+    public CreditAccount SetCreditLimit(string customerId, decimal limit, string currency = "USD")
+        => CreateCreditAccount(customerId, limit);
+
     public CreditAccount? GetCreditAccount(string id)
     {
         var ptr = NativeMethods.stateset_credit_account_get(_commerce.Handle, id);
@@ -1762,6 +1799,8 @@ public sealed class CreditApi
         var ptr = NativeMethods.stateset_credit_account_get_by_customer(_commerce.Handle, customerId);
         return StateSetCommerce.ParseJson<CreditAccount>(ptr);
     }
+
+    public CreditAccount? GetCreditLimit(string customerId) => GetCreditAccountByCustomer(customerId);
 
     public List<CreditAccount> ListCreditAccounts()
     {

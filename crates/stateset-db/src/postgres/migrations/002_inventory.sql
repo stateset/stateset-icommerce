@@ -16,7 +16,7 @@ CREATE INDEX IF NOT EXISTS idx_inventory_items_sku ON inventory_items(sku);
 
 -- Inventory locations
 CREATE TABLE IF NOT EXISTS inventory_locations (
-    id BIGSERIAL PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     code TEXT NOT NULL UNIQUE,
     address JSONB,
@@ -33,7 +33,7 @@ ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS inventory_balances (
     id BIGSERIAL PRIMARY KEY,
     item_id BIGINT NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
-    location_id BIGINT NOT NULL REFERENCES inventory_locations(id) DEFAULT 1,
+    location_id INTEGER NOT NULL REFERENCES inventory_locations(id) DEFAULT 1,
     quantity_on_hand NUMERIC(19, 4) NOT NULL DEFAULT 0,
     quantity_allocated NUMERIC(19, 4) NOT NULL DEFAULT 0,
     quantity_available NUMERIC(19, 4) NOT NULL DEFAULT 0,
@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_inventory_balances_location ON inventory_balances
 CREATE TABLE IF NOT EXISTS inventory_transactions (
     id BIGSERIAL PRIMARY KEY,
     item_id BIGINT NOT NULL REFERENCES inventory_items(id),
-    location_id BIGINT NOT NULL DEFAULT 1,
+    location_id INTEGER NOT NULL DEFAULT 1,
     transaction_type TEXT NOT NULL,
     quantity NUMERIC(19, 4) NOT NULL,
     reference_type TEXT,
@@ -69,7 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_inventory_transactions_type ON inventory_transact
 CREATE TABLE IF NOT EXISTS inventory_reservations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     item_id BIGINT NOT NULL REFERENCES inventory_items(id),
-    location_id BIGINT NOT NULL DEFAULT 1,
+    location_id INTEGER NOT NULL DEFAULT 1,
     quantity NUMERIC(19, 4) NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     reference_type TEXT NOT NULL,

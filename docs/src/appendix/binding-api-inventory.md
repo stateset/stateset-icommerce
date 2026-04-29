@@ -34,7 +34,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Language | Ecosystem | Package | Version | Coverage | Summary |
 | --- | --- | --- | --- | --- | --- |
-| .NET | NuGet | `StateSet.Embedded` | `1.0.0` | `detailed` | 233 API methods |
+| .NET | NuGet | `StateSet.Embedded` | `1.0.0` | `detailed` | 245 API methods |
 | Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 80 API methods |
 | Java | Maven | `com.stateset:embedded` | `1.0.0` | `package-manifest` | manifest coverage |
 | Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.0.0` | `package-manifest` | manifest coverage |
@@ -256,7 +256,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Public types | 112 |
 | API types | 31 |
 | Facade properties | 31 |
-| API methods | 233 |
+| API methods | 245 |
 | Target frameworks | `net6.0`, `net7.0`, `net8.0` |
 
 ## .NET Public Types
@@ -433,10 +433,14 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `AccountsReceivableApi` | `GetTotalOutstanding` |
 | `AccountsReceivableApi` | `GetUnappliedCredits` |
 | `AccountsReceivableApi` | `ListCreditMemos` |
+| `AccountsReceivableApi` | `ListReceivables` |
 | `AccountsReceivableApi` | `VoidCreditMemo` |
 | `AnalyticsApi` | `GetSalesSummary` |
 | `AnalyticsApi` | `GetTopCustomers` |
 | `AnalyticsApi` | `GetTopProducts` |
+| `AnalyticsApi` | `SalesSummary` |
+| `AnalyticsApi` | `TopCustomers` |
+| `AnalyticsApi` | `TopProducts` |
 | `BackordersApi` | `CancelBackorder` |
 | `BackordersApi` | `CountPending` |
 | `BackordersApi` | `CreateBackorder` |
@@ -458,6 +462,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `CartsApi` | `Get` |
 | `CostAccountingApi` | `GetItemCost` |
 | `CostAccountingApi` | `GetTotalInventoryValue` |
+| `CostAccountingApi` | `ListCostEntries` |
 | `CostAccountingApi` | `ListItemCosts` |
 | `CostAccountingApi` | `SetItemCost` |
 | `CostAccountingApi` | `UpdateAverageCost` |
@@ -466,9 +471,11 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `CreditApi` | `CreateCreditAccount` |
 | `CreditApi` | `GetCreditAccount` |
 | `CreditApi` | `GetCreditAccountByCustomer` |
+| `CreditApi` | `GetCreditLimit` |
 | `CreditApi` | `GetOverLimitCustomers` |
 | `CreditApi` | `ListCreditAccounts` |
 | `CreditApi` | `ReactivateCreditAccount` |
+| `CreditApi` | `SetCreditLimit` |
 | `CreditApi` | `SuspendCreditAccount` |
 | `CurrencyApi` | `Convert` |
 | `CurrencyApi` | `GetRate` |
@@ -488,6 +495,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `FulfillmentApi` | `GetWave` |
 | `FulfillmentApi` | `IsOrderReadyToPack` |
 | `FulfillmentApi` | `IsOrderReadyToShip` |
+| `FulfillmentApi` | `ListPickLists` |
 | `FulfillmentApi` | `ListPicks` |
 | `FulfillmentApi` | `ListWaves` |
 | `FulfillmentApi` | `ReleaseWave` |
@@ -516,6 +524,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `InvoicesApi` | `Send` |
 | `InvoicesApi` | `Void` |
 | `LotsApi` | `Create` |
+| `LotsApi` | `CreateLot` |
 | `LotsApi` | `Get` |
 | `LotsApi` | `GetActiveLots` |
 | `LotsApi` | `GetByNumber` |
@@ -523,6 +532,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `LotsApi` | `GetExpiringLots` |
 | `LotsApi` | `GetQuarantined` |
 | `LotsApi` | `List` |
+| `LotsApi` | `ListLots` |
 | `LotsApi` | `Quarantine` |
 | `LotsApi` | `ReleaseQuarantine` |
 | `OrdersApi` | `Cancel` |
@@ -592,8 +602,10 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `SerialsApi` | `GetBySerial` |
 | `SerialsApi` | `IsAvailable` |
 | `SerialsApi` | `List` |
+| `SerialsApi` | `ListSerials` |
 | `SerialsApi` | `MarkSold` |
 | `SerialsApi` | `Quarantine` |
+| `SerialsApi` | `RegisterSerial` |
 | `ShipmentsApi` | `Cancel` |
 | `ShipmentsApi` | `Create` |
 | `ShipmentsApi` | `Deliver` |

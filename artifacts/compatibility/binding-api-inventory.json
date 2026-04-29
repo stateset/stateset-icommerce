@@ -62,7 +62,7 @@
       "publicTypeCount": 112,
       "apiTypeCount": 31,
       "facadePropertyCount": 31,
-      "apiMethodCount": 233,
+      "apiMethodCount": 245,
       "publicTypes": [
         "AccountsPayableApi",
         "AccountsReceivableApi",
@@ -407,6 +407,10 @@
         },
         {
           "type": "AccountsReceivableApi",
+          "method": "ListReceivables"
+        },
+        {
+          "type": "AccountsReceivableApi",
           "method": "VoidCreditMemo"
         },
         {
@@ -420,6 +424,18 @@
         {
           "type": "AnalyticsApi",
           "method": "GetTopProducts"
+        },
+        {
+          "type": "AnalyticsApi",
+          "method": "SalesSummary"
+        },
+        {
+          "type": "AnalyticsApi",
+          "method": "TopCustomers"
+        },
+        {
+          "type": "AnalyticsApi",
+          "method": "TopProducts"
         },
         {
           "type": "BackordersApi",
@@ -507,6 +523,10 @@
         },
         {
           "type": "CostAccountingApi",
+          "method": "ListCostEntries"
+        },
+        {
+          "type": "CostAccountingApi",
           "method": "ListItemCosts"
         },
         {
@@ -539,6 +559,10 @@
         },
         {
           "type": "CreditApi",
+          "method": "GetCreditLimit"
+        },
+        {
+          "type": "CreditApi",
           "method": "GetOverLimitCustomers"
         },
         {
@@ -548,6 +572,10 @@
         {
           "type": "CreditApi",
           "method": "ReactivateCreditAccount"
+        },
+        {
+          "type": "CreditApi",
+          "method": "SetCreditLimit"
         },
         {
           "type": "CreditApi",
@@ -624,6 +652,10 @@
         {
           "type": "FulfillmentApi",
           "method": "IsOrderReadyToShip"
+        },
+        {
+          "type": "FulfillmentApi",
+          "method": "ListPickLists"
         },
         {
           "type": "FulfillmentApi",
@@ -739,6 +771,10 @@
         },
         {
           "type": "LotsApi",
+          "method": "CreateLot"
+        },
+        {
+          "type": "LotsApi",
           "method": "Get"
         },
         {
@@ -764,6 +800,10 @@
         {
           "type": "LotsApi",
           "method": "List"
+        },
+        {
+          "type": "LotsApi",
+          "method": "ListLots"
         },
         {
           "type": "LotsApi",
@@ -1043,11 +1083,19 @@
         },
         {
           "type": "SerialsApi",
+          "method": "ListSerials"
+        },
+        {
+          "type": "SerialsApi",
           "method": "MarkSold"
         },
         {
           "type": "SerialsApi",
           "method": "Quarantine"
+        },
+        {
+          "type": "SerialsApi",
+          "method": "RegisterSerial"
         },
         {
           "type": "ShipmentsApi",

@@ -210,7 +210,7 @@ impl MessageQueue {
     /// Compute the next retry timestamp using exponential backoff.
     ///
     /// The delay doubles with each attempt (1 s, 2 s, 4 s, 8 s, 16 s) and is
-    /// capped at [`MAX_BACKOFF_SECS`] seconds.
+    /// capped at the internal maximum backoff limit.
     #[must_use]
     pub fn compute_next_retry(attempts: u32) -> DateTime<Utc> {
         let secs = 1i64

@@ -105,7 +105,7 @@ afterEach(() => {
   __resetClaudeQueryImplForTest();
 });
 
-describe('Claude harness paths', () => {
+describe('Claude harness paths', { concurrency: false }, () => {
   it('runs the Claude SDK path with tool events, prompt reporting, and session persistence', async () => {
     const dbPath = newDbPath();
     const sessionStore = createSessionStore();

@@ -45,6 +45,7 @@ insta = "1.46"
 [[bench]]
 name = "db_benchmarks"
 harness = false
+required-features = ["sqlite"]
 
 [lints]
 workspace = true

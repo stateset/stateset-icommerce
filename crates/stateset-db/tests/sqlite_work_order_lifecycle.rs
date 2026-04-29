@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 use rust_decimal_macros::dec;
 use stateset_core::{CreateWorkOrder, ProductId, WorkOrderRepository, WorkOrderStatus};
 use stateset_db::SqliteDatabase;

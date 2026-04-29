@@ -569,15 +569,14 @@ public class StateSetTests : IDisposable
             name: "Zone Warehouse"
         );
 
-        var zone = _commerce.Warehouse.CreateZone(
+        var location = _commerce.Warehouse.CreateLocation(
             warehouseId: warehouse.Id,
-            code: "ZONE-A",
-            name: "Zone A",
-            zoneType: "storage"
+            locationType: "storage",
+            zone: "ZONE-A"
         );
 
-        Assert.NotEmpty(zone.Id);
-        Assert.Equal("ZONE-A", zone.Code);
+        Assert.True(location.Id > 0);
+        Assert.Equal(warehouse.Id, location.WarehouseId);
     }
 
     #endregion
@@ -845,8 +844,7 @@ public class StateSetTests : IDisposable
 
         var bom = _commerce.Bom.Create(
             productId: product.Id,
-            name: "Test BOM",
-            version: "1.0"
+            name: "Test BOM"
         );
 
         Assert.NotEmpty(bom.Id);
@@ -875,7 +873,7 @@ public class StateSetTests : IDisposable
 
         var workOrder = _commerce.WorkOrders.Create(
             productId: product.Id,
-            quantity: 10
+            quantityToBuild: 10
         );
 
         Assert.NotEmpty(workOrder.Id);
@@ -897,7 +895,8 @@ public class StateSetTests : IDisposable
     {
         var supplier = _commerce.Suppliers.Create(
             name: "PO Supplier",
-            email: "posupplier@example.com"
+            email: "posupplier@example.com",
+            phone: "555-0100"
         );
 
         var po = _commerce.PurchaseOrders.Create(
@@ -992,10 +991,16 @@ public class StateSetTests : IDisposable
             firstName: "Warranty",
             lastName: "Test"
         );
+        var product = _commerce.Products.Create(
+            name: "Warranty Product",
+            sku: "WARRANTY-PROD",
+            price: 25.00m
+        );
 
         var warranty = _commerce.Warranties.Create(
             customerId: customer.Id,
-            warrantyType: "standard",
+            productId: product.Id,
+            warrantyType: WarrantyType.Standard,
             durationMonths: 12
         );
 
@@ -1032,7 +1037,7 @@ public class StateSetTests : IDisposable
 
         var returnRequest = _commerce.Returns.Create(
             orderId: order.Id,
-            reason: "defective"
+            reason: ReturnReason.Defective
         );
 
         Assert.NotEmpty(returnRequest.Id);
@@ -1069,7 +1074,7 @@ public class StateSetTests : IDisposable
         var payment = _commerce.Payments.Create(
             orderId: order.Id,
             amount: 100.00m,
-            method: "credit_card"
+            method: PaymentMethod.CreditCard
         );
 
         Assert.NotEmpty(payment.Id);
