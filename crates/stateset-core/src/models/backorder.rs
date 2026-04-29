@@ -242,7 +242,8 @@ pub struct BackorderSummary {
 #[must_use]
 pub fn generate_backorder_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
-    let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
+    let suffix = Uuid::new_v4().simple().to_string();
+    let random = suffix[..12].to_uppercase();
     format!("BO-{timestamp}-{random}")
 }
 
@@ -284,5 +285,16 @@ mod tests {
     fn test_allocation_status_from_str() {
         assert_eq!(AllocationStatus::from_str("confirmed").unwrap(), AllocationStatus::Confirmed);
         assert!(AllocationStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn backorder_numbers_are_unique_under_tight_loops() {
+        let mut seen = std::collections::HashSet::new();
+
+        for _ in 0..10_000 {
+            let number = generate_backorder_number();
+            assert!(number.starts_with("BO-"));
+            assert!(seen.insert(number));
+        }
     }
 }
