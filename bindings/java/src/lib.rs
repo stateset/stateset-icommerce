@@ -201,8 +201,15 @@ fn parse_order_items(items_json: &str) -> Result<Vec<CreateOrderItem>, String> {
                 .and_then(|value| Decimal::try_from(value).ok())
                 .unwrap_or_default();
 
+            let product_id = item
+                .get("product_id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                .map(ProductId::from_uuid)
+                .unwrap_or_else(ProductId::new);
+
             Ok(CreateOrderItem {
-                product_id: ProductId::nil(),
+                product_id,
                 sku,
                 name,
                 quantity,
@@ -1600,8 +1607,10 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCreate<'local>(
             .carts()
             .create(CreateCart {
                 customer_id: customer_uuid.map(Into::into),
-                customer_email: None,
-                customer_name: None,
+                customer_email: customer_uuid
+                    .is_none()
+                    .then(|| format!("guest-{}@stateset.local", uuid::Uuid::new_v4())),
+                customer_name: customer_uuid.is_none().then(|| "Guest Customer".to_string()),
                 currency: if currency_str.is_empty() {
                     None
                 } else {
@@ -1684,6 +1693,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeAddItem<'local>(
                     name: name_str,
                     quantity,
                     unit_price: price,
+                    requires_shipping: Some(false),
                     ..Default::default()
                 },
             )
