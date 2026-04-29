@@ -920,6 +920,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Generate code coverage
+        env:
+          STATESET_ALLOW_POSTGRES_SKIP: "1"
         run: |
           mkdir -p ./coverage
           cargo llvm-cov \
