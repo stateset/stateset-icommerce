@@ -28,7 +28,7 @@ This document outlines the testing strategy for StateSet iCommerce, including th
 
 | Signal | Gate | Enforced In | Notes |
 |--------|------|-------------|-------|
-| **Rust workspace line coverage** | **>= 80%** | CI (`cargo tarpaulin`) and coverage workflow (`cargo llvm-cov`) | Excludes benches/tests from gate calculations where configured |
+| **Rust workspace line coverage** | **>= 80%** | CI and coverage workflow (`cargo llvm-cov`) | Excludes benches/tests from gate calculations where configured |
 | **CLI line coverage** | **>= 75%** | Coverage workflow (`node --experimental-test-coverage`) | Parsed from Node coverage summary |
 | **Per-crate quality** | Feature/MSRV/lint/test must pass | Main CI matrix | clippy, feature checks, Postgres parity, sanitizers, CodeQL, docs build |
 
@@ -337,7 +337,7 @@ mutation-testing:
 
 ### Coverage Reporting
 
-**Tool**: `cargo-tarpaulin`
+**Tool**: `cargo llvm-cov`
 
 **Configuration**:
 ```yaml
@@ -346,10 +346,10 @@ coverage:
   runs-on: ubuntu-latest
   steps:
     - uses: actions/checkout@v4
-    - name: Install cargo-tarpaulin
-      run: cargo install cargo-tarpaulin
+    - name: Install cargo-llvm-cov
+      run: cargo install cargo-llvm-cov
     - name: Generate coverage
-      run: cargo tarpaulin --out Xml --workspace --exclude-files '*/tests/*'
+      run: cargo llvm-cov --workspace --cobertura --output-path coverage/cobertura.xml --fail-under-lines 80
     - name: Upload to Codecov
       uses: codecov/codecov-action@v4
 ```

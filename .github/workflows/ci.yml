@@ -909,32 +909,35 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: stable
+          components: llvm-tools-preview
           override: true
 
-      - name: Install cargo-tarpaulin
+      - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d
         with:
-          tool: cargo-tarpaulin
+          tool: cargo-llvm-cov
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Generate code coverage
         run: |
-          cargo tarpaulin \
-            --out Xml \
-            --output-dir ./coverage \
+          mkdir -p ./coverage
+          cargo llvm-cov \
             --workspace \
-            --fail-under 80 \
+            --cobertura \
+            --output-path ./coverage/cobertura.xml \
+            --fail-under-lines 80 \
+            --ignore-filename-regex '(/tests/|/benches/)' \
             --exclude stateset-embedded-node \
             --exclude stateset-embedded-python \
             --exclude stateset-embedded-wasm \
+            --exclude stateset-embedded-ruby \
+            --exclude stateset-embedded-php \
             --exclude stateset-java \
             --exclude stateset-kotlin \
             --exclude stateset-swift \
             --exclude stateset-dotnet \
             --exclude stateset-go \
-            --exclude-files '*/tests/*' \
-            --exclude-files '*/benches/*' \
             --features postgres
 
       - name: Upload coverage to Codecov
