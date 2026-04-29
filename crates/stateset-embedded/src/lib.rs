@@ -131,6 +131,11 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
+#[cfg(feature = "async")]
+use futures as _;
+#[cfg(feature = "postgres")]
+use sqlx as _;
+
 mod accounts_payable;
 mod accounts_receivable;
 mod analytics;

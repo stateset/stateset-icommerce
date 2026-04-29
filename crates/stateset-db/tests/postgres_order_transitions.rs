@@ -272,6 +272,21 @@ async fn postgres_ship_fails_when_reservation_expired() {
         create_customer(&db, &format!("expired-reservation-{}@example.com", Uuid::new_v4())).await;
     let order = create_order(&db, customer.id, &sku).await;
 
+    db.orders()
+        .update_async(
+            order.id.into(),
+            UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
+        )
+        .await
+        .expect("update order to confirmed");
+    db.orders()
+        .update_async(
+            order.id.into(),
+            UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
+        )
+        .await
+        .expect("update order to processing");
+
     let reservations = db
         .inventory()
         .list_reservations_by_reference_async("order", &order.id.to_string())

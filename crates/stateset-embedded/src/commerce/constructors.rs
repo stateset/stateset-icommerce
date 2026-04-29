@@ -5,14 +5,14 @@ use super::{block_on_postgres_connect, block_on_postgres_connect_with_options};
 use std::sync::Arc;
 
 use stateset_core::CommerceError;
-use stateset_db::{Database, DatabaseConfig};
+use stateset_db::Database;
 use stateset_observability::{MetricsConfig, init_metrics};
 
 #[cfg(feature = "events")]
 use crate::events::EventSystem;
 
 #[cfg(feature = "sqlite")]
-use stateset_db::SqliteDatabase;
+use stateset_db::{DatabaseConfig, SqliteDatabase};
 
 impl Commerce {
     /// Create a new Commerce instance with a SQLite database.

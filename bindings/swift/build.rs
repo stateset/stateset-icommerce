@@ -1,25 +1,37 @@
-use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = PathBuf::from(&crate_dir).join("Sources/StateSetC/include");
 
-    // Create the output directory if it doesn't exist
-    std::fs::create_dir_all(&out_dir).ok();
+    std::fs::create_dir_all(&out_dir).expect("create Swift C include directory");
+    std::fs::write(
+        out_dir.join("stateset.h"),
+        r#"#ifndef STATESET_H
+#define STATESET_H
 
-    // Generate C header
-    cbindgen::Builder::new()
-        .with_crate(crate_dir)
-        .with_language(cbindgen::Language::C)
-        .with_include_guard("STATESET_H")
-        .with_documentation(true)
-        .with_no_includes()
-        .with_sys_include("stdint.h")
-        .with_sys_include("stdbool.h")
-        .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file(out_dir.join("stateset.h"));
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef void *StateSetHandle;
+
+StateSetHandle stateset_commerce_new(const char *db_path);
+void stateset_commerce_free(StateSetHandle handle);
+void stateset_string_free(char *s);
+char *stateset_get_last_error(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+"#,
+    )
+    .expect("write Swift C header");
 
     println!("cargo:rerun-if-changed=src/lib.rs");
 }

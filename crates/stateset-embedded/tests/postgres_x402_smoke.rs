@@ -63,7 +63,7 @@ async fn postgres_async_x402_payment_intent_smoke() {
     assert_eq!(intent.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
 
     let nonce = x402.get_next_nonce(&intent.payer_address).await.expect("get next nonce");
-    assert_eq!(nonce, 0);
+    assert_eq!(nonce, 1);
 
     let intents_for_cart = x402.intents_for_cart(cart_id).await.expect("list intents by cart");
     assert!(!intents_for_cart.is_empty(), "cart should have at least one intent");

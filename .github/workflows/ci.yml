@@ -799,6 +799,8 @@ jobs:
 
       - name: Test
         working-directory: bindings/dotnet/tests
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/release
         run: dotnet test
 
   jvm-bindings:

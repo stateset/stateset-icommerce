@@ -29,6 +29,7 @@ import StateSetC
 /// ```
 public final class StateSetCommerce {
     private var handle: StateSetHandle?
+    internal let store = StateSetSwiftStore()
 
     /// Customers API
     public private(set) lazy var customers = CustomersAPI(commerce: self)

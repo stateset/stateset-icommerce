@@ -17,6 +17,8 @@ public struct Customer: Codable, Identifiable, Sendable {
 public struct Product: Codable, Identifiable, Sendable {
     public let id: String
     public let name: String
+    public let sku: String
+    public let price: Double?
     public let slug: String?
     public let description: String?
     public let isActive: Bool?
@@ -60,11 +62,6 @@ public struct OrderItem: Codable, Sendable {
         self.quantity = quantity
         self.unitPrice = unitPrice
     }
-
-    enum CodingKeys: String, CodingKey {
-        case sku, name, quantity
-        case unitPrice = "unit_price"
-    }
 }
 
 // MARK: - Inventory
@@ -82,9 +79,9 @@ public struct StockLevel: Codable, Identifiable, Sendable {
     public let id: String
     public let inventoryItemId: String
     public let locationId: String?
-    public let available: String
-    public let reserved: String
-    public let incoming: String?
+    public let available: Int
+    public let reserved: Int
+    public let incoming: Int?
     public let updatedAt: String?
 }
 
@@ -132,6 +129,16 @@ public struct Payment: Codable, Identifiable, Sendable {
     public let createdAt: String?
 }
 
+public struct Refund: Codable, Identifiable, Sendable {
+    public let id: String
+    public let paymentId: String
+    public let amount: String
+    public let currency: String
+    public let status: String
+    public let reason: String?
+    public let createdAt: String?
+}
+
 // MARK: - Analytics
 
 public struct SalesSummary: Codable, Sendable {
@@ -152,47 +159,6 @@ public struct TopCustomer: Codable, Sendable {
     public let customerName: String
     public let orderCount: Int
     public let totalSpent: String
-}
-
-// MARK: - Enums
-
-public enum OrderStatus: String, Codable, Sendable {
-    case pending = "pending"
-    case confirmed = "confirmed"
-    case processing = "processing"
-    case shipped = "shipped"
-    case delivered = "delivered"
-    case cancelled = "cancelled"
-    case refunded = "refunded"
-}
-
-public enum ReturnReason: String, Codable, Sendable {
-    case defective = "defective"
-    case wrongItem = "wrong_item"
-    case notAsDescribed = "not_as_described"
-    case changedMind = "changed_mind"
-    case arrivedLate = "arrived_late"
-    case other = "other"
-}
-
-public enum PaymentMethod: String, Codable, Sendable {
-    case creditCard = "credit_card"
-    case debitCard = "debit_card"
-    case bankTransfer = "bank_transfer"
-    case paypal = "paypal"
-    case stripe = "stripe"
-    case crypto = "crypto"
-    case cash = "cash"
-    case other = "other"
-}
-
-public enum TimePeriod: String, Sendable {
-    case today = "today"
-    case thisWeek = "week"
-    case thisMonth = "month"
-    case thisQuarter = "quarter"
-    case thisYear = "year"
-    case allTime = "all"
 }
 
 // MARK: - Shipment
@@ -217,6 +183,197 @@ public struct Shipment: Codable, Identifiable, Sendable {
     public let updatedAt: String?
 }
 
+// MARK: - Currency
+
+public struct ExchangeRate: Codable, Identifiable, Sendable {
+    public let id: String
+    public let fromCurrency: String
+    public let toCurrency: String
+    public let rate: Double
+    public let source: String?
+    public let validFrom: String
+    public let validTo: String?
+    public let createdAt: String?
+}
+
+public struct ConversionResult: Codable, Sendable {
+    public let fromCurrency: String
+    public let toCurrency: String
+    public let originalAmount: Double
+    public let convertedAmount: Double
+    public let rate: Double
+    public let rateAt: String
+}
+
+public struct StoreCurrencySettings: Codable, Sendable {
+    public let baseCurrency: String
+    public let enabledCurrencies: [String]
+    public let autoConvert: Bool
+    public let roundingMode: String
+}
+
+// MARK: - Subscription
+
+public struct SubscriptionPlan: Codable, Identifiable, Sendable {
+    public let id: String
+    public let code: String
+    public let name: String
+    public let interval: String
+    public let intervalCount: Int
+    public let price: Double
+    public let currency: String
+    public let status: String
+    public let createdAt: String?
+}
+
+public struct Subscription: Codable, Identifiable, Sendable {
+    public let id: String
+    public let customerId: String
+    public let planId: String
+    public let status: String
+    public let createdAt: String?
+}
+
+// MARK: - Promotion
+
+public struct Promotion: Codable, Identifiable, Sendable {
+    public let id: String
+    public let code: String
+    public let name: String
+    public let discountType: String
+    public let discountValue: Double
+    public let isActive: Bool
+    public let createdAt: String?
+}
+
+public struct Coupon: Codable, Identifiable, Sendable {
+    public let id: String
+    public let promotionId: String
+    public let code: String
+    public let maxUses: Int?
+    public let usedCount: Int
+    public let isActive: Bool
+    public let createdAt: String?
+}
+
+// MARK: - Tax
+
+public struct TaxCalculation: Codable, Sendable {
+    public let subtotal: Double
+    public let taxAmount: Double
+    public let total: Double
+    public let currency: String
+}
+
+public struct TaxJurisdiction: Codable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let code: String
+    public let countryCode: String
+    public let stateCode: String?
+}
+
+public struct TaxRate: Codable, Identifiable, Sendable {
+    public let id: String
+    public let jurisdictionId: String
+    public let name: String
+    public let rate: Double
+}
+
+public struct TaxExemption: Codable, Identifiable, Sendable {
+    public let id: String
+    public let customerId: String
+    public let exemptionType: String
+    public let effectiveFrom: String
+}
+
+public struct TaxSettings: Codable, Sendable {
+    public let enabled: Bool
+    public let defaultCountry: String
+    public let pricesIncludeTax: Bool
+}
+
+// MARK: - Warehouse
+
+public struct Warehouse: Codable, Identifiable, Sendable {
+    public let id: Int
+    public let code: String
+    public let name: String
+    public let warehouseType: String
+    public let isActive: Bool
+    public let createdAt: String?
+}
+
+public struct Location: Codable, Identifiable, Sendable {
+    public let id: Int
+    public let warehouseId: Int
+    public let locationType: String
+    public let zone: String?
+    public let aisle: String?
+}
+
+// MARK: - General Ledger
+
+public struct GlAccount: Codable, Identifiable, Sendable {
+    public let id: String
+    public let accountNumber: String
+    public let name: String
+    public let accountType: String
+    public let isActive: Bool
+    public let createdAt: String?
+}
+
+// MARK: - Enums
+
+public enum OrderStatus: String, Codable, Sendable {
+    case pending = "pending"
+    case confirmed = "confirmed"
+    case processing = "processing"
+    case shipped = "shipped"
+    case delivered = "delivered"
+    case cancelled = "cancelled"
+    case refunded = "refunded"
+}
+
+public enum ReturnReason: String, Codable, Sendable {
+    case defective = "defective"
+    case wrongItem = "wrong_item"
+    case notAsDescribed = "not_as_described"
+    case changedMind = "changed_mind"
+    case arrivedLate = "arrived_late"
+    case other = "other"
+}
+
+public enum ReturnStatus: String, Codable, Sendable {
+    case requested = "requested"
+    case approved = "approved"
+    case rejected = "rejected"
+    case inTransit = "in_transit"
+    case received = "received"
+    case completed = "completed"
+    case cancelled = "cancelled"
+}
+
+public enum PaymentMethod: String, Codable, Sendable {
+    case creditCard = "credit_card"
+    case debitCard = "debit_card"
+    case bankTransfer = "bank_transfer"
+    case paypal = "paypal"
+    case stripe = "stripe"
+    case crypto = "crypto"
+    case cash = "cash"
+    case other = "other"
+}
+
+public enum TimePeriod: String, Sendable {
+    case today = "today"
+    case thisWeek = "week"
+    case thisMonth = "month"
+    case thisQuarter = "quarter"
+    case thisYear = "year"
+    case allTime = "all"
+}
+
 public enum ShipmentStatus: String, Codable, Sendable {
     case pending = "pending"
     case processing = "processing"
@@ -237,302 +394,7 @@ public enum ShippingCarrier: String, Codable, Sendable {
     case other = "other"
 }
 
-// MARK: - Warranty
-
-public struct Warranty: Codable, Identifiable, Sendable {
-    public let id: String
-    public let warrantyNumber: String
-    public let customerId: String
-    public let productId: String?
-    public let orderId: String?
-    public let orderItemId: String?
-    public let serialNumber: String?
-    public let status: String
-    public let warrantyType: String
-    public let durationMonths: Int
-    public let coverageDescription: String?
-    public let startDate: String
-    public let endDate: String
-    public let purchaseDate: String?
-    public let notes: String?
-    public let createdAt: String?
-    public let updatedAt: String?
-}
-
-public struct WarrantyClaim: Codable, Identifiable, Sendable {
-    public let id: String
-    public let claimNumber: String
-    public let warrantyId: String
-    public let status: String
-    public let issueDescription: String
-    public let resolution: String?
-    public let resolutionNotes: String?
-    public let contactEmail: String?
-    public let contactPhone: String?
-    public let denialReason: String?
-    public let resolvedAt: String?
-    public let createdAt: String?
-    public let updatedAt: String?
-}
-
-public enum WarrantyType: String, Codable, Sendable {
-    case standard = "standard"
-    case extended = "extended"
-    case limited = "limited"
-    case lifetime = "lifetime"
-}
-
-public enum WarrantyStatus: String, Codable, Sendable {
-    case active = "active"
-    case expired = "expired"
-    case voided = "voided"
-}
-
-public enum ClaimStatus: String, Codable, Sendable {
-    case pending = "pending"
-    case approved = "approved"
-    case denied = "denied"
-    case completed = "completed"
-    case cancelled = "cancelled"
-}
-
-public enum ClaimResolution: String, Codable, Sendable {
-    case repair = "repair"
-    case replacement = "replacement"
-    case refund = "refund"
-    case storeCredit = "store_credit"
-}
-
-// MARK: - Supplier
-
-public struct Supplier: Codable, Identifiable, Sendable {
-    public let id: String
-    public let supplierCode: String?
-    public let name: String
-    public let email: String?
-    public let phone: String?
-    public let address: String?
-    public let contactName: String?
-    public let paymentTerms: String?
-    public let leadTimeDays: Int?
-    public let isActive: Bool?
-    public let notes: String?
-    public let createdAt: String?
-    public let updatedAt: String?
-}
-
-// MARK: - Purchase Order
-
-public struct PurchaseOrder: Codable, Identifiable, Sendable {
-    public let id: String
-    public let poNumber: String
-    public let supplierId: String
-    public let status: String
-    public let subtotal: String
-    public let taxAmount: String
-    public let shippingCost: String
-    public let total: String
-    public let currency: String
-    public let shipToAddress: String?
-    public let expectedDate: String?
-    public let receivedDate: String?
-    public let approvedBy: String?
-    public let approvedAt: String?
-    public let supplierReference: String?
-    public let notes: String?
-    public let createdAt: String?
-    public let updatedAt: String?
-}
-
-public struct PurchaseOrderItem: Codable, Sendable {
-    public let sku: String
-    public let name: String
-    public let quantity: Double
-    public let unitCost: Double
-
-    public init(sku: String, name: String, quantity: Double, unitCost: Double) {
-        self.sku = sku
-        self.name = name
-        self.quantity = quantity
-        self.unitCost = unitCost
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case sku, name, quantity
-        case unitCost = "unit_cost"
-    }
-}
-
-public enum PurchaseOrderStatus: String, Codable, Sendable {
-    case draft = "draft"
-    case pendingApproval = "pending_approval"
-    case approved = "approved"
-    case sent = "sent"
-    case acknowledged = "acknowledged"
-    case partiallyReceived = "partially_received"
-    case received = "received"
-    case completed = "completed"
-    case cancelled = "cancelled"
-    case onHold = "on_hold"
-}
-
-// MARK: - Invoice
-
-public struct Invoice: Codable, Identifiable, Sendable {
-    public let id: String
-    public let invoiceNumber: String
-    public let customerId: String
-    public let orderId: String?
-    public let status: String
-    public let invoiceType: String
-    public let subtotal: String
-    public let taxAmount: String
-    public let total: String
-    public let amountPaid: String
-    public let currency: String
-    public let billingEmail: String?
-    public let billingName: String?
-    public let billingAddress: String?
-    public let dueDate: String?
-    public let sentAt: String?
-    public let viewedAt: String?
-    public let paidAt: String?
-    public let notes: String?
-    public let createdAt: String?
-    public let updatedAt: String?
-}
-
-public struct InvoiceItem: Codable, Sendable {
-    public let description: String
-    public let quantity: Double
-    public let unitPrice: Double
-    public let sku: String?
-
-    public init(description: String, quantity: Double, unitPrice: Double, sku: String? = nil) {
-        self.description = description
-        self.quantity = quantity
-        self.unitPrice = unitPrice
-        self.sku = sku
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case description, quantity, sku
-        case unitPrice = "unit_price"
-    }
-}
-
-public enum InvoiceStatus: String, Codable, Sendable {
-    case draft = "draft"
-    case sent = "sent"
-    case viewed = "viewed"
-    case partiallyPaid = "partially_paid"
-    case paid = "paid"
-    case overdue = "overdue"
-    case voided = "voided"
-    case writtenOff = "written_off"
-    case disputed = "disputed"
-}
-
-// MARK: - Bill of Materials
-
-public struct BillOfMaterials: Codable, Identifiable, Sendable {
-    public let id: String
-    public let bomNumber: String
-    public let productId: String
-    public let name: String
-    public let description: String?
-    public let version: String
-    public let status: String
-    public let notes: String?
-    public let createdAt: String?
-    public let updatedAt: String?
-}
-
-public struct BOMComponent: Codable, Identifiable, Sendable {
-    public let id: String
-    public let bomId: String
-    public let componentSku: String?
-    public let name: String
-    public let description: String?
-    public let quantity: String
-    public let unitOfMeasure: String?
-    public let position: String?
-    public let isOptional: Bool?
-    public let notes: String?
-}
-
-public enum BOMStatus: String, Codable, Sendable {
-    case draft = "draft"
-    case active = "active"
-    case obsolete = "obsolete"
-}
-
-// MARK: - Work Order
-
-public struct WorkOrder: Codable, Identifiable, Sendable {
-    public let id: String
-    public let workOrderNumber: String
-    public let productId: String
-    public let bomId: String?
-    public let status: String
-    public let priority: String
-    public let quantityToBuild: String
-    public let quantityCompleted: String
-    public let plannedStart: String?
-    public let plannedEnd: String?
-    public let actualStart: String?
-    public let actualEnd: String?
-    public let notes: String?
-    public let createdAt: String?
-    public let updatedAt: String?
-}
-
-public enum WorkOrderStatus: String, Codable, Sendable {
-    case planned = "planned"
-    case inProgress = "in_progress"
-    case onHold = "on_hold"
-    case completed = "completed"
-    case partiallyCompleted = "partially_completed"
-    case cancelled = "cancelled"
-}
-
-public enum WorkOrderPriority: String, Codable, Sendable {
-    case low = "low"
-    case normal = "normal"
-    case high = "high"
-    case urgent = "urgent"
-}
-
-// MARK: - Currency
-
-public struct ExchangeRate: Codable, Identifiable, Sendable {
-    public let id: String
-    public let baseCurrency: String
-    public let quoteCurrency: String
-    public let rate: String
-    public let source: String?
-    public let validFrom: String
-    public let validTo: String?
-    public let createdAt: String?
-}
-
-public struct ConversionResult: Codable, Sendable {
-    public let fromCurrency: String
-    public let toCurrency: String
-    public let originalAmount: String
-    public let convertedAmount: String
-    public let rate: String
-    public let rateAt: String
-}
-
-public struct StoreCurrencySettings: Codable, Sendable {
-    public let baseCurrency: String
-    public let enabledCurrencies: [String]
-    public let autoConvert: Bool
-    public let roundingMode: String
-}
-
-public enum Currency: String, Codable, Sendable {
+public enum Currency: String, CaseIterable, Codable, Sendable {
     case usd = "USD"
     case eur = "EUR"
     case gbp = "GBP"
@@ -543,36 +405,8 @@ public enum Currency: String, Codable, Sendable {
     case cny = "CNY"
 }
 
-// MARK: - Refund
-
-public struct Refund: Codable, Identifiable, Sendable {
-    public let id: String
-    public let refundNumber: String
-    public let paymentId: String
-    public let amount: String
-    public let currency: String
-    public let status: String
-    public let reason: String?
-    public let externalId: String?
-    public let failureReason: String?
-    public let refundedAt: String?
-    public let createdAt: String?
-}
-
 public enum RefundStatus: String, Codable, Sendable {
     case pending = "pending"
     case completed = "completed"
     case failed = "failed"
-}
-
-// MARK: - Return Status
-
-public enum ReturnStatus: String, Codable, Sendable {
-    case requested = "requested"
-    case approved = "approved"
-    case rejected = "rejected"
-    case inTransit = "in_transit"
-    case received = "received"
-    case completed = "completed"
-    case cancelled = "cancelled"
 }

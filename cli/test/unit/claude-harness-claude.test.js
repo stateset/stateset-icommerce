@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -101,12 +101,28 @@ async function waitFor(predicate, { timeoutMs = 500, intervalMs = 5 } = {}) {
   throw new Error('Timed out waiting for condition');
 }
 
-afterEach(() => {
-  __resetClaudeQueryImplForTest();
-});
+let claudeHarnessTestGate = Promise.resolve();
+
+function itSerial(name, fn) {
+  it(name, async (t) => {
+    const previous = claudeHarnessTestGate;
+    let release;
+    claudeHarnessTestGate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+    try {
+      return await fn(t);
+    } finally {
+      __resetClaudeQueryImplForTest();
+      release();
+    }
+  });
+}
 
 describe('Claude harness paths', { concurrency: false }, () => {
-  it('runs the Claude SDK path with tool events, prompt reporting, and session persistence', async () => {
+  itSerial('runs the Claude SDK path with tool events, prompt reporting, and session persistence', async () => {
     const dbPath = newDbPath();
     const sessionStore = createSessionStore();
     const events = [];
@@ -200,7 +216,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     cleanupDb(dbPath);
   });
 
-  it('passes autonomousEngine into the Claude MCP server for runAgentLoop', async () => {
+  itSerial('passes autonomousEngine into the Claude MCP server for runAgentLoop', async () => {
     const dbPath = newDbPath();
     const delegated = [];
 
@@ -257,7 +273,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     cleanupDb(dbPath);
   });
 
-  it('raises a watchdog timeout on the Claude SDK path and persists the failure', async () => {
+  itSerial('raises a watchdog timeout on the Claude SDK path and persists the failure', async () => {
     const dbPath = newDbPath();
     const sessionStore = createSessionStore();
     const events = [];
@@ -311,7 +327,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     cleanupDb(dbPath);
   });
 
-  it('runs the Claude streaming path with prompt reporting and session persistence', async () => {
+  itSerial('runs the Claude streaming path with prompt reporting and session persistence', async () => {
     const dbPath = newDbPath();
     const sessionStore = createSessionStore();
     const events = [];
@@ -374,7 +390,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     cleanupDb(dbPath);
   });
 
-  it('passes autonomousEngine into the Claude MCP server for runAgentStream', async () => {
+  itSerial('passes autonomousEngine into the Claude MCP server for runAgentStream', async () => {
     const dbPath = newDbPath();
     const received = [];
     const delegated = [];
@@ -436,7 +452,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     cleanupDb(dbPath);
   });
 
-  it('passes autonomousEngine through createAgentSession queries', async () => {
+  itSerial('passes autonomousEngine through createAgentSession queries', async () => {
     const dbPath = newDbPath();
     const delegated = [];
 
@@ -494,7 +510,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     cleanupDb(dbPath);
   });
 
-  it('raises a watchdog timeout on the Claude streaming path and records the failure', async () => {
+  itSerial('raises a watchdog timeout on the Claude streaming path and records the failure', async () => {
     const dbPath = newDbPath();
     const sessionStore = createSessionStore();
     const events = [];
@@ -545,7 +561,7 @@ describe('Claude harness paths', { concurrency: false }, () => {
     cleanupDb(dbPath);
   });
 
-it('keeps interactive sessions idle-safe between turns and persists turn accounting', async () => {
+itSerial('keeps interactive sessions idle-safe between turns and persists turn accounting', async () => {
   const dbPath = newDbPath();
   const sessionStore = createSessionStore();
   const events = [];
@@ -761,7 +777,7 @@ it('keeps interactive sessions idle-safe between turns and persists turn account
   cleanupDb(dbPath);
 });
 
-it('passes autonomousEngine into interactive session MCP servers', async () => {
+itSerial('passes autonomousEngine into interactive session MCP servers', async () => {
   const dbPath = newDbPath();
   const received = [];
   const delegated = [];
@@ -834,7 +850,7 @@ it('passes autonomousEngine into interactive session MCP servers', async () => {
   cleanupDb(dbPath);
 });
 
-it('injects seeded conversation history into a fresh interactive Claude session', async () => {
+itSerial('injects seeded conversation history into a fresh interactive Claude session', async () => {
   const dbPath = newDbPath();
   const events = [];
   const received = [];
@@ -900,7 +916,7 @@ it('injects seeded conversation history into a fresh interactive Claude session'
   cleanupDb(dbPath);
 });
 
-it('records treasury billing for persistent interactive Claude turns', async () => {
+itSerial('records treasury billing for persistent interactive Claude turns', async () => {
   const dbPath = newDbPath();
   const sessionStore = createSessionStore();
   const events = [];

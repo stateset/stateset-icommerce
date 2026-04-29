@@ -1,6 +1,8 @@
 //! Ruby runtime bindings for the v1 supported surface.
 
-use magnus::{Error, RArray, RHash, Ruby, Symbol, class, define_module, exception, function, method, prelude::*};
+use magnus::{
+    Error, IntoValue, RArray, RHash, Ruby, Symbol, exception, function, method, prelude::*,
+};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]

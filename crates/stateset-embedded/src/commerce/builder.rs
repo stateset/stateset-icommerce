@@ -5,19 +5,20 @@ use super::{Commerce, CommerceBackend};
 use std::sync::Arc;
 
 use stateset_core::CommerceError;
-use stateset_db::{Database, DatabaseConfig};
+use stateset_db::Database;
 use stateset_observability::{MetricsConfig, init_metrics};
 
 #[cfg(feature = "events")]
 use crate::events::{EventConfig, EventSystem};
 
 #[cfg(feature = "sqlite")]
-use stateset_db::SqliteDatabase;
+use stateset_db::{DatabaseConfig, SqliteDatabase};
 
 /// Builder for creating a Commerce instance with custom configuration.
 #[derive(Default)]
 #[must_use]
 pub struct CommerceBuilder {
+    #[cfg(feature = "sqlite")]
     sqlite_path: Option<String>,
     #[cfg(feature = "postgres")]
     postgres_url: Option<String>,
@@ -166,6 +167,11 @@ impl CommerceBuilder {
                 sqlite_db: None,
             });
         }
+
+        #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+        return Err(CommerceError::Internal(
+            "PostgreSQL URL is required when the sqlite feature is disabled".to_string(),
+        ));
 
         // Default to SQLite
         #[cfg(feature = "sqlite")]

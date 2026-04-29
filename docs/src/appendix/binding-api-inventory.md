@@ -42,7 +42,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | PHP | Composer | `stateset/embedded` | `1.0.0` | `package-manifest` | manifest coverage |
 | Python | PyPI | `stateset-embedded` | `1.0.0` | `detailed` | 99 public symbols |
 | Ruby | RubyGems | `stateset_embedded` | `1.0.0` | `package-manifest` | manifest coverage |
-| Swift | SwiftPM | `StateSet` | — | `detailed` | 232 API methods |
+| Swift | SwiftPM | `StateSet` | — | `detailed` | 71 API methods |
 | WASM | npm | `@stateset/embedded-wasm` | `1.0.0` | `package-manifest` | manifest coverage |
 
 ## Node.js Exports
@@ -781,10 +781,10 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Metric | Value |
 | --- | --- |
-| Public types | 80 |
+| Public types | 73 |
 | API types | 31 |
 | Facade properties | 31 |
-| API methods | 232 |
+| API methods | 71 |
 | Targets | `StateSet`, `StateSetC`, `StateSetTests` |
 
 ## Swift Public Types
@@ -795,17 +795,13 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `AccountsReceivableAPI` |
 | `AnalyticsAPI` |
 | `BackordersAPI` |
-| `BillOfMaterials` |
 | `BOMAPI` |
-| `BOMComponent` |
-| `BOMStatus` |
 | `Cart` |
 | `CartItem` |
 | `CartsAPI` |
-| `ClaimResolution` |
-| `ClaimStatus` |
 | `ConversionResult` |
 | `CostAccountingAPI` |
+| `Coupon` |
 | `CreditAPI` |
 | `Currency` |
 | `CurrencyAPI` |
@@ -814,12 +810,11 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `ExchangeRate` |
 | `FulfillmentAPI` |
 | `GeneralLedgerAPI` |
+| `GlAccount` |
 | `InventoryAPI` |
 | `InventoryItem` |
-| `Invoice` |
-| `InvoiceItem` |
 | `InvoicesAPI` |
-| `InvoiceStatus` |
+| `Location` |
 | `LotsAPI` |
 | `Order` |
 | `OrderItem` |
@@ -831,11 +826,9 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `Product` |
 | `ProductsAPI` |
 | `ProductVariant` |
+| `Promotion` |
 | `PromotionsAPI` |
-| `PurchaseOrder` |
-| `PurchaseOrderItem` |
 | `PurchaseOrdersAPI` |
-| `PurchaseOrderStatus` |
 | `QualityAPI` |
 | `ReceivingAPI` |
 | `Refund` |
@@ -854,23 +847,23 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `StateSetError` |
 | `StockLevel` |
 | `StoreCurrencySettings` |
+| `Subscription` |
+| `SubscriptionPlan` |
 | `SubscriptionsAPI` |
-| `Supplier` |
 | `SuppliersAPI` |
 | `TaxAPI` |
+| `TaxCalculation` |
+| `TaxExemption` |
+| `TaxJurisdiction` |
+| `TaxRate` |
+| `TaxSettings` |
 | `TimePeriod` |
 | `TopCustomer` |
 | `TopProduct` |
+| `Warehouse` |
 | `WarehouseAPI` |
 | `WarrantiesAPI` |
-| `Warranty` |
-| `WarrantyClaim` |
-| `WarrantyStatus` |
-| `WarrantyType` |
-| `WorkOrder` |
-| `WorkOrderPriority` |
 | `WorkOrdersAPI` |
-| `WorkOrderStatus` |
 
 ## Swift Facade Properties
 
@@ -912,60 +905,10 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | API type | Method |
 | --- | --- |
-| `AccountsPayableAPI` | `approveBill` |
-| `AccountsPayableAPI` | `cancelBill` |
-| `AccountsPayableAPI` | `createBill` |
-| `AccountsPayableAPI` | `getAgingSummary` |
-| `AccountsPayableAPI` | `getBill` |
-| `AccountsPayableAPI` | `getBillByNumber` |
-| `AccountsPayableAPI` | `getBillsDueSoon` |
-| `AccountsPayableAPI` | `getOverdueBills` |
-| `AccountsPayableAPI` | `getTotalOutstanding` |
-| `AccountsPayableAPI` | `listBills` |
-| `AccountsReceivableAPI` | `createCreditMemo` |
-| `AccountsReceivableAPI` | `getAgingSummary` |
-| `AccountsReceivableAPI` | `getCreditMemo` |
-| `AccountsReceivableAPI` | `getDso` |
-| `AccountsReceivableAPI` | `getTotalOutstanding` |
-| `AccountsReceivableAPI` | `getUnappliedCredits` |
-| `AccountsReceivableAPI` | `listCreditMemos` |
-| `AccountsReceivableAPI` | `voidCreditMemo` |
 | `AnalyticsAPI` | `salesSummary` |
 | `AnalyticsAPI` | `topCustomers` |
 | `AnalyticsAPI` | `topProducts` |
-| `BackordersAPI` | `cancelBackorder` |
-| `BackordersAPI` | `countPending` |
-| `BackordersAPI` | `createBackorder` |
-| `BackordersAPI` | `getBackorder` |
-| `BackordersAPI` | `getBackorderByNumber` |
-| `BackordersAPI` | `getBackordersForOrder` |
-| `BackordersAPI` | `getBackordersForSku` |
-| `BackordersAPI` | `getOverdueBackorders` |
-| `BackordersAPI` | `getSummary` |
-| `BackordersAPI` | `listBackorders` |
-| `BOMAPI` | `activate` |
-| `BOMAPI` | `addComponent` |
-| `BOMAPI` | `create` |
-| `BOMAPI` | `get` |
-| `BOMAPI` | `getComponents` |
-| `BOMAPI` | `list` |
-| `CartsAPI` | `addItem` |
 | `CartsAPI` | `create` |
-| `CartsAPI` | `get` |
-| `CostAccountingAPI` | `getItemCost` |
-| `CostAccountingAPI` | `getTotalInventoryValue` |
-| `CostAccountingAPI` | `listItemCosts` |
-| `CostAccountingAPI` | `setItemCost` |
-| `CostAccountingAPI` | `updateAverageCost` |
-| `CreditAPI` | `adjustCreditLimit` |
-| `CreditAPI` | `checkCredit` |
-| `CreditAPI` | `createCreditAccount` |
-| `CreditAPI` | `getCreditAccount` |
-| `CreditAPI` | `getCreditAccountByCustomer` |
-| `CreditAPI` | `getOverLimitCustomers` |
-| `CreditAPI` | `listCreditAccounts` |
-| `CreditAPI` | `reactivateCreditAccount` |
-| `CreditAPI` | `suspendCreditAccount` |
 | `CurrencyAPI` | `convert` |
 | `CurrencyAPI` | `getRate` |
 | `CurrencyAPI` | `getSettings` |
@@ -974,64 +917,20 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `CustomersAPI` | `delete` |
 | `CustomersAPI` | `get` |
 | `CustomersAPI` | `list` |
-| `FulfillmentAPI` | `assignPick` |
-| `FulfillmentAPI` | `cancelPick` |
-| `FulfillmentAPI` | `cancelWave` |
-| `FulfillmentAPI` | `completeWave` |
-| `FulfillmentAPI` | `createWave` |
-| `FulfillmentAPI` | `getPick` |
-| `FulfillmentAPI` | `getWave` |
-| `FulfillmentAPI` | `isOrderReadyToPack` |
-| `FulfillmentAPI` | `isOrderReadyToShip` |
-| `FulfillmentAPI` | `listPicks` |
-| `FulfillmentAPI` | `listWaves` |
-| `FulfillmentAPI` | `releaseWave` |
-| `FulfillmentAPI` | `startPick` |
 | `GeneralLedgerAPI` | `createAccount` |
-| `GeneralLedgerAPI` | `getAccount` |
-| `GeneralLedgerAPI` | `getAccountBalance` |
-| `GeneralLedgerAPI` | `getAccountByNumber` |
-| `GeneralLedgerAPI` | `getBalanceSheet` |
-| `GeneralLedgerAPI` | `getIncomeStatement` |
-| `GeneralLedgerAPI` | `getJournalEntry` |
-| `GeneralLedgerAPI` | `getTrialBalance` |
-| `GeneralLedgerAPI` | `initializeChartOfAccounts` |
 | `GeneralLedgerAPI` | `listAccounts` |
-| `GeneralLedgerAPI` | `listJournalEntries` |
-| `GeneralLedgerAPI` | `postJournalEntry` |
-| `GeneralLedgerAPI` | `voidJournalEntry` |
 | `InventoryAPI` | `adjust` |
 | `InventoryAPI` | `createItem` |
 | `InventoryAPI` | `getLevel` |
-| `InvoicesAPI` | `create` |
-| `InvoicesAPI` | `get` |
-| `InvoicesAPI` | `getOverdue` |
-| `InvoicesAPI` | `list` |
-| `InvoicesAPI` | `recordPayment` |
-| `InvoicesAPI` | `send` |
-| `InvoicesAPI` | `void` |
-| `LotsAPI` | `create` |
-| `LotsAPI` | `get` |
-| `LotsAPI` | `getActiveLots` |
-| `LotsAPI` | `getByNumber` |
-| `LotsAPI` | `getExpiredLots` |
-| `LotsAPI` | `getExpiringLots` |
-| `LotsAPI` | `getQuarantined` |
-| `LotsAPI` | `list` |
-| `LotsAPI` | `quarantine` |
-| `LotsAPI` | `releaseQuarantine` |
 | `OrdersAPI` | `cancel` |
 | `OrdersAPI` | `create` |
 | `OrdersAPI` | `get` |
 | `OrdersAPI` | `list` |
 | `OrdersAPI` | `ship` |
 | `OrdersAPI` | `updateStatus` |
-| `PaymentsAPI` | `complete` |
 | `PaymentsAPI` | `create` |
-| `PaymentsAPI` | `fail` |
 | `PaymentsAPI` | `get` |
 | `PaymentsAPI` | `list` |
-| `PaymentsAPI` | `refund` |
 | `ProductsAPI` | `create` |
 | `ProductsAPI` | `get` |
 | `ProductsAPI` | `list` |
@@ -1046,49 +945,12 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `PromotionsAPI` | `getCouponByCode` |
 | `PromotionsAPI` | `list` |
 | `PromotionsAPI` | `validateCoupon` |
-| `PurchaseOrdersAPI` | `approve` |
-| `PurchaseOrdersAPI` | `cancel` |
-| `PurchaseOrdersAPI` | `create` |
-| `PurchaseOrdersAPI` | `get` |
-| `PurchaseOrdersAPI` | `list` |
-| `PurchaseOrdersAPI` | `send` |
-| `PurchaseOrdersAPI` | `submit` |
-| `QualityAPI` | `closeNcr` |
-| `QualityAPI` | `completeInspection` |
-| `QualityAPI` | `createHold` |
-| `QualityAPI` | `createInspection` |
-| `QualityAPI` | `createNcr` |
-| `QualityAPI` | `getActiveHolds` |
-| `QualityAPI` | `getHold` |
-| `QualityAPI` | `getInspection` |
-| `QualityAPI` | `getNcr` |
-| `QualityAPI` | `listHolds` |
-| `QualityAPI` | `listInspections` |
-| `QualityAPI` | `listNcrs` |
-| `QualityAPI` | `releaseHold` |
-| `QualityAPI` | `startInspection` |
-| `ReceivingAPI` | `cancelReceipt` |
-| `ReceivingAPI` | `completeReceiving` |
-| `ReceivingAPI` | `createReceipt` |
-| `ReceivingAPI` | `createReceiptFromPo` |
-| `ReceivingAPI` | `getReceipt` |
-| `ReceivingAPI` | `getReceiptByNumber` |
-| `ReceivingAPI` | `listReceipts` |
-| `ReceivingAPI` | `startReceiving` |
 | `ReturnsAPI` | `approve` |
 | `ReturnsAPI` | `complete` |
 | `ReturnsAPI` | `create` |
 | `ReturnsAPI` | `get` |
 | `ReturnsAPI` | `list` |
 | `ReturnsAPI` | `reject` |
-| `SerialsAPI` | `create` |
-| `SerialsAPI` | `get` |
-| `SerialsAPI` | `getAvailable` |
-| `SerialsAPI` | `getBySerial` |
-| `SerialsAPI` | `isAvailable` |
-| `SerialsAPI` | `list` |
-| `SerialsAPI` | `markSold` |
-| `SerialsAPI` | `quarantine` |
 | `ShipmentsAPI` | `cancel` |
 | `ShipmentsAPI` | `create` |
 | `ShipmentsAPI` | `deliver` |
@@ -1106,41 +968,11 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `SubscriptionsAPI` | `pause` |
 | `SubscriptionsAPI` | `resume` |
 | `SubscriptionsAPI` | `subscribe` |
-| `SuppliersAPI` | `create` |
-| `SuppliersAPI` | `get` |
-| `SuppliersAPI` | `list` |
 | `TaxAPI` | `calculate` |
-| `TaxAPI` | `createExemption` |
-| `TaxAPI` | `createJurisdiction` |
-| `TaxAPI` | `createRate` |
-| `TaxAPI` | `customerIsExempt` |
-| `TaxAPI` | `getCustomerExemptions` |
 | `TaxAPI` | `getEffectiveRate` |
-| `TaxAPI` | `getJurisdiction` |
-| `TaxAPI` | `getRate` |
 | `TaxAPI` | `getSettings` |
-| `TaxAPI` | `listJurisdictions` |
-| `TaxAPI` | `listRates` |
 | `TaxAPI` | `setEnabled` |
-| `WarehouseAPI` | `createLocation` |
 | `WarehouseAPI` | `createWarehouse` |
-| `WarehouseAPI` | `getLocation` |
-| `WarehouseAPI` | `getPickableLocations` |
-| `WarehouseAPI` | `getTotalAvailable` |
 | `WarehouseAPI` | `getWarehouse` |
 | `WarehouseAPI` | `getWarehouseByCode` |
-| `WarehouseAPI` | `listLocations` |
 | `WarehouseAPI` | `listWarehouses` |
-| `WarrantiesAPI` | `approveClaim` |
-| `WarrantiesAPI` | `completeClaim` |
-| `WarrantiesAPI` | `create` |
-| `WarrantiesAPI` | `createClaim` |
-| `WarrantiesAPI` | `denyClaim` |
-| `WarrantiesAPI` | `get` |
-| `WarrantiesAPI` | `list` |
-| `WorkOrdersAPI` | `cancel` |
-| `WorkOrdersAPI` | `complete` |
-| `WorkOrdersAPI` | `create` |
-| `WorkOrdersAPI` | `get` |
-| `WorkOrdersAPI` | `list` |
-| `WorkOrdersAPI` | `start` |
