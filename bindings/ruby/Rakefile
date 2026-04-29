@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
 require 'bundler/gem_tasks'
+require 'rake/extensiontask'
 require 'rspec/core/rake_task'
-require 'rb_sys/extensiontask'
 
 GEMSPEC = Gem::Specification.load('stateset_embedded.gemspec')
 
-RbSys::ExtensionTask.new('stateset_embedded', GEMSPEC) do |ext|
+Rake::ExtensionTask.new('stateset_embedded', GEMSPEC) do |ext|
   ext.lib_dir = 'lib/stateset_embedded'
 end
 
