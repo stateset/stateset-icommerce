@@ -7,8 +7,8 @@ use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jdouble, jint, jlong};
 use rust_decimal::Decimal;
 use stateset_core::{
-    AccountType, BackorderPriority, InspectionType, LocationType, OrderStatus, ReturnReason,
-    ShippingCarrier, WarehouseType,
+    AccountType, BackorderPriority, InspectionType, LocationType, OrderStatus, ProductId,
+    ReturnReason, ShippingCarrier, WarehouseType,
 };
 use stateset_embedded::{
     AddCartItem,
@@ -37,6 +37,7 @@ use stateset_embedded::{
     CreateWarehouse,
     CustomerFilter,
     OrderFilter,
+    PaymentFilter,
     PaymentMethodType,
     ProductFilter,
     SetItemCost,
@@ -145,6 +146,48 @@ fn to_json_string<'a>(env: &JNIEnv<'a>, value: &impl serde::Serialize) -> JObjec
         Ok(json) => env.new_string(&json).map(|s| s.into()).unwrap_or(JObject::null()),
         Err(_) => JObject::null(),
     }
+}
+
+fn parse_order_items(items_json: &str) -> Result<Vec<stateset_embedded::CreateOrderItem>, String> {
+    if items_json.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_str(items_json).map_err(|e| format!("Invalid order items JSON: {}", e))?;
+    let items = value.as_array().ok_or_else(|| "Order items JSON must be an array".to_string())?;
+
+    items
+        .iter()
+        .map(|item| {
+            let sku =
+                item.get("sku").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+            let name =
+                item.get("name").and_then(serde_json::Value::as_str).unwrap_or(&sku).to_string();
+            let quantity =
+                item.get("quantity").and_then(serde_json::Value::as_i64).unwrap_or(1) as i32;
+            let unit_price = item
+                .get("unit_price")
+                .and_then(serde_json::Value::as_f64)
+                .and_then(|value| Decimal::try_from(value).ok())
+                .unwrap_or_default();
+            let product_id = item
+                .get("product_id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                .map(ProductId::from_uuid)
+                .unwrap_or_else(ProductId::new);
+
+            Ok(stateset_embedded::CreateOrderItem {
+                product_id,
+                sku,
+                name,
+                quantity,
+                unit_price,
+                ..Default::default()
+            })
+        })
+        .collect()
 }
 
 // =============================================================================
@@ -415,10 +458,10 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeOrderCr
         }
     };
 
-    let items: Vec<stateset_embedded::CreateOrderItem> = match serde_json::from_str(&items_str) {
+    let items = match parse_order_items(&items_str) {
         Ok(i) => i,
         Err(e) => {
-            throw_exception(&mut env, &format!("Invalid items JSON: {}", e));
+            throw_exception(&mut env, &e);
             return JObject::null();
         }
     };
@@ -433,6 +476,64 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeOrderCr
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(order) => to_json_string(&env, &order),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeOrderShip<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.orders().ship(uuid.into(), None).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(order) => to_json_string(&env, &order),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeOrderCancel<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.orders().cancel(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -572,7 +673,18 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeInvento
     });
 
     match result {
-        Ok(item) => to_json_string(&env, &item),
+        Ok(item) => {
+            let payload = serde_json::json!({
+                "id": item.id.to_string(),
+                "sku": item.sku,
+                "name": item.name,
+                "description": item.description,
+                "unit_of_measure": item.unit_of_measure,
+                "created_at": item.created_at,
+                "updated_at": item.updated_at,
+            });
+            to_json_string(&env, &payload)
+        }
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -622,7 +734,20 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeInvento
     });
 
     match result {
-        Ok(Some(level)) => to_json_string(&env, &level),
+        Ok(Some(level)) => {
+            let location_id =
+                level.locations.first().map(|location| location.location_id.to_string());
+            let sku = level.sku.clone();
+            let payload = serde_json::json!({
+                "id": sku,
+                "inventory_item_id": level.sku,
+                "location_id": location_id,
+                "available": level.total_available,
+                "reserved": level.total_allocated,
+                "incoming": null,
+            });
+            to_json_string(&env, &payload)
+        }
         Ok(None) => JObject::null(),
         Err(e) => {
             throw_exception(&mut env, &e);
@@ -847,6 +972,124 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeReturnL
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeReturnGet<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid return UUID");
+            return JObject::null();
+        }
+    };
+
+    let result =
+        use_handle(ptr, |commerce| commerce.returns().get(uuid.into()).map_err(|e| e.to_string()));
+
+    match result {
+        Ok(Some(ret)) => to_json_string(&env, &ret),
+        Ok(None) => JObject::null(),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeReturnApprove<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid return UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.returns().approve(uuid.into()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(ret) => to_json_string(&env, &ret),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeReturnReject<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+    reason: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let reason_str = get_string(&mut env, &reason);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid return UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.returns().reject(uuid.into(), &reason_str).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(ret) => to_json_string(&env, &ret),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeReturnComplete<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid return UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.returns().complete(uuid.into()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(ret) => to_json_string(&env, &ret),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
 // =============================================================================
 // Payments API
 // =============================================================================
@@ -900,6 +1143,54 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativePayment
 
     match result {
         Ok(payment) => to_json_string(&env, &payment),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativePaymentGet<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid payment UUID");
+            return JObject::null();
+        }
+    };
+
+    let result =
+        use_handle(ptr, |commerce| commerce.payments().get(uuid.into()).map_err(|e| e.to_string()));
+
+    match result {
+        Ok(Some(payment)) => to_json_string(&env, &payment),
+        Ok(None) => JObject::null(),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativePaymentList<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.payments().list(PaymentFilter::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(payments) => to_json_string(&env, &payments),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()

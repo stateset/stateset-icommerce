@@ -27,7 +27,7 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
-    systemProperty("java.library.path", "${project.rootDir}/../target/release")
+    systemProperty("java.library.path", "${project.rootDir}/../../../target/release")
 }
 
 // Native library loading support
@@ -40,7 +40,7 @@ tasks.jar {
     }
 
     // Include native libraries
-    from("../target/release") {
+    from("${project.rootDir}/../../../target/release") {
         include("*.so", "*.dylib", "*.dll")
         into("native/")
     }

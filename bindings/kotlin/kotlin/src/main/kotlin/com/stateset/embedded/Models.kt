@@ -115,7 +115,7 @@ data class Payment(
     @SerialName("order_id") val orderId: String,
     val amount: String,
     val currency: String,
-    val method: String,
+    @SerialName("payment_method") val method: String,
     val status: String,
     @SerialName("created_at") val createdAt: String? = null
 )
