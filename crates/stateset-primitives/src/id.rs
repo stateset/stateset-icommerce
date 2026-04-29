@@ -371,8 +371,8 @@ mod tests {
 
     #[test]
     fn id_types_are_distinct() {
-        let order_id = OrderId::new();
-        let customer_id = CustomerId::new();
+        let order_id = OrderId::from_uuid(Uuid::from_bytes([1; 16]));
+        let customer_id = CustomerId::from_uuid(Uuid::from_bytes([2; 16]));
 
         // Both are UUIDs internally, but they're different types
         let _: Uuid = order_id.into();
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn roundtrip_display_parse() {
-        let id = OrderId::new();
+        let id = OrderId::from_uuid(Uuid::from_bytes([3; 16]));
         let s = id.to_string();
         let parsed: OrderId = s.parse().unwrap();
         assert_eq!(id, parsed);
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn serde_roundtrip() {
-        let id = ProductId::new();
+        let id = ProductId::from_uuid(Uuid::from_bytes([4; 16]));
         let json = serde_json::to_string(&id).unwrap();
         let parsed: ProductId = serde_json::from_str(&json).unwrap();
         assert_eq!(id, parsed);
@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn from_uuid_roundtrip() {
-        let uuid = Uuid::new_v4();
+        let uuid = Uuid::from_bytes([5; 16]);
         let order_id = OrderId::from(uuid);
         assert_eq!(Uuid::from(order_id), uuid);
     }

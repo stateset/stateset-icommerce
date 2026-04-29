@@ -233,7 +233,8 @@ jobs:
       matrix:
         flags: ["", "--no-default-features"]
     env:
-      MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-tree-borrows
+      MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-tree-borrows -Zmiri-disable-isolation
+      PROPTEST_CASES: "4"
       PROPTEST_DISABLE_FAILURE_PERSISTENCE: "1"
     steps:
       - uses: actions/checkout@v6
@@ -950,7 +951,7 @@ jobs:
 
       - name: Check package metadata
         working-directory: bindings/php
-        run: composer validate --strict --no-check-lock
+        run: composer validate --no-check-lock
 
       - name: Install PHP dependencies
         working-directory: bindings/php

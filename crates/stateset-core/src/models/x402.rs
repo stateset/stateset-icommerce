@@ -1538,6 +1538,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "hybrid PQC signature verification is too slow under Miri")]
     fn test_hybrid_signature_verifies() {
         let mut intent = X402PaymentIntent::new(
             "0x1234567890abcdef1234567890abcdef12345678",
@@ -1559,6 +1560,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "strict PQC signature verification is too slow under Miri")]
     fn test_strict_signature_verifies() {
         let mut intent = X402PaymentIntent::new(
             "0x1234567890abcdef1234567890abcdef12345678",
