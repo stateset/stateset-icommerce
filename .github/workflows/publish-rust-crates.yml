@@ -36,6 +36,17 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            cli/package-lock.json
+
+      - name: Install root tooling
+        run: HUSKY=0 npm ci
+
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm ci
 
       - name: Check release hygiene
         env:
