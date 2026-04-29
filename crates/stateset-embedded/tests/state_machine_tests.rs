@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //!
 //! Comprehensive state machine tests for core commerce entities.
 //!

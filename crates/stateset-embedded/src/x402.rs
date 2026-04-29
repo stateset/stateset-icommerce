@@ -632,7 +632,7 @@ impl X402 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 mod tests {
     use super::*;
     use stateset_core::{

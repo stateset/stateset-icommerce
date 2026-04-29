@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //!
 //! Property-based tests for concurrent operations using proptest.
 //!

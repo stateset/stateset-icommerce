@@ -6,7 +6,7 @@ mod constructors;
 mod events;
 mod introspection;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 mod tests;
 
 use std::sync::Arc;

@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for Returns/RMA lifecycle
 //!
 //! Tests the full return lifecycle including:

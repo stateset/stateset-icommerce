@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for ERP accessor modules that previously lacked dedicated test files.
 //!
 //! Covers: `accounts_payable`, `accounts_receivable`, `general_ledger`, `credit`,

@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Tests for newly added commerce modules
 
 use rust_decimal_macros::dec;

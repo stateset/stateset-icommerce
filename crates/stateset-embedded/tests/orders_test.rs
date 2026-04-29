@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for Order management
 
 use rust_decimal_macros::dec;

@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for Cart management
 
 use rust_decimal_macros::dec;

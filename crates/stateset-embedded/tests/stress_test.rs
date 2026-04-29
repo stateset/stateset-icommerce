@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Stress tests for performance and reliability under load
 //!
 //! These tests verify system behavior under high volume operations.

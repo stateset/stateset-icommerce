@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! API-level benchmark suite for `stateset-embedded`.
 //!
 //! Run with: `cargo bench -p stateset-embedded --bench api_benchmarks`

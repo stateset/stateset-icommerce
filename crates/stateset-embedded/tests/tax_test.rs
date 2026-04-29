@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for tax calculation features
 
 use chrono::Utc;

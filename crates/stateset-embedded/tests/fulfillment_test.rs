@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for Fulfillment (Pick/Pack/Ship)
 //!
 //! These tests cover the full pick/pack/ship workflow for warehouse fulfillment

@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! End-to-end commerce workflow test
 //!
 //! Tests the full lifecycle: Customer → Product → Inventory → Order →

@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //!
 //! Comprehensive end-to-end integration tests for full commerce workflows.
 //!

@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Concurrency and inventory reservation conflict tests
 //! Tests behavior under concurrent access, race conditions, and deadlocks
 

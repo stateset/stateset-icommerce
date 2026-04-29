@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Advanced integration tests for Inventory management
 
 use rust_decimal_macros::dec;

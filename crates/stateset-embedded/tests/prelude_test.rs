@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Locks in the contents of `stateset_embedded::prelude`.
 //!
 //! If a future refactor moves or renames one of the curated types, this

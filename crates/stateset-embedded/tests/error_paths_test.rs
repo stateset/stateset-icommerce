@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Error path tests for comprehensive coverage
 //!
 //! Tests error conditions, edge cases, and failure modes.

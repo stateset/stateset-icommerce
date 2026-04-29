@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 use serde_json::json;
 use stateset_embedded::{
     Commerce, CreateCustomObject, CreateCustomObjectType, CustomFieldDefinition, CustomFieldType,

@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for the event infrastructure:
 //! `EventBus`, `EventEmitter`, `EventStore`, `EventSystem`, filtered subscriptions,
 //! notification service integration, and webhook registration edge cases.

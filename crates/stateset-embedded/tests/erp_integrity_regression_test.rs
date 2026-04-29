@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 use chrono::Utc;
 use rust_decimal_macros::dec;
 use stateset_core::{

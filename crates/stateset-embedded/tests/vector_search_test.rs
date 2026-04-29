@@ -1,3 +1,5 @@
+#![cfg(all(feature = "sqlite", feature = "vector"))]
+
 //! Vector search integration tests
 //!
 //! Tests the full embed → store → search round-trip using the embedded commerce engine.
@@ -5,8 +7,6 @@
 //!   `OPENAI_API_KEY=sk`-... cargo test --test `vector_search_test` --features vector -- --ignored
 //!
 //! All tests are #[ignore] by default so they don't run in CI without the API key.
-
-#![cfg(feature = "vector")]
 
 use stateset_embedded::{Commerce, CreateCustomer, CreateProduct, EntityType};
 use uuid::Uuid;

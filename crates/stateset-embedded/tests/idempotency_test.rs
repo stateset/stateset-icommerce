@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Idempotency tests for payments, refunds, and returns
 
 use rust_decimal_macros::dec;

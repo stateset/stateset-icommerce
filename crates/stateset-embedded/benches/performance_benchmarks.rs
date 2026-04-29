@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //!
 //! Performance benchmark suite for critical operations.
 //!

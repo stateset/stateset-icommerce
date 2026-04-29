@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for subscription management features
 
 use rust_decimal_macros::dec;

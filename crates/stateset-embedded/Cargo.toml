@@ -76,11 +76,14 @@ proptest = "1.4"
 [[bench]]
 name = "api_benchmarks"
 harness = false
+required-features = ["sqlite"]
 
 [[bench]]
 name = "performance_benchmarks"
 harness = false
+required-features = ["sqlite"]
 
 [[example]]
 name = "basic_usage"
 path = "../../examples/basic_usage.rs"
+required-features = ["sqlite"]
