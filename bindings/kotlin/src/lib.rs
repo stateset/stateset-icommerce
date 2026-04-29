@@ -36,6 +36,7 @@ use stateset_embedded::{
     CreateShipment,
     CreateWarehouse,
     CustomerFilter,
+    CustomerStatus,
     OrderFilter,
     PaymentFilter,
     PaymentMethodType,
@@ -283,8 +284,10 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeCustome
     });
 
     match result {
-        Ok(Some(customer)) => to_json_string(&env, &customer),
-        Ok(None) => JObject::null(),
+        Ok(Some(customer)) if customer.status != CustomerStatus::Deleted => {
+            to_json_string(&env, &customer)
+        }
+        Ok(Some(_)) | Ok(None) => JObject::null(),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()

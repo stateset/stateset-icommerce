@@ -209,7 +209,9 @@ impl Shipment {
     #[must_use]
     pub fn generate_shipment_number() -> String {
         let now = chrono::Utc::now();
-        format!("SHP-{}", now.format("%Y%m%d%H%M%S"))
+        let suffix = Uuid::new_v4().simple().to_string();
+        let short_suffix = suffix[..8].to_uppercase();
+        format!("SHP-{}-{short_suffix}", now.format("%Y%m%d%H%M%S"))
     }
 
     /// Calculate transit time in days (if delivered)
@@ -367,5 +369,15 @@ mod tests {
         assert_eq!(ShippingMethod::from_str("standard").unwrap(), ShippingMethod::Standard);
         assert_eq!(ShippingMethod::from_str("two_day").unwrap(), ShippingMethod::TwoDay);
         assert_eq!(ShippingMethod::from_str("sameday").unwrap(), ShippingMethod::SameDay);
+    }
+
+    #[test]
+    fn shipment_numbers_are_unique_within_the_same_second() {
+        let first = Shipment::generate_shipment_number();
+        let second = Shipment::generate_shipment_number();
+
+        assert!(first.starts_with("SHP-"));
+        assert!(second.starts_with("SHP-"));
+        assert_ne!(first, second);
     }
 }
