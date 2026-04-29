@@ -25,7 +25,7 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
-    systemProperty 'java.library.path', "${project.rootDir}/../target/release"
+    systemProperty 'java.library.path', "${project.rootDir}/../../../target/release"
 }
 
 jar {
@@ -39,25 +39,24 @@ jar {
 }
 
 // Include native libraries in the JAR
+def nativePlatform = {
+    def os = System.getProperty('os.name').toLowerCase()
+    def arch = System.getProperty('os.arch').toLowerCase()
+    if (os.contains('win')) {
+        return 'windows-x86_64'
+    }
+    if (os.contains('mac')) {
+        return arch.contains('aarch64') || arch.contains('arm64') ? 'darwin-arm64' : 'darwin-x86_64'
+    }
+    return arch.contains('aarch64') || arch.contains('arm64') ? 'linux-arm64' : 'linux-x86_64'
+}()
+
 processResources {
-    from("${project.rootDir}/../target/release") {
+    from("${project.rootDir}/../../../target/release") {
         include 'libstateset_java.so'
         include 'libstateset_java.dylib'
         include 'stateset_java.dll'
-        into 'native'
-        rename { filename ->
-            def os = System.getProperty('os.name').toLowerCase()
-            def arch = System.getProperty('os.arch').toLowerCase()
-            def platform
-            if (os.contains('win')) {
-                platform = 'windows-x86_64'
-            } else if (os.contains('mac')) {
-                platform = arch.contains('aarch64') || arch.contains('arm64') ? 'darwin-arm64' : 'darwin-x86_64'
-            } else {
-                platform = arch.contains('aarch64') || arch.contains('arm64') ? 'linux-arm64' : 'linux-x86_64'
-            }
-            "native/${platform}/${filename}"
-        }
+        into "native/${nativePlatform}"
     }
 }
 

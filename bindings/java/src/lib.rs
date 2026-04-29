@@ -4,14 +4,13 @@
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString, JValue};
-use jni::sys::{jdouble, jint, jlong};
+use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jdouble, jint, jlong};
 use rust_decimal::Decimal;
-use stateset_core::{OrderStatus, ReturnReason};
+use stateset_core::{InventoryFilter, OrderStatus, ProductId, ReturnFilter, ReturnReason};
 use stateset_embedded::{
     AddCartItem, AnalyticsQuery, Commerce as RustCommerce, CreateCart, CreateCustomer,
-    CreateInventoryItem, CreateOrder, CreatePayment, CreateProduct, CreateProductVariant,
-    CreateReturn, CreateReturnItem, CustomerFilter, OrderFilter, PaymentMethodType, ProductFilter,
-    TimePeriod,
+    CreateInventoryItem, CreateOrder, CreateOrderItem, CreatePayment, CreateProduct, CreateReturn,
+    CreateReturnItem, CustomerFilter, OrderFilter, PaymentMethodType, ProductFilter, TimePeriod,
 };
 use stateset_primitives::CurrencyCode;
 use std::collections::HashMap;
@@ -26,6 +25,15 @@ type SharedCommerce = Arc<Mutex<RustCommerce>>;
 
 static HANDLE_REGISTRY: OnceLock<Mutex<HashMap<usize, SharedCommerce>>> = OnceLock::new();
 static NEXT_HANDLE_ID: AtomicUsize = AtomicUsize::new(1);
+static RESERVATION_REGISTRY: OnceLock<
+    Mutex<HashMap<(usize, i64), Vec<InventoryReservationEntry>>>,
+> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+struct InventoryReservationEntry {
+    id: uuid::Uuid,
+    quantity: Decimal,
+}
 
 fn handle_registry() -> &'static Mutex<HashMap<usize, SharedCommerce>> {
     HANDLE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
@@ -73,6 +81,9 @@ fn destroy_handle(ptr: jlong) {
         return;
     }
     let _ = with_handle_registry(|handles| handles.remove(&(ptr as usize)));
+    let _ = with_reservation_registry(|reservations| {
+        reservations.retain(|(handle_id, _), _| *handle_id != ptr as usize);
+    });
 }
 
 fn use_handle<F, R>(ptr: jlong, f: F) -> Result<R, String>
@@ -82,6 +93,20 @@ where
     let handle = get_handle(ptr).ok_or_else(|| "Null handle".to_string())?;
     let guard = handle.lock().map_err(|e| format!("Lock failed: {}", e))?;
     f(&guard)
+}
+
+fn reservation_registry() -> &'static Mutex<HashMap<(usize, i64), Vec<InventoryReservationEntry>>> {
+    RESERVATION_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn with_reservation_registry<T>(
+    f: impl FnOnce(&mut HashMap<(usize, i64), Vec<InventoryReservationEntry>>) -> T,
+) -> T {
+    let mut reservations = match reservation_registry().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    f(&mut reservations)
 }
 
 // =============================================================================
@@ -124,6 +149,70 @@ where
     }
 }
 
+fn decimal_to_jint(value: Decimal) -> jint {
+    to_f64_or_nan(value).round() as jint
+}
+
+fn inventory_quantities(commerce: &RustCommerce, sku: &str) -> Result<(jint, jint, jint), String> {
+    let stock = commerce.inventory().get_stock(sku).map_err(|e| e.to_string())?;
+    Ok(match stock {
+        Some(stock) => (
+            decimal_to_jint(stock.total_on_hand),
+            decimal_to_jint(stock.total_allocated),
+            decimal_to_jint(stock.total_available),
+        ),
+        None => (0, 0, 0),
+    })
+}
+
+fn inventory_item_by_id(
+    commerce: &RustCommerce,
+    id: &str,
+) -> Result<stateset_core::InventoryItem, String> {
+    let item_id = id.parse::<i64>().map_err(|_| "Invalid inventory item ID".to_string())?;
+    commerce
+        .inventory()
+        .get_item(item_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Inventory item not found".to_string())
+}
+
+fn parse_order_items(items_json: &str) -> Result<Vec<CreateOrderItem>, String> {
+    if items_json.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_str(items_json).map_err(|e| format!("Invalid order items JSON: {}", e))?;
+    let items = value.as_array().ok_or_else(|| "Order items JSON must be an array".to_string())?;
+
+    items
+        .iter()
+        .map(|item| {
+            let sku =
+                item.get("sku").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+            let name =
+                item.get("name").and_then(serde_json::Value::as_str).unwrap_or(&sku).to_string();
+            let quantity =
+                item.get("quantity").and_then(serde_json::Value::as_i64).unwrap_or(1) as i32;
+            let unit_price = item
+                .get("unit_price")
+                .and_then(serde_json::Value::as_f64)
+                .and_then(|value| Decimal::try_from(value).ok())
+                .unwrap_or_default();
+
+            Ok(CreateOrderItem {
+                product_id: ProductId::nil(),
+                sku,
+                name,
+                quantity,
+                unit_price,
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
 fn create_customer_object<'a>(
     env: &mut JNIEnv<'a>,
     customer: &stateset_core::Customer,
@@ -160,23 +249,36 @@ fn create_customer_object<'a>(
         Some(value) => value,
         None => return JObject::null(),
     };
+    let status_result = env.new_string(customer.status.to_string());
+    let status = match jni_or_throw(env, status_result, "Failed to create customer status") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
     let created_at_result = env.new_string(customer.created_at.to_rfc3339());
     let created_at =
         match jni_or_throw(env, created_at_result, "Failed to create customer created_at") {
             Some(value) => value,
             None => return JObject::null(),
         };
+    let updated_at_result = env.new_string(customer.updated_at.to_rfc3339());
+    let updated_at =
+        match jni_or_throw(env, updated_at_result, "Failed to create customer updated_at") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
 
     let obj_result = env.new_object(
         class,
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
         &[
             JValue::Object(&id),
             JValue::Object(&email),
             JValue::Object(&first_name),
             JValue::Object(&last_name),
             JValue::Object(&phone),
+            JValue::Object(&status),
             JValue::Object(&created_at),
+            JValue::Object(&updated_at),
         ],
     );
     match jni_or_throw(env, obj_result, "Failed to create customer object") {
@@ -199,28 +301,58 @@ fn create_product_object<'a>(
         Some(value) => value,
         None => return JObject::null(),
     };
-    // Product doesn't have SKU directly - use slug as identifier
-    let sku_result = env.new_string(&product.slug);
-    let sku = match jni_or_throw(env, sku_result, "Failed to create product sku") {
-        Some(value) => value,
-        None => return JObject::null(),
-    };
     let name_result = env.new_string(&product.name);
     let name = match jni_or_throw(env, name_result, "Failed to create product name") {
         Some(value) => value,
         None => return JObject::null(),
     };
-    // Product doesn't have base_price - that's on variants. Use 0.0 as placeholder.
-    let base_price: f64 = 0.0;
+    let description_result = env.new_string(&product.description);
+    let description =
+        match jni_or_throw(env, description_result, "Failed to create product description") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
+    let vendor_result = env.new_string("");
+    let vendor = match jni_or_throw(env, vendor_result, "Failed to create product vendor") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let product_type_result = env.new_string(product.product_type.to_string());
+    let product_type = match jni_or_throw(env, product_type_result, "Failed to create product type")
+    {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let status_result = env.new_string(product.status.to_string());
+    let status = match jni_or_throw(env, status_result, "Failed to create product status") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let created_at_result = env.new_string(product.created_at.to_rfc3339());
+    let created_at =
+        match jni_or_throw(env, created_at_result, "Failed to create product created_at") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
+    let updated_at_result = env.new_string(product.updated_at.to_rfc3339());
+    let updated_at =
+        match jni_or_throw(env, updated_at_result, "Failed to create product updated_at") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
 
     let obj_result = env.new_object(
         class,
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;D)V",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
         &[
             JValue::Object(&id),
-            JValue::Object(&sku),
             JValue::Object(&name),
-            JValue::Double(base_price),
+            JValue::Object(&description),
+            JValue::Object(&vendor),
+            JValue::Object(&product_type),
+            JValue::Object(&status),
+            JValue::Object(&created_at),
+            JValue::Object(&updated_at),
         ],
     );
     match jni_or_throw(env, obj_result, "Failed to create product object") {
@@ -252,7 +384,7 @@ fn create_order_object<'a>(env: &mut JNIEnv<'a>, order: &stateset_core::Order) -
             Some(value) => value,
             None => return JObject::null(),
         };
-    let status_result = env.new_string(format!("{:?}", order.status));
+    let status_result = env.new_string(order.status.to_string());
     let status = match jni_or_throw(env, status_result, "Failed to create order status") {
         Some(value) => value,
         None => return JObject::null(),
@@ -263,8 +395,29 @@ fn create_order_object<'a>(env: &mut JNIEnv<'a>, order: &stateset_core::Order) -
         Some(value) => value,
         None => return JObject::null(),
     };
+    let payment_status_result = env.new_string(order.payment_status.to_string());
+    let payment_status =
+        match jni_or_throw(env, payment_status_result, "Failed to create order payment status") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
+    let fulfillment_status_result = env.new_string(order.fulfillment_status.to_string());
+    let fulfillment_status = match jni_or_throw(
+        env,
+        fulfillment_status_result,
+        "Failed to create order fulfillment status",
+    ) {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
     let created_at_result = env.new_string(order.created_at.to_rfc3339());
     let created_at = match jni_or_throw(env, created_at_result, "Failed to create order created_at")
+    {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let updated_at_result = env.new_string(order.updated_at.to_rfc3339());
+    let updated_at = match jni_or_throw(env, updated_at_result, "Failed to create order updated_at")
     {
         Some(value) => value,
         None => return JObject::null(),
@@ -272,7 +425,7 @@ fn create_order_object<'a>(env: &mut JNIEnv<'a>, order: &stateset_core::Order) -
 
     let obj_result = env.new_object(
         class,
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;)V",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
         &[
             JValue::Object(&id),
             JValue::Object(&order_number),
@@ -280,7 +433,10 @@ fn create_order_object<'a>(env: &mut JNIEnv<'a>, order: &stateset_core::Order) -
             JValue::Object(&status),
             JValue::Double(total),
             JValue::Object(&currency),
+            JValue::Object(&payment_status),
+            JValue::Object(&fulfillment_status),
             JValue::Object(&created_at),
+            JValue::Object(&updated_at),
         ],
     );
     match jni_or_throw(env, obj_result, "Failed to create order object") {
@@ -289,9 +445,14 @@ fn create_order_object<'a>(env: &mut JNIEnv<'a>, order: &stateset_core::Order) -
     }
 }
 
-fn create_inventory_item_object<'a>(
+fn create_inventory_item_object_with_quantities<'a>(
     env: &mut JNIEnv<'a>,
     item: &stateset_core::InventoryItem,
+    quantity_on_hand: jint,
+    quantity_reserved: jint,
+    quantity_available: jint,
+    reorder_point: jint,
+    reorder_quantity: jint,
 ) -> JObject<'a> {
     let class_result = env.find_class("com/stateset/embedded/InventoryItem");
     let class = match jni_or_throw(env, class_result, "InventoryItem class not found") {
@@ -308,25 +469,18 @@ fn create_inventory_item_object<'a>(
         Some(value) => value,
         None => return JObject::null(),
     };
-    let name_result = env.new_string(&item.name);
-    let name = match jni_or_throw(env, name_result, "Failed to create inventory item name") {
-        Some(value) => value,
-        None => return JObject::null(),
-    };
-    // InventoryItem doesn't have quantities directly - those are in InventoryBalance/StockLevel
-    // Use 0.0 as placeholder
-    let available: f64 = 0.0;
-    let reserved: f64 = 0.0;
 
     let obj_result = env.new_object(
         class,
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DD)V",
+        "(Ljava/lang/String;Ljava/lang/String;IIIII)V",
         &[
             JValue::Object(&id),
             JValue::Object(&sku),
-            JValue::Object(&name),
-            JValue::Double(available),
-            JValue::Double(reserved),
+            JValue::Int(quantity_on_hand),
+            JValue::Int(quantity_reserved),
+            JValue::Int(quantity_available),
+            JValue::Int(reorder_point),
+            JValue::Int(reorder_quantity),
         ],
     );
     match jni_or_throw(env, obj_result, "Failed to create inventory item object") {
@@ -353,27 +507,43 @@ fn create_cart_object<'a>(env: &mut JNIEnv<'a>, cart: &stateset_core::Cart) -> J
             Some(value) => value,
             None => return JObject::null(),
         };
-    let status_result = env.new_string(format!("{:?}", cart.status));
+    let status_result = env.new_string(cart.status.to_string());
     let status = match jni_or_throw(env, status_result, "Failed to create cart status") {
         Some(value) => value,
         None => return JObject::null(),
     };
+    let subtotal: f64 = to_f64_or_nan(cart.subtotal);
     let total: f64 = to_f64_or_nan(cart.grand_total);
     let currency_result = env.new_string(cart.currency.as_str());
     let currency = match jni_or_throw(env, currency_result, "Failed to create cart currency") {
         Some(value) => value,
         None => return JObject::null(),
     };
+    let created_at_result = env.new_string(cart.created_at.to_rfc3339());
+    let created_at = match jni_or_throw(env, created_at_result, "Failed to create cart created_at")
+    {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let updated_at_result = env.new_string(cart.updated_at.to_rfc3339());
+    let updated_at = match jni_or_throw(env, updated_at_result, "Failed to create cart updated_at")
+    {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
 
     let obj_result = env.new_object(
         class,
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;)V",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DDLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
         &[
             JValue::Object(&id),
             JValue::Object(&customer_id),
             JValue::Object(&status),
+            JValue::Double(subtotal),
             JValue::Double(total),
             JValue::Object(&currency),
+            JValue::Object(&created_at),
+            JValue::Object(&updated_at),
         ],
     );
     match jni_or_throw(env, obj_result, "Failed to create cart object") {
@@ -393,12 +563,18 @@ fn create_sales_summary_object<'a>(
     };
     let total_revenue: f64 = to_f64_or_nan(summary.total_revenue);
     let total_orders = summary.order_count as jint;
+    let total_items_sold = summary.items_sold as jint;
     let aov: f64 = to_f64_or_nan(summary.average_order_value);
 
     let obj_result = env.new_object(
         class,
-        "(DID)V",
-        &[JValue::Double(total_revenue), JValue::Int(total_orders), JValue::Double(aov)],
+        "(DIID)V",
+        &[
+            JValue::Double(total_revenue),
+            JValue::Int(total_orders),
+            JValue::Int(total_items_sold),
+            JValue::Double(aov),
+        ],
     );
     match jni_or_throw(env, obj_result, "Failed to create sales summary object") {
         Some(obj) => obj,
@@ -422,27 +598,48 @@ fn create_return_object<'a>(env: &mut JNIEnv<'a>, ret: &stateset_core::Return) -
         Some(value) => value,
         None => return JObject::null(),
     };
-    let reason_result = env.new_string(format!("{:?}", ret.reason));
-    let reason = match jni_or_throw(env, reason_result, "Failed to create return reason") {
-        Some(value) => value,
-        None => return JObject::null(),
-    };
-    let status_result = env.new_string(format!("{:?}", ret.status));
+    let customer_id_result = env.new_string(ret.customer_id.to_string());
+    let customer_id =
+        match jni_or_throw(env, customer_id_result, "Failed to create return customer id") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
+    let status_result = env.new_string(ret.status.to_string());
     let status = match jni_or_throw(env, status_result, "Failed to create return status") {
         Some(value) => value,
         None => return JObject::null(),
     };
+    let reason_result = env.new_string(ret.reason.to_string());
+    let reason = match jni_or_throw(env, reason_result, "Failed to create return reason") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
     let refund_amount: f64 = ret.refund_amount.map(to_f64_or_nan).unwrap_or(0.0);
+    let created_at_result = env.new_string(ret.created_at.to_rfc3339());
+    let created_at =
+        match jni_or_throw(env, created_at_result, "Failed to create return created_at") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
+    let updated_at_result = env.new_string(ret.updated_at.to_rfc3339());
+    let updated_at =
+        match jni_or_throw(env, updated_at_result, "Failed to create return updated_at") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
 
     let obj_result = env.new_object(
         class,
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;D)V",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;)V",
         &[
             JValue::Object(&id),
             JValue::Object(&order_id),
-            JValue::Object(&reason),
+            JValue::Object(&customer_id),
             JValue::Object(&status),
+            JValue::Object(&reason),
             JValue::Double(refund_amount),
+            JValue::Object(&created_at),
+            JValue::Object(&updated_at),
         ],
     );
     match jni_or_throw(env, obj_result, "Failed to create return object") {
@@ -493,10 +690,12 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeCreate<'local>
     email: JString<'local>,
     first_name: JString<'local>,
     last_name: JString<'local>,
+    phone: JString<'local>,
 ) -> JObject<'local> {
     let email_str = get_string(&mut env, &email);
     let first_name_str = get_string(&mut env, &first_name);
     let last_name_str = get_string(&mut env, &last_name);
+    let phone_str = get_string(&mut env, &phone);
 
     let result = use_handle(ptr, |commerce| {
         commerce
@@ -505,6 +704,7 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeCreate<'local>
                 email: email_str,
                 first_name: first_name_str,
                 last_name: last_name_str,
+                phone: if phone_str.is_empty() { None } else { Some(phone_str) },
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -537,6 +737,29 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeGet<'local>(
 
     let result = use_handle(ptr, |commerce| {
         commerce.customers().get(uuid.into()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(Some(customer)) => create_customer_object(&mut env, &customer),
+        Ok(None) => JObject::null(),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Customers_nativeGetByEmail<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    email: JString<'local>,
+) -> JObject<'local> {
+    let email_str = get_string(&mut env, &email);
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.customers().get_by_email(&email_str).map_err(|e| e.to_string())
     });
 
     match result {
@@ -592,6 +815,23 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeList<'local>(
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Customers_nativeCount<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> jlong {
+    match use_handle(ptr, |commerce| {
+        commerce.customers().count(CustomerFilter::default()).map_err(|e| e.to_string())
+    }) {
+        Ok(count) => count as jlong,
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            0
+        }
+    }
+}
+
 // =============================================================================
 // Products API
 // =============================================================================
@@ -601,26 +841,26 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     ptr: jlong,
-    sku: JString<'local>,
     name: JString<'local>,
-    base_price: jdouble,
+    description: JString<'local>,
+    _vendor: JString<'local>,
+    product_type: JString<'local>,
 ) -> JObject<'local> {
-    let sku_str = get_string(&mut env, &sku);
     let name_str = get_string(&mut env, &name);
-    let price = Decimal::try_from(base_price).unwrap_or_default();
+    let description_str = get_string(&mut env, &description);
+    let product_type_str = get_string(&mut env, &product_type);
 
     let result = use_handle(ptr, |commerce| {
-        // Create product with a default variant that has SKU and price
         commerce
             .products()
             .create(CreateProduct {
                 name: name_str,
-                variants: Some(vec![CreateProductVariant {
-                    sku: sku_str,
-                    price,
-                    is_default: Some(true),
-                    ..Default::default()
-                }]),
+                description: if description_str.is_empty() { None } else { Some(description_str) },
+                product_type: if product_type_str.is_empty() {
+                    None
+                } else {
+                    product_type_str.parse().ok()
+                },
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -640,19 +880,19 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeGet<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     ptr: jlong,
-    sku: JString<'local>,
+    id: JString<'local>,
 ) -> JObject<'local> {
-    let sku_str = get_string(&mut env, &sku);
-
-    // Get variant by SKU, then get its parent product
-    let result = use_handle(ptr, |commerce| {
-        if let Some(variant) =
-            commerce.products().get_variant_by_sku(&sku_str).map_err(|e| e.to_string())?
-        {
-            commerce.products().get(variant.product_id).map_err(|e| e.to_string())
-        } else {
-            Ok(None)
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid product UUID");
+            return JObject::null();
         }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.products().get(ProductId::from_uuid(uuid)).map_err(|e| e.to_string())
     });
 
     match result {
@@ -708,37 +948,69 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeList<'local>(
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Products_nativeCount<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> jlong {
+    match use_handle(ptr, |commerce| {
+        commerce.products().count(ProductFilter::default()).map_err(|e| e.to_string())
+    }) {
+        Ok(count) => count as jlong,
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            0
+        }
+    }
+}
+
 // =============================================================================
 // Inventory API
 // =============================================================================
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeCreateItem<'local>(
+pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     ptr: jlong,
     sku: JString<'local>,
-    name: JString<'local>,
-    initial_quantity: jdouble,
+    quantity: jint,
+    reorder_point: jint,
+    reorder_quantity: jint,
 ) -> JObject<'local> {
     let sku_str = get_string(&mut env, &sku);
-    let name_str = get_string(&mut env, &name);
-    let qty = Decimal::try_from(initial_quantity).ok();
+    let qty = Decimal::from(quantity);
 
     let result = use_handle(ptr, |commerce| {
-        commerce
+        let item = commerce
             .inventory()
             .create_item(CreateInventoryItem {
-                sku: sku_str,
-                name: name_str,
-                initial_quantity: qty,
+                sku: sku_str.clone(),
+                name: sku_str,
+                initial_quantity: Some(qty),
+                reorder_point: if reorder_point > 0 {
+                    Some(Decimal::from(reorder_point))
+                } else {
+                    None
+                },
                 ..Default::default()
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        let (on_hand, reserved, available) = inventory_quantities(commerce, &item.sku)?;
+        Ok((item, on_hand, reserved, available))
     });
 
     match result {
-        Ok(item) => create_inventory_item_object(&mut env, &item),
+        Ok((item, on_hand, reserved, available)) => create_inventory_item_object_with_quantities(
+            &mut env,
+            &item,
+            on_hand,
+            reserved,
+            available,
+            reorder_point,
+            reorder_quantity,
+        ),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -751,26 +1023,25 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeAdjust<'local>
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     ptr: jlong,
-    sku: JString<'local>,
-    quantity: jdouble,
+    id: JString<'local>,
+    quantity: jint,
     reason: JString<'local>,
 ) -> JObject<'local> {
-    let sku_str = get_string(&mut env, &sku);
+    let id_str = get_string(&mut env, &id);
     let reason_str = get_string(&mut env, &reason);
-    let qty = Decimal::try_from(quantity).unwrap_or_default();
+    let qty = Decimal::from(quantity);
 
     let result = use_handle(ptr, |commerce| {
-        commerce.inventory().adjust(&sku_str, qty, &reason_str).map_err(|e| e.to_string())?;
-        // Return the updated item
-        commerce
-            .inventory()
-            .get_item_by_sku(&sku_str)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Item not found".to_string())
+        let item = inventory_item_by_id(commerce, &id_str)?;
+        commerce.inventory().adjust(&item.sku, qty, &reason_str).map_err(|e| e.to_string())?;
+        let (on_hand, reserved, available) = inventory_quantities(commerce, &item.sku)?;
+        Ok((item, on_hand, reserved, available))
     });
 
     match result {
-        Ok(item) => create_inventory_item_object(&mut env, &item),
+        Ok((item, on_hand, reserved, available)) => create_inventory_item_object_with_quantities(
+            &mut env, &item, on_hand, reserved, available, 0, 0,
+        ),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -783,17 +1054,106 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeGet<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+
+    let result = use_handle(ptr, |commerce| {
+        let item = inventory_item_by_id(commerce, &id_str)?;
+        let (on_hand, reserved, available) = inventory_quantities(commerce, &item.sku)?;
+        Ok((item, on_hand, reserved, available))
+    });
+
+    match result {
+        Ok((item, on_hand, reserved, available)) => create_inventory_item_object_with_quantities(
+            &mut env, &item, on_hand, reserved, available, 0, 0,
+        ),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeGetBySku<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
     sku: JString<'local>,
 ) -> JObject<'local> {
     let sku_str = get_string(&mut env, &sku);
 
     let result = use_handle(ptr, |commerce| {
-        commerce.inventory().get_item_by_sku(&sku_str).map_err(|e| e.to_string())
+        let item = commerce
+            .inventory()
+            .get_item_by_sku(&sku_str)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Inventory item not found".to_string())?;
+        let (on_hand, reserved, available) = inventory_quantities(commerce, &item.sku)?;
+        Ok((item, on_hand, reserved, available))
     });
 
     match result {
-        Ok(Some(item)) => create_inventory_item_object(&mut env, &item),
-        Ok(None) => JObject::null(),
+        Ok((item, on_hand, reserved, available)) => create_inventory_item_object_with_quantities(
+            &mut env, &item, on_hand, reserved, available, 0, 0,
+        ),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeList<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce
+            .inventory()
+            .list(InventoryFilter::default())
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|item| {
+                let (on_hand, reserved, available) = inventory_quantities(commerce, &item.sku)?;
+                Ok((item, on_hand, reserved, available))
+            })
+            .collect::<Result<Vec<_>, String>>()
+    });
+
+    match result {
+        Ok(items) => {
+            let find_class_result = env.find_class("java/util/ArrayList");
+            let list_class =
+                match jni_or_throw(&mut env, find_class_result, "ArrayList class not found") {
+                    Some(value) => value,
+                    None => return JObject::null(),
+                };
+            let new_object_result = env.new_object(list_class, "()V", &[]);
+            let list = match jni_or_throw(&mut env, new_object_result, "Failed to create ArrayList")
+            {
+                Some(value) => value,
+                None => return JObject::null(),
+            };
+
+            for (item, on_hand, reserved, available) in &items {
+                let obj = create_inventory_item_object_with_quantities(
+                    &mut env, item, *on_hand, *reserved, *available, 0, 0,
+                );
+                let add_result =
+                    env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]);
+                if jni_or_throw(&mut env, add_result, "Failed to add inventory item to list")
+                    .is_none()
+                {
+                    return JObject::null();
+                }
+            }
+
+            list
+        }
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -806,21 +1166,38 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeReserve<'local
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     ptr: jlong,
-    sku: JString<'local>,
-    quantity: jdouble,
-) {
-    let sku_str = get_string(&mut env, &sku);
-    let qty = Decimal::try_from(quantity).unwrap_or_default();
+    id: JString<'local>,
+    quantity: jint,
+    order_id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let order_id_str = get_string(&mut env, &order_id);
+    let qty = Decimal::from(quantity);
 
     let result = use_handle(ptr, |commerce| {
-        commerce
+        let item = inventory_item_by_id(commerce, &id_str)?;
+        let reservation = commerce
             .inventory()
-            .reserve(&sku_str, qty, "java", "reservation", None)
-            .map_err(|e| e.to_string())
+            .reserve(&item.sku, qty, "order", &order_id_str, None)
+            .map_err(|e| e.to_string())?;
+        with_reservation_registry(|reservations| {
+            reservations
+                .entry((ptr as usize, item.id))
+                .or_default()
+                .push(InventoryReservationEntry { id: reservation.id, quantity: qty });
+        });
+        let (on_hand, reserved, available) = inventory_quantities(commerce, &item.sku)?;
+        Ok((item, on_hand, reserved, available))
     });
 
-    if let Err(e) = result {
-        throw_exception(&mut env, &e);
+    match result {
+        Ok((item, on_hand, reserved, available)) => create_inventory_item_object_with_quantities(
+            &mut env, &item, on_hand, reserved, available, 0, 0,
+        ),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
     }
 }
 
@@ -828,14 +1205,57 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeReserve<'local
 pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeRelease<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
-    _ptr: jlong,
-    sku: JString<'local>,
-    _quantity: jdouble,
-) {
-    let _sku_str = get_string(&mut env, &sku);
-    // Note: Release requires a reservation ID, not SKU
-    // For now, this is a no-op
-    throw_exception(&mut env, "Release requires reservation ID, not SKU");
+    ptr: jlong,
+    id: JString<'local>,
+    quantity: jint,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let qty = Decimal::from(quantity);
+
+    let result = use_handle(ptr, |commerce| {
+        let item = inventory_item_by_id(commerce, &id_str)?;
+        let mut remaining = qty;
+        let mut replacement = Decimal::ZERO;
+        let key = (ptr as usize, item.id);
+        let entries =
+            with_reservation_registry(|reservations| reservations.remove(&key).unwrap_or_default());
+
+        for entry in entries {
+            commerce.inventory().release_reservation(entry.id).map_err(|e| e.to_string())?;
+            if remaining >= entry.quantity {
+                remaining -= entry.quantity;
+            } else {
+                replacement += entry.quantity - remaining;
+                remaining = Decimal::ZERO;
+            }
+        }
+
+        if replacement > Decimal::ZERO {
+            let reservation = commerce
+                .inventory()
+                .reserve(&item.sku, replacement, "java", "reservation", None)
+                .map_err(|e| e.to_string())?;
+            with_reservation_registry(|reservations| {
+                reservations
+                    .entry(key)
+                    .or_default()
+                    .push(InventoryReservationEntry { id: reservation.id, quantity: replacement });
+            });
+        }
+
+        let (on_hand, reserved, available) = inventory_quantities(commerce, &item.sku)?;
+        Ok((item, on_hand, reserved, available))
+    });
+
+    match result {
+        Ok((item, on_hand, reserved, available)) => create_inventory_item_object_with_quantities(
+            &mut env, &item, on_hand, reserved, available, 0, 0,
+        ),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
 }
 
 // =============================================================================
@@ -848,15 +1268,24 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeCreate<'local>(
     _class: JClass<'local>,
     ptr: jlong,
     customer_id: JString<'local>,
+    items_json: JString<'local>,
     currency: JString<'local>,
 ) -> JObject<'local> {
     let customer_id_str = get_string(&mut env, &customer_id);
+    let items_json_str = get_string(&mut env, &items_json);
     let currency_str = get_string(&mut env, &currency);
 
     let uuid = match uuid::Uuid::parse_str(&customer_id_str) {
         Ok(u) => u,
         Err(_) => {
             throw_exception(&mut env, "Invalid customer UUID");
+            return JObject::null();
+        }
+    };
+    let items = match parse_order_items(&items_json_str) {
+        Ok(items) => items,
+        Err(e) => {
+            throw_exception(&mut env, &e);
             return JObject::null();
         }
     };
@@ -871,7 +1300,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeCreate<'local>(
                 } else {
                     currency_str.parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD)
                 }),
-                items: vec![],
+                items,
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -951,6 +1380,156 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeList<'local>(
 
             list
         }
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Orders_nativeCount<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> jlong {
+    match use_handle(ptr, |commerce| {
+        commerce.orders().count(OrderFilter::default()).map_err(|e| e.to_string())
+    }) {
+        Ok(count) => count as jlong,
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Orders_nativeShip<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+    tracking_number: JString<'local>,
+    _carrier: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let tracking_number_str = get_string(&mut env, &tracking_number);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce
+            .orders()
+            .ship(
+                uuid.into(),
+                if tracking_number_str.is_empty() {
+                    None
+                } else {
+                    Some(tracking_number_str.as_str())
+                },
+            )
+            .map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(order) => create_order_object(&mut env, &order),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Orders_nativeCancel<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+    _reason: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.orders().cancel(uuid.into()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(order) => create_order_object(&mut env, &order),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Orders_nativeConfirm<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce
+            .orders()
+            .update_status(uuid.into(), OrderStatus::Confirmed)
+            .map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(order) => create_order_object(&mut env, &order),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Orders_nativeDeliver<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.orders().deliver(uuid.into()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(order) => create_order_object(&mut env, &order),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1167,6 +1746,58 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCheckout<'local>(
 // =============================================================================
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Payments_nativeRecord<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    order_id: JString<'local>,
+    amount: jdouble,
+    method: JString<'local>,
+) -> jboolean {
+    let order_id_str = get_string(&mut env, &order_id);
+    let method_str = get_string(&mut env, &method);
+    let amt = Decimal::try_from(amount).unwrap_or_default();
+
+    let uuid = match uuid::Uuid::parse_str(&order_id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid order UUID");
+            return JNI_FALSE;
+        }
+    };
+
+    let payment_method = match method_str.to_lowercase().as_str() {
+        "credit" | "credit_card" | "creditcard" | "card" => PaymentMethodType::CreditCard,
+        "debit" | "debit_card" | "debitcard" => PaymentMethodType::DebitCard,
+        "bank" | "bank_transfer" | "banktransfer" | "ach" => PaymentMethodType::BankTransfer,
+        "paypal" => PaymentMethodType::PayPal,
+        "apple" | "apple_pay" | "applepay" => PaymentMethodType::ApplePay,
+        "google" | "google_pay" | "googlepay" => PaymentMethodType::GooglePay,
+        "crypto" | "cryptocurrency" => PaymentMethodType::Crypto,
+        _ => PaymentMethodType::CreditCard,
+    };
+
+    match use_handle(ptr, |commerce| {
+        commerce
+            .payments()
+            .create(CreatePayment {
+                order_id: Some(uuid.into()),
+                amount: amt,
+                currency: Some(CurrencyCode::USD),
+                payment_method,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
+    }) {
+        Ok(_) => JNI_TRUE,
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JNI_FALSE
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Payments_nativeRecordPayment<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1248,6 +1879,7 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeCreate<'local>(
         "defective" => ReturnReason::Defective,
         "wrong_item" | "wrongitem" => ReturnReason::WrongItem,
         "not_as_described" | "notasdescribed" => ReturnReason::NotAsDescribed,
+        "damaged" => ReturnReason::Damaged,
         "no_longer_needed" | "nolongerneeded" => ReturnReason::NoLongerNeeded,
         "better_price_found" | "betterpricefound" => ReturnReason::BetterPriceFound,
         _ => ReturnReason::Other,
@@ -1277,6 +1909,139 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeCreate<'local>(
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(ret) => create_return_object(&mut env, &ret),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Returns_nativeGet<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid return UUID");
+            return JObject::null();
+        }
+    };
+
+    let result =
+        use_handle(ptr, |commerce| commerce.returns().get(uuid.into()).map_err(|e| e.to_string()));
+
+    match result {
+        Ok(Some(ret)) => create_return_object(&mut env, &ret),
+        Ok(None) => JObject::null(),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Returns_nativeList<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.returns().list(ReturnFilter::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(returns) => {
+            let find_class_result = env.find_class("java/util/ArrayList");
+            let list_class =
+                match jni_or_throw(&mut env, find_class_result, "ArrayList class not found") {
+                    Some(value) => value,
+                    None => return JObject::null(),
+                };
+            let new_object_result = env.new_object(list_class, "()V", &[]);
+            let list = match jni_or_throw(&mut env, new_object_result, "Failed to create ArrayList")
+            {
+                Some(value) => value,
+                None => return JObject::null(),
+            };
+
+            for ret in &returns {
+                let obj = create_return_object(&mut env, ret);
+                let add_result =
+                    env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]);
+                if jni_or_throw(&mut env, add_result, "Failed to add return to list").is_none() {
+                    return JObject::null();
+                }
+            }
+
+            list
+        }
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Returns_nativeApprove<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+    _refund_amount: jdouble,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid return UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.returns().approve(uuid.into()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(ret) => create_return_object(&mut env, &ret),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Returns_nativeReject<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+    reason: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let reason_str = get_string(&mut env, &reason);
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid return UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.returns().reject(uuid.into(), &reason_str).map_err(|e| e.to_string())
     });
 
     match result {

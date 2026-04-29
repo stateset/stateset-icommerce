@@ -1,6 +1,5 @@
 package com.stateset.embedded;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -54,8 +53,8 @@ public final class Customers {
      * @return List of all customers
      */
     public List<Customer> list() {
-        Customer[] arr = nativeList(nativePtr);
-        return arr != null ? Arrays.asList(arr) : List.of();
+        List<Customer> customers = nativeList(nativePtr);
+        return customers != null ? customers : List.of();
     }
 
     /**
@@ -71,6 +70,6 @@ public final class Customers {
     private static native Customer nativeCreate(long ptr, String email, String firstName, String lastName, String phone);
     private static native Customer nativeGet(long ptr, String id);
     private static native Customer nativeGetByEmail(long ptr, String email);
-    private static native Customer[] nativeList(long ptr);
+    private static native List<Customer> nativeList(long ptr);
     private static native long nativeCount(long ptr);
 }

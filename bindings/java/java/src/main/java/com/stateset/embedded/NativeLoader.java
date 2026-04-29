@@ -72,18 +72,22 @@ final class NativeLoader {
             return;
         }
 
-        // Try target/release directory (development)
-        Path targetLib = Paths.get(currentDir, "target", "release", libName + libExtension);
-        if (Files.exists(targetLib)) {
-            System.load(targetLib.toAbsolutePath().toString());
-            loaded = true;
-            return;
+        // Try target/release directory from the current directory or one of its parents.
+        Path searchDir = Paths.get(currentDir).toAbsolutePath();
+        while (searchDir != null) {
+            Path targetLib = searchDir.resolve("target").resolve("release").resolve(libName + libExtension);
+            if (Files.exists(targetLib)) {
+                System.load(targetLib.toString());
+                loaded = true;
+                return;
+            }
+            searchDir = searchDir.getParent();
         }
 
         throw new UnsatisfiedLinkError(
             "Failed to load StateSet native library. " +
             "Tried: java.library.path, classpath resource (" + resourcePath + "), " +
-            "current directory, and target/release directory."
+            "current directory, and target/release in parent directories."
         );
     }
 

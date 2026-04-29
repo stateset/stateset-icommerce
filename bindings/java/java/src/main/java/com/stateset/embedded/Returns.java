@@ -1,6 +1,5 @@
 package com.stateset.embedded;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -42,8 +41,8 @@ public final class Returns {
      * @return List of all returns
      */
     public List<ReturnRequest> list() {
-        ReturnRequest[] arr = nativeList(nativePtr);
-        return arr != null ? Arrays.asList(arr) : List.of();
+        List<ReturnRequest> returns = nativeList(nativePtr);
+        return returns != null ? returns : List.of();
     }
 
     /**
@@ -71,7 +70,7 @@ public final class Returns {
     // Native methods
     private static native ReturnRequest nativeCreate(long ptr, String orderId, String reason);
     private static native ReturnRequest nativeGet(long ptr, String id);
-    private static native ReturnRequest[] nativeList(long ptr);
+    private static native List<ReturnRequest> nativeList(long ptr);
     private static native ReturnRequest nativeApprove(long ptr, String id, double refundAmount);
     private static native ReturnRequest nativeReject(long ptr, String id, String reason);
 }

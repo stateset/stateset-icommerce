@@ -1,6 +1,5 @@
 package com.stateset.embedded;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -54,8 +53,8 @@ public final class Inventory {
      * @return List of all inventory items
      */
     public List<InventoryItem> list() {
-        InventoryItem[] arr = nativeList(nativePtr);
-        return arr != null ? Arrays.asList(arr) : List.of();
+        List<InventoryItem> items = nativeList(nativePtr);
+        return items != null ? items : List.of();
     }
 
     /**
@@ -97,7 +96,7 @@ public final class Inventory {
     private static native InventoryItem nativeCreate(long ptr, String sku, int quantity, int reorderPoint, int reorderQuantity);
     private static native InventoryItem nativeGet(long ptr, String id);
     private static native InventoryItem nativeGetBySku(long ptr, String sku);
-    private static native InventoryItem[] nativeList(long ptr);
+    private static native List<InventoryItem> nativeList(long ptr);
     private static native InventoryItem nativeAdjust(long ptr, String id, int adjustment, String reason);
     private static native InventoryItem nativeReserve(long ptr, String id, int quantity, String orderId);
     private static native InventoryItem nativeRelease(long ptr, String id, int quantity);

@@ -1,6 +1,5 @@
 package com.stateset.embedded;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -43,8 +42,8 @@ public final class Orders {
      * @return List of all orders
      */
     public List<Order> list() {
-        Order[] arr = nativeList(nativePtr);
-        return arr != null ? Arrays.asList(arr) : List.of();
+        List<Order> orders = nativeList(nativePtr);
+        return orders != null ? orders : List.of();
     }
 
     /**
@@ -104,7 +103,7 @@ public final class Orders {
     // Native methods
     private static native Order nativeCreate(long ptr, String customerId, String itemsJson, String currency);
     private static native Order nativeGet(long ptr, String id);
-    private static native Order[] nativeList(long ptr);
+    private static native List<Order> nativeList(long ptr);
     private static native long nativeCount(long ptr);
     private static native Order nativeShip(long ptr, String id, String trackingNumber, String carrier);
     private static native Order nativeCancel(long ptr, String id, String reason);

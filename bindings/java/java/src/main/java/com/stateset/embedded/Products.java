@@ -1,6 +1,5 @@
 package com.stateset.embedded;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -47,8 +46,8 @@ public final class Products {
      * @return List of all products
      */
     public List<Product> list() {
-        Product[] arr = nativeList(nativePtr);
-        return arr != null ? Arrays.asList(arr) : List.of();
+        List<Product> products = nativeList(nativePtr);
+        return products != null ? products : List.of();
     }
 
     /**
@@ -63,6 +62,6 @@ public final class Products {
     // Native methods
     private static native Product nativeCreate(long ptr, String name, String description, String vendor, String productType);
     private static native Product nativeGet(long ptr, String id);
-    private static native Product[] nativeList(long ptr);
+    private static native List<Product> nativeList(long ptr);
     private static native long nativeCount(long ptr);
 }
