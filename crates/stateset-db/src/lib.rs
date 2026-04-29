@@ -39,9 +39,10 @@
 //! debugging and error categorization. Use the error helper functions
 //! in the `error_helpers` module for converting backend-specific errors.
 
-pub mod audit;
 pub mod error_helpers;
 
+#[cfg(feature = "sqlite")]
+pub mod audit;
 #[cfg(feature = "sqlite")]
 pub mod backup;
 #[cfg(feature = "sqlite")]

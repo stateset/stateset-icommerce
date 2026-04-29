@@ -278,12 +278,9 @@ The WASM bundle is approximately 2MB gzipped and includes:
 ## Source Files
 
 - Package: `@stateset/embedded-wasm`
-- Types: `bindings/wasm/pkg/stateset_embedded_wasm.d.ts`
-- Node types: `bindings/wasm/pkg-node/stateset_embedded_wasm.d.ts`
+- Types are emitted under the generated `pkg/` and `pkg-node/` build outputs.
 
 ## Examples
 
 - `bindings/wasm/README.md`
 - `bindings/wasm/test-wasm.js`
-- `bindings/wasm/pkg/README.md`
-- `bindings/wasm/pkg-node/README.md`

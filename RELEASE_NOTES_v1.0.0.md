@@ -103,12 +103,15 @@ in `TRUST_FOUNDATION.md`.
 - Hardened GitHub Actions release gates for third-party action inputs, checksum
   generation, language-binding package builds, CLI audit scope, and release
   hygiene setup.
-- Fixed final binding release blockers across .NET model coverage, PHP native
-  extension stubs, Ruby `rb_sys` package metadata, and WASM entropy features.
+- Fixed final binding release blockers across .NET model coverage, PHP
+  Composer/stub validation, Ruby `rb_sys` package metadata, and WASM entropy
+  features.
+- Updated `rustls-webpki` to the fixed `0.103.13` line for the April 2026
+  RustSec advisories.
 - Verified the primitives crate on a `no_std` target and kept the default CLI
   install/audit path lean by making Solana client libraries optional.
-- Kept `Cargo.lock` changes limited to local workspace package version bumps,
-  avoiding opportunistic third-party dependency churn.
+- Kept `Cargo.lock` churn limited to workspace version alignment and the
+  targeted `rustls-webpki` security update.
 
 ---
 
@@ -121,6 +124,7 @@ The final release gate validated the following:
 - Rust formatting, tests, clippy, and feature matrix.
 - Node binding debug build, tests, and package-shape checks.
 - Python binding tests, wheel build, sdist build, and package-shape checks.
+- PHP Composer metadata, stub lint, and autoload-surface checks.
 - Admin typecheck, test typecheck, lint, and full Vitest suite.
 - CLI check suite.
 - Engine examples for JavaScript and Python surfaces.

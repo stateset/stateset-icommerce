@@ -8,7 +8,7 @@ Gem::Specification.new do |s|
   s.homepage    = 'https://github.com/stateset/stateset-icommerce'
   s.license     = 'MIT'
 
-  s.files       = Dir['lib/**/*.rb', 'ext/**/*', 'Cargo.toml', 'src/**/*.rs']
+  s.files       = Dir['lib/**/*.rb', 'ext/**/*', 'Cargo.toml', 'src/**/*.rs', 'extconf.rb']
   s.extensions  = ['ext/stateset_embedded/extconf.rb']
 
   s.required_ruby_version = '>= 3.0'

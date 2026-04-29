@@ -38,8 +38,11 @@ flags, MCP tool names and schemas, policy YAML, and additive SQLite migrations.
   with in-memory fallback for local and single-instance deployments.
 - Hardened release workflows for action input validation, checksum generation,
   binding package builds, CLI audit scope, and release hygiene setup.
-- Fixed final binding blockers in .NET model coverage, PHP extension stubs, Ruby
-  package metadata, WASM entropy configuration, and primitives `no_std` support.
+- Fixed final binding blockers in .NET model coverage, PHP Composer/stub
+  package validation, Ruby package metadata, WASM entropy configuration, and
+  primitives `no_std` support.
+- Updated `rustls-webpki` to the fixed `0.103.13` line for the April 2026
+  RustSec advisories.
 
 ## [0.9.9] - 2026-04-20
 

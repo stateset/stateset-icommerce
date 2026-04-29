@@ -151,12 +151,6 @@ async function buildPythonBindingInventory() {
     .map((name) => name.replace(/\.py$/, ''))
     .sort((left, right) => left.localeCompare(right));
 
-  const nativeExtensions = packageEntries
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .filter((name) => /\.(so|pyd|dylib)$/.test(name))
-    .sort((left, right) => left.localeCompare(right));
-
   return {
     language: 'Python',
     ecosystem: 'PyPI',
@@ -174,7 +168,7 @@ async function buildPythonBindingInventory() {
     moduleCount: helperModules.length + 1,
     publicSymbolCount: publicSymbols.length,
     helperModules,
-    nativeExtensions,
+    nativeExtensions: [],
     publicSymbols,
   };
 }

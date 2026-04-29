@@ -330,3 +330,156 @@ describe('GET /api/sessions', () => {
     });
   });
 });
+
+describe('GET /api/sessions/[id]', () => {
+  it('returns a session with events for a valid ID', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          session: { id: 'session-1', status: 'running' },
+          events: [{ id: 'event-1', type: 'started' }],
+        }),
+    });
+
+    const { GET } = await import('@/app/api/sessions/[id]/route');
+    const request = createAuthenticatedRequest({
+      url: 'http://localhost:3000/api/sessions/session-1',
+    });
+
+    const response = await GET(request, { params: Promise.resolve({ id: 'session-1' }) });
+    const body = await parseResponse<{ success: boolean; data: { session: { id: string } } }>(response);
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.session.id).toBe('session-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.sandbox.stateset.app/api/admin/agent-sessions/session-1',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-token',
+        }),
+      })
+    );
+  });
+
+  it('rejects invalid session IDs before proxying', async () => {
+    const { GET } = await import('@/app/api/sessions/[id]/route');
+    const request = createAuthenticatedRequest({
+      url: 'http://localhost:3000/api/sessions/../bad',
+    });
+
+    const response = await GET(request, { params: Promise.resolve({ id: '../bad' }) });
+
+    await expectError(response, 400, 'BAD_REQUEST');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty session payload when admin auth is disabled without a service token', async () => {
+    vi.stubEnv('STATESET_ADMIN_DISABLE_AUTH', 'true');
+    vi.stubEnv('STATESET_API_TOKEN', '');
+
+    const { GET } = await import('@/app/api/sessions/[id]/route');
+    const request = createMockRequest({
+      url: 'http://localhost:3000/api/sessions/session-1',
+    });
+
+    const response = await GET(request, { params: Promise.resolve({ id: 'session-1' }) });
+    const body = await parseResponse<{ success: boolean; data: { session: null; events: unknown[] } }>(response);
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.session).toBeNull();
+    expect(body.data.events).toEqual([]);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('maps upstream authorization failures to 401', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: () => Promise.resolve({ error: 'Forbidden' }),
+    });
+
+    const { GET } = await import('@/app/api/sessions/[id]/route');
+    const request = createAuthenticatedRequest({
+      url: 'http://localhost:3000/api/sessions/session-1',
+    });
+
+    const response = await GET(request, { params: Promise.resolve({ id: 'session-1' }) });
+
+    await expectError(response, 401, 'UNAUTHORIZED');
+  });
+});
+
+describe('GET /api/sessions/summary', () => {
+  it('returns upstream session summary data', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          total: 4,
+          by_status: { running: 2, completed: 2 },
+          active_now: 2,
+          rotations_last_hour: 1,
+          avg_duration_seconds: 42,
+        }),
+    });
+
+    const { GET } = await import('@/app/api/sessions/summary/route');
+    const request = createAuthenticatedRequest({
+      url: 'http://localhost:3000/api/sessions/summary',
+    });
+
+    const response = await GET(request, undefined as any);
+    const body = await parseResponse<{ success: boolean; data: { total: number } }>(response);
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.total).toBe(4);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.sandbox.stateset.app/api/admin/agent-sessions/summary',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-token',
+        }),
+      })
+    );
+  });
+
+  it('returns a zero summary when admin auth is disabled without a service token', async () => {
+    vi.stubEnv('STATESET_ADMIN_DISABLE_AUTH', 'true');
+    vi.stubEnv('STATESET_API_TOKEN', '');
+
+    const { GET } = await import('@/app/api/sessions/summary/route');
+    const request = createMockRequest({
+      url: 'http://localhost:3000/api/sessions/summary',
+    });
+
+    const response = await GET(request, undefined as any);
+    const body = await parseResponse<{ success: boolean; data: { total: number; active_now: number } }>(response);
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.total).toBe(0);
+    expect(body.data.active_now).toBe(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('maps upstream failures to an error envelope', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: () => Promise.resolve({ error: 'Bad gateway' }),
+    });
+
+    const { GET } = await import('@/app/api/sessions/summary/route');
+    const request = createAuthenticatedRequest({
+      url: 'http://localhost:3000/api/sessions/summary',
+    });
+
+    const response = await GET(request, undefined as any);
+
+    await expectError(response, 502, 'UPSTREAM_ERROR');
+  });
+});

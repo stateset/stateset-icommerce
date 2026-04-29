@@ -1840,9 +1840,7 @@
         "langchain",
         "openai"
       ],
-      "nativeExtensions": [
-        "stateset_embedded.cpython-310-x86_64-linux-gnu.so"
-      ],
+      "nativeExtensions": [],
       "publicSymbols": [
         "__version__",
         "AddCartItemInput",

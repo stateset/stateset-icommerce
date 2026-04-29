@@ -7,7 +7,7 @@
 //! intends to stand behind with a SemVer-stable commitment at 1.0 —
 //! breaking changes to anything below require a major-version bump.
 //!
-//! Most users should prefer [`stateset_sdk::prelude`] — it's the same
+//! Most users should prefer `stateset_sdk::prelude` — it's the same
 //! commitment served through the facade crate and adds typed IDs,
 //! filters, and the error/result types. This module exists for
 //! consumers (like `stateset-icp-handler`) that depend on

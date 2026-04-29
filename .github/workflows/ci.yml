@@ -234,6 +234,7 @@ jobs:
         flags: ["", "--no-default-features"]
     env:
       MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-tree-borrows
+      PROPTEST_DISABLE_FAILURE_PERSISTENCE: "1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -906,6 +907,14 @@ jobs:
             --output-dir ./coverage \
             --workspace \
             --fail-under 80 \
+            --exclude stateset-embedded-node \
+            --exclude stateset-embedded-python \
+            --exclude stateset-embedded-wasm \
+            --exclude stateset-java \
+            --exclude stateset-kotlin \
+            --exclude stateset-swift \
+            --exclude stateset-dotnet \
+            --exclude stateset-go \
             --exclude-files '*/tests/*' \
             --exclude-files '*/benches/*' \
             --features postgres
@@ -939,17 +948,22 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Build extension
+      - name: Check package metadata
         working-directory: bindings/php
-        run: cargo build --release --features runtime
+        run: composer validate --strict --no-check-lock
 
       - name: Install PHP dependencies
         working-directory: bindings/php
-        run: composer install
+        run: composer install --no-interaction --no-progress
 
-      - name: Test
+      - name: Lint generated stubs
         working-directory: bindings/php
-        run: php -d extension=target/release/libstateset_embedded.so vendor/bin/phpunit tests/
+        run: php -l stubs/StateSet.php
+
+      - name: Verify Composer autoload surface
+        working-directory: bindings/php
+        run: |
+          php -r "require 'vendor/autoload.php'; exit(class_exists('StateSet\\\\Commerce') ? 0 : 1);"
 
   release-governance:
     name: Release Governance

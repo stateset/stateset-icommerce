@@ -177,10 +177,12 @@ try {
     /** @type {unknown} */ (await import('@stateset/embedded'))
   );
 } catch (nativeErr) {
-  console.debug(
-    'native crypto module not available, using JS fallback:',
-    messageFromError(nativeErr),
-  );
+  if (process.env.STATESET_DEBUG_NATIVE_CRYPTO === '1') {
+    console.error(
+      'native crypto module not available, using JS fallback:',
+      messageFromError(nativeErr),
+    );
+  }
 }
 
 /**

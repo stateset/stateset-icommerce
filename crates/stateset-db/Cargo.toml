@@ -20,8 +20,8 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-hex = { workspace = true }
-tracing = "0.1"
+hex = { workspace = true, optional = true }
+tracing = { version = "0.1", optional = true }
 
 # SQLite dependencies (optional)
 rusqlite = { workspace = true, optional = true }
@@ -51,7 +51,7 @@ workspace = true
 
 [features]
 default = ["sqlite"]
-sqlite = ["dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "stateset-core/rusqlite"]
+sqlite = ["dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:hex", "dep:tracing", "stateset-core/rusqlite"]
 postgres = ["dep:sqlx", "dep:tokio", "stateset-core/sqlx-postgres"]
 vector = ["sqlite", "stateset-core/embeddings"]
 # Experimental: persisted saga coordinator for multi-step orchestration.
