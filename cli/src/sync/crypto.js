@@ -531,6 +531,9 @@ export function canonicalizeJson(value) {
   throw new Error(`Cannot canonicalize type: ${type}`);
 }
 
+/**
+ * @param {any} value
+ */
 function assertCanonicalizableJson(value) {
   if (value === null || value === undefined) return;
 
