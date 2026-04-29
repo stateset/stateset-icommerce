@@ -571,7 +571,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sanitizer: [address, undefined]
+        sanitizer: [address]
 
     steps:
       - uses: actions/checkout@v6

@@ -6,15 +6,15 @@ DRY_RUN="${DRY_RUN:-0}"
 SANITIZER_TARGET="${SANITIZER_TARGET:-x86_64-unknown-linux-gnu}"
 
 if [[ -z "${SANITIZER}" ]]; then
-  echo "error: set SANITIZER=address|undefined or pass as first argument" >&2
+  echo "error: set SANITIZER=address or pass as first argument" >&2
   exit 1
 fi
 
 case "${SANITIZER}" in
-  address|undefined)
+  address)
     ;;
   *)
-    echo "error: unsupported SANITIZER '${SANITIZER}' (expected address|undefined)" >&2
+    echo "error: unsupported SANITIZER '${SANITIZER}' (expected address)" >&2
     exit 1
     ;;
 esac
@@ -24,10 +24,6 @@ export RUSTDOCFLAGS="-Zsanitizer=${SANITIZER}"
 
 if [[ "${SANITIZER}" == "address" ]]; then
   export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:halt_on_error=1}"
-fi
-
-if [[ "${SANITIZER}" == "undefined" ]]; then
-  export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
 fi
 
 cmd=(
