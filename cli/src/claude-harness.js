@@ -571,7 +571,7 @@ export async function runAgentLoop({
   // v0.4.0: Model Fallback - Set up fallback chain
   // -------------------------------------------------------------------------
   let modelFallback = null;
-  if (enableFallback && effectiveProvider === 'claude') {
+  if (enableFallback && effectiveProvider === 'claude' && !queryImpl) {
     modelFallback = new ModelFallback({
       requiredCapabilities: effectiveThinkLevel !== 'off' ? ['tools', 'thinking'] : ['tools'],
       onFallback: (info) => {
