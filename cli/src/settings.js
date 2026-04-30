@@ -76,6 +76,8 @@ export const DEFAULT_AGENT_SETTINGS = {
     enabled: false,
     useMarkdown: true,
     maxSummaries: 5,
+    dir: null,
+    dbPath: null,
   },
   plugins: {
     enabled: false,
@@ -85,6 +87,10 @@ export const DEFAULT_AGENT_SETTINGS = {
     enabled: true,
     dbPath: null,
     maxSummaries: 5,
+  },
+  channels: {
+    configPath: null,
+    default: null,
   },
   queue: {
     maxLanes: 1000,

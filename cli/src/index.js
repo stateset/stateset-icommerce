@@ -174,6 +174,25 @@ export {
 export { DEFAULT_AGENT_SETTINGS, loadAgentSettings, resetAgentSettingsCache } from './settings.js';
 
 export {
+  collectAgentOsStatus,
+  createRunbookSkill,
+  formatAgentContext,
+  formatAgentStatus,
+  formatMemoryList,
+  formatNextActions,
+  formatRunbookCreated,
+  formatSessionList,
+  formatSetupResult,
+  formatSkillList,
+  inspectAgentContext,
+  listAgentSessions,
+  listAgentSkills,
+  saveOperationalMemory,
+  setupAgentWorkspace,
+  searchOperationalMemory,
+} from './agent-os.js';
+
+export {
   CredentialStore,
   getCredentialStore,
   resolveProviderApiKey,

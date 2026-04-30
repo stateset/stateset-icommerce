@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -42,6 +42,7 @@
     "stateset-google-chat": "bin/stateset-google-chat.js",
     "stateset-signal": "bin/stateset-signal.js",
     "stateset-channels": "bin/stateset-channels.js",
+    "stateset-agent": "bin/stateset-agent.js",
     "stateset-skills": "bin/stateset-skills.js",
     "stateset-daemon": "bin/stateset-daemon.js",
     "stateset-install-service": "bin/stateset-install-service.js",
@@ -103,7 +104,7 @@
     "test:heartbeat": "node --test tests/v031-heartbeat.test.js",
     "test:permissions": "node --test tests/v031-permissions.test.js",
     "test:v031": "node --test tests/v031-permissions.test.js tests/v031-heartbeat.test.js",
-    "test:smoke": "node --test tests/credentials.test.js tests/v028-features.test.js tests/v030-integration.test.js tests/cli-help-version.test.js test/unit/agent-session-store.test.js test/unit/doctor-checks.test.js test/unit/audit-store.test.js test/unit/audit-tools.test.js test/unit/channel-session-store.test.js test/unit/identity.test.js test/unit/treasury-store.test.js test/unit/erc8004.test.js test/unit/erc8004-tools.test.js test/unit/a2a-store-column-whitelist.test.js test/unit/a2a-sla.test.js test/unit/a2a-workflows.test.js",
+    "test:smoke": "node --test tests/credentials.test.js tests/v028-features.test.js tests/v030-integration.test.js tests/cli-help-version.test.js tests/cli-agent-os.test.js test/unit/agent-session-store.test.js test/unit/doctor-checks.test.js test/unit/audit-store.test.js test/unit/audit-tools.test.js test/unit/channel-session-store.test.js test/unit/identity.test.js test/unit/treasury-store.test.js test/unit/erc8004.test.js test/unit/erc8004-tools.test.js test/unit/a2a-store-column-whitelist.test.js test/unit/a2a-sla.test.js test/unit/a2a-workflows.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js test/unit/*.test.js test/integration/*.test.js test/e2e/*.test.js test/a2a/*.test.js test/adapters/*.test.js test/x402/*.test.js tests/*.test.js",
     "lint": "npx eslint src/ bin/",
     "lint:fix": "npx eslint --fix src/ bin/",
@@ -183,7 +184,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.1.70",
     "@clack/prompts": "^0.11.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@stateset/embedded": "^1.0.0",
+    "@stateset/embedded": "^1.0.1",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ethers": "^6.16.0",

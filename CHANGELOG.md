@@ -6,6 +6,22 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-04-30
+
+Patch release for the agent operating-system release track.
+
+### Added
+- Added the workspace Agent OS CLI surface for setup, readiness, context, skills, sessions, memory, and runbook creation.
+- Added generated inventory coverage for the new Agent OS source and CLI binary.
+
+### Changed
+- Hardened dependency policy by removing stale OpenSSL exceptions and pinning known duplicate-dependency skips to exact versions.
+- Documented the temporary RustSec rand advisory ignore in CI until upstream consumers converge on patched releases.
+- Synced workspace, bindings, examples, templates, docs, and release metadata to 1.0.1.
+
+### Fixed
+- Restored clean release-hygiene validation after the Agent OS source and CLI binary expanded the workspace inventory.
+
 ## [1.0.0] - 2026-04-28
 
 First stable release of the StateSet iCommerce engine. This release starts the

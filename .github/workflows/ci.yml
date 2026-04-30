@@ -88,7 +88,10 @@ jobs:
         # RUSTSEC-2023-0071 affects `rsa` (pulled in via optional `sqlx-mysql`).
         # This workspace does not enable or ship MySQL support, and there is no
         # fixed upgrade available upstream.
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        # RUSTSEC-2026-0097 affects `rand` when custom logging calls `rand::rng()`;
+        # this workspace does not install such a logger. Keep this ignored until
+        # upstream `rand` consumers converge on patched releases.
+        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0097
 
   deny:
     name: Dependency Policy

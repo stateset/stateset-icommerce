@@ -24,6 +24,7 @@ const HELP_TARGETS = [
   { bin: 'stateset-doctor.js', label: 'stateset-doctor' },
   { bin: 'stateset-update.js', label: 'stateset-update' },
   { bin: 'stateset-mcp-events.js', label: 'stateset-mcp-events' },
+  { bin: 'stateset-agent.js', label: 'stateset-agent' },
 ];
 
 const VERSION_TARGETS = [
@@ -34,6 +35,7 @@ const VERSION_TARGETS = [
   { bin: 'stateset-returns.js', label: 'stateset-returns' },
   { bin: 'stateset-update.js', label: 'stateset-update' },
   { bin: 'stateset-mcp-events.js', label: 'stateset-mcp-events' },
+  { bin: 'stateset-agent.js', label: 'stateset-agent' },
 ];
 
 const REQUEST_REQUIRED_TARGETS = [

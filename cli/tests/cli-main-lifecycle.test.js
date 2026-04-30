@@ -50,6 +50,12 @@ describe('stateset lifecycle and guardrails', () => {
     assert.match(result.stdout, /StateSet Pay/i);
   });
 
+  it('routes `stateset agent --help` to stateset-agent', () => {
+    const result = runMain(['agent', '--help']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /StateSet Agent OS/i);
+  });
+
   it('supports `--update` shorthand routing', () => {
     const result = runMain(['--update', '--help']);
     assert.equal(result.status, 0, result.stderr);

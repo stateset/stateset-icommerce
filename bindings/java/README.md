@@ -10,20 +10,20 @@ Local-first commerce engine for Java applications. Native JNI bindings to the Ru
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.stateset:embedded:1.0.0'
+implementation 'com.stateset:embedded:1.0.1'
 ```
 
 ### Gradle (Kotlin DSL)
 
 ```kotlin
-implementation("com.stateset:embedded:1.0.0")
+implementation("com.stateset:embedded:1.0.1")
 ```
 
 ## Quick Start

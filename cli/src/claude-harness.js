@@ -600,9 +600,9 @@ export async function runAgentLoop({
 
   if (effectiveEnableMemory) {
     try {
-      memoryStore = getMemoryStore();
+      memoryStore = getMemoryStore({ dbPath: memorySettings.dbPath || undefined });
       if (effectiveUseMarkdownMemory) {
-        markdownMemory = getMarkdownMemoryStore();
+        markdownMemory = getMarkdownMemoryStore({ memoryDir: memorySettings.dir || undefined });
       }
     } catch (e) {
       telem.logCustomEvent('memory_init_failed', { error: e.message });
@@ -2488,10 +2488,12 @@ export function createAgentStreamSession(options = {}) {
   if (effectiveEnableMemory) {
     try {
       if (!memoryStoreInstance) {
-        memoryStoreInstance = getMemoryStore();
+        memoryStoreInstance = getMemoryStore({ dbPath: memorySettings.dbPath || undefined });
       }
       if (effectiveUseMarkdownMemory && !markdownMemoryStoreInstance) {
-        markdownMemoryStoreInstance = getMarkdownMemoryStore();
+        markdownMemoryStoreInstance = getMarkdownMemoryStore({
+          memoryDir: memorySettings.dir || undefined,
+        });
       }
     } catch (err) {
       console.warn('[Harness] Memory store unavailable:', err.message);

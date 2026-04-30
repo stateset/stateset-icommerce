@@ -43,6 +43,7 @@ const MAX_PARALLELISM = (() => {
 const BACKPRESSURE_DELAY_MS = 1000;
 const QUEUE_ADMIN_ENV = 'STATESET_QUEUE_ADMIN';
 const SUBCOMMAND_SCRIPTS = new Map([
+  ['agent', 'stateset-agent.js'],
   ['doctor', 'stateset-doctor.js'],
   ['update', 'stateset-update.js'],
   ['simulate', 'stateset-simulate.js'],

@@ -9,8 +9,8 @@ no-default-features = false
 
 [advisories]
 # Keep `cargo deny` strict (don't ignore advisories here). The CI `cargo audit`
-# step separately ignores RUSTSEC-2023-0071 (sqlx-mysql/rsa) because MySQL isn't
-# supported by this workspace and there is no upstream fix available.
+# step owns documented temporary ignores for advisories that need runtime
+# context or upstream fixes before they can be removed.
 yanked = "warn"
 
 [licenses]
@@ -23,11 +23,8 @@ allow = [
   "BSD-3-Clause",
   "ISC",
   "Zlib",
-  "Unicode-DFS-2016",
   "Unicode-3.0",
-  "CC0-1.0",
   "MPL-2.0",
-  "OpenSSL",
   "CDLA-Permissive-2.0",
 ]
 exceptions = []
@@ -43,21 +40,45 @@ highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
-# Ban direct openssl usage — we use rustls for TLS to keep container images
-# minimal. Allow it as a transitive dep of native-tls (pulled by optional
-# features we don't enable).
+# Ban OpenSSL usage. The workspace standardizes on rustls for TLS to keep
+# container images small and release builds portable.
 deny = [
-  { name = "openssl", wrappers = ["native-tls"] },
-  { name = "openssl-sys", wrappers = ["openssl", "native-tls"] },
-]
-skip = []
-skip-tree = [
-  # OpenSSL is pulled transitively by some optional deps (e.g., native-tls)
-  # but never compiled in our workspace since we use rustls. Skip the tree
-  # to avoid false positives.
   { name = "openssl" },
   { name = "openssl-sys" },
 ]
+# Exact-version skips for known upstream transition duplicates. Keep these
+# version-pinned so newly introduced duplicate versions still surface.
+skip = [
+  # RustCrypto/PQC stacks are mid-transition across digest 0.10 and 0.11 RCs.
+  { name = "block-buffer", version = "=0.10.4" },
+  { name = "cpufeatures", version = "=0.2.17" },
+  { name = "crypto-common", version = "=0.1.7" },
+  { name = "digest", version = "=0.10.7" },
+  { name = "signature", version = "=2.2.0" },
+
+  # rand/getrandom are split by upstream consumers until the ecosystem settles
+  # on the 2024/2026 APIs.
+  { name = "getrandom", version = "=0.2.17" },
+  { name = "rand", version = "=0.8.5" },
+  { name = "rand_core", version = "=0.6.4" },
+
+  # Legacy proc-macro and map dependencies are held by upstream crates.
+  { name = "hashbrown", version = "=0.14.5" },
+  { name = "heck", version = "=0.4.1" },
+
+  # Windows target crates are retained by old JNI/build-tooling dependencies.
+  { name = "windows-sys", version = "=0.45.0" },
+  { name = "windows-sys", version = "=0.52.0" },
+  { name = "windows-targets", version = "=0.42.2" },
+  { name = "windows_aarch64_gnullvm", version = "=0.42.2" },
+  { name = "windows_aarch64_msvc", version = "=0.42.2" },
+  { name = "windows_i686_gnu", version = "=0.42.2" },
+  { name = "windows_i686_msvc", version = "=0.42.2" },
+  { name = "windows_x86_64_gnu", version = "=0.42.2" },
+  { name = "windows_x86_64_gnullvm", version = "=0.42.2" },
+  { name = "windows_x86_64_msvc", version = "=0.42.2" },
+]
+skip-tree = []
 
 [sources]
 unknown-registry = "deny"

@@ -19,10 +19,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.0.0     # Python
-npm install @stateset/embedded@1.0.0     # Node.js
-npm install -g @stateset/cli@1.0.0       # CLI
-gem install stateset_embedded -v 1.0.0   # Ruby
+pip install stateset-embedded==1.0.1     # Python
+npm install @stateset/embedded@1.0.1     # Node.js
+npm install -g @stateset/cli@1.0.1       # CLI
+gem install stateset_embedded -v 1.0.1   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -98,7 +98,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.0.0 @stateset/cli@1.0.0
+npm install @stateset/embedded@1.0.1 @stateset/cli@1.0.1
 ```
 
 ```javascript
@@ -248,22 +248,22 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.0.0
+## What's New in v1.0.1
 
-**Stable Engine Release** - `1.0.0` starts the stable `v1` line for the embedded commerce engine. The curated Rust SDK and embedded preludes, language binding version line, MCP tool names and schemas, CLI flags, policy YAML, and additive SQLite migration direction are now treated as stable within `v1.x`.
+**Agent OS Patch Release** - `1.0.1` keeps the stable `v1` compatibility contract intact while adding a first-class local Agent OS layer for release-ready commerce agents.
 
-### Agent Framework Embedding
-- Added engine-first toolkit helpers and documented adapters for OpenAI, LangChain, generic tool runtimes, CrewAI, and AutoGen across the Node and Python binding surfaces
-- Expanded agent examples so framework users can embed the runtime directly instead of standing up a separate commerce service
+### Agent OS
+- Added `stateset-agent` and `stateset agent` flows for workspace setup, readiness checks, operational context, skills, sessions, memory, and runbook creation
+- Added a bundled/workspace skill inventory path so operators can see which commerce runbooks are available before handing work to an agent
+- Added smoke and unit coverage for Agent OS setup, status, context, skills, sessions, memory, and CLI lifecycle behavior
 
-### Runtime and Release Hardening
-- Fixed protected admin API access so bearer-token requests are accepted consistently through middleware and route handlers
-- Enforced request-size limits against actual streamed bodies and preserved gateway query strings during proxying
-- Cleared the CLI typecheck and lint blockers across the x402 and sync surfaces so the published quality gate passes end to end
-- Hardened the repo-wide Rust check pipeline against debug-symbol and incremental-cache blowups during release validation
+### Release Hardening
+- Regenerated workspace inventory for the expanded CLI surface
+- Hardened dependency policy by removing stale OpenSSL exceptions and pinning known duplicate-dependency skips to exact versions
+- Documented the temporary RustSec rand advisory ignore in CI until upstream consumers converge on patched releases
 
-### Versioned 1.0 Cut
-- Synced workspace versions, install snippets, deployment references, and current-release docs to `1.0.0`
+### Versioned 1.0 Patch
+- Synced workspace versions, install snippets, deployment references, examples, templates, and current-release docs to `1.0.1`
 - Kept the release preflight green across bindings, docs, examples, inventories, admin, and CLI surfaces
 
 ---
@@ -1287,7 +1287,7 @@ tool access are generated from code in the
 
 ```toml
 [dependencies]
-stateset-embedded = "1.0.0"
+stateset-embedded = "1.0.1"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1337,14 +1337,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:1.0.0'
+implementation 'com.stateset:embedded:1.0.1'
 ```
 
 ### Kotlin (Gradle)
@@ -1352,7 +1352,7 @@ implementation 'com.stateset:embedded:1.0.0'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:1.0.0")
+    implementation("com.stateset:embedded-kotlin:1.0.1")
 }
 ```
 
@@ -1361,32 +1361,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "1.0.0")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "1.0.1")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 1.0.0'
+pod 'StateSet', '~> 1.0.1'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 1.0.0
+dotnet add package StateSet.Embedded --version 1.0.1
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="1.0.0" />
+<PackageReference Include="StateSet.Embedded" Version="1.0.1" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.0.0
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.0.1
 ```
 
 ### CLI

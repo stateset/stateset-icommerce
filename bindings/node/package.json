@@ -1,6 +1,6 @@
 {
   "name": "@stateset/embedded",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The SQLite of commerce - embeddable commerce library powered by Rust",
   "main": "index.js",
   "types": "index.d.ts",
@@ -88,7 +88,7 @@
     "@napi-rs/cli": "^2.18.0"
   },
   "peerDependencies": {
-    "@stateset/cli": "^1.0.0"
+    "@stateset/cli": "^1.0.1"
   },
   "peerDependenciesMeta": {
     "@stateset/cli": {

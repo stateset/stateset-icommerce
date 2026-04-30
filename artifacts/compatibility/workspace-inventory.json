@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "memberCount": 29,
     "defaultMemberCount": 19,
     "rustCrateCount": 21,
@@ -517,7 +517,7 @@
     }
   ],
   "cli": {
-    "binaryCount": 49,
+    "binaryCount": 50,
     "dependencyCount": 10,
     "optionalDependencyCount": 15,
     "topLevelSourceCounts": [
@@ -627,6 +627,10 @@
       },
       {
         "name": "agent-definitions.js",
+        "count": 1
+      },
+      {
+        "name": "agent-os.js",
         "count": 1
       },
       {

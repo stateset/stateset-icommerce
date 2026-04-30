@@ -178,7 +178,7 @@ node --input-type=module -e "
   import fs from 'node:fs';
   const file = '.github/workflows/publish-rust-crates.yml';
   const original = fs.readFileSync(file, 'utf8');
-  fs.writeFileSync(file, original.replace('Version to release (e.g., 1.0.0)', 'Version to release (e.g., 0.9.5)'));
+  fs.writeFileSync(file, original.replace('Version to release (e.g., 1.0.1)', 'Version to release (e.g., 0.9.5)'));
 "
 
 set +e
