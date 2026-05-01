@@ -8,6 +8,7 @@ Local admin dashboard for StateSet iCommerce operations.
 - `STATESET_API_URL`: server-side API base URL used by Next route handlers.
 - `STATESET_API_TOKEN`: optional server-side token used for admin session and agent-session API access.
 - `STATESET_ADMIN_DISABLE_AUTH`: dev-only bypass that disables the login gate for local admin use. It is ignored in production.
+- `STATESET_ADMIN_TRUST_PROXY_HEADERS`: trusts `x-forwarded-for` / `x-real-ip` for rate limiting. Enable only behind a trusted proxy that strips client-supplied forwarded headers.
 - `STATESET_ADMIN_ALLOW_MOCK_DATA`: explicit mock embedded-engine fallback for demos and tests. It is rejected in production.
 
 Server route precedence is:

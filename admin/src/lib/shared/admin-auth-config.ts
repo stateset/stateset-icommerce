@@ -1,6 +1,6 @@
 export const ADMIN_AUTH_DISABLE_FLAG = 'STATESET_ADMIN_DISABLE_AUTH';
 
-function isTruthyFlag(value: string | undefined): boolean {
+export function isTruthyFlag(value: string | undefined): boolean {
   return typeof value === 'string' && /^(1|true|yes|on)$/i.test(value.trim());
 }
 

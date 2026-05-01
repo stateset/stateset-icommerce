@@ -13,7 +13,7 @@ declare(strict_types=1);
 
 namespace StateSet\Installer;
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 const EXTENSION_NAME = 'stateset_embedded';
 const GITHUB_REPO = 'stateset/stateset-icommerce';
 

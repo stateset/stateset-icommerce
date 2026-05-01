@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-05-01
+
+Patch release for the v1 release-readiness track.
+
+### Changed
+- Synced workspace, bindings, examples, templates, docs, and release metadata to 1.0.2.
+- Documented the admin trusted-proxy rate-limit configuration flag for deployments that terminate traffic behind a controlled proxy boundary.
+
+### Fixed
+- Hardened admin rate limiting so spoofable `x-forwarded-for` and `x-real-ip` headers are ignored unless trusted proxy mode is explicitly enabled.
+- Synced Agent OS status output to the package version instead of reporting a hardcoded stale version.
+- Escaped generated runbook skill frontmatter so multiline descriptions cannot corrupt `SKILL.md` metadata.
+
 ## [1.0.1] - 2026-04-30
 
 Patch release for the agent operating-system release track.

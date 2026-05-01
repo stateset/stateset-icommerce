@@ -6,7 +6,7 @@
   },
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "totalPaths": 40,
   "totalOperations": 57,
   "totalSchemas": 54,

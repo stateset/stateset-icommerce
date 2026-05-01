@@ -7,7 +7,7 @@ import memoryModule, { MarkdownMemoryStore } from './memory/markdown-store.js';
 import { discoverSkills } from './skills/loader.js';
 import { SkillRegistry } from './skills/registry.js';
 import { AGENTS } from './agent-definitions.js';
-import { PROVIDERS, DEFAULT_MODEL } from './config.js';
+import { PROVIDERS, DEFAULT_MODEL, CLI_VERSION } from './config.js';
 import { loadAgentSettings } from './settings.js';
 import { DEFAULT_DB_PATH as DEFAULT_SESSION_DB_PATH } from './agent-session-store.js';
 
@@ -81,6 +81,19 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function sanitizeTemplateLine(value, fallback) {
+  return (
+    String(value ?? '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || fallback
+  );
+}
+
+function yamlDoubleQuoted(value) {
+  return JSON.stringify(sanitizeTemplateLine(value, ''));
 }
 
 function truncate(value, width = 96) {
@@ -597,7 +610,7 @@ export function collectAgentOsStatus(options = {}) {
   });
 
   return {
-    version: '1.0.0',
+    version: CLI_VERSION,
     generatedAt: new Date().toISOString(),
     defaultAgent: settings.agent?.default || 'customer-service',
     defaultProvider: settings.provider?.default || 'claude',
@@ -1047,14 +1060,20 @@ export function formatMemoryList(entries, { query } = {}) {
 }
 
 function runbookTemplate({ name, skillName, description }) {
+  const safeName = sanitizeTemplateLine(name, 'Commerce Runbook');
+  const safeDescription = sanitizeTemplateLine(
+    description,
+    'a recurring commerce operations workflow',
+  );
+
   return `---
 name: ${skillName}
-description: ${description}
+description: ${yamlDoubleQuoted(safeDescription)}
 ---
-# ${name}
+# ${safeName}
 
 ## Trigger
-Use this runbook when the commerce agent needs a repeatable procedure for ${description}.
+Use this runbook when the commerce agent needs a repeatable procedure for ${safeDescription}.
 
 ## Preconditions
 - Confirm the requester, store context, and affected commerce objects.
@@ -1099,11 +1118,7 @@ export async function createRunbookSkill(options = {}) {
   }
 
   await fsp.mkdir(skillDir, { recursive: true });
-  await fsp.writeFile(
-    skillPath,
-    runbookTemplate({ name: String(name).trim(), skillName, description }),
-    'utf-8',
-  );
+  await fsp.writeFile(skillPath, runbookTemplate({ name, skillName, description }), 'utf-8');
 
   return {
     created: true,

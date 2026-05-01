@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeScript } from './helpers/run-node-script.js';
+import { CLI_VERSION } from '../src/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -58,6 +59,7 @@ describe('stateset-agent CLI', () => {
     const statusPayload = JSON.parse(status.stdout);
     assert.equal(statusPayload.readiness.grade, 'A+');
     assert.equal(statusPayload.readiness.score, 100);
+    assert.equal(statusPayload.version, CLI_VERSION);
     assert.equal(
       statusPayload.channels.find((channel) => channel.name === 'webchat')?.configured,
       true,

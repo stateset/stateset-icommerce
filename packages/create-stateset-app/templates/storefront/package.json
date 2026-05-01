@@ -1,6 +1,6 @@
 {
   "name": "{{PACKAGE_NAME}}",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -12,7 +12,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
     "@ai-sdk/react": "^1.2.12",
-    "@stateset/embedded": "^1.0.1",
+    "@stateset/embedded": "^1.0.2",
     "@tanstack/react-query": "^5.90.12",
     "ai": "^4.3.19",
     "lucide-react": "^0.563.0",

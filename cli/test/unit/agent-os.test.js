@@ -19,6 +19,7 @@ import {
   searchOperationalMemory,
   setupAgentWorkspace,
 } from '../../src/agent-os.js';
+import { CLI_VERSION } from '../../src/config.js';
 
 const tempDirs = new Set();
 
@@ -50,7 +51,7 @@ describe('agent OS status', () => {
       limit: 3,
     });
 
-    assert.equal(status.version, '1.0.1');
+    assert.equal(status.version, CLI_VERSION);
     assert.equal(status.providers.find((provider) => provider.id === 'claude')?.configured, true);
     assert.ok(status.skills.total > 0, 'expected bundled commerce skills to be discovered');
     assert.equal(status.sessions.count, 0);
@@ -72,6 +73,7 @@ describe('agent OS runbooks', () => {
     assert.equal(result.name, 'commerce-runbook-daily-ops');
     const content = readFileSync(result.path, 'utf-8');
     assert.match(content, /name: commerce-runbook-daily-ops/);
+    assert.match(content, /description: "daily commerce operations"/);
     assert.match(content, /## Procedure/);
 
     await assert.rejects(
@@ -84,6 +86,24 @@ describe('agent OS runbooks', () => {
       workspaceSkillDir: workspaceDir,
     });
     assert.equal(skills.some((skill) => skill.name === 'commerce-runbook-daily-ops'), true);
+  });
+
+  it('keeps generated runbook frontmatter single-document and escaped', async () => {
+    const workspaceDir = join(tempDir(), 'skills');
+
+    const result = await createRunbookSkill({
+      name: 'Daily Ops\n# Injected',
+      description: 'daily ops\n---\nname: injected',
+      workspaceDir,
+    });
+
+    const content = readFileSync(result.path, 'utf-8');
+    const frontmatterFences = content.match(/^---$/gm) || [];
+
+    assert.equal(frontmatterFences.length, 2);
+    assert.match(content, /^description: "daily ops --- name: injected"$/m);
+    assert.doesNotMatch(content, /^name: injected$/m);
+    assert.match(content, /^# Daily Ops # Injected$/m);
   });
 });
 

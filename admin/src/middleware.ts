@@ -5,12 +5,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { isAdminAuthDisabled } from '@/lib/shared/admin-auth-config';
+import { isAdminAuthDisabled, isTruthyFlag } from '@/lib/shared/admin-auth-config';
 import { getRequestSessionToken } from '@/lib/shared/auth-session';
 import { getStateSetApiConnectSources } from '@/lib/stateset-api-url';
 import { apiRateLimiter, authRateLimiter } from '@/lib/shared/rate-limit';
 
 const ADMIN_SESSION_COOKIE = 'stateset_admin_session';
+const TRUST_PROXY_HEADERS_FLAG = 'STATESET_ADMIN_TRUST_PROXY_HEADERS';
 
 const PUBLIC_API_PREFIXES = [
   '/api/auth/csrf-token',
@@ -33,6 +34,35 @@ function isPublicApiPath(pathname: string): boolean {
   return PUBLIC_API_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
+}
+
+function normalizeRateLimitIdentifier(value: string | null | undefined): string | null {
+  const normalized = value?.split(',')[0]?.trim();
+  if (!normalized || normalized.length > 128 || /[\r\n]/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function shouldTrustProxyHeaders(): boolean {
+  return isTruthyFlag(process.env[TRUST_PROXY_HEADERS_FLAG]);
+}
+
+export function resolveRateLimitClientKey(request: NextRequest): string {
+  const runtimeIp = normalizeRateLimitIdentifier(
+    (request as unknown as { ip?: string }).ip
+  );
+  if (runtimeIp) {
+    return runtimeIp;
+  }
+
+  if (shouldTrustProxyHeaders()) {
+    return normalizeRateLimitIdentifier(request.headers.get('x-forwarded-for'))
+      || normalizeRateLimitIdentifier(request.headers.get('x-real-ip'))
+      || 'unknown';
+  }
+
+  return 'unknown';
 }
 
 function applySecurityHeaders(request: NextRequest, response: NextResponse): NextResponse {
@@ -69,13 +99,8 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const authDisabled = isAdminAuthDisabled();
 
-  // Rate limiting
-  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    || request.headers.get('x-real-ip')
-    || 'unknown';
-
   const limiter = pathname.startsWith('/api/auth/') ? authRateLimiter : apiRateLimiter;
-  const rateLimitResult = await limiter.consumeAsync(clientIp);
+  const rateLimitResult = await limiter.consumeAsync(resolveRateLimitClientKey(request));
 
   if (!rateLimitResult.allowed) {
     const response = NextResponse.json(

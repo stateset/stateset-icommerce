@@ -123,7 +123,7 @@ from stateset_embedded.openai import (
     execute_openai_tool_calls,
 )
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 __all__ = [
     # Main entry point

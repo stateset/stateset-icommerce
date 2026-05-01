@@ -23,7 +23,7 @@ This workspace is the application-layer repo in a larger documented stack:
 - `stateset-stark`: STARK proving and verification
 - `set`: settlement chain, registry contracts, anchor service
 
-The current workspace release line is `1.0.1`.
+The current workspace release line is `1.0.2`.
 
 ## Trust Levels
 
@@ -54,7 +54,7 @@ Do not collapse those into a single "post-quantum" claim.
 
 ## Compatibility Contract
 
-The current workspace release line is `1.0.1`, so the published artifacts are
+The current workspace release line is `1.0.2`, so the published artifacts are
 on the first stable `v1.x` compatibility line.
 
 The `v1.0.0` compatibility contract is frozen and remains active:

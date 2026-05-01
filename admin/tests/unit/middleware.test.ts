@@ -7,14 +7,18 @@ describe('admin middleware', () => {
   beforeEach(() => {
     // Reset rate limiters between tests so they don't interfere
     apiRateLimiter.reset('127.0.0.1');
+    apiRateLimiter.reset('203.0.113.10');
     authRateLimiter.reset('127.0.0.1');
+    authRateLimiter.reset('203.0.113.10');
     apiRateLimiter.reset('unknown');
     authRateLimiter.reset('unknown');
   });
 
   afterEach(() => {
     apiRateLimiter.reset('127.0.0.1');
+    apiRateLimiter.reset('203.0.113.10');
     authRateLimiter.reset('127.0.0.1');
+    authRateLimiter.reset('203.0.113.10');
     apiRateLimiter.reset('unknown');
     authRateLimiter.reset('unknown');
     vi.unstubAllEnvs();
@@ -94,16 +98,12 @@ describe('admin middleware', () => {
 
   describe('rate limiting', () => {
     it('returns 429 after exceeding the API rate limit', async () => {
-      const ip = '127.0.0.1';
-
       // Exhaust the API limit (100 requests)
       for (let i = 0; i < 100; i++) {
-        apiRateLimiter.consume(ip);
+        apiRateLimiter.consume('unknown');
       }
 
-      const request = new NextRequest('http://localhost:3000/api/sessions', {
-        headers: { 'x-forwarded-for': ip },
-      });
+      const request = new NextRequest('http://localhost:3000/api/sessions');
       const response = await middleware(request);
       const body = await response.json();
 
@@ -118,15 +118,11 @@ describe('admin middleware', () => {
     });
 
     it('sets Retry-After header on 429 responses', async () => {
-      const ip = '127.0.0.1';
-
       for (let i = 0; i < 100; i++) {
-        apiRateLimiter.consume(ip);
+        apiRateLimiter.consume('unknown');
       }
 
-      const request = new NextRequest('http://localhost:3000/api/sessions', {
-        headers: { 'x-forwarded-for': ip },
-      });
+      const request = new NextRequest('http://localhost:3000/api/sessions');
       const response = await middleware(request);
 
       const retryAfter = response.headers.get('Retry-After');
@@ -136,15 +132,11 @@ describe('admin middleware', () => {
     });
 
     it('sets X-RateLimit-Limit and X-RateLimit-Remaining headers on 429', async () => {
-      const ip = '127.0.0.1';
-
       for (let i = 0; i < 100; i++) {
-        apiRateLimiter.consume(ip);
+        apiRateLimiter.consume('unknown');
       }
 
-      const request = new NextRequest('http://localhost:3000/api/sessions', {
-        headers: { 'x-forwarded-for': ip },
-      });
+      const request = new NextRequest('http://localhost:3000/api/sessions');
       const response = await middleware(request);
 
       expect(response.headers.get('X-RateLimit-Limit')).toBe('100');
@@ -152,16 +144,12 @@ describe('admin middleware', () => {
     });
 
     it('auth endpoints use the stricter 10/min limit', async () => {
-      const ip = '127.0.0.1';
-
       // Exhaust the auth limit (10 requests)
       for (let i = 0; i < 10; i++) {
-        authRateLimiter.consume(ip);
+        authRateLimiter.consume('unknown');
       }
 
-      const request = new NextRequest('http://localhost:3000/api/auth/login', {
-        headers: { 'x-forwarded-for': ip },
-      });
+      const request = new NextRequest('http://localhost:3000/api/auth/login');
       const response = await middleware(request);
       const body = await response.json();
 
@@ -173,6 +161,37 @@ describe('admin middleware', () => {
           code: 'RATE_LIMITED',
         },
       });
+    });
+
+    it('ignores spoofable forwarded headers unless proxy trust is enabled', async () => {
+      const spoofedIp = '203.0.113.10';
+
+      for (let i = 0; i < 100; i++) {
+        apiRateLimiter.consume(spoofedIp);
+      }
+
+      const request = new NextRequest('http://localhost:3000/api/sessions', {
+        headers: { 'x-forwarded-for': spoofedIp },
+      });
+      const response = await middleware(request);
+
+      expect(response.status).toBe(401);
+    });
+
+    it('uses forwarded headers only after explicit proxy trust is enabled', async () => {
+      vi.stubEnv('STATESET_ADMIN_TRUST_PROXY_HEADERS', 'true');
+      const ip = '203.0.113.10';
+
+      for (let i = 0; i < 100; i++) {
+        apiRateLimiter.consume(ip);
+      }
+
+      const request = new NextRequest('http://localhost:3000/api/sessions', {
+        headers: { 'x-forwarded-for': `${ip}, 198.51.100.25` },
+      });
+      const response = await middleware(request);
+
+      expect(response.status).toBe(429);
     });
   });
 });

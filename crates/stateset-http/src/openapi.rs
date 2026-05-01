@@ -36,7 +36,7 @@ use crate::state::AppState;
     info(
         title = "StateSet Commerce API",
         description = "REST API for the StateSet embedded commerce engine.",
-        version = "1.0.1",
+        version = "1.0.2",
         contact(name = "StateSet", url = "https://stateset.io"),
         license(name = "MIT", url = "https://opensource.org/licenses/MIT"),
     ),
@@ -230,7 +230,7 @@ mod tests {
         let spec = ApiDoc::openapi();
         let json = serde_json::to_value(&spec).unwrap();
         assert_eq!(json["info"]["title"], "StateSet Commerce API");
-        assert_eq!(json["info"]["version"], "1.0.1");
+        assert_eq!(json["info"]["version"], "1.0.2");
     }
 
     #[test]
