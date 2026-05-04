@@ -8,7 +8,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  fetchWithValidatedRedirects,
   validateFetchUrl,
+  validateResolvedFetchUrl,
+  isBlockedIpAddress,
   isSafeDisplayUrl,
 } from '../../src/utils/url-validator.js';
 
@@ -65,11 +68,10 @@ describe('validateFetchUrl — blocks localhost', () => {
     });
   });
 
-  it('blocks ::1 (IPv6 loopback) when hostname matches exactly', () => {
-    // Note: new URL('http://[::1]/') yields hostname "[::1]" (with brackets)
-    // so the validator's `host === '::1'` check does not match bracketed form.
-    // This test documents current behavior; a future fix could strip brackets.
-    assert.doesNotThrow(() => validateFetchUrl('http://[::1]/admin'));
+  it('blocks ::1 (IPv6 loopback)', () => {
+    assert.throws(() => validateFetchUrl('http://[::1]/admin'), {
+      message: /SSRF blocked/,
+    });
   });
 
   it('blocks 0.0.0.0', () => {
@@ -138,12 +140,148 @@ describe('validateFetchUrl — blocks private IPs', () => {
     });
   });
 
+  it('blocks link-local metadata addresses', () => {
+    assert.throws(() => validateFetchUrl('http://169.254.169.254/latest/meta-data'), {
+      message: /SSRF blocked/,
+    });
+  });
+
+  it('blocks IPv6 unique-local addresses', () => {
+    assert.throws(() => validateFetchUrl('http://[fd00::1]/'), {
+      message: /SSRF blocked/,
+    });
+  });
+
+  it('blocks IPv6 link-local addresses', () => {
+    assert.throws(() => validateFetchUrl('http://[fe80::1]/'), {
+      message: /SSRF blocked/,
+    });
+  });
+
   it('allows 172.32.0.1 (outside private range)', () => {
     assert.doesNotThrow(() => validateFetchUrl('http://172.32.0.1/'));
   });
 
   it('allows 172.15.0.1 (outside private range)', () => {
     assert.doesNotThrow(() => validateFetchUrl('http://172.15.0.1/'));
+  });
+});
+
+// ===========================================================================
+// validateResolvedFetchUrl — DNS rebinding protection
+// ===========================================================================
+
+describe('validateResolvedFetchUrl', () => {
+  it('allows hostnames resolving only to public addresses', async () => {
+    await assert.doesNotReject(() =>
+      validateResolvedFetchUrl('https://merchant.test/pay', {
+        cache: false,
+        lookup: async () => [{ address: '8.8.8.8', family: 4 }],
+      }),
+    );
+  });
+
+  it('blocks hostnames resolving to private IPv4 addresses', async () => {
+    await assert.rejects(
+      () =>
+        validateResolvedFetchUrl('https://merchant.test/pay', {
+          cache: false,
+          lookup: async () => [{ address: '10.0.0.5', family: 4 }],
+        }),
+      /resolves to internal address/,
+    );
+  });
+
+  it('blocks hostnames resolving to private IPv6 addresses', async () => {
+    await assert.rejects(
+      () =>
+        validateResolvedFetchUrl('https://merchant.test/pay', {
+          cache: false,
+          lookup: async () => [{ address: 'fd00::5', family: 6 }],
+        }),
+      /resolves to internal address/,
+    );
+  });
+
+  it('reports DNS resolution failures before fetch', async () => {
+    await assert.rejects(
+      () =>
+        validateResolvedFetchUrl('https://merchant.test/pay', {
+          cache: false,
+          lookup: async () => {
+            throw new Error('no such host');
+          },
+        }),
+      /Unable to resolve URL host/,
+    );
+  });
+});
+
+describe('fetchWithValidatedRedirects', () => {
+  it('follows public redirects with redirect validation enabled', async () => {
+    const calls = [];
+    const fetch = async (url, options) => {
+      calls.push({ url: String(url), redirect: options.redirect });
+      if (String(url) === 'https://merchant.test/start') {
+        return new Response('', {
+          status: 302,
+          headers: { location: 'https://checkout.test/final' },
+        });
+      }
+      return new Response('ok', { status: 200 });
+    };
+
+    const response = await fetchWithValidatedRedirects(
+      'https://merchant.test/start',
+      {},
+      {
+        cache: false,
+        fetch,
+        lookup: async () => [{ address: '8.8.8.8', family: 4 }],
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, [
+      { url: 'https://merchant.test/start', redirect: 'manual' },
+      { url: 'https://checkout.test/final', redirect: 'manual' },
+    ]);
+  });
+
+  it('blocks redirects to internal addresses before following them', async () => {
+    const fetch = async () =>
+      new Response('', {
+        status: 302,
+        headers: { location: 'http://169.254.169.254/latest/meta-data' },
+      });
+
+    await assert.rejects(
+      () =>
+        fetchWithValidatedRedirects(
+          'https://merchant.test/start',
+          {},
+          {
+            cache: false,
+            fetch,
+            lookup: async () => [{ address: '8.8.8.8', family: 4 }],
+          },
+        ),
+      /SSRF blocked/,
+    );
+  });
+});
+
+describe('isBlockedIpAddress', () => {
+  it('identifies non-public IPv4 ranges', () => {
+    assert.equal(isBlockedIpAddress('127.0.0.1'), true);
+    assert.equal(isBlockedIpAddress('169.254.169.254'), true);
+    assert.equal(isBlockedIpAddress('8.8.8.8'), false);
+  });
+
+  it('identifies non-public IPv6 ranges', () => {
+    assert.equal(isBlockedIpAddress('::1'), true);
+    assert.equal(isBlockedIpAddress('fd00::1'), true);
+    assert.equal(isBlockedIpAddress('2606:4700:4700::1111'), false);
   });
 });
 

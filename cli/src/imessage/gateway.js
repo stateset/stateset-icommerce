@@ -16,6 +16,25 @@ import { getNotifier } from '../channels/notifier.js';
 // BlueBubbles REST helpers
 // ============================================================================
 
+const BLUEBUBBLES_AUTH_MODE_ENV = 'BLUEBUBBLES_AUTH_MODE';
+const BLUEBUBBLES_AUTH_MODES = new Set(['auto', 'header', 'query']);
+
+function normalizeBlueBubblesAuthMode(value) {
+  const normalized = String(value || 'auto')
+    .trim()
+    .toLowerCase();
+  return BLUEBUBBLES_AUTH_MODES.has(normalized) ? normalized : 'auto';
+}
+
+function applyBlueBubblesAuth(url, fetchOpts, password, authMode) {
+  if (authMode === 'query') {
+    url.searchParams.set('password', password);
+    return;
+  }
+  fetchOpts.headers.Authorization = `Bearer ${password}`;
+  fetchOpts.headers['X-BlueBubbles-Password'] = password;
+}
+
 /**
  * Make a request to the BlueBubbles API.
  * @param {string} baseUrl
@@ -25,8 +44,8 @@ import { getNotifier } from '../channels/notifier.js';
  * @returns {Promise<any>}
  */
 async function bbFetch(baseUrl, password, path, opts = {}) {
+  const authMode = normalizeBlueBubblesAuthMode(opts.authMode);
   const url = new URL(path, baseUrl);
-  url.searchParams.set('password', password);
 
   if (opts.params) {
     for (const [k, v] of Object.entries(opts.params)) {
@@ -34,20 +53,26 @@ async function bbFetch(baseUrl, password, path, opts = {}) {
     }
   }
 
-  const fetchOpts = {
-    method: opts.method || 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  };
-
-  if (opts.body) {
-    fetchOpts.body = JSON.stringify(opts.body);
+  async function attempt(mode) {
+    const attemptUrl = new URL(url.toString());
+    const fetchOpts = {
+      method: opts.method || 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    };
+    applyBlueBubblesAuth(attemptUrl, fetchOpts, password, mode);
+    if (opts.body) {
+      fetchOpts.body = JSON.stringify(opts.body);
+    }
+    if (opts.signal) {
+      fetchOpts.signal = opts.signal;
+    }
+    return fetch(attemptUrl.toString(), fetchOpts);
   }
 
-  if (opts.signal) {
-    fetchOpts.signal = opts.signal;
+  let res = await attempt(authMode === 'query' ? 'query' : 'header');
+  if (authMode === 'auto' && (res.status === 401 || res.status === 403)) {
+    res = await attempt('query');
   }
-
-  const res = await fetch(url.toString(), fetchOpts);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`BlueBubbles ${opts.method || 'GET'} ${path} failed: ${res.status} ${text}`);
@@ -64,9 +89,10 @@ async function bbFetch(baseUrl, password, path, opts = {}) {
  *
  * @param {string} baseUrl - BlueBubbles server URL
  * @param {string} password - BlueBubbles API password
+ * @param {string} authMode - Authentication mode: auto, header, or query
  * @returns {import('../channels/base.js').ChannelAdapter}
  */
-function createAdapter(baseUrl, password) {
+function createAdapter(baseUrl, password, authMode) {
   return {
     extractText(raw) {
       if (!raw || !raw.text) return null;
@@ -90,6 +116,7 @@ function createAdapter(baseUrl, password) {
 
     async send(chatGuid, text) {
       await bbFetch(baseUrl, password, '/api/v1/message/text', {
+        authMode,
         method: 'POST',
         body: {
           chatGuid,
@@ -125,18 +152,28 @@ function createAdapter(baseUrl, password) {
  * @param {Object} opts
  * @param {string} opts.baseUrl
  * @param {string} opts.password
+ * @param {string} opts.authMode
  * @param {number} opts.pollIntervalMs
  * @param {Function} opts.onMessage
  * @param {AbortSignal} opts.signal
  * @param {boolean} [opts.verbose]
  * @returns {{ lastMessageDate: number }}
  */
-async function startPolling({ baseUrl, password, pollIntervalMs, onMessage, signal, verbose }) {
+async function startPolling({
+  baseUrl,
+  password,
+  authMode,
+  pollIntervalMs,
+  onMessage,
+  signal,
+  verbose,
+}) {
   // Get the most recent message timestamp so we only process new messages
   let lastDate = Date.now();
 
   try {
     const recent = await bbFetch(baseUrl, password, '/api/v1/message', {
+      authMode,
       params: { limit: 1, sort: 'DESC', with: 'chat,handle' },
     });
     if (recent.data?.[0]?.dateCreated) {
@@ -155,6 +192,7 @@ async function startPolling({ baseUrl, password, pollIntervalMs, onMessage, sign
 
     try {
       const result = await bbFetch(baseUrl, password, '/api/v1/message', {
+        authMode,
         params: {
           after: lastDate,
           sort: 'ASC',
@@ -215,6 +253,9 @@ async function startPolling({ baseUrl, password, pollIntervalMs, onMessage, sign
 export async function startIMessageGateway(config, shared) {
   const baseUrl = config.blueBubblesUrl || process.env.BLUEBUBBLES_URL || 'http://localhost:1234';
   const password = config.blueBubblesPassword || process.env.BLUEBUBBLES_PASSWORD;
+  const authMode = normalizeBlueBubblesAuthMode(
+    config.blueBubblesAuthMode || process.env[BLUEBUBBLES_AUTH_MODE_ENV],
+  );
 
   if (!password) {
     throw new Error(
@@ -229,7 +270,7 @@ export async function startIMessageGateway(config, shared) {
 
   // Verify connection
   try {
-    const serverInfo = await bbFetch(baseUrl, password, '/api/v1/server/info');
+    const serverInfo = await bbFetch(baseUrl, password, '/api/v1/server/info', { authMode });
     console.debug(
       `[iMessage] Connected to BlueBubbles ${serverInfo.data?.os_version || 'unknown'}`,
     );
@@ -245,7 +286,7 @@ export async function startIMessageGateway(config, shared) {
   const cleanupHandle = sessionMgr.startCleanup();
 
   // Create adapter and message handler
-  const adapter = createAdapter(baseUrl, password);
+  const adapter = createAdapter(baseUrl, password, authMode);
   const handleMessage = createMessageHandler(adapter, {
     getSession: sessionMgr.getSession,
     persistSession: sessionMgr.persistSession,
@@ -272,6 +313,7 @@ export async function startIMessageGateway(config, shared) {
   await startPolling({
     baseUrl,
     password,
+    authMode,
     pollIntervalMs,
     onMessage: handleMessage,
     signal: abortController.signal,

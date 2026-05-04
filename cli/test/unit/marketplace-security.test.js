@@ -205,7 +205,7 @@ describe('MarketplaceClient download hardening', () => {
     );
   });
 
-  it('uses fetch redirect=error for remote downloads', async () => {
+  it('uses manual redirect handling for remote downloads', async () => {
     const tmpDir = mkTmpDir();
     const installDir = path.join(tmpDir, 'installed');
     const bundledDir = path.join(tmpDir, 'bundled');
@@ -230,7 +230,97 @@ describe('MarketplaceClient download hardening', () => {
 
     assert.equal(result.installed, true);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].options?.redirect, 'error');
+    assert.equal(calls[0].options?.redirect, 'manual');
+  });
+
+  it('rejects remote package redirects instead of following them', async () => {
+    const tmpDir = mkTmpDir();
+    const installDir = path.join(tmpDir, 'installed');
+    const bundledDir = path.join(tmpDir, 'bundled');
+    const catalogPath = buildCatalogFile(tmpDir, {
+      downloadChecksum: 'sha256:deadbeef',
+    });
+
+    const calls = [];
+    global.fetch = async (url, options) => {
+      calls.push({ url: String(url), options });
+      return new Response('', {
+        status: 302,
+        headers: { location: 'https://skills.example.com/packages/redirected.md' },
+      });
+    };
+
+    const client = new MarketplaceClient({ catalogPath, installDir, bundledDir });
+    const result = await client.install('remote-skill');
+
+    assert.equal(result.installed, false);
+    assert.match(result.error, /redirect/i);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].options?.redirect, 'manual');
+  });
+
+  it('rejects remote download hosts that resolve to private addresses before fetch', async () => {
+    const tmpDir = mkTmpDir();
+    const installDir = path.join(tmpDir, 'installed');
+    const bundledDir = path.join(tmpDir, 'bundled');
+    const payload = '# Remote Skill\n\nSafe content';
+    const digest = crypto.createHash('sha256').update(Buffer.from(payload, 'utf8')).digest('hex');
+    const catalogPath = buildCatalogFile(tmpDir, {
+      downloadUrl: 'https://skills.stateset.test/packages/remote-skill.md',
+      downloadChecksum: `sha256:${digest}`,
+    });
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+    catalog.baseUrl = 'https://skills.stateset.test/packages/';
+    fs.writeFileSync(catalogPath, JSON.stringify(catalog, null, 2));
+
+    let fetchCalled = false;
+    global.fetch = async () => {
+      fetchCalled = true;
+      throw new Error('fetch should not be called');
+    };
+
+    const client = new MarketplaceClient({
+      catalogPath,
+      installDir,
+      bundledDir,
+      urlLookup: async () => [{ address: '10.0.0.10', family: 4 }],
+    });
+    const result = await client.install('remote-skill');
+
+    assert.equal(result.installed, false);
+    assert.match(result.error, /resolves to internal address/);
+    assert.equal(fetchCalled, false);
+  });
+
+  it('rejects oversized remote packages', async () => {
+    const tmpDir = mkTmpDir();
+    const installDir = path.join(tmpDir, 'installed');
+    const bundledDir = path.join(tmpDir, 'bundled');
+    const payload = '# Remote Skill\n\nSafe content';
+    const digest = crypto.createHash('sha256').update(Buffer.from(payload, 'utf8')).digest('hex');
+    const catalogPath = buildCatalogFile(tmpDir, {
+      downloadChecksum: `sha256:${digest}`,
+    });
+
+    global.fetch = async () =>
+      new Response(payload, {
+        status: 200,
+        headers: {
+          'content-type': 'text/markdown',
+          'content-length': String(payload.length),
+        },
+      });
+
+    const client = new MarketplaceClient({
+      catalogPath,
+      installDir,
+      bundledDir,
+      maxDownloadBytes: 8,
+    });
+    const result = await client.install('remote-skill');
+
+    assert.equal(result.installed, false);
+    assert.match(result.error, /exceeds maximum size/);
   });
 
   it('allows insecure download mode when env flag is enabled', async () => {

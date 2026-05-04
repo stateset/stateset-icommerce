@@ -225,6 +225,32 @@ describe('sendNotification', () => {
     );
   });
 
+  it('does not follow webhook redirects to internal addresses', async () => {
+    const config = webhookConfig({ endpoint_url: 'https://hooks.example.com/webhook' });
+    const store = makeStore({
+      getWebhookConfig: mock.fn(async () => config),
+      getNotificationLog: mock.fn(async () => null),
+    });
+    globalThis.fetch = mock.fn(async () =>
+      new Response('', {
+        status: 302,
+        headers: { location: 'http://169.254.169.254/latest/meta-data' },
+      }),
+    );
+
+    const svc = createNotificationService(store);
+    const result = await svc.sendNotification({
+      recipientAddress: '0xRecipient',
+      eventType: 'test',
+      payload: {},
+    });
+
+    assert.equal(result.status, 'pending');
+    assert.match(result.lastError, /SSRF|blocked|internal/i);
+    assert.equal(globalThis.fetch.mock.calls.length, 1);
+    assert.equal(globalThis.fetch.mock.calls[0].arguments[1].redirect, 'manual');
+  });
+
   it('computes correct HMAC-SHA256 signature', async () => {
     const secret = 'whsec_mysecret';
     const config = webhookConfig({ secret });

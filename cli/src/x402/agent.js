@@ -3,7 +3,7 @@
  */
 
 import crypto from 'crypto';
-import { validateFetchUrl } from '../utils/url-validator.js';
+import { fetchWithValidatedRedirects } from '../utils/url-validator.js';
 import { createBudgetState, getDefaultBudgetStateFile } from './budget.js';
 import {
   computeX402SigningHash,
@@ -96,6 +96,7 @@ import { createExactEvmPaymentPayload, isExactEvmRequirement } from './exact-evm
  *   budgetStateFile?: string,
  *   startingBalance?: number,
  *   validateUrl?: boolean,
+ *   urlLookup?: (hostname: string, options: { all: boolean, verbatim: boolean }) => Promise<Array<string | { address?: string, family?: number }> | string | { address?: string, family?: number }>,
  * }} X402FetchConfig
  * @typedef {{ requirements: PaymentRequirement | null, version: 'v1' | 'v2' | null, raw: unknown }} ParsedPaymentRequired
  */
@@ -308,6 +309,7 @@ export async function x402Fetch(url, options, config) {
     budgetStateFile,
     startingBalance,
     validateUrl = true,
+    urlLookup,
   } = config;
 
   if (!agentId) throw new Error('agentId is required');
@@ -315,13 +317,18 @@ export async function x402Fetch(url, options, config) {
   if (!signingKey?.privateKey || !signingKey?.publicKey)
     throw new Error('signingKey with privateKey/publicKey is required');
 
-  if (validateUrl !== false) {
-    validateFetchUrl(url);
-  }
-
   const baseHeaders = headersToObject(options?.headers);
+  /**
+   * @param {string} requestUrl
+   * @param {RequestInit} requestOptions
+   * @returns {Promise<Response>}
+   */
+  const request = (requestUrl, requestOptions) =>
+    validateUrl === false
+      ? fetch(requestUrl, requestOptions)
+      : fetchWithValidatedRedirects(requestUrl, requestOptions, { lookup: urlLookup });
 
-  const response = await fetch(url, {
+  const response = await request(url, {
     ...options,
     headers: baseHeaders,
   });
@@ -389,7 +396,7 @@ export async function x402Fetch(url, options, config) {
       ...baseHeaders,
       'PAYMENT-SIGNATURE': encodeBase64Json(paymentPayload),
     };
-    const finalResponse = await fetch(url, {
+    const finalResponse = await request(url, {
       ...options,
       headers: retryHeaders,
     });
@@ -541,7 +548,7 @@ export async function x402Fetch(url, options, config) {
       : { [paymentHeader]: encodeBase64Json(submitPayload) }),
   };
 
-  const finalResponse = await fetch(url, {
+  const finalResponse = await request(url, {
     ...options,
     headers: retryHeaders,
   });

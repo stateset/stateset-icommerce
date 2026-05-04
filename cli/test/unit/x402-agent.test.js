@@ -341,6 +341,63 @@ describe('x402Fetch — validation', () => {
     );
   });
 
+  it('throws before fetch when DNS resolves to a private address', async () => {
+    let fetchCalled = false;
+    global.fetch = async () => {
+      fetchCalled = true;
+      throw new Error('fetch should not be called');
+    };
+
+    await assert.rejects(
+      () =>
+        x402Fetch(
+          'https://merchant.stateset.test/resource',
+          {},
+          {
+            sequencerClient: {},
+            tenantId: 'T',
+            storeId: 'S',
+            agentId: 'A',
+            payerAddress: '0xPayer',
+            signingKey: { privateKey: Buffer.alloc(32), publicKey: Buffer.alloc(32) },
+            urlLookup: async () => [{ address: '172.16.0.5', family: 4 }],
+          },
+        ),
+      /resolves to internal address/,
+    );
+    assert.equal(fetchCalled, false);
+  });
+
+  it('throws before following redirects to private addresses', async () => {
+    const calls = [];
+    global.fetch = async (url) => {
+      calls.push(String(url));
+      return new Response('', {
+        status: 302,
+        headers: { location: 'http://169.254.169.254/latest/meta-data' },
+      });
+    };
+
+    await assert.rejects(
+      () =>
+        x402Fetch(
+          'https://redirector.stateset.test/resource',
+          {},
+          {
+            sequencerClient: {},
+            tenantId: 'T',
+            storeId: 'S',
+            agentId: 'A',
+            payerAddress: '0xPayer',
+            signingKey: { privateKey: Buffer.alloc(32), publicKey: Buffer.alloc(32) },
+            urlLookup: async () => [{ address: '8.8.8.8', family: 4 }],
+          },
+        ),
+      /SSRF|blocked|internal/i,
+    );
+    assert.deepEqual(calls, ['https://redirector.stateset.test/resource']);
+  });
+
   it('throws on SSRF attempt (private IP)', async () => {
     await assert.rejects(
       () =>

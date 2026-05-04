@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-05-04
+
+Patch release for CLI outbound security hardening.
+
+### Changed
+- Synced workspace, bindings, examples, templates, docs, and release metadata to 1.0.3.
+- Changed BlueBubbles authentication to prefer header delivery while retaining the legacy query-token fallback.
+
+### Fixed
+- Hardened outbound CLI fetch paths against DNS private-address resolution and unchecked redirects across A2A webhooks, MPP, x402, and marketplace catalog/package flows.
+- Hardened remote skill marketplace installs with package size caps, checksum enforcement, and archive path preflight.
+- Added regression coverage for DNS and redirect SSRF blocks, webhook retry validation, marketplace package limits, and iMessage auth fallback.
+
 ## [1.0.2] - 2026-05-01
 
 Patch release for the v1 release-readiness track.

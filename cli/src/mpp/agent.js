@@ -1,4 +1,4 @@
-import { validateFetchUrl } from '../utils/url-validator.js';
+import { fetchWithValidatedRedirects } from '../utils/url-validator.js';
 import {
   MPP_PROTOCOL,
   MPP_VERSION,
@@ -248,24 +248,32 @@ export function extractPayableHttpRoutes(document = {}, filters = {}) {
 }
 
 export async function fetchMppServiceInfo(baseUrl, config = {}) {
-  const { fetch: providedFetch, validateUrl = true, serviceInfoPath = null } = config || {};
+  const {
+    fetch: providedFetch,
+    validateUrl = true,
+    serviceInfoPath = null,
+    urlLookup,
+  } = config || {};
   const endpoint = resolveUrl(baseUrl, serviceInfoPath || '/.well-known/service-info');
-
-  if (validateUrl !== false) {
-    validateFetchUrl(endpoint);
-  }
 
   const fetchImpl = providedFetch || globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
     throw new Error('fetch implementation is required');
   }
 
-  const response = await fetchImpl(endpoint, {
+  const requestOptions = {
     method: 'GET',
     headers: {
       accept: 'application/json',
     },
-  });
+  };
+  const response =
+    validateUrl === false
+      ? await fetchImpl(endpoint, requestOptions)
+      : await fetchWithValidatedRedirects(endpoint, requestOptions, {
+          fetch: fetchImpl,
+          lookup: urlLookup,
+        });
   if (!response?.ok) {
     throw new Error(`Failed to fetch MPP service info: HTTP ${response?.status ?? 'unknown'}`);
   }
@@ -278,24 +286,27 @@ export async function fetchMppServiceInfo(baseUrl, config = {}) {
 }
 
 export async function fetchMppDiscoveryDocument(baseUrl, config = {}) {
-  const { fetch: providedFetch, validateUrl = true, openapiPath = null } = config || {};
+  const { fetch: providedFetch, validateUrl = true, openapiPath = null, urlLookup } = config || {};
   const endpoint = resolveUrl(baseUrl, openapiPath || '/openapi.json');
-
-  if (validateUrl !== false) {
-    validateFetchUrl(endpoint);
-  }
 
   const fetchImpl = providedFetch || globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
     throw new Error('fetch implementation is required');
   }
 
-  const response = await fetchImpl(endpoint, {
+  const requestOptions = {
     method: 'GET',
     headers: {
       accept: 'application/json',
     },
-  });
+  };
+  const response =
+    validateUrl === false
+      ? await fetchImpl(endpoint, requestOptions)
+      : await fetchWithValidatedRedirects(endpoint, requestOptions, {
+          fetch: fetchImpl,
+          lookup: urlLookup,
+        });
   if (!response?.ok) {
     throw new Error(
       `Failed to fetch MPP discovery document: HTTP ${response?.status ?? 'unknown'}`,
@@ -396,12 +407,9 @@ export async function mppFetch(url, options = {}, config = {}) {
     fetch: providedFetch,
     validateUrl = true,
     requireReceipt = false,
+    urlLookup,
     ...payment
   } = config || {};
-
-  if (validateUrl !== false) {
-    validateFetchUrl(url);
-  }
 
   const fetchImpl = providedFetch || globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
@@ -409,7 +417,15 @@ export async function mppFetch(url, options = {}, config = {}) {
   }
 
   const preparedOptions = prepareRequestOptions(options);
-  const firstResponse = await fetchImpl(url, preparedOptions);
+  const request = (requestUrl, requestOptions) =>
+    validateUrl === false
+      ? fetchImpl(requestUrl, requestOptions)
+      : fetchWithValidatedRedirects(requestUrl, requestOptions, {
+          fetch: fetchImpl,
+          lookup: urlLookup,
+        });
+
+  const firstResponse = await request(url, preparedOptions);
   if (firstResponse?.status !== 402) {
     return attachPaymentContext(firstResponse, {
       receipt: await extractHttpPaymentReceipt(firstResponse),
@@ -462,7 +478,7 @@ export async function mppFetch(url, options = {}, config = {}) {
     'x-payment-protocol': MPP_PROTOCOL,
     'x-payment-version': MPP_VERSION,
   };
-  const finalResponse = await fetchImpl(url, {
+  const finalResponse = await request(url, {
     ...preparedOptions,
     headers: retryHeaders,
   });

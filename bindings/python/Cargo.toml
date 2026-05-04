@@ -1,6 +1,6 @@
 [package]
 name = "stateset-embedded-python"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 description = "Python bindings for StateSet Embedded Commerce"
 license = "MIT OR Apache-2.0"
@@ -14,11 +14,11 @@ crate-type = ["cdylib"]
 doc = false
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded", features = ["vector"], version = "1.0.2" }
-stateset-core = { path = "../../crates/stateset-core", features = ["embeddings"], version = "1.0.2" }
-stateset-primitives = { path = "../../crates/stateset-primitives", version = "1.0.2" }
-stateset-db = { path = "../../crates/stateset-db", features = ["vector"], version = "1.0.2" }
-stateset-sdk = { path = "../../crates/stateset-sdk", version = "1.0.2", default-features = false, features = ["sync"] }
+stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded", features = ["vector"], version = "1.0.3" }
+stateset-core = { path = "../../crates/stateset-core", features = ["embeddings"], version = "1.0.3" }
+stateset-primitives = { path = "../../crates/stateset-primitives", version = "1.0.3" }
+stateset-db = { path = "../../crates/stateset-db", features = ["vector"], version = "1.0.3" }
+stateset-sdk = { path = "../../crates/stateset-sdk", version = "1.0.3", default-features = false, features = ["sync"] }
 pyo3 = { version = "0.24", features = ["extension-module"] }
 rust_decimal = { version = "1.36", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }

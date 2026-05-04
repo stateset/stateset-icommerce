@@ -34,18 +34,22 @@ import { randomUUID, createHmac } from 'node:crypto';
 import { Agent as HttpsAgent } from 'node:https';
 
 // Try to import SSRF-safe URL validator; fall back to basic protocol check
-let validateFetchUrl;
+let validateResolvedFetchUrl;
+let fetchWithValidatedRedirects;
 try {
   const urlValidator = await import('../utils/url-validator.js');
-  if (typeof urlValidator.validateFetchUrl === 'function') {
-    validateFetchUrl = urlValidator.validateFetchUrl;
+  if (typeof urlValidator.validateResolvedFetchUrl === 'function') {
+    validateResolvedFetchUrl = urlValidator.validateResolvedFetchUrl;
+  }
+  if (typeof urlValidator.fetchWithValidatedRedirects === 'function') {
+    fetchWithValidatedRedirects = urlValidator.fetchWithValidatedRedirects;
   }
 } catch (err) {
   console.debug(
     '[a2a/notifications] url-validator.js not available, using fallback SSRF check:',
     err.message || err,
   );
-  validateFetchUrl = null;
+  validateResolvedFetchUrl = null;
 }
 
 /**
@@ -55,9 +59,9 @@ try {
  * @param {string} url - The URL to validate
  * @throws {Error} If the URL is invalid or blocked
  */
-function safeValidateUrl(url) {
-  if (validateFetchUrl) {
-    validateFetchUrl(url);
+async function safeValidateUrl(url) {
+  if (validateResolvedFetchUrl) {
+    await validateResolvedFetchUrl(url);
     return;
   }
   // Inline SSRF protection (mirrors utils/url-validator.js)
@@ -80,6 +84,24 @@ function safeValidateUrl(url) {
   ) {
     throw new Error(`SSRF blocked: cannot fetch internal URL ${parsed.origin}`);
   }
+}
+
+/**
+ * Fetch a validated webhook URL without allowing unchecked redirect targets.
+ *
+ * @param {string} url
+ * @param {RequestInit} options
+ * @returns {Promise<Response>}
+ */
+async function safeFetchUrl(url, options) {
+  if (fetchWithValidatedRedirects) {
+    return fetchWithValidatedRedirects(url, options);
+  }
+  await safeValidateUrl(url);
+  return fetch(url, {
+    ...options,
+    redirect: 'error',
+  });
 }
 
 /**
@@ -215,7 +237,7 @@ export function createNotificationService(store) {
     }
 
     // Validate the endpoint URL
-    safeValidateUrl(endpointUrl);
+    await safeValidateUrl(endpointUrl);
 
     // Build the signed payload
     const timestamp = new Date().toISOString();
@@ -258,7 +280,7 @@ export function createNotificationService(store) {
       if (mtlsAgent) {
         fetchOptions.agent = mtlsAgent;
       }
-      const response = await fetch(endpointUrl, fetchOptions);
+      const response = await safeFetchUrl(endpointUrl, fetchOptions);
 
       if (response.ok) {
         status = 'delivered';
@@ -342,6 +364,7 @@ export function createNotificationService(store) {
       const newAttempts = currentAttempts + 1;
 
       try {
+        await safeValidateUrl(notification.endpoint_url);
         const recipientConfig = await store.getWebhookConfig(notification.recipient_address);
         const retryFetchOptions = {
           method: 'POST',
@@ -358,7 +381,7 @@ export function createNotificationService(store) {
         if (retryMtlsAgent) {
           retryFetchOptions.agent = retryMtlsAgent;
         }
-        const response = await fetch(notification.endpoint_url, retryFetchOptions);
+        const response = await safeFetchUrl(notification.endpoint_url, retryFetchOptions);
 
         if (response.ok) {
           succeeded++;
@@ -431,7 +454,7 @@ export function createNotificationService(store) {
     if (!endpointUrl) {
       throw new Error('endpointUrl is required');
     }
-    safeValidateUrl(endpointUrl);
+    await safeValidateUrl(endpointUrl);
 
     const config = {
       agent_address: agentAddress,

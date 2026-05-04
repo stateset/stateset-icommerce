@@ -19,10 +19,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.0.2     # Python
-npm install @stateset/embedded@1.0.2     # Node.js
-npm install -g @stateset/cli@1.0.2       # CLI
-gem install stateset_embedded -v 1.0.2   # Ruby
+pip install stateset-embedded==1.0.3     # Python
+npm install @stateset/embedded@1.0.3     # Node.js
+npm install -g @stateset/cli@1.0.3       # CLI
+gem install stateset_embedded -v 1.0.3   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -98,7 +98,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.0.2 @stateset/cli@1.0.2
+npm install @stateset/embedded@1.0.3 @stateset/cli@1.0.3
 ```
 
 ```javascript
@@ -248,22 +248,22 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.0.2
+## What's New in v1.0.3
 
-**Release-Readiness Patch** - `1.0.2` keeps the stable `v1` compatibility contract intact while tightening admin rate-limit trust boundaries and polishing Agent OS release metadata.
+**CLI Security Hardening Patch** - `1.0.3` keeps the stable `v1` compatibility contract intact while hardening outbound CLI network paths and remote skill marketplace installs.
 
-### Agent OS
-- Synced Agent OS status output to the package version instead of a hardcoded value
-- Escaped generated runbook skill frontmatter so multiline descriptions cannot corrupt `SKILL.md` metadata
-- Added regression coverage for Agent OS version sync and runbook frontmatter safety
+### Outbound Network Safety
+- Blocked private and loopback DNS resolution across A2A webhook, MPP, x402, and marketplace fetch flows
+- Validated redirects so approved outbound requests cannot be bounced to private hosts
+- Added regression coverage for SSRF blocking, DNS rebinding-style resolution, and webhook retry validation
 
-### Release Hardening
-- Hardened admin rate limiting so spoofable `x-forwarded-for` and `x-real-ip` headers are ignored unless trusted proxy mode is explicitly enabled
-- Documented `STATESET_ADMIN_TRUST_PROXY_HEADERS` for deployments that terminate traffic behind a controlled proxy boundary
-- Added regression coverage for default-safe and explicitly trusted proxy rate-limit behavior
+### Marketplace and iMessage
+- Hardened remote skill marketplace installs with package size caps, checksum enforcement, and archive path preflight
+- Changed BlueBubbles authentication to prefer header delivery while retaining the legacy query-token fallback
+- Added regression coverage for marketplace package limits and iMessage auth fallback behavior
 
 ### Versioned 1.0 Patch
-- Synced workspace versions, install snippets, deployment references, examples, templates, and current-release docs to `1.0.2`
+- Synced workspace versions, install snippets, deployment references, examples, templates, and current-release docs to `1.0.3`
 - Kept the release preflight green across bindings, docs, examples, inventories, admin, and CLI surfaces
 
 ---
@@ -1287,7 +1287,7 @@ tool access are generated from code in the
 
 ```toml
 [dependencies]
-stateset-embedded = "1.0.2"
+stateset-embedded = "1.0.3"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1337,14 +1337,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:1.0.2'
+implementation 'com.stateset:embedded:1.0.3'
 ```
 
 ### Kotlin (Gradle)
@@ -1352,7 +1352,7 @@ implementation 'com.stateset:embedded:1.0.2'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:1.0.2")
+    implementation("com.stateset:embedded-kotlin:1.0.3")
 }
 ```
 
@@ -1361,32 +1361,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "1.0.2")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "1.0.3")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 1.0.2'
+pod 'StateSet', '~> 1.0.3'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 1.0.2
+dotnet add package StateSet.Embedded --version 1.0.3
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="1.0.2" />
+<PackageReference Include="StateSet.Embedded" Version="1.0.3" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.0.2
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.0.3
 ```
 
 ### CLI

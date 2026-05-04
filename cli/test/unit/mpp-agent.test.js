@@ -326,6 +326,45 @@ describe('mpp HTTP agent', () => {
     assert.equal(calls.length, 4);
   });
 
+  it('blocks discovery hosts that resolve to private addresses before fetch', async () => {
+    let fetchCalled = false;
+    const fetch = async () => {
+      fetchCalled = true;
+      throw new Error('fetch should not be called');
+    };
+
+    await assert.rejects(
+      () =>
+        fetchMppServiceInfo('https://merchant.stateset.test', {
+          fetch,
+          urlLookup: async () => [{ address: '192.168.1.20', family: 4 }],
+        }),
+      /resolves to internal address/,
+    );
+    assert.equal(fetchCalled, false);
+  });
+
+  it('blocks discovery redirects to internal addresses before following them', async () => {
+    const calls = [];
+    const fetch = async (url) => {
+      calls.push(String(url));
+      return createResponse({
+        status: 302,
+        headers: { location: 'http://169.254.169.254/latest/meta-data' },
+      });
+    };
+
+    await assert.rejects(
+      () =>
+        fetchMppServiceInfo('https://redirector.stateset.test', {
+          fetch,
+          urlLookup: async () => [{ address: '8.8.8.8', family: 4 }],
+        }),
+      /SSRF|blocked|internal/i,
+    );
+    assert.deepEqual(calls, ['https://redirector.stateset.test/.well-known/service-info']);
+  });
+
   it('createMppHttpAgent delegates to mppFetch', async () => {
     const agent = createMppHttpAgent({
       fetch: async () =>

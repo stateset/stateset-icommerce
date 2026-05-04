@@ -11,6 +11,7 @@ import os from 'os';
 import crypto from 'crypto';
 import net from 'net';
 import { fileURLToPath } from 'url';
+import { fetchWithValidatedRedirects, validateResolvedFetchUrl } from '../utils/url-validator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,6 +51,7 @@ const DEFAULT_INSTALL_DIR = path.join(os.homedir(), '.stateset', 'skills');
 const DEFAULT_CATALOG_PATH = path.resolve(__dirname, '..', '..', 'skills', 'marketplace.json');
 const DEFAULT_BUNDLED_DIR = path.resolve(__dirname, '..', '..', 'skills');
 const ALLOW_INSECURE_DOWNLOADS_ENV = 'STATESET_ALLOW_INSECURE_SKILL_DOWNLOADS';
+const DEFAULT_MAX_REMOTE_SKILL_DOWNLOAD_BYTES = 10 * 1024 * 1024;
 
 // ============================================================================
 // MarketplaceClient
@@ -64,6 +66,8 @@ export class MarketplaceClient {
    * @param {string} [opts.bundledDir] - Bundled skills directory
    * @param {boolean} [opts.allowInsecureDownloads=false] - Allow downloads without checksum metadata.
    *    Can also be enabled with STATESET_ALLOW_INSECURE_SKILL_DOWNLOADS=1.
+   * @param {number} [opts.maxDownloadBytes] - Maximum remote package size.
+   * @param {Function} [opts.urlLookup] - Optional DNS lookup override for tests.
    */
   constructor(opts = {}) {
     this._catalogUrl = opts.catalogUrl || null;
@@ -72,6 +76,11 @@ export class MarketplaceClient {
     this._bundledDir = opts.bundledDir || DEFAULT_BUNDLED_DIR;
     this._allowInsecureDownloads =
       opts.allowInsecureDownloads === true || envFlagEnabled(ALLOW_INSECURE_DOWNLOADS_ENV);
+    this._maxDownloadBytes =
+      Number.isSafeInteger(opts.maxDownloadBytes) && opts.maxDownloadBytes > 0
+        ? opts.maxDownloadBytes
+        : DEFAULT_MAX_REMOTE_SKILL_DOWNLOAD_BYTES;
+    this._urlLookup = opts.urlLookup;
     this._catalog = null;
   }
 
@@ -88,7 +97,13 @@ export class MarketplaceClient {
     // Try remote first
     if (this._catalogUrl) {
       try {
-        const res = await fetch(this._catalogUrl);
+        const res = await fetchWithValidatedRedirects(
+          this._catalogUrl,
+          {},
+          {
+            lookup: this._urlLookup,
+          },
+        );
         if (res.ok) {
           this._catalog = await res.json();
           return this._catalog;
@@ -235,7 +250,7 @@ export class MarketplaceClient {
 
     // Not bundled — download from remote URL
     if (entry.downloadUrl) {
-      const sourceError = this._validateRemoteDownloadSource(entry);
+      const sourceError = await this._validateRemoteDownloadSource(entry);
       if (sourceError) {
         return { installed: false, path: '', error: sourceError };
       }
@@ -326,9 +341,25 @@ export class MarketplaceClient {
    */
   async _downloadAndInstall(name, entry, destDir, force) {
     const url = entry.downloadUrl;
-    const res = await fetch(url, { redirect: 'error' });
+    const res = await fetchWithValidatedRedirects(
+      url,
+      {},
+      {
+        lookup: this._urlLookup,
+        maxRedirects: 0,
+      },
+    );
     if (!res.ok) {
       return { installed: false, path: '', error: `HTTP ${res.status}: ${res.statusText}` };
+    }
+
+    const contentLength = Number.parseInt(res.headers.get('content-length') || '0', 10);
+    if (Number.isFinite(contentLength) && contentLength > this._maxDownloadBytes) {
+      return {
+        installed: false,
+        path: '',
+        error: `Remote skill package exceeds maximum size of ${this._maxDownloadBytes} bytes.`,
+      };
     }
 
     // Remove existing if force
@@ -347,19 +378,35 @@ export class MarketplaceClient {
         contentType.includes('text/plain')
       ) {
         // Direct SKILL.md download
-        const text = await res.text();
-        const payload = Buffer.from(text, 'utf8');
+        const payload = Buffer.from(await res.arrayBuffer());
+        if (payload.length > this._maxDownloadBytes) {
+          fs.rmSync(destDir, { recursive: true, force: true });
+          return {
+            installed: false,
+            path: destDir,
+            error: `Remote skill package exceeds maximum size of ${this._maxDownloadBytes} bytes.`,
+          };
+        }
         const checksumError = this._verifyDownloadChecksum(entry, payload);
         if (checksumError) {
           fs.rmSync(destDir, { recursive: true, force: true });
           return { installed: false, path: destDir, error: checksumError };
         }
+        const text = payload.toString('utf8');
         fs.writeFileSync(path.join(destDir, 'SKILL.md'), text);
       } else {
         // Binary package — save as temp file
         const tmpFile = path.join(os.tmpdir(), `stateset-skill-${name}-${Date.now()}.bin`);
         const arrayBuf = await res.arrayBuffer();
         const payload = Buffer.from(arrayBuf);
+        if (payload.length > this._maxDownloadBytes) {
+          fs.rmSync(destDir, { recursive: true, force: true });
+          return {
+            installed: false,
+            path: destDir,
+            error: `Remote skill package exceeds maximum size of ${this._maxDownloadBytes} bytes.`,
+          };
+        }
         const checksumError = this._verifyDownloadChecksum(entry, payload);
         if (checksumError) {
           fs.rmSync(destDir, { recursive: true, force: true });
@@ -371,12 +418,22 @@ export class MarketplaceClient {
           // Extract archive — use execFileSync (no shell) for safety
           const { execFileSync } = await import('child_process');
           if (url.endsWith('.tar.gz') || url.endsWith('.tgz')) {
+            const listing = execFileSync('tar', ['-tzf', tmpFile], {
+              encoding: 'utf8',
+              timeout: 30000,
+            });
+            assertSafeArchiveListing(listing, 'tar');
             // --strip-components=1 prevents directory traversal at top level
             execFileSync('tar', ['-xzf', tmpFile, '-C', destDir, '--strip-components=1'], {
               stdio: 'pipe',
               timeout: 30000,
             });
           } else {
+            const listing = execFileSync('unzip', ['-Z1', tmpFile], {
+              encoding: 'utf8',
+              timeout: 30000,
+            });
+            assertSafeArchiveListing(listing, 'zip');
             execFileSync('unzip', ['-o', '-q', tmpFile, '-d', destDir], {
               stdio: 'pipe',
               timeout: 30000,
@@ -390,7 +447,8 @@ export class MarketplaceClient {
             timeout: 5000,
           });
           for (const line of listing.split('\n').filter(Boolean)) {
-            if (!path.resolve(line).startsWith(resolvedDest)) {
+            const relative = path.relative(resolvedDest, path.resolve(line));
+            if (relative.startsWith('..') || path.isAbsolute(relative)) {
               fs.rmSync(resolvedDest, { recursive: true, force: true });
               throw new Error('Extracted archive contains path traversal — installation aborted');
             }
@@ -421,7 +479,7 @@ export class MarketplaceClient {
    * @returns {string|null}
    * @private
    */
-  _validateRemoteDownloadSource(entry) {
+  async _validateRemoteDownloadSource(entry) {
     let parsed;
     try {
       parsed = new URL(entry.downloadUrl);
@@ -471,6 +529,12 @@ export class MarketplaceClient {
       if (configuredAlgorithm && configuredAlgorithm !== parsedChecksum.algorithm) {
         return 'downloadChecksum algorithm does not match checksumAlgorithm.';
       }
+    }
+
+    try {
+      await validateResolvedFetchUrl(entry.downloadUrl, { lookup: this._urlLookup });
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
     }
 
     return null;
@@ -649,6 +713,31 @@ function copyDir(src, dest) {
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
+  }
+}
+
+function assertSafeArchivePath(entry, archiveType) {
+  const normalized = String(entry || '')
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .trim();
+
+  if (!normalized || normalized.endsWith('/')) return;
+  if (
+    normalized.startsWith('/') ||
+    normalized.startsWith('~') ||
+    /^[a-zA-Z]:/.test(normalized) ||
+    normalized.split('/').includes('..')
+  ) {
+    throw new Error(`${archiveType} archive contains unsafe path: ${entry}`);
+  }
+}
+
+function assertSafeArchiveListing(listing, archiveType) {
+  for (const entry of String(listing || '')
+    .split('\n')
+    .filter(Boolean)) {
+    assertSafeArchivePath(entry, archiveType);
   }
 }
 

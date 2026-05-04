@@ -1,6 +1,6 @@
 [package]
 name = "stateset-embedded-php"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 description = "PHP bindings for StateSet Embedded Commerce"
 license = "MIT OR Apache-2.0"
@@ -24,8 +24,8 @@ runtime = [
 ]
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded", version = "1.0.2", optional = true }
-stateset-core = { path = "../../crates/stateset-core", version = "1.0.2", optional = true }
+stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded", version = "1.0.3", optional = true }
+stateset-core = { path = "../../crates/stateset-core", version = "1.0.3", optional = true }
 ext-php-rs = { version = "0.13", optional = true }
 rust_decimal = { version = "1.36", features = ["serde"], optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }

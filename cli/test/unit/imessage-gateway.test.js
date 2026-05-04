@@ -126,7 +126,9 @@ describe('iMessage Gateway', () => {
       assert.ok(source.includes('async function bbFetch'));
     });
 
-    it('appends password as query parameter', () => {
+    it('supports header-first auth with legacy query fallback', () => {
+      assert.ok(source.includes("const BLUEBUBBLES_AUTH_MODES = new Set(['auto', 'header', 'query'])"));
+      assert.ok(source.includes("fetchOpts.headers.Authorization = `Bearer ${password}`"));
       assert.ok(source.includes("url.searchParams.set('password', password)"));
     });
 
