@@ -34,11 +34,16 @@ impl SqliteQualityRepository {
     }
 
     fn generate_inspection_number() -> String {
-        format!("INS-{}", Utc::now().format("%Y%m%d%H%M%S"))
+        // Millisecond timestamp + UUID suffix so concurrent inspection creation
+        // (or rapid-fire batches in tests) cannot collide on the UNIQUE constraint.
+        let suffix = &Uuid::new_v4().simple().to_string()[..8];
+        format!("INS-{}-{suffix}", Utc::now().format("%Y%m%d%H%M%S%3f"))
     }
 
     fn generate_ncr_number() -> String {
-        format!("NCR-{}", Utc::now().format("%Y%m%d%H%M%S"))
+        // Same fix as inspection_number above: include ms + UUID suffix.
+        let suffix = &Uuid::new_v4().simple().to_string()[..8];
+        format!("NCR-{}-{suffix}", Utc::now().format("%Y%m%d%H%M%S%3f"))
     }
 
     fn row_to_inspection(row: &rusqlite::Row<'_>) -> rusqlite::Result<Inspection> {
@@ -1096,5 +1101,235 @@ impl QualityRepository for SqliteQualityRepository {
         conn.execute("UPDATE defect_codes SET is_active = 0 WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateDefectCode, CreateInspection, CreateInspectionItem, CreateNonConformance,
+        CreateQualityHold, InspectionFilter, InspectionType, NonConformanceFilter,
+        NonConformanceSource, QualityHoldFilter, QualityRepository, Severity,
+    };
+
+    fn fresh_repo() -> SqliteQualityRepository {
+        SqliteDatabase::in_memory().expect("in-memory").quality()
+    }
+
+    fn make_inspection(repo: &SqliteQualityRepository) -> Inspection {
+        repo.create_inspection(CreateInspection {
+            inspection_type: InspectionType::Incoming,
+            reference_type: "purchase_order".into(),
+            reference_id: Uuid::new_v4(),
+            inspector_id: Some("inspector-1".into()),
+            scheduled_at: None,
+            notes: Some("incoming check".into()),
+            items: vec![CreateInspectionItem {
+                sku: "WIDGET-1".into(),
+                lot_number: None,
+                serial_number: None,
+                quantity_to_inspect: dec!(10),
+            }],
+        })
+        .expect("create inspection")
+    }
+
+    #[test]
+    fn create_inspection_round_trips() {
+        let repo = fresh_repo();
+        let i = make_inspection(&repo);
+        assert_eq!(i.inspection_type, InspectionType::Incoming);
+        assert!(!i.inspection_number.is_empty());
+
+        let by_id = repo.get_inspection(i.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, i.id);
+        let by_num =
+            repo.get_inspection_by_number(&i.inspection_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, i.id);
+        assert!(repo.get_inspection_by_number("missing").expect("ok").is_none());
+
+        let items = repo.get_inspection_items(i.id).expect("items");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].sku, "WIDGET-1");
+    }
+
+    #[test]
+    fn list_inspections_filters_by_type() {
+        let repo = fresh_repo();
+        make_inspection(&repo);
+        repo.create_inspection(CreateInspection {
+            inspection_type: InspectionType::Final,
+            reference_type: "shipment".into(),
+            reference_id: Uuid::new_v4(),
+            inspector_id: None,
+            scheduled_at: None,
+            notes: None,
+            items: vec![CreateInspectionItem {
+                sku: "FINAL-1".into(),
+                quantity_to_inspect: dec!(1),
+                ..Default::default()
+            }],
+        })
+        .expect("final");
+
+        let incoming = repo
+            .list_inspections(InspectionFilter {
+                inspection_type: Some(InspectionType::Incoming),
+                ..Default::default()
+            })
+            .expect("incoming");
+        assert!(incoming.iter().all(|i| i.inspection_type == InspectionType::Incoming));
+        assert!(!incoming.is_empty());
+    }
+
+    #[test]
+    fn create_ncr_round_trips() {
+        let repo = fresh_repo();
+        let ncr = repo
+            .create_ncr(CreateNonConformance {
+                inspection_id: None,
+                source: NonConformanceSource::InternalAudit,
+                severity: Severity::Major,
+                sku: "SKU-NCR".into(),
+                lot_number: None,
+                serial_number: None,
+                quantity_affected: dec!(5),
+                description: "scratched units".into(),
+                assigned_to: Some("qa-1".into()),
+            })
+            .expect("create ncr");
+        assert_eq!(ncr.sku, "SKU-NCR");
+        assert!(!ncr.ncr_number.is_empty());
+
+        let by_id = repo.get_ncr(ncr.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, ncr.id);
+        let by_num = repo.get_ncr_by_number(&ncr.ncr_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, ncr.id);
+        assert!(repo.get_ncr_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_ncrs_filters_by_severity() {
+        let repo = fresh_repo();
+        repo.create_ncr(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::InternalAudit,
+            severity: Severity::Minor,
+            sku: "SKU-1".into(),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(1),
+            description: "minor".into(),
+            assigned_to: None,
+        })
+        .expect("minor");
+        repo.create_ncr(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::InternalAudit,
+            severity: Severity::Major,
+            sku: "SKU-2".into(),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(5),
+            description: "major".into(),
+            assigned_to: None,
+        })
+        .expect("major");
+
+        let majors = repo
+            .list_ncrs(NonConformanceFilter {
+                severity: Some(Severity::Major),
+                ..Default::default()
+            })
+            .expect("majors");
+        assert!(majors.iter().all(|n| n.severity == Severity::Major));
+        assert!(!majors.is_empty());
+    }
+
+    #[test]
+    fn create_hold_and_get_active_holds_for_sku() {
+        let repo = fresh_repo();
+        let hold = repo
+            .create_hold(CreateQualityHold {
+                sku: "HOLD-1".into(),
+                lot_number: None,
+                serial_number: None,
+                location_id: None,
+                quantity: dec!(20),
+                reason: "audit".into(),
+                hold_type: stateset_core::HoldType::default(),
+                ncr_id: None,
+                inspection_id: None,
+                placed_by: "qa".into(),
+                expires_at: None,
+            })
+            .expect("create hold");
+        assert_eq!(hold.sku, "HOLD-1");
+
+        let active_for_sku = repo.get_active_holds_for_sku("HOLD-1").expect("ok");
+        assert_eq!(active_for_sku.len(), 1);
+        assert!(repo.get_active_holds_for_sku("MISSING").expect("ok").is_empty());
+    }
+
+    #[test]
+    fn list_holds_filters_by_active_only() {
+        let repo = fresh_repo();
+        repo.create_hold(CreateQualityHold {
+            sku: "ACT-1".into(),
+            quantity: dec!(1),
+            reason: "r".into(),
+            placed_by: "qa".into(),
+            ..Default::default()
+        })
+        .expect("h1");
+        let holds = repo
+            .list_holds(QualityHoldFilter { active_only: Some(true), ..Default::default() })
+            .expect("active");
+        assert!(!holds.is_empty());
+    }
+
+    #[test]
+    fn create_defect_code_round_trips() {
+        let repo = fresh_repo();
+        let code = repo
+            .create_defect_code(CreateDefectCode {
+                code: "SCRATCH".into(),
+                name: "Surface Scratch".into(),
+                description: Some("Visible scratch on surface".into()),
+                category: "cosmetic".into(),
+                severity: Severity::Minor,
+            })
+            .expect("create code");
+        assert_eq!(code.code, "SCRATCH");
+        let by_code = repo.get_defect_code("SCRATCH").expect("ok").expect("found");
+        assert_eq!(by_code.code, "SCRATCH");
+        assert!(repo.get_defect_code("missing").expect("ok").is_none());
+
+        let listed = repo.list_defect_codes(None).expect("list");
+        assert!(listed.iter().any(|c| c.code == "SCRATCH"));
+
+        let by_cat = repo.list_defect_codes(Some("cosmetic")).expect("by cat");
+        assert!(by_cat.iter().any(|c| c.category == "cosmetic"));
+    }
+
+    #[test]
+    fn unknown_inspection_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_inspection(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn unknown_ncr_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_ncr(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn unknown_hold_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_hold(Uuid::new_v4()).expect("ok").is_none());
     }
 }

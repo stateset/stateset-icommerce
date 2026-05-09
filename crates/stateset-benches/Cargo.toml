@@ -10,13 +10,13 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-stateset-primitives = { path = "../stateset-primitives", version = "1.0.3" }
-stateset-core = { path = "../stateset-core", version = "1.0.3" }
-stateset-crypto = { path = "../stateset-crypto", version = "1.0.3", features = ["pqc"] }
-stateset-db = { path = "../stateset-db", version = "1.0.3", features = ["sqlite"] }
-stateset-embedded = { path = "../stateset-embedded", version = "1.0.3", features = ["sqlite", "events"] }
-stateset-http = { path = "../stateset-http", version = "1.0.3" }
-stateset-policy = { path = "../stateset-policy", version = "1.0.3" }
+stateset-primitives = { path = "../stateset-primitives", version = "1.0.4" }
+stateset-core = { path = "../stateset-core", version = "1.0.4" }
+stateset-crypto = { path = "../stateset-crypto", version = "1.0.4", features = ["pqc"] }
+stateset-db = { path = "../stateset-db", version = "1.0.4", features = ["sqlite"] }
+stateset-embedded = { path = "../stateset-embedded", version = "1.0.4", features = ["sqlite", "events"] }
+stateset-http = { path = "../stateset-http", version = "1.0.4" }
+stateset-policy = { path = "../stateset-policy", version = "1.0.4" }
 serde_json = { workspace = true }
 axum = "0.8"
 tower = { version = "0.5", features = ["util"] }

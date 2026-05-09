@@ -101,6 +101,10 @@ from stateset_embedded.stateset_embedded import (
     ProductSearchResult,
     CustomerSearchResult,
     EmbeddingStats,
+    # Cross-binding crypto primitives (verified by tests/test_cross_binding_vectors.py).
+    jcs_canonicalize,
+    payload_plain_hash,
+    merkle_root,
 )
 from stateset_embedded.agent_toolkit import (
     AgentToolDescriptor,
@@ -123,7 +127,7 @@ from stateset_embedded.openai import (
     execute_openai_tool_calls,
 )
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 __all__ = [
     # Main entry point
@@ -228,6 +232,10 @@ __all__ = [
     "ProductSearchResult",
     "CustomerSearchResult",
     "EmbeddingStats",
+    # Cross-binding crypto primitives
+    "jcs_canonicalize",
+    "payload_plain_hash",
+    "merkle_root",
     # Agent toolkit
     "AgentToolDescriptor",
     "EmbeddedAgentToolkit",

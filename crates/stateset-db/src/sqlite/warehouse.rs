@@ -1241,3 +1241,264 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         Ok(locations)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateLocation, CreateWarehouse, CreateZone, LocationFilter, LocationType, UpdateLocation,
+        UpdateWarehouse, WarehouseAddress, WarehouseFilter, WarehouseRepository, WarehouseType,
+    };
+
+    fn fresh_repo() -> SqliteWarehouseRepository {
+        SqliteDatabase::in_memory().expect("in-memory").warehouse()
+    }
+
+    fn addr() -> WarehouseAddress {
+        WarehouseAddress {
+            street1: "1 Test St".into(),
+            street2: None,
+            city: "Test City".into(),
+            state: "TC".into(),
+            postal_code: "00000".into(),
+            country: "US".into(),
+            phone: None,
+        }
+    }
+
+    fn make_wh(repo: &SqliteWarehouseRepository, code: &str) -> Warehouse {
+        repo.create_warehouse(CreateWarehouse {
+            code: code.into(),
+            name: format!("WH {code}"),
+            warehouse_type: WarehouseType::Distribution,
+            address: addr(),
+            timezone: Some("America/Los_Angeles".into()),
+        })
+        .expect("create warehouse")
+    }
+
+    fn make_loc(repo: &SqliteWarehouseRepository, wh_id: i32, code: &str) -> Location {
+        repo.create_location(CreateLocation {
+            warehouse_id: wh_id,
+            code: Some(code.into()),
+            location_type: LocationType::Bulk,
+            zone: Some("A".into()),
+            aisle: Some("01".into()),
+            rack: None,
+            level: None,
+            bin: None,
+            max_weight_kg: Some(dec!(500)),
+            max_volume_m3: Some(dec!(2.5)),
+            is_pickable: Some(true),
+            is_receivable: Some(true),
+        })
+        .expect("create location")
+    }
+
+    #[test]
+    fn create_warehouse_round_trips() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-A");
+        assert_eq!(wh.code, "WH-A");
+        assert_eq!(wh.warehouse_type, WarehouseType::Distribution);
+        assert!(wh.is_active);
+
+        let by_id = repo.get_warehouse(wh.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, wh.id);
+        let by_code = repo.get_warehouse_by_code("WH-A").expect("ok").expect("found");
+        assert_eq!(by_code.id, wh.id);
+        assert!(repo.get_warehouse_by_code("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn update_warehouse_changes_fields() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-UP");
+        let updated = repo
+            .update_warehouse(
+                wh.id,
+                UpdateWarehouse {
+                    name: Some("Renamed Warehouse".into()),
+                    is_active: Some(false),
+                    ..Default::default()
+                },
+            )
+            .expect("update");
+        assert_eq!(updated.name, "Renamed Warehouse");
+        assert!(!updated.is_active);
+    }
+
+    #[test]
+    fn list_warehouses_filters_by_active() {
+        let repo = fresh_repo();
+        let wh_active = make_wh(&repo, "WH-AC");
+        let wh_inactive = make_wh(&repo, "WH-IN");
+        repo.update_warehouse(
+            wh_inactive.id,
+            UpdateWarehouse { is_active: Some(false), ..Default::default() },
+        )
+        .expect("inactive");
+
+        let active = repo
+            .list_warehouses(WarehouseFilter { is_active: Some(true), ..Default::default() })
+            .expect("active");
+        let inactive = repo
+            .list_warehouses(WarehouseFilter { is_active: Some(false), ..Default::default() })
+            .expect("inactive");
+        assert!(active.iter().any(|w| w.id == wh_active.id));
+        assert!(!active.iter().any(|w| w.id == wh_inactive.id));
+        assert!(inactive.iter().any(|w| w.id == wh_inactive.id));
+    }
+
+    #[test]
+    fn delete_warehouse_soft_or_hard() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-DEL");
+        repo.delete_warehouse(wh.id).expect("delete");
+        // Either gone entirely or marked inactive — both behaviours are acceptable.
+        if let Some(found) = repo.get_warehouse(wh.id).expect("ok") {
+            assert!(!found.is_active, "deleted warehouse should be inactive");
+        }
+    }
+
+    #[test]
+    fn create_zone_round_trips() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-Z");
+        let zone = repo
+            .create_zone(CreateZone {
+                warehouse_id: wh.id,
+                code: "PICK-A".into(),
+                name: "Pick Aisle A".into(),
+                description: Some("Fast-moving SKUs".into()),
+            })
+            .expect("create zone");
+        assert_eq!(zone.code, "PICK-A");
+
+        let by_id = repo.get_zone(zone.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, zone.id);
+
+        let zones = repo.get_zones(wh.id).expect("zones");
+        assert_eq!(zones.len(), 1);
+    }
+
+    #[test]
+    fn create_location_with_explicit_code_round_trips() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-L");
+        let loc = make_loc(&repo, wh.id, "A-01-01-001");
+        assert_eq!(loc.warehouse_id, wh.id);
+        assert_eq!(loc.code, "A-01-01-001");
+        assert!(loc.is_pickable);
+
+        let by_id = repo.get_location(loc.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, loc.id);
+        let by_code = repo.get_location_by_code(wh.id, "A-01-01-001").expect("ok").expect("found");
+        assert_eq!(by_code.id, loc.id);
+        assert!(repo.get_location_by_code(wh.id, "missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn update_location_changes_pickable_flag() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-UPD");
+        let loc = make_loc(&repo, wh.id, "B-02");
+        let updated = repo
+            .update_location(
+                loc.id,
+                UpdateLocation { is_pickable: Some(false), ..Default::default() },
+            )
+            .expect("update");
+        assert!(!updated.is_pickable);
+    }
+
+    #[test]
+    fn list_locations_filters_by_warehouse_and_pickable() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-LL");
+        let pickable = make_loc(&repo, wh.id, "P-1");
+        let non_pickable = repo
+            .create_location(CreateLocation {
+                warehouse_id: wh.id,
+                code: Some("NP-1".into()),
+                location_type: LocationType::Quarantine,
+                is_pickable: Some(false),
+                is_receivable: Some(false),
+                ..Default::default()
+            })
+            .expect("create np");
+
+        let pickable_filter = repo
+            .list_locations(LocationFilter {
+                warehouse_id: Some(wh.id),
+                is_pickable: Some(true),
+                ..Default::default()
+            })
+            .expect("pickable");
+        assert!(pickable_filter.iter().any(|l| l.id == pickable.id));
+        assert!(!pickable_filter.iter().any(|l| l.id == non_pickable.id));
+    }
+
+    #[test]
+    fn get_locations_for_warehouse_returns_all() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-ALL");
+        make_loc(&repo, wh.id, "L1");
+        make_loc(&repo, wh.id, "L2");
+        let locs = repo.get_locations_for_warehouse(wh.id).expect("ok");
+        assert_eq!(locs.len(), 2);
+    }
+
+    #[test]
+    fn get_pickable_locations_excludes_non_pickable() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-PK");
+        make_loc(&repo, wh.id, "PK-1");
+        repo.create_location(CreateLocation {
+            warehouse_id: wh.id,
+            code: Some("NPK-1".into()),
+            location_type: LocationType::Quarantine,
+            is_pickable: Some(false),
+            is_receivable: Some(false),
+            ..Default::default()
+        })
+        .expect("npk");
+
+        let pickable = repo.get_pickable_locations(wh.id, "ANY-SKU").expect("ok");
+        assert!(pickable.iter().all(|l| l.is_pickable));
+    }
+
+    #[test]
+    fn get_receivable_locations_only_returns_receivable() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-RC");
+        let recv = make_loc(&repo, wh.id, "RCV-1");
+        let _non_recv = repo
+            .create_location(CreateLocation {
+                warehouse_id: wh.id,
+                code: Some("NRCV-1".into()),
+                location_type: LocationType::Quarantine,
+                is_pickable: Some(false),
+                is_receivable: Some(false),
+                ..Default::default()
+            })
+            .expect("nrcv");
+        let receivable = repo.get_receivable_locations(wh.id).expect("ok");
+        assert!(receivable.iter().any(|l| l.id == recv.id));
+        assert!(receivable.iter().all(|l| l.is_receivable));
+    }
+
+    #[test]
+    fn get_warehouse_unknown_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_warehouse(99_999).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_location_unknown_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_location(99_999).expect("ok").is_none());
+    }
+}

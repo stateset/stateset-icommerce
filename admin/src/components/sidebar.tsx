@@ -15,6 +15,7 @@ import {
   TagIcon,
   ArchiveBoxIcon,
   ServerStackIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
 import { APP_VERSION } from '@/lib/version';
@@ -30,6 +31,7 @@ const navigation = [
   { name: 'Subscriptions', href: '/subscriptions', icon: CreditCardIcon },
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
   { name: 'Gateway', href: '/gateway', icon: ServerStackIcon },
+  { name: 'Build info', href: '/build-info', icon: ShieldCheckIcon },
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
 ];
 

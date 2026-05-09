@@ -132,6 +132,83 @@ We minimize dependencies and audit them regularly. Key dependencies:
 | `serde` | Serialization | No unsafe code |
 | `uuid` | ID generation | Cryptographically random UUIDs |
 
+### Supply-chain auditing
+
+We use [`cargo-vet`](https://mozilla.github.io/cargo-vet/) to track which
+dependencies have been audited. Configuration lives under `supply-chain/`:
+
+- `supply-chain/config.toml` — policy + trusted-import feeds
+  (Mozilla, Google, Embark Studios, Bytecode Alliance, Zcash, ISRG).
+- `supply-chain/audits.toml` — first-party audits we record ourselves.
+- Exemptions cover the existing dep tree at bootstrap; the goal is to
+  pay them down over time and eventually require every dep to be audited
+  or imported.
+
+The `.github/workflows/supply-chain.yml` workflow runs `cargo vet` on every
+push and pull request as a **required check**. Bootstrap exemptions cover
+the existing dep tree, so the gate passes today; from this point forward,
+any new dependency must come with an audit, an imported audit, or an
+explicit exemption. The goal is to pay exemptions down over time using
+`cargo vet certify`.
+
+In addition to `cargo-vet`:
+
+- `cargo-deny` enforces the license allowlist and OpenSSL ban (`deny.toml`).
+- `cargo-audit` runs against [RustSec](https://rustsec.org/) on every PR.
+- `dependabot` opens weekly PRs across cargo, npm, pip, bundler, gradle,
+  composer, gomod, and nuget.
+- An SBOM is generated and uploaded as an artifact on every push to main
+  (`.github/workflows/sbom.yml`).
+- A nightly `cargo-fuzz` run exercises crypto + protocol decoders
+  (`.github/workflows/fuzz-nightly.yml`).
+- `gitleaks` scans every push and PR for leaked secrets
+  (`.github/workflows/gitleaks.yml`).
+
+### Signed releases (sigstore / cosign)
+
+Every annotated `v*` tag triggers `.github/workflows/release-sign.yml`,
+which:
+
+1. Builds a deterministic source tarball from the tag.
+2. Generates a CycloneDX SBOM.
+3. Computes a SHA256SUMS file over both.
+4. Signs the SHA256SUMS file with [`cosign`](https://github.com/sigstore/cosign)
+   using **keyless OIDC** — the signing identity is the workflow run's
+   ephemeral GitHub Actions OIDC token, recorded in the public
+   [Rekor transparency log](https://docs.sigstore.dev/logging/overview/).
+5. Attaches tarball, SBOM, SHA256SUMS, signature, and certificate to the
+   GitHub Release.
+
+To verify a release:
+
+```bash
+TAG="v1.0.4"
+REPO="stateset/stateset-icommerce"
+
+# Download artifacts
+gh release download "$TAG" --repo "$REPO" \
+  --pattern "stateset-icommerce-*.tar.gz" \
+  --pattern "stateset-icommerce-*.SHA256SUMS" \
+  --pattern "stateset-icommerce-*.SHA256SUMS.sig" \
+  --pattern "stateset-icommerce-*.SHA256SUMS.pem"
+
+# Verify the cosign signature on SHA256SUMS
+cosign verify-blob \
+  --certificate "stateset-icommerce-${TAG}.SHA256SUMS.pem" \
+  --signature   "stateset-icommerce-${TAG}.SHA256SUMS.sig" \
+  --certificate-identity-regexp \
+    "^https://github.com/${REPO}/\.github/workflows/release-sign\.yml@refs/tags/v.*$" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "stateset-icommerce-${TAG}.SHA256SUMS"
+
+# Then verify the tarball matches the signed checksum
+sha256sum -c "stateset-icommerce-${TAG}.SHA256SUMS"
+```
+
+A successful verification proves that the artifacts were produced by the
+expected GitHub Actions workflow at the expected tag, with the signature
+publicly recorded in Rekor.
+
 ## Known Advisories
 
 ### RUSTSEC-2023-0071 — Marvin Attack (rsa crate)

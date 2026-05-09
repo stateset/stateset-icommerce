@@ -901,6 +901,49 @@ pub struct ReadyResponse {
     pub tenant_cache: Option<TenantCacheResponse>,
 }
 
+/// Response body for `GET /version` — build & release metadata.
+///
+/// All fields except `version` are best-effort: they're set at compile
+/// time from environment variables the release pipeline injects. When a
+/// build runs without those variables set (e.g. local `cargo build`),
+/// the corresponding fields are `None` and operators can interpret that
+/// as "this binary did not come from a verified release pipeline".
+///
+/// The companion admin route (Phase 4.4) consumes this endpoint to
+/// display sigstore-verified release information so operators can audit
+/// what's actually running in production.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct VersionResponse {
+    /// Package version from `Cargo.toml` (always present).
+    pub version: &'static str,
+
+    /// Git commit SHA (full or short) of the build, if injected via
+    /// `GITHUB_SHA` at compile time. `None` for unverified local builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<&'static str>,
+
+    /// Git branch or tag name, if injected via `GITHUB_REF_NAME`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_ref: Option<&'static str>,
+
+    /// Release tag (e.g. `v1.0.3`) if this binary came from a tagged
+    /// release. Distinct from `git_ref` because release builds set this
+    /// explicitly via `STATESET_RELEASE_TAG`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_tag: Option<&'static str>,
+
+    /// RFC 3339 build timestamp, if injected via
+    /// `STATESET_BUILD_TIMESTAMP` at compile time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub built_at: Option<&'static str>,
+
+    /// Whether this binary's release artifacts were signed via sigstore.
+    /// `true` when the release pipeline injected `STATESET_SIGNED=true`;
+    /// `false` (the default) for local builds, dev builds, and any
+    /// release where signing was skipped or failed.
+    pub signed: bool,
+}
+
 // ============================================================================
 // Events
 // ============================================================================

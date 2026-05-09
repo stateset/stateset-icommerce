@@ -15,7 +15,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | --- | --- |
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
-| API version | `1.0.3` |
+| API version | `1.0.4` |
 | Paths | 40 |
 | Operations | 57 |
 | Schemas | 54 |

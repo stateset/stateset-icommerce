@@ -1083,3 +1083,145 @@ impl ProductRepository for SqliteProductRepository {
         Ok(products)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateProduct, CreateProductVariant, ProductFilter, ProductRepository, ProductStatus,
+        UpdateProduct,
+    };
+
+    fn fresh_repo() -> SqliteProductRepository {
+        SqliteDatabase::in_memory().expect("in-memory").products()
+    }
+
+    fn make_product(repo: &SqliteProductRepository, name: &str, slug: &str) -> Product {
+        repo.create(CreateProduct {
+            name: name.into(),
+            slug: Some(slug.into()),
+            description: Some(format!("Description for {name}")),
+            product_type: None,
+            attributes: None,
+            seo: None,
+            variants: Some(vec![CreateProductVariant {
+                sku: format!("SKU-{slug}"),
+                name: Some("Default".into()),
+                price: dec!(19.99),
+                is_default: Some(true),
+                ..Default::default()
+            }]),
+        })
+        .expect("create product")
+    }
+
+    #[test]
+    fn create_product_round_trips_with_default_variant() {
+        let repo = fresh_repo();
+        let p = make_product(&repo, "Widget", "widget");
+        assert_eq!(p.name, "Widget");
+        assert_eq!(p.slug, "widget");
+
+        let by_id = repo.get(p.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, p.id);
+        let by_slug = repo.get_by_slug("widget").expect("ok").expect("found");
+        assert_eq!(by_slug.id, p.id);
+        assert!(repo.get_by_slug("missing-slug").expect("ok").is_none());
+
+        let variants = repo.get_variants(p.id).expect("variants");
+        assert_eq!(variants.len(), 1);
+    }
+
+    #[test]
+    fn update_product_changes_name_and_status() {
+        let repo = fresh_repo();
+        let p = make_product(&repo, "Original", "original");
+        let updated = repo
+            .update(
+                p.id,
+                UpdateProduct {
+                    name: Some("Renamed".into()),
+                    status: Some(ProductStatus::Archived),
+                    ..Default::default()
+                },
+            )
+            .expect("update");
+        assert_eq!(updated.name, "Renamed");
+        assert_eq!(updated.status, ProductStatus::Archived);
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        // Newly-created products default to ProductStatus::Draft.
+        let draft = make_product(&repo, "Draft", "draft-prod");
+        let to_archive = make_product(&repo, "ToArchive", "to-archive");
+        repo.update(
+            to_archive.id,
+            UpdateProduct { status: Some(ProductStatus::Archived), ..Default::default() },
+        )
+        .expect("archive");
+
+        let drafts = repo
+            .list(ProductFilter { status: Some(ProductStatus::Draft), ..Default::default() })
+            .expect("draft");
+        let archived = repo
+            .list(ProductFilter { status: Some(ProductStatus::Archived), ..Default::default() })
+            .expect("archived");
+        assert!(drafts.iter().any(|p| p.id == draft.id));
+        assert!(archived.iter().any(|p| p.id == to_archive.id));
+    }
+
+    #[test]
+    fn delete_removes_product() {
+        let repo = fresh_repo();
+        let p = make_product(&repo, "DelMe", "del-me");
+        repo.delete(p.id).expect("delete");
+        if let Some(found) = repo.get(p.id).expect("ok") {
+            assert_ne!(found.status, ProductStatus::Active, "deleted product should not be Active");
+        }
+    }
+
+    #[test]
+    fn get_variant_by_sku_round_trips() {
+        let repo = fresh_repo();
+        let p = make_product(&repo, "VarTest", "var-test");
+        let variants = repo.get_variants(p.id).expect("ok");
+        let v = variants.first().expect("default variant exists");
+        let by_sku = repo.get_variant_by_sku(&v.sku).expect("ok").expect("found");
+        assert_eq!(by_sku.id, v.id);
+        assert!(repo.get_variant_by_sku("missing-sku").expect("ok").is_none());
+    }
+
+    #[test]
+    fn create_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let mk = |name: &str, slug: &str| CreateProduct {
+            name: name.into(),
+            slug: Some(slug.into()),
+            description: None,
+            product_type: None,
+            attributes: None,
+            seo: None,
+            variants: Some(vec![CreateProductVariant {
+                sku: format!("SKU-B-{slug}"),
+                price: dec!(1),
+                is_default: Some(true),
+                ..Default::default()
+            }]),
+        };
+        let result = repo
+            .create_batch(vec![mk("A", "a-batch"), mk("B", "b-batch"), mk("C", "c-batch")])
+            .expect("batch");
+        assert_eq!(result.success_count, 3);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn get_unknown_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(stateset_core::ProductId::new()).expect("ok").is_none());
+    }
+}

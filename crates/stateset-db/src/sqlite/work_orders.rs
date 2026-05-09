@@ -1297,3 +1297,236 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         Ok(work_orders)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, ProductId, TaskStatus,
+        WorkOrderFilter, WorkOrderRepository, WorkOrderStatus,
+    };
+
+    fn fresh_repo() -> SqliteWorkOrderRepository {
+        SqliteDatabase::in_memory().expect("in-memory").work_orders()
+    }
+
+    fn make_wo(repo: &SqliteWorkOrderRepository, qty: Decimal) -> WorkOrder {
+        repo.create(CreateWorkOrder {
+            product_id: ProductId::new(),
+            quantity_to_build: qty,
+            ..Default::default()
+        })
+        .expect("create wo")
+    }
+
+    #[test]
+    fn create_wo_starts_in_planned() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(10));
+        assert_eq!(wo.status, WorkOrderStatus::Planned);
+        assert_eq!(wo.quantity_to_build, dec!(10));
+        assert!(!wo.work_order_number.is_empty());
+    }
+
+    #[test]
+    fn create_wo_with_tasks_persists_them() {
+        let repo = fresh_repo();
+        let wo = repo
+            .create(CreateWorkOrder {
+                product_id: ProductId::new(),
+                quantity_to_build: dec!(5),
+                tasks: Some(vec![
+                    CreateWorkOrderTask {
+                        sequence: Some(1),
+                        task_name: "Assembly".into(),
+                        estimated_hours: Some(dec!(2)),
+                        assigned_to: None,
+                        notes: None,
+                    },
+                    CreateWorkOrderTask {
+                        sequence: Some(2),
+                        task_name: "QA".into(),
+                        estimated_hours: Some(dec!(1)),
+                        assigned_to: None,
+                        notes: None,
+                    },
+                ]),
+                ..Default::default()
+            })
+            .expect("create");
+        let tasks = repo.get_tasks(wo.id).expect("tasks");
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn get_and_get_by_number_round_trip() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(1));
+        let by_id = repo.get(wo.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, wo.id);
+        let by_num = repo.get_by_number(&wo.work_order_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, wo.id);
+        assert!(repo.get_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn start_transitions_to_in_progress() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(1));
+        let started = repo.start(wo.id).expect("start");
+        assert_eq!(started.status, WorkOrderStatus::InProgress);
+    }
+
+    #[test]
+    fn complete_full_quantity_marks_completed() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(5));
+        repo.start(wo.id).expect("start");
+        let done = repo.complete(wo.id, dec!(5)).expect("complete");
+        assert_eq!(done.status, WorkOrderStatus::Completed);
+        assert_eq!(done.quantity_completed, dec!(5));
+    }
+
+    #[test]
+    fn complete_partial_quantity_marks_partially_completed() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(10));
+        repo.start(wo.id).expect("start");
+        let partial = repo.complete(wo.id, dec!(7)).expect("partial");
+        assert_eq!(partial.status, WorkOrderStatus::PartiallyCompleted);
+        assert_eq!(partial.quantity_completed, dec!(7));
+    }
+
+    #[test]
+    fn cancel_transitions_to_cancelled() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(1));
+        let cancelled = repo.cancel(wo.id).expect("cancel");
+        assert_eq!(cancelled.status, WorkOrderStatus::Cancelled);
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        let planned = make_wo(&repo, dec!(1));
+        let in_progress = make_wo(&repo, dec!(1));
+        repo.start(in_progress.id).expect("start");
+
+        let pl = repo
+            .list(WorkOrderFilter { status: Some(WorkOrderStatus::Planned), ..Default::default() })
+            .expect("planned");
+        let ip = repo
+            .list(WorkOrderFilter {
+                status: Some(WorkOrderStatus::InProgress),
+                ..Default::default()
+            })
+            .expect("in_progress");
+        assert!(pl.iter().any(|w| w.id == planned.id));
+        assert!(ip.iter().any(|w| w.id == in_progress.id));
+    }
+
+    #[test]
+    fn add_task_appends_to_work_order() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(1));
+        let task = repo
+            .add_task(
+                wo.id,
+                CreateWorkOrderTask {
+                    sequence: Some(1),
+                    task_name: "Solder".into(),
+                    estimated_hours: Some(dec!(0.5)),
+                    assigned_to: None,
+                    notes: None,
+                },
+            )
+            .expect("add task");
+        assert_eq!(task.task_name, "Solder");
+        let tasks = repo.get_tasks(wo.id).expect("tasks");
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn start_and_complete_task_transitions() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(1));
+        let task = repo
+            .add_task(
+                wo.id,
+                CreateWorkOrderTask {
+                    sequence: Some(1),
+                    task_name: "Wash".into(),
+                    estimated_hours: Some(dec!(1)),
+                    assigned_to: None,
+                    notes: None,
+                },
+            )
+            .expect("add");
+        let started = repo.start_task(task.id).expect("start");
+        assert_eq!(started.status, TaskStatus::InProgress);
+        let completed = repo.complete_task(task.id, Some(dec!(1.5))).expect("complete");
+        assert_eq!(completed.status, TaskStatus::Completed);
+    }
+
+    #[test]
+    fn add_and_consume_material() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(1));
+        let mat = repo
+            .add_material(
+                wo.id,
+                AddWorkOrderMaterial {
+                    component_id: None,
+                    component_sku: "PART-A".into(),
+                    component_name: "Resistor".into(),
+                    quantity: dec!(10),
+                },
+            )
+            .expect("add mat");
+        assert_eq!(mat.component_sku, "PART-A");
+
+        let consumed = repo.consume_material(mat.id, dec!(4)).expect("consume");
+        assert_eq!(consumed.id, mat.id);
+        let remaining_materials = repo.get_materials(wo.id).expect("materials");
+        assert_eq!(remaining_materials.len(), 1);
+    }
+
+    #[test]
+    fn create_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let result = repo
+            .create_batch(vec![
+                CreateWorkOrder {
+                    product_id: ProductId::new(),
+                    quantity_to_build: dec!(1),
+                    ..Default::default()
+                },
+                CreateWorkOrder {
+                    product_id: ProductId::new(),
+                    quantity_to_build: dec!(2),
+                    ..Default::default()
+                },
+            ])
+            .expect("batch");
+        assert_eq!(result.success_count, 2);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn get_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_batch_returns_only_existing() {
+        let repo = fresh_repo();
+        let w1 = make_wo(&repo, dec!(1));
+        let w2 = make_wo(&repo, dec!(2));
+        let stranger = Uuid::new_v4();
+        let fetched = repo.get_batch(vec![w1.id, w2.id, stranger]).expect("ok");
+        assert_eq!(fetched.len(), 2);
+    }
+}

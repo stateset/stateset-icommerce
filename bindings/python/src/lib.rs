@@ -12203,12 +12203,88 @@ impl SyncRuntime {
 }
 
 // ============================================================================
+// Cross-binding crypto primitives
+// ============================================================================
+//
+// Thin Python wrappers over the `stateset-crypto` Rust crate so the Python
+// binding can verify the language-neutral test corpus at
+// `bindings/test-vectors/v1.json`. Counterpart in Rust:
+// `crates/stateset-crypto/tests/cross_binding_vectors.rs`. Counterpart in
+// Node: `bindings/node/test/cross-binding-vectors.js`.
+
+/// RFC 8785 JCS canonical-form bytes for a JSON string.
+///
+/// Returns the canonical UTF-8 byte sequence (callers SHA-256 it themselves
+/// when comparing against ground truth).
+#[pyfunction]
+fn jcs_canonicalize(json_str: &str) -> PyResult<Vec<u8>> {
+    let value: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| PyValueError::new_err(format!("invalid JSON: {e}")))?;
+    ::stateset_crypto::canonicalize::canonicalize_json_bytes(&value)
+        .map_err(|e| PyRuntimeError::new_err(format!("canonicalize: {e}")))
+}
+
+/// VES v1.0 payload-plain hash.
+///
+/// Equivalent to `sha256(domain.PAYLOAD_PLAIN || optional_salt || jcs(payload))`.
+/// Salt, when provided, must be exactly 16 bytes.
+#[pyfunction]
+#[pyo3(signature = (json_str, salt=None))]
+fn payload_plain_hash(json_str: &str, salt: Option<&[u8]>) -> PyResult<Vec<u8>> {
+    let value: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| PyValueError::new_err(format!("invalid JSON: {e}")))?;
+    let salt_arr = match salt {
+        None => None,
+        Some(s) => {
+            if s.len() != 16 {
+                return Err(PyValueError::new_err(format!(
+                    "salt must be exactly 16 bytes, got {}",
+                    s.len()
+                )));
+            }
+            let mut out = [0_u8; 16];
+            out.copy_from_slice(s);
+            Some(out)
+        }
+    };
+    let digest = ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref())
+        .map_err(|e| PyRuntimeError::new_err(format!("payload_plain_hash: {e}")))?;
+    Ok(digest.to_vec())
+}
+
+/// Merkle root for a list of 32-byte leaves.
+///
+/// Returns a 32-byte digest. Each leaf must be exactly 32 bytes. An empty
+/// list yields the empty-tree sentinel from `stateset-crypto`.
+#[pyfunction]
+fn merkle_root(leaves: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
+    let mut typed: Vec<[u8; 32]> = Vec::with_capacity(leaves.len());
+    for (i, leaf) in leaves.iter().enumerate() {
+        if leaf.len() != 32 {
+            return Err(PyValueError::new_err(format!(
+                "leaf {i} must be 32 bytes, got {}",
+                leaf.len()
+            )));
+        }
+        let mut buf = [0_u8; 32];
+        buf.copy_from_slice(leaf);
+        typed.push(buf);
+    }
+    Ok(::stateset_crypto::merkle::compute_merkle_root(&typed).to_vec())
+}
+
+// ============================================================================
 // Module Definition
 // ============================================================================
 
 /// StateSet Embedded Commerce - Local-first commerce library
 #[pymodule]
 fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Cross-binding crypto primitives (verified by `test_cross_binding_vectors.py`).
+    m.add_function(wrap_pyfunction!(jcs_canonicalize, m)?)?;
+    m.add_function(wrap_pyfunction!(payload_plain_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(merkle_root, m)?)?;
+
     // Core
     m.add_class::<Commerce>()?;
     m.add_class::<SyncRuntime>()?;

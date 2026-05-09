@@ -6832,6 +6832,72 @@ impl Tax {
     }
 }
 
+// ============================================================================
+// Cross-binding crypto primitives
+// ============================================================================
+//
+// Thin WASM wrappers over the `stateset-crypto` Rust crate so the WASM binding
+// can verify the language-neutral test corpus at
+// `bindings/test-vectors/v1.json`. Counterparts:
+//   - Rust:   crates/stateset-crypto/tests/cross_binding_vectors.rs
+//   - Node:   bindings/node/test/cross-binding-vectors.js
+//   - Python: bindings/python/tests/test_cross_binding_vectors.py
+//   - Go:     bindings/go/stateset/crypto_test.go
+
+/// RFC 8785 JCS canonical bytes for a JSON string.
+#[wasm_bindgen(js_name = jcsCanonicalize)]
+pub fn jcs_canonicalize(json_str: &str) -> Result<Vec<u8>, JsError> {
+    let value: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|e| JsError::new(&format!("invalid JSON: {e}")))?;
+    ::stateset_crypto::canonicalize::canonicalize_json_bytes(&value)
+        .map_err(|e| JsError::new(&format!("canonicalize: {e}")))
+}
+
+/// VES v1.0 payload-plain hash. Returns 32 bytes.
+/// `salt` may be null/undefined; if provided it must be exactly 16 bytes.
+#[wasm_bindgen(js_name = payloadPlainHash)]
+pub fn payload_plain_hash(json_str: &str, salt: Option<Vec<u8>>) -> Result<Vec<u8>, JsError> {
+    let value: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|e| JsError::new(&format!("invalid JSON: {e}")))?;
+    let salt_arr = match salt {
+        None => None,
+        Some(s) => {
+            if s.len() != 16 {
+                return Err(JsError::new(&format!(
+                    "salt must be exactly 16 bytes, got {}",
+                    s.len()
+                )));
+            }
+            let mut buf = [0_u8; 16];
+            buf.copy_from_slice(&s);
+            Some(buf)
+        }
+    };
+    let digest = ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref())
+        .map_err(|e| JsError::new(&format!("payload_plain_hash: {e}")))?;
+    Ok(digest.to_vec())
+}
+
+/// Merkle root of a list of 32-byte leaves. Returns 32 bytes.
+/// Each leaf must be exactly 32 bytes; an empty list yields the empty-tree
+/// sentinel from `stateset-crypto`. The JS-side input is `Uint8Array[]`.
+#[wasm_bindgen(js_name = merkleRoot)]
+pub fn merkle_root(leaves: js_sys::Array) -> Result<Vec<u8>, JsError> {
+    let len = leaves.length() as usize;
+    let mut typed: Vec<[u8; 32]> = Vec::with_capacity(len);
+    for i in 0..len {
+        let item = leaves.get(i as u32);
+        let arr = js_sys::Uint8Array::new(&item);
+        if arr.length() as usize != 32 {
+            return Err(JsError::new(&format!("leaf {i} must be 32 bytes, got {}", arr.length())));
+        }
+        let mut buf = [0_u8; 32];
+        arr.copy_to(&mut buf);
+        typed.push(buf);
+    }
+    Ok(::stateset_crypto::merkle::compute_merkle_root(&typed).to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

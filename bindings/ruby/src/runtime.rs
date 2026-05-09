@@ -1,9 +1,84 @@
 //! Ruby runtime bindings for the v1 supported surface.
 
 use magnus::{
-    Error, IntoValue, RArray, RHash, Ruby, Symbol, exception, function, method, prelude::*,
+    Error, IntoValue, RArray, RHash, RString, Ruby, Symbol, exception, function, method,
+    prelude::*,
 };
 use std::sync::{Arc, Mutex};
+
+// =============================================================================
+// Cross-binding crypto primitives
+// =============================================================================
+//
+// Thin magnus wrappers over the `stateset-crypto` Rust crate so the Ruby
+// binding can verify the language-neutral test corpus at
+// `bindings/test-vectors/v1.json`. Counterparts in every wired binding.
+// Errors raise `StateSet::CryptoError` (subclass of `StandardError`).
+
+fn crypto_jcs_canonicalize(json_str: String) -> Result<RString, Error> {
+    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
+        Error::new(
+            magnus::exception::arg_error(),
+            format!("invalid JSON: {e}"),
+        )
+    })?;
+    let canonical = ::stateset_crypto::canonicalize::canonicalize_json_bytes(&value).map_err(
+        |e| Error::new(magnus::exception::runtime_error(), format!("canonicalize: {e}")),
+    )?;
+    Ok(RString::from_slice(&canonical))
+}
+
+fn crypto_payload_plain_hash(json_str: String, salt: Option<RString>) -> Result<RString, Error> {
+    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
+        Error::new(
+            magnus::exception::arg_error(),
+            format!("invalid JSON: {e}"),
+        )
+    })?;
+    let salt_arr = match salt {
+        None => None,
+        Some(rs) => {
+            let bytes = unsafe { rs.as_slice() };
+            if bytes.len() != 16 {
+                return Err(Error::new(
+                    magnus::exception::arg_error(),
+                    format!("salt must be exactly 16 bytes, got {}", bytes.len()),
+                ));
+            }
+            let mut buf = [0_u8; 16];
+            buf.copy_from_slice(bytes);
+            Some(buf)
+        }
+    };
+    let digest = ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref())
+        .map_err(|e| {
+            Error::new(
+                magnus::exception::runtime_error(),
+                format!("payload_plain_hash: {e}"),
+            )
+        })?;
+    Ok(RString::from_slice(&digest))
+}
+
+fn crypto_merkle_root(leaves: RArray) -> Result<RString, Error> {
+    let len = leaves.len();
+    let mut typed: Vec<[u8; 32]> = Vec::with_capacity(len);
+    for i in 0..len {
+        let val = leaves.entry::<RString>(i as isize)?;
+        let bytes = unsafe { val.as_slice() };
+        if bytes.len() != 32 {
+            return Err(Error::new(
+                magnus::exception::arg_error(),
+                format!("leaf {i} must be 32 bytes, got {}", bytes.len()),
+            ));
+        }
+        let mut buf = [0_u8; 32];
+        buf.copy_from_slice(bytes);
+        typed.push(buf);
+    }
+    let root = ::stateset_crypto::merkle::compute_merkle_root(&typed);
+    Ok(RString::from_slice(&root))
+}
 
 #[derive(Default)]
 struct Store {
@@ -981,6 +1056,18 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_class("Subscriptions", ruby.class_object())?;
     module.define_class("Promotions", ruby.class_object())?;
     module.define_class("Tax", ruby.class_object())?;
+
+    // Cross-binding crypto primitives (verified by spec/crypto_vector_spec.rb).
+    let crypto_module = module.define_module("Crypto")?;
+    crypto_module.define_singleton_method(
+        "jcs_canonicalize",
+        function!(crypto_jcs_canonicalize, 1),
+    )?;
+    crypto_module.define_singleton_method(
+        "payload_plain_hash",
+        function!(crypto_payload_plain_hash, 2),
+    )?;
+    crypto_module.define_singleton_method("merkle_root", function!(crypto_merkle_root, 1))?;
 
     Ok(())
 }

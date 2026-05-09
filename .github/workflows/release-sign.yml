@@ -1,0 +1,140 @@
+name: release-sign
+
+# Sigstore keyless-signing for release artifacts.
+#
+# On every annotated `v*` tag push, this workflow:
+#   1. Generates a source-only tarball (git archive of the tag).
+#   2. Generates a CycloneDX SBOM via `cargo cyclonedx` (best-effort).
+#   3. Computes SHA256SUMS over the tarball + SBOM.
+#   4. Signs SHA256SUMS with `cosign sign-blob` using keyless OIDC
+#      (no long-lived secret; the signing identity is the workflow run's
+#      ephemeral OIDC token, recorded transparently in Rekor).
+#   5. Attaches tarball, SBOM, SHA256SUMS, signature, and certificate
+#      to the GitHub Release for the tag.
+#
+# Verification recipe (downstream):
+#
+#     cosign verify-blob \
+#       --certificate stateset-icommerce-${TAG}.SHA256SUMS.pem \
+#       --signature   stateset-icommerce-${TAG}.SHA256SUMS.sig \
+#       --certificate-identity-regexp \
+#         '^https://github.com/stateset/stateset-icommerce/\.github/workflows/release-sign\.yml@refs/tags/v.*$' \
+#       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#       stateset-icommerce-${TAG}.SHA256SUMS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to sign (e.g. v1.0.4)'
+        required: true
+
+permissions:
+  contents: write   # needed to upload artifacts to the release
+  id-token: write   # needed by cosign for keyless OIDC signing
+
+concurrency:
+  group: release-sign-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Resolve target ref
+        id: target
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout (full history at the tag)
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.target.outputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install cyclonedx-cargo (SBOM)
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Build source tarball
+        id: tarball
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          OUT="stateset-icommerce-${TAG}.tar.gz"
+          git archive --format=tar.gz --prefix="stateset-icommerce-${TAG}/" -o "$OUT" "$TAG"
+          echo "tarball=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Build SBOM (CycloneDX)
+        id: sbom
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        # Best-effort: SBOM generation can fail on bindings that need extra
+        # toolchains. We still sign whatever artifacts we successfully build.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --format json --override-filename "stateset-icommerce-${TAG}.cdx" --target-only || true
+          ls *.cdx.json 2>/dev/null || true
+
+      - name: Compute SHA256SUMS
+        id: sums
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          SUMS="stateset-icommerce-${TAG}.SHA256SUMS"
+          sha256sum stateset-icommerce-${TAG}.tar.gz > "$SUMS"
+          for f in *.cdx.json; do
+            [ -e "$f" ] && sha256sum "$f" >> "$SUMS"
+          done
+          echo "sums=$SUMS" >> "$GITHUB_OUTPUT"
+          cat "$SUMS"
+
+      - name: Sign SHA256SUMS (keyless cosign)
+        env:
+          COSIGN_YES: "true"
+          SUMS: ${{ steps.sums.outputs.sums }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob "$SUMS" \
+            --output-signature   "${SUMS}.sig" \
+            --output-certificate "${SUMS}.pem"
+
+      - name: Attach signed artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.target.outputs.tag }}
+          SUMS: ${{ steps.sums.outputs.sums }}
+          TARBALL: ${{ steps.tarball.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          # Create the release if it doesn't exist; otherwise upload to it.
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes "Signed release. See SECURITY.md for verification."
+          fi
+          gh release upload "$TAG" --clobber \
+            "$TARBALL" \
+            "$SUMS" "${SUMS}.sig" "${SUMS}.pem" \
+            $(ls *.cdx.json 2>/dev/null || true)

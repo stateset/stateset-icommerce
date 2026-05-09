@@ -1,0 +1,38 @@
+[package]
+name = "stateset-protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+# Standalone workspace so cargo-fuzz can manage its own deps without inheriting
+# the parent workspace's lockfile and lint set.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+stateset-protocol = { path = ".." }
+
+[[bin]]
+name = "envelope_deserialize"
+path = "fuzz_targets/envelope_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "batch_deserialize"
+path = "fuzz_targets/batch_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "canonical_json"
+path = "fuzz_targets/canonical_json.rs"
+test = false
+doc = false
+bench = false

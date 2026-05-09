@@ -6,7 +6,7 @@
  * Do not include this file at runtime - the extension provides the actual classes.
  *
  * @package StateSet\Embedded
- * @version 1.0.3
+ * @version 1.0.4
  */
 
 namespace StateSet;
@@ -2149,4 +2149,46 @@ class Tax
      * @return bool
      */
     public function setEnabled(bool $enabled): bool {}
+}
+
+/**
+ * Cross-binding cryptographic primitives.
+ *
+ * Thin wrappers over the `stateset-crypto` Rust crate, exposed identically
+ * across every StateSet binding (Node, Python, Go, WASM, Java, Kotlin, .NET,
+ * Swift, Ruby, PHP) and verified against the language-neutral test corpus
+ * at `bindings/test-vectors/v1.json`.
+ *
+ * All methods are static. On invalid input or runtime failure they throw
+ * an `\Exception`.
+ */
+class Crypto
+{
+    /**
+     * Return the RFC 8785 JCS canonical-form bytes for a JSON string.
+     *
+     * @param string $json JSON value as a UTF-8 string
+     * @return string the canonical UTF-8 bytes
+     * @throws \Exception if $json is invalid or canonicalization fails
+     */
+    public static function jcsCanonicalize(string $json): string {}
+
+    /**
+     * Compute the VES v1.0 payload-plain hash of a JSON payload.
+     *
+     * @param string $json JSON payload as a UTF-8 string
+     * @param string|null $salt 16 bytes of salt, or null for unsalted
+     * @return string the 32-byte digest
+     * @throws \Exception if $json is invalid or $salt is not exactly 16 bytes
+     */
+    public static function payloadPlainHash(string $json, ?string $salt = null): string {}
+
+    /**
+     * Compute the merkle root of a list of 32-byte leaves.
+     *
+     * @param string[] $leaves the leaf digests (each 32 bytes)
+     * @return string the 32-byte merkle root
+     * @throws \Exception if any leaf is not exactly 32 bytes
+     */
+    public static function merkleRoot(array $leaves): string {}
 }

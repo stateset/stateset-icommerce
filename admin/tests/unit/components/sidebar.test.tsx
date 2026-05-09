@@ -49,6 +49,7 @@ vi.mock('@heroicons/react/24/outline', () => {
     TagIcon: makeIcon('tag'),
     ArchiveBoxIcon: makeIcon('archive-box'),
     ServerStackIcon: makeIcon('server-stack'),
+    ShieldCheckIcon: makeIcon('shield-check'),
   };
 });
 
@@ -159,7 +160,7 @@ describe('Sidebar', () => {
   it('renders an icon for each navigation item plus logo', () => {
     render(React.createElement(Sidebar));
     const svgs = screen.getAllByTestId(/^icon-/);
-    // 11 nav items + 1 logo sparkles icon = 12
-    expect(svgs.length).toBe(12);
+    // 12 nav items + 1 logo sparkles icon = 13
+    expect(svgs.length).toBe(13);
   });
 });

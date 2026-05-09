@@ -14,11 +14,11 @@ use stateset_crypto::pqc::{
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn test_hash() -> [u8; 32] {
+const fn test_hash() -> [u8; 32] {
     [0xAB; 32]
 }
 
-fn dummy_aad_params(plain_hash: &[u8; 32]) -> PayloadAadParams<'_> {
+const fn dummy_aad_params(plain_hash: &[u8; 32]) -> PayloadAadParams<'_> {
     PayloadAadParams {
         ves_version: 1,
         tenant_id: "550e8400-e29b-41d4-a716-446655440000",
@@ -196,8 +196,8 @@ fn bench_pqc_payload(c: &mut Criterion) {
     let hybrid_rk = generate_hybrid_recipient_keypair(1).expect("hybrid rk setup");
     let strict_rk = generate_strict_recipient_keypair(2).expect("strict rk setup");
 
-    let hybrid_recipients = [hybrid_rk.public.clone()];
-    let strict_recipients = [strict_rk.public.clone()];
+    let hybrid_recipients = [hybrid_rk.public];
+    let strict_recipients = [strict_rk.public];
 
     group.bench_function("hybrid_encrypt_payload", |b| {
         b.iter(|| {

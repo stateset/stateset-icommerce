@@ -1211,3 +1211,216 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(warranties)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use stateset_core::{
+        CreateWarranty, CreateWarrantyClaim, CustomerId, WarrantyClaimFilter, WarrantyFilter,
+        WarrantyRepository, WarrantyStatus, WarrantyType,
+    };
+
+    fn fresh_repo() -> SqliteWarrantyRepository {
+        SqliteDatabase::in_memory().expect("in-memory").warranties()
+    }
+
+    fn make_warranty(repo: &SqliteWarrantyRepository, customer: CustomerId) -> Warranty {
+        repo.create(CreateWarranty {
+            customer_id: customer,
+            order_id: None,
+            order_item_id: None,
+            product_id: None,
+            sku: Some("WIDGET-1".into()),
+            serial_number: Some("SN-1".into()),
+            warranty_type: Some(WarrantyType::Standard),
+            provider: Some("ACME".into()),
+            coverage_description: Some("Standard 12-month warranty".into()),
+            purchase_date: None,
+            start_date: None,
+            end_date: None,
+            duration_months: Some(12),
+            max_coverage_amount: None,
+            deductible: None,
+            max_claims: Some(2),
+            terms: None,
+            notes: None,
+        })
+        .expect("create warranty")
+    }
+
+    #[test]
+    fn create_warranty_starts_active() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let w = make_warranty(&repo, cust);
+        assert_eq!(w.customer_id, cust);
+        assert_eq!(w.status, WarrantyStatus::Active);
+        assert!(!w.warranty_number.is_empty());
+        assert_eq!(w.serial_number.as_deref(), Some("SN-1"));
+    }
+
+    #[test]
+    fn get_and_get_by_number_round_trips() {
+        let repo = fresh_repo();
+        let w = make_warranty(&repo, CustomerId::new());
+        let by_id = repo.get(w.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, w.id);
+        let by_num = repo.get_by_number(&w.warranty_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, w.id);
+        assert!(repo.get_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_by_serial_finds_warranty() {
+        let repo = fresh_repo();
+        let w = make_warranty(&repo, CustomerId::new());
+        let by_serial = repo.get_by_serial("SN-1").expect("ok").expect("found");
+        assert_eq!(by_serial.id, w.id);
+        assert!(repo.get_by_serial("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_filters_by_customer() {
+        let repo = fresh_repo();
+        let cust_a = CustomerId::new();
+        let cust_b = CustomerId::new();
+        make_warranty(&repo, cust_a);
+        make_warranty(&repo, cust_a);
+        make_warranty(&repo, cust_b);
+
+        let for_a = repo
+            .list(WarrantyFilter { customer_id: Some(cust_a), ..Default::default() })
+            .expect("list");
+        assert_eq!(for_a.len(), 2);
+        assert!(for_a.iter().all(|w| w.customer_id == cust_a));
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let active = make_warranty(&repo, cust);
+        let to_expire = make_warranty(&repo, cust);
+        repo.expire(to_expire.id).expect("expire");
+
+        let actives = repo
+            .list(WarrantyFilter { status: Some(WarrantyStatus::Active), ..Default::default() })
+            .expect("active");
+        let expireds = repo
+            .list(WarrantyFilter { status: Some(WarrantyStatus::Expired), ..Default::default() })
+            .expect("expired");
+        assert!(actives.iter().any(|w| w.id == active.id));
+        assert!(expireds.iter().any(|w| w.id == to_expire.id));
+    }
+
+    #[test]
+    fn expire_transitions_status() {
+        let repo = fresh_repo();
+        let w = make_warranty(&repo, CustomerId::new());
+        let expired = repo.expire(w.id).expect("expire");
+        assert_eq!(expired.status, WarrantyStatus::Expired);
+    }
+
+    #[test]
+    fn create_claim_round_trips_and_lists_for_warranty() {
+        let repo = fresh_repo();
+        let w = make_warranty(&repo, CustomerId::new());
+        let claim = repo
+            .create_claim(CreateWarrantyClaim {
+                warranty_id: w.id,
+                issue_description: "Won't power on".into(),
+                issue_category: Some("electrical".into()),
+                issue_date: None,
+                contact_phone: None,
+                contact_email: Some("user@example.com".into()),
+                shipping_address: None,
+                customer_notes: Some("First claim".into()),
+            })
+            .expect("create claim");
+        assert_eq!(claim.warranty_id, w.id);
+        assert!(!claim.claim_number.is_empty());
+
+        let by_id = repo.get_claim(claim.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, claim.id);
+
+        let by_num = repo.get_claim_by_number(&claim.claim_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, claim.id);
+
+        let claims_for_w = repo.get_claims(w.id).expect("ok");
+        assert_eq!(claims_for_w.len(), 1);
+        assert_eq!(claims_for_w[0].id, claim.id);
+    }
+
+    #[test]
+    fn list_claims_filters_by_warranty() {
+        let repo = fresh_repo();
+        let w_a = make_warranty(&repo, CustomerId::new());
+        let w_b = make_warranty(&repo, CustomerId::new());
+        for desc in ["Issue 1", "Issue 2"] {
+            repo.create_claim(CreateWarrantyClaim {
+                warranty_id: w_a.id,
+                issue_description: desc.into(),
+                issue_category: None,
+                issue_date: None,
+                contact_phone: None,
+                contact_email: None,
+                shipping_address: None,
+                customer_notes: None,
+            })
+            .expect("c");
+        }
+        repo.create_claim(CreateWarrantyClaim {
+            warranty_id: w_b.id,
+            issue_description: "B issue".into(),
+            issue_category: None,
+            issue_date: None,
+            contact_phone: None,
+            contact_email: None,
+            shipping_address: None,
+            customer_notes: None,
+        })
+        .expect("c");
+
+        let for_a = repo
+            .list_claims(WarrantyClaimFilter { warranty_id: Some(w_a.id), ..Default::default() })
+            .expect("list");
+        assert_eq!(for_a.len(), 2);
+    }
+
+    #[test]
+    fn create_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let result = repo
+            .create_batch(vec![
+                CreateWarranty {
+                    customer_id: cust,
+                    sku: Some("A".into()),
+                    duration_months: Some(12),
+                    ..Default::default()
+                },
+                CreateWarranty {
+                    customer_id: cust,
+                    sku: Some("B".into()),
+                    duration_months: Some(24),
+                    ..Default::default()
+                },
+            ])
+            .expect("batch");
+        assert_eq!(result.success_count, 2);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn get_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(stateset_core::WarrantyId::new()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_unknown_claim_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_claim(Uuid::new_v4()).expect("ok").is_none());
+    }
+}

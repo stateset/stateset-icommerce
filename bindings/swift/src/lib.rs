@@ -1674,6 +1674,163 @@ pub extern "C" fn stateset_gl_trial_balance(handle: *mut CommerceHandle) -> *mut
     }
 }
 
+// =============================================================================
+// Cross-binding crypto primitives
+// =============================================================================
+//
+// Thin C-FFI wrappers over the `stateset-crypto` Rust crate so the Swift
+// binding can verify the language-neutral test corpus at
+// `bindings/test-vectors/v1.json`. FFI shape matches the Go and .NET
+// bindings byte-for-byte. Counterparts in every wired binding.
+
+/// Free a buffer returned by `stateset_crypto_jcs_canonicalize`.
+///
+/// # Safety
+/// `ptr` must come from `stateset_crypto_jcs_canonicalize`; `len` must match.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn stateset_crypto_free_buffer(ptr: *mut u8, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    unsafe {
+        let _ = Vec::from_raw_parts(ptr, len, len);
+    }
+}
+
+/// JCS-canonicalize a JSON string and return canonical bytes.
+///
+/// Returns 0 on success; -1 on null/invalid input; -2 on canonicalization error.
+///
+/// # Safety
+/// `json_in` must be a valid NUL-terminated UTF-8 C string.
+/// `out_ptr` and `out_len` must be valid writable pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn stateset_crypto_jcs_canonicalize(
+    json_in: *const c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> c_int {
+    if json_in.is_null() || out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+    let s = match unsafe { CStr::from_ptr(json_in) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let value: serde_json::Value = match serde_json::from_str(s) {
+        Ok(v) => v,
+        Err(_) => return -1,
+    };
+    let canonical = match ::stateset_crypto::canonicalize::canonicalize_json_bytes(&value) {
+        Ok(b) => b,
+        Err(_) => return -2,
+    };
+    let mut boxed = canonical.into_boxed_slice();
+    let ptr = boxed.as_mut_ptr();
+    let len = boxed.len();
+    std::mem::forget(boxed);
+    unsafe {
+        *out_ptr = ptr;
+        *out_len = len;
+    }
+    0
+}
+
+/// Compute the VES v1.0 payload-plain hash for a JSON payload.
+///
+/// Writes 32 bytes into `out_buf32`. If `salt_in` is non-null, `salt_len`
+/// must be 16. Returns 0 on success; -1/-2 on errors.
+///
+/// # Safety
+/// `json_in` must be a valid NUL-terminated UTF-8 C string. `salt_in` may be null;
+/// if non-null it must point to `salt_len` bytes. `out_buf32` must be writable
+/// for 32 bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn stateset_crypto_payload_plain_hash(
+    json_in: *const c_char,
+    salt_in: *const u8,
+    salt_len: usize,
+    out_buf32: *mut u8,
+) -> c_int {
+    if json_in.is_null() || out_buf32.is_null() {
+        return -1;
+    }
+    let s = match unsafe { CStr::from_ptr(json_in) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let value: serde_json::Value = match serde_json::from_str(s) {
+        Ok(v) => v,
+        Err(_) => return -1,
+    };
+    let salt_arr = if salt_in.is_null() {
+        None
+    } else {
+        if salt_len != 16 {
+            return -1;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(salt_in, salt_len) };
+        let mut buf = [0_u8; 16];
+        buf.copy_from_slice(slice);
+        Some(buf)
+    };
+    let digest =
+        match ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref()) {
+            Ok(d) => d,
+            Err(_) => return -2,
+        };
+    unsafe {
+        std::ptr::copy_nonoverlapping(digest.as_ptr(), out_buf32, 32);
+    }
+    0
+}
+
+/// Compute the merkle root of a list of 32-byte leaves.
+///
+/// `leaves_in` is a contiguous buffer of `leaf_count * 32` bytes. Writes
+/// 32 bytes into `out_buf32`. If `leaf_count == 0`, writes the empty-tree
+/// sentinel.
+///
+/// # Safety
+/// `leaves_in` must point to at least `leaf_count * 32` bytes (or be null when
+/// `leaf_count == 0`). `out_buf32` must be writable for 32 bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn stateset_crypto_merkle_root(
+    leaves_in: *const u8,
+    leaf_count: usize,
+    out_buf32: *mut u8,
+) -> c_int {
+    if out_buf32.is_null() {
+        return -1;
+    }
+    if leaf_count == 0 {
+        let root = ::stateset_crypto::merkle::compute_merkle_root(&[]);
+        unsafe {
+            std::ptr::copy_nonoverlapping(root.as_ptr(), out_buf32, 32);
+        }
+        return 0;
+    }
+    if leaves_in.is_null() {
+        return -1;
+    }
+    let total = match leaf_count.checked_mul(32) {
+        Some(n) => n,
+        None => return -1,
+    };
+    let bytes = unsafe { std::slice::from_raw_parts(leaves_in, total) };
+    let mut leaves: Vec<[u8; 32]> = Vec::with_capacity(leaf_count);
+    for i in 0..leaf_count {
+        let mut buf = [0_u8; 32];
+        buf.copy_from_slice(&bytes[i * 32..(i + 1) * 32]);
+        leaves.push(buf);
+    }
+    let root = ::stateset_crypto::merkle::compute_merkle_root(&leaves);
+    unsafe {
+        std::ptr::copy_nonoverlapping(root.as_ptr(), out_buf32, 32);
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

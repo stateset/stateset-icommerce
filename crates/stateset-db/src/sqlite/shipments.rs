@@ -1196,3 +1196,191 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(shipments)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateShipment, OrderId, ShipmentFilter, ShipmentRepository, ShipmentStatus,
+        ShippingCarrier, ShippingMethod,
+    };
+
+    fn fresh_repo() -> SqliteShipmentRepository {
+        SqliteDatabase::in_memory().expect("in-memory").shipments()
+    }
+
+    fn make_shipment(repo: &SqliteShipmentRepository, tracking: Option<&str>) -> Shipment {
+        repo.create(CreateShipment {
+            order_id: OrderId::new(),
+            carrier: Some(ShippingCarrier::Ups),
+            shipping_method: Some(ShippingMethod::Ground),
+            tracking_number: tracking.map(String::from),
+            recipient_name: "Ada Lovelace".into(),
+            recipient_email: Some("ada@example.com".into()),
+            recipient_phone: None,
+            shipping_address: "1 Babbage Way, London".into(),
+            weight_kg: Some(dec!(2.5)),
+            dimensions: Some("30x20x10cm".into()),
+            shipping_cost: Some(dec!(8.99)),
+            insurance_amount: None,
+            signature_required: Some(false),
+            estimated_delivery: None,
+            notes: None,
+            items: None,
+        })
+        .expect("create shipment")
+    }
+
+    #[test]
+    fn create_shipment_round_trips() {
+        let repo = fresh_repo();
+        let s = make_shipment(&repo, Some("1Z9999"));
+        assert_eq!(s.recipient_name, "Ada Lovelace");
+        assert_eq!(s.tracking_number.as_deref(), Some("1Z9999"));
+        assert_eq!(s.carrier, ShippingCarrier::Ups);
+        assert!(!s.shipment_number.is_empty());
+
+        let by_id = repo.get(s.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, s.id);
+        let by_num = repo.get_by_number(&s.shipment_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, s.id);
+        assert!(repo.get_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_by_tracking_finds_shipment() {
+        let repo = fresh_repo();
+        let s = make_shipment(&repo, Some("TRACK-XYZ"));
+        let by_track = repo.get_by_tracking("TRACK-XYZ").expect("ok").expect("found");
+        assert_eq!(by_track.id, s.id);
+        assert!(repo.get_by_tracking("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        let pending = make_shipment(&repo, Some("P1"));
+        let to_cancel = make_shipment(&repo, Some("P2"));
+        repo.cancel(to_cancel.id).expect("cancel");
+
+        let pendings = repo
+            .list(ShipmentFilter { status: Some(ShipmentStatus::Pending), ..Default::default() })
+            .expect("pending");
+        let cancelleds = repo
+            .list(ShipmentFilter { status: Some(ShipmentStatus::Cancelled), ..Default::default() })
+            .expect("cancelled");
+        assert!(pendings.iter().any(|s| s.id == pending.id));
+        assert!(cancelleds.iter().any(|s| s.id == to_cancel.id));
+    }
+
+    #[test]
+    fn list_filters_by_carrier() {
+        let repo = fresh_repo();
+        make_shipment(&repo, Some("UPS-1"));
+        make_shipment(&repo, Some("UPS-2"));
+        repo.create(CreateShipment {
+            order_id: OrderId::new(),
+            carrier: Some(ShippingCarrier::FedEx),
+            shipping_method: Some(ShippingMethod::Express),
+            tracking_number: Some("FEDEX-1".into()),
+            recipient_name: "Test".into(),
+            recipient_email: None,
+            recipient_phone: None,
+            shipping_address: "123 Test St".into(),
+            weight_kg: None,
+            dimensions: None,
+            shipping_cost: None,
+            insurance_amount: None,
+            signature_required: None,
+            estimated_delivery: None,
+            notes: None,
+            items: None,
+        })
+        .expect("fedex");
+
+        let ups = repo
+            .list(ShipmentFilter { carrier: Some(ShippingCarrier::Ups), ..Default::default() })
+            .expect("ups");
+        assert!(ups.iter().all(|s| s.carrier == ShippingCarrier::Ups));
+        assert!(ups.len() >= 2);
+    }
+
+    #[test]
+    fn cancel_transitions_to_cancelled() {
+        let repo = fresh_repo();
+        let s = make_shipment(&repo, Some("CANCEL-1"));
+        let cancelled = repo.cancel(s.id).expect("cancel");
+        assert_eq!(cancelled.status, ShipmentStatus::Cancelled);
+    }
+
+    #[test]
+    fn get_items_returns_empty_for_shipment_without_items() {
+        let repo = fresh_repo();
+        let s = make_shipment(&repo, Some("NO-ITEMS"));
+        let items = repo.get_items(s.id).expect("items");
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn get_events_returns_at_most_one_initial_event() {
+        let repo = fresh_repo();
+        let s = make_shipment(&repo, Some("NO-EVENTS"));
+        let events = repo.get_events(s.id).expect("events");
+        assert!(events.len() <= 1);
+    }
+
+    #[test]
+    fn create_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let result = repo
+            .create_batch(vec![
+                CreateShipment {
+                    order_id: OrderId::new(),
+                    carrier: Some(ShippingCarrier::Ups),
+                    shipping_method: Some(ShippingMethod::Ground),
+                    tracking_number: Some("B1".into()),
+                    recipient_name: "X".into(),
+                    recipient_email: None,
+                    recipient_phone: None,
+                    shipping_address: "addr".into(),
+                    weight_kg: None,
+                    dimensions: None,
+                    shipping_cost: None,
+                    insurance_amount: None,
+                    signature_required: None,
+                    estimated_delivery: None,
+                    notes: None,
+                    items: None,
+                },
+                CreateShipment {
+                    order_id: OrderId::new(),
+                    carrier: Some(ShippingCarrier::FedEx),
+                    shipping_method: Some(ShippingMethod::Express),
+                    tracking_number: Some("B2".into()),
+                    recipient_name: "Y".into(),
+                    recipient_email: None,
+                    recipient_phone: None,
+                    shipping_address: "addr".into(),
+                    weight_kg: None,
+                    dimensions: None,
+                    shipping_cost: None,
+                    insurance_amount: None,
+                    signature_required: None,
+                    estimated_delivery: None,
+                    notes: None,
+                    items: None,
+                },
+            ])
+            .expect("batch");
+        assert_eq!(result.success_count, 2);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn get_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(stateset_core::ShipmentId::new()).expect("ok").is_none());
+    }
+}

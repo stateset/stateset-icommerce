@@ -3793,7 +3793,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stateset-a2a"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "hex",
@@ -3810,7 +3810,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-authz"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "serde",
@@ -3821,7 +3821,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-benches"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "axum 0.8.8",
  "chrono",
@@ -3845,7 +3845,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-core"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -3877,7 +3877,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-crypto"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -3903,7 +3903,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-db"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "criterion",
@@ -3929,7 +3929,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-dotnet"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "libc",
@@ -3937,6 +3937,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stateset-core",
+ "stateset-crypto",
  "stateset-embedded",
  "thiserror 1.0.69",
  "uuid",
@@ -3944,7 +3945,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "criterion",
@@ -3976,7 +3977,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-node"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -3998,14 +3999,16 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-python"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
+ "hex",
  "pyo3",
  "rust_decimal",
  "serde",
  "serde_json",
  "stateset-core",
+ "stateset-crypto",
  "stateset-db",
  "stateset-embedded",
  "stateset-primitives",
@@ -4016,7 +4019,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-wasm"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -4028,6 +4031,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "stateset-core",
+ "stateset-crypto",
  "stateset-pricing",
  "thiserror 1.0.69",
  "uuid",
@@ -4038,7 +4042,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-ffi"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4056,7 +4060,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-go"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "libc",
@@ -4064,6 +4068,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stateset-core",
+ "stateset-crypto",
  "stateset-embedded",
  "thiserror 1.0.69",
  "uuid",
@@ -4071,7 +4076,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-http"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "axum 0.8.8",
  "base64 0.22.1",
@@ -4101,7 +4106,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-integration-tests"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "rust_decimal",
@@ -4123,7 +4128,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-java"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "jni",
@@ -4131,6 +4136,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stateset-core",
+ "stateset-crypto",
  "stateset-embedded",
  "stateset-primitives",
  "thiserror 1.0.69",
@@ -4139,7 +4145,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-jobs"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "serde",
@@ -4152,7 +4158,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-kotlin"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "jni",
@@ -4160,6 +4166,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stateset-core",
+ "stateset-crypto",
  "stateset-embedded",
  "thiserror 1.0.69",
  "uuid",
@@ -4167,7 +4174,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-macros"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4179,7 +4186,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-migrations"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "insta",
@@ -4192,7 +4199,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-observability"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
@@ -4205,10 +4212,11 @@ dependencies = [
 
 [[package]]
 name = "stateset-policy"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "insta",
+ "proptest",
  "regex",
  "rust_decimal",
  "serde",
@@ -4223,7 +4231,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-pricing"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "proptest",
@@ -4236,7 +4244,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-primitives"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "proptest",
  "proptest-derive",
@@ -4251,7 +4259,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-protocol"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "ed25519-dalek",
@@ -4269,7 +4277,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-sdk"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4291,7 +4299,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-swift"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "cbindgen",
  "chrono",
@@ -4300,6 +4308,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stateset-core",
+ "stateset-crypto",
  "stateset-embedded",
  "thiserror 1.0.69",
  "uuid",
@@ -4307,7 +4316,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-sync"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4326,7 +4335,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-test-utils"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "rust_decimal",

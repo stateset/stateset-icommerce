@@ -1180,3 +1180,259 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(bills)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use chrono::Duration;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        AccountsPayableRepository, BillFilter, BillPaymentFilter, BillStatus, CreateBill,
+        CreateBillItem, CreateBillPayment, PaymentAllocationInput, PaymentMethodAP,
+    };
+
+    fn fresh_repo() -> SqliteAccountsPayableRepository {
+        SqliteDatabase::in_memory().expect("in-memory").accounts_payable()
+    }
+
+    fn make_bill(
+        repo: &SqliteAccountsPayableRepository,
+        supplier: Uuid,
+        qty: Decimal,
+        price: Decimal,
+    ) -> Bill {
+        repo.create_bill(CreateBill {
+            bill_number: None,
+            supplier_id: supplier,
+            purchase_order_id: None,
+            bill_date: None,
+            due_date: Utc::now() + Duration::days(30),
+            payment_terms: Some("NET30".into()),
+            currency: None,
+            reference_number: None,
+            memo: Some("test bill".into()),
+            items: vec![CreateBillItem {
+                description: "Widget".into(),
+                account_code: Some("5000".into()),
+                quantity: qty,
+                unit_price: price,
+                tax_rate: None,
+                po_line_id: None,
+            }],
+        })
+        .expect("create bill")
+    }
+
+    #[test]
+    fn create_bill_starts_in_draft_with_items() {
+        let repo = fresh_repo();
+        let supplier = Uuid::new_v4();
+        let bill = make_bill(&repo, supplier, dec!(10), dec!(5));
+        assert_eq!(bill.supplier_id, supplier);
+        assert_eq!(bill.status, BillStatus::Draft);
+        assert!(bill.bill_number.starts_with("BILL-"));
+
+        let items = repo.get_bill_items(bill.id).expect("items");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].quantity, dec!(10));
+    }
+
+    #[test]
+    fn get_bill_and_get_bill_by_number_round_trip() {
+        let repo = fresh_repo();
+        let bill = make_bill(&repo, Uuid::new_v4(), dec!(1), dec!(1));
+        let by_id = repo.get_bill(bill.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, bill.id);
+        let by_num = repo.get_bill_by_number(&bill.bill_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, bill.id);
+        assert!(repo.get_bill_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn approve_bill_transitions_status() {
+        let repo = fresh_repo();
+        let bill = make_bill(&repo, Uuid::new_v4(), dec!(1), dec!(50));
+        let approved = repo.approve_bill(bill.id).expect("approve");
+        assert_eq!(approved.status, BillStatus::Approved);
+    }
+
+    #[test]
+    fn list_bills_filters_by_supplier() {
+        let repo = fresh_repo();
+        let s_a = Uuid::new_v4();
+        let s_b = Uuid::new_v4();
+        make_bill(&repo, s_a, dec!(1), dec!(1));
+        make_bill(&repo, s_a, dec!(2), dec!(2));
+        make_bill(&repo, s_b, dec!(3), dec!(3));
+
+        let for_a = repo
+            .list_bills(BillFilter { supplier_id: Some(s_a), ..Default::default() })
+            .expect("list");
+        assert_eq!(for_a.len(), 2);
+        assert!(for_a.iter().all(|b| b.supplier_id == s_a));
+    }
+
+    #[test]
+    fn list_bills_filters_by_status() {
+        let repo = fresh_repo();
+        let supplier = Uuid::new_v4();
+        let draft = make_bill(&repo, supplier, dec!(1), dec!(1));
+        let to_approve = make_bill(&repo, supplier, dec!(1), dec!(1));
+        repo.approve_bill(to_approve.id).expect("approve");
+
+        let drafts = repo
+            .list_bills(BillFilter { status: Some(BillStatus::Draft), ..Default::default() })
+            .expect("drafts");
+        let approved = repo
+            .list_bills(BillFilter { status: Some(BillStatus::Approved), ..Default::default() })
+            .expect("approved");
+        assert!(drafts.iter().any(|b| b.id == draft.id));
+        assert!(approved.iter().any(|b| b.id == to_approve.id));
+    }
+
+    #[test]
+    fn empty_db_returns_zero_aging_and_outstanding() {
+        let repo = fresh_repo();
+        let aging = repo.get_aging_summary().expect("aging");
+        assert_eq!(aging.total, dec!(0));
+        let outstanding = repo.get_total_outstanding().expect("outstanding");
+        assert_eq!(outstanding, dec!(0));
+    }
+
+    #[test]
+    fn empty_db_returns_no_overdue_or_due_soon() {
+        let repo = fresh_repo();
+        assert!(repo.get_overdue_bills().expect("overdue").is_empty());
+        assert!(repo.get_bills_due_soon(7).expect("due soon").is_empty());
+    }
+
+    #[test]
+    fn get_supplier_summary_for_unknown_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_supplier_summary(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn create_payment_with_allocation_links_to_bill() {
+        let repo = fresh_repo();
+        let supplier = Uuid::new_v4();
+        let bill = make_bill(&repo, supplier, dec!(2), dec!(50));
+        repo.approve_bill(bill.id).expect("approve");
+
+        let payment = repo
+            .create_payment(CreateBillPayment {
+                supplier_id: supplier,
+                payment_date: None,
+                payment_method: PaymentMethodAP::Ach,
+                amount: dec!(100),
+                currency: None,
+                reference_number: Some("ACH-1".into()),
+                bank_account: None,
+                check_number: None,
+                memo: None,
+                allocations: vec![PaymentAllocationInput { bill_id: bill.id, amount: dec!(100) }],
+            })
+            .expect("create payment");
+        assert_eq!(payment.supplier_id, supplier);
+        assert_eq!(payment.amount, dec!(100));
+
+        let allocations = repo.get_payment_allocations(payment.id).expect("allocations");
+        assert_eq!(allocations.len(), 1);
+        assert_eq!(allocations[0].bill_id, bill.id);
+
+        let payments_for_bill = repo.get_payments_for_bill(bill.id).expect("payments");
+        assert!(payments_for_bill.iter().any(|p| p.id == payment.id));
+    }
+
+    #[test]
+    fn list_payments_filters_by_supplier() {
+        let repo = fresh_repo();
+        let supplier_a = Uuid::new_v4();
+        let supplier_b = Uuid::new_v4();
+        let bill_a = make_bill(&repo, supplier_a, dec!(1), dec!(10));
+        let bill_b = make_bill(&repo, supplier_b, dec!(1), dec!(10));
+        repo.approve_bill(bill_a.id).expect("approve a");
+        repo.approve_bill(bill_b.id).expect("approve b");
+
+        repo.create_payment(CreateBillPayment {
+            supplier_id: supplier_a,
+            payment_date: None,
+            payment_method: PaymentMethodAP::Check,
+            amount: dec!(10),
+            currency: None,
+            reference_number: None,
+            bank_account: None,
+            check_number: None,
+            memo: None,
+            allocations: vec![PaymentAllocationInput { bill_id: bill_a.id, amount: dec!(10) }],
+        })
+        .expect("pay a");
+        repo.create_payment(CreateBillPayment {
+            supplier_id: supplier_b,
+            payment_date: None,
+            payment_method: PaymentMethodAP::Check,
+            amount: dec!(10),
+            currency: None,
+            reference_number: None,
+            bank_account: None,
+            check_number: None,
+            memo: None,
+            allocations: vec![PaymentAllocationInput { bill_id: bill_b.id, amount: dec!(10) }],
+        })
+        .expect("pay b");
+
+        let payments_a = repo
+            .list_payments(BillPaymentFilter {
+                supplier_id: Some(supplier_a),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(payments_a.len(), 1);
+        assert_eq!(payments_a[0].supplier_id, supplier_a);
+    }
+
+    #[test]
+    fn create_bills_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let supplier = Uuid::new_v4();
+        let result = repo
+            .create_bills_batch(vec![
+                CreateBill {
+                    supplier_id: supplier,
+                    due_date: Utc::now() + Duration::days(30),
+                    items: vec![CreateBillItem {
+                        description: "A".into(),
+                        account_code: None,
+                        quantity: dec!(1),
+                        unit_price: dec!(1),
+                        tax_rate: None,
+                        po_line_id: None,
+                    }],
+                    ..Default::default()
+                },
+                CreateBill {
+                    supplier_id: supplier,
+                    due_date: Utc::now() + Duration::days(30),
+                    items: vec![CreateBillItem {
+                        description: "B".into(),
+                        account_code: None,
+                        quantity: dec!(2),
+                        unit_price: dec!(2),
+                        tax_rate: None,
+                        po_line_id: None,
+                    }],
+                    ..Default::default()
+                },
+            ])
+            .expect("batch");
+        assert_eq!(result.success_count, 2);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn get_bill_unknown_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_bill(Uuid::new_v4()).expect("ok").is_none());
+    }
+}

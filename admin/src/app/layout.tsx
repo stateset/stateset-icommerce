@@ -5,6 +5,7 @@ import { Suspense } from 'react';
 import './globals.css';
 import { Sidebar } from '@/components/sidebar';
 import { SessionsSidebar } from '@/components/sessions-sidebar';
+import { TopBar } from '@/components/shared/top-bar';
 import { AdminLoginGate } from '@/lib/shared/admin-login-gate';
 import { ADMIN_SESSION_COOKIE, isAdminAuthDisabled, validateSessionToken } from '@/lib/shared/auth-session';
 
@@ -81,14 +82,18 @@ export default async function RootLayout({
             <SessionsSidebar className="hidden lg:flex" />
           </Suspense>
           <Sidebar />
-          <main id="main-content" className="flex-1 overflow-y-auto">
+          <main id="main-content" className="flex-1 overflow-y-auto flex flex-col">
+            {/* Top bar (org switcher; hides itself when there's ≤1 org). */}
+            <Suspense fallback={null}>
+              <TopBar />
+            </Suspense>
             <Suspense fallback={
               <div className="container mx-auto p-6 animate-pulse">
                 <div className="h-8 bg-gray-200 dark:bg-gray-800 rounded w-1/3 mb-4" />
                 <div className="h-64 bg-gray-200 dark:bg-gray-800 rounded" />
               </div>
             }>
-              <div className="container mx-auto p-6">
+              <div className="container mx-auto p-6 flex-1">
                 {children}
               </div>
             </Suspense>

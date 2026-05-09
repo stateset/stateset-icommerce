@@ -1178,3 +1178,245 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(picks)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CompletePick, CreatePackTask, CreatePickTask, CreateWave, FulfillmentRepository, OrderId,
+        OrderItemId, PickTaskFilter, WarehouseRepository, WaveFilter, WaveStatus,
+    };
+
+    /// Build an in-memory DB and bootstrap a warehouse + location.
+    /// Returns (fulfillment repo, warehouse id, location id).
+    /// Pick tasks FK both warehouses(id) and locations(id) per migration 018.
+    fn fresh_setup() -> (SqliteFulfillmentRepository, i32, i32) {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let wh = db
+            .warehouse()
+            .create_warehouse(stateset_core::CreateWarehouse {
+                code: "WH-FULFIL".into(),
+                name: "Fulfillment Test Warehouse".into(),
+                warehouse_type: stateset_core::WarehouseType::Distribution,
+                address: stateset_core::WarehouseAddress {
+                    street1: "1 Test St".into(),
+                    street2: None,
+                    city: "Test City".into(),
+                    state: "TC".into(),
+                    postal_code: "00000".into(),
+                    country: "US".into(),
+                    phone: None,
+                },
+                timezone: None,
+            })
+            .expect("create warehouse");
+        let loc = db
+            .warehouse()
+            .create_location(stateset_core::CreateLocation {
+                warehouse_id: wh.id,
+                code: Some("PICK-1".into()),
+                location_type: stateset_core::LocationType::Pick,
+                is_pickable: Some(true),
+                is_receivable: Some(true),
+                ..Default::default()
+            })
+            .expect("create location");
+        (db.fulfillment(), wh.id, loc.id)
+    }
+
+    fn fresh_repo() -> SqliteFulfillmentRepository {
+        fresh_setup().0
+    }
+
+    fn make_wave(
+        repo: &SqliteFulfillmentRepository,
+        warehouse_id: i32,
+        orders: Vec<OrderId>,
+    ) -> Wave {
+        repo.create_wave(CreateWave {
+            warehouse_id,
+            order_ids: orders,
+            priority: Some(5),
+            notes: Some("test wave".into()),
+            created_by: Some("alice".into()),
+        })
+        .expect("create wave")
+    }
+
+    fn make_pick(
+        repo: &SqliteFulfillmentRepository,
+        warehouse_id: i32,
+        location_id: i32,
+        wave: Option<FulfillmentId>,
+        order: OrderId,
+        sku: &str,
+    ) -> PickTask {
+        repo.create_pick(CreatePickTask {
+            wave_id: wave,
+            order_id: order,
+            order_item_id: OrderItemId::new(),
+            warehouse_id,
+            sku: sku.into(),
+            product_name: Some(format!("Product {sku}")),
+            source_location_id: location_id,
+            quantity_requested: dec!(5),
+            lot_id: None,
+            serial_number: None,
+            priority: Some(1),
+            notes: None,
+        })
+        .expect("create pick")
+    }
+
+    #[test]
+    fn create_wave_starts_in_draft_with_orders() {
+        let (repo, wh_id, _) = fresh_setup();
+        let order_a = OrderId::new();
+        let order_b = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order_a, order_b]);
+        assert_eq!(wave.warehouse_id, wh_id);
+        assert_eq!(wave.status, WaveStatus::Draft);
+        assert!(!wave.wave_number.is_empty());
+
+        let orders = repo.get_wave_orders(wave.id).expect("ok");
+        assert_eq!(orders.len(), 2);
+        assert!(orders.contains(&order_a) && orders.contains(&order_b));
+    }
+
+    #[test]
+    fn get_wave_and_get_wave_by_number_round_trip() {
+        let (repo, wh_id, _) = fresh_setup();
+        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let by_id = repo.get_wave(wave.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, wave.id);
+        let by_num = repo.get_wave_by_number(&wave.wave_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, wave.id);
+        assert!(repo.get_wave_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn complete_wave_transitions_status() {
+        let (repo, wh_id, _) = fresh_setup();
+        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let done = repo.complete_wave(wave.id).expect("complete");
+        assert_eq!(done.status, WaveStatus::Completed);
+    }
+
+    #[test]
+    fn cancel_wave_transitions_status() {
+        let (repo, wh_id, _) = fresh_setup();
+        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let cancelled = repo.cancel_wave(wave.id).expect("cancel");
+        assert_eq!(cancelled.status, WaveStatus::Cancelled);
+    }
+
+    #[test]
+    fn list_waves_filters_by_warehouse() {
+        let (repo, wh_id, _) = fresh_setup();
+        make_wave(&repo, wh_id, vec![OrderId::new()]);
+        make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let waves = repo
+            .list_waves(WaveFilter { warehouse_id: Some(wh_id), ..Default::default() })
+            .expect("list");
+        assert!(waves.len() >= 2);
+        assert!(waves.iter().all(|w| w.warehouse_id == wh_id));
+    }
+
+    #[test]
+    fn create_pick_round_trips_and_lists_for_order() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let pick = make_pick(&repo, wh_id, loc_id, None, order, "SKU-1");
+        assert_eq!(pick.order_id, order);
+        assert_eq!(pick.quantity_requested, dec!(5));
+
+        let by_id = repo.get_pick(pick.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, pick.id);
+
+        let for_order = repo.get_picks_for_order(order).expect("ok");
+        assert_eq!(for_order.len(), 1);
+    }
+
+    #[test]
+    fn start_and_complete_pick_transitions() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let pick = make_pick(&repo, wh_id, loc_id, None, order, "SKU-START");
+        let started = repo.start_pick(pick.id).expect("start");
+        assert_ne!(started.status, pick.status, "status should change after start");
+
+        let completed = repo
+            .complete_pick(CompletePick {
+                pick_id: pick.id,
+                quantity_picked: dec!(5),
+                quantity_short: None,
+                short_reason: None,
+                lot_id: None,
+                serial_number: None,
+                completed_by: Some("alice".into()),
+            })
+            .expect("complete");
+        assert_eq!(completed.id, pick.id);
+        assert_eq!(completed.quantity_picked, dec!(5));
+    }
+
+    #[test]
+    fn cancel_pick_changes_status() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let pick = make_pick(&repo, wh_id, loc_id, None, OrderId::new(), "SKU-CN");
+        let cancelled = repo.cancel_pick(pick.id).expect("cancel");
+        assert_ne!(cancelled.status, pick.status);
+    }
+
+    #[test]
+    fn list_picks_filters_by_order() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order_a = OrderId::new();
+        let order_b = OrderId::new();
+        make_pick(&repo, wh_id, loc_id, None, order_a, "A1");
+        make_pick(&repo, wh_id, loc_id, None, order_a, "A2");
+        make_pick(&repo, wh_id, loc_id, None, order_b, "B1");
+
+        let picks_a = repo
+            .list_picks(PickTaskFilter { order_id: Some(order_a), ..Default::default() })
+            .expect("a");
+        assert_eq!(picks_a.len(), 2);
+    }
+
+    #[test]
+    fn get_picks_for_wave_returns_picks() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let order = OrderId::new();
+        make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "WV-1");
+        make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "WV-2");
+        let picks = repo.get_picks_for_wave(wave.id).expect("ok");
+        assert_eq!(picks.len(), 2);
+    }
+
+    #[test]
+    fn create_pack_task_round_trips() {
+        let repo = fresh_repo();
+        let order = OrderId::new();
+        let pack = repo
+            .create_pack(CreatePackTask { order_id: order, notes: Some("ship by tomorrow".into()) })
+            .expect("create pack");
+        assert_eq!(pack.order_id, order);
+        let by_id = repo.get_pack(pack.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, pack.id);
+    }
+
+    #[test]
+    fn get_unknown_wave_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_wave(stateset_core::FulfillmentId::new()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_unknown_pick_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_pick(Uuid::new_v4()).expect("ok").is_none());
+    }
+}

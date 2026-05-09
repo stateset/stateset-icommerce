@@ -1201,11 +1201,15 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
+        // Sum on-hand from inventory_balances (per-location) up to per-sku via inventory_items.id
         let mut stmt = conn
             .prepare(
-                "SELECT ii.quantity_on_hand, ic.standard_cost, ic.average_cost, ic.last_cost
+                "SELECT COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0) AS qty,
+                        ic.standard_cost, ic.average_cost, ic.last_cost
                  FROM inventory_items ii
-                 LEFT JOIN item_costs ic ON ii.sku = ic.sku",
+                 LEFT JOIN inventory_balances ib ON ib.item_id = ii.id
+                 LEFT JOIN item_costs ic ON ii.sku = ic.sku
+                 GROUP BY ii.id, ic.standard_cost, ic.average_cost, ic.last_cost",
             )
             .map_err(map_db_error)?;
         let mut rows = stmt.query([]).map_err(map_db_error)?;
@@ -1214,13 +1218,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let mut total_value = Decimal::ZERO;
 
         while let Some(row) = rows.next().map_err(map_db_error)? {
-            let qty_raw: Option<String> = row.get(0).map_err(map_db_error)?;
-            let quantity = match qty_raw {
-                Some(value) if !value.is_empty() => {
-                    parse_decimal_strict(&value, "inventory_items", "quantity_on_hand")?
-                }
-                _ => Decimal::ZERO,
-            };
+            let qty_real: f64 = row.get(0).map_err(map_db_error)?;
+            let quantity = Decimal::from_f64_retain(qty_real).unwrap_or(Decimal::ZERO);
 
             let standard_raw: Option<String> = row.get(1).map_err(map_db_error)?;
             let average_raw: Option<String> = row.get(2).map_err(map_db_error)?;
@@ -1278,35 +1277,32 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let result = conn.query_row(
             "SELECT
                 ii.sku,
-                ii.quantity_on_hand,
+                COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0) AS qty,
                 ic.standard_cost,
                 ic.average_cost
              FROM inventory_items ii
+             LEFT JOIN inventory_balances ib ON ib.item_id = ii.id
              LEFT JOIN item_costs ic ON ii.sku = ic.sku
-             WHERE ii.sku = ?",
+             WHERE ii.sku = ?
+             GROUP BY ii.id, ic.standard_cost, ic.average_cost",
             [sku],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, f64>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<String>>(3)?,
                 ))
             },
         );
 
-        let (sku_value, qty_raw, standard_raw, average_raw) = match result {
+        let (sku_value, qty_real, standard_raw, average_raw) = match result {
             Ok(row) => row,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
             Err(e) => return Err(map_db_error(e)),
         };
 
-        let quantity_on_hand = match qty_raw {
-            Some(value) if !value.is_empty() => {
-                parse_decimal_strict(&value, "sku_cost_summary", "quantity_on_hand")?
-            }
-            _ => Decimal::ZERO,
-        };
+        let quantity_on_hand = Decimal::from_f64_retain(qty_real).unwrap_or(Decimal::ZERO);
         let standard_cost = match standard_raw {
             Some(value) if !value.is_empty() => {
                 parse_decimal_strict(&value, "sku_cost_summary", "standard_cost")?
@@ -1345,5 +1341,302 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     fn get_total_inventory_value(&self) -> Result<Decimal> {
         let valuation = self.get_inventory_valuation(CostMethod::Average)?;
         Ok(valuation.total_value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use chrono::Duration;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CostAccountingRepository, CostAdjustmentFilter, CostAdjustmentType, CostLayerFilter,
+        CostLayerSource, CostMethod, CreateCostAdjustment, CreateCostLayer, IssueCostLayers,
+        ItemCostFilter, RecordCostVariance, SetItemCost, VarianceType,
+    };
+
+    fn fresh_repo() -> SqliteCostAccountingRepository {
+        SqliteDatabase::in_memory().expect("in-memory").cost_accounting()
+    }
+
+    fn make_layer(
+        repo: &SqliteCostAccountingRepository,
+        sku: &str,
+        qty: Decimal,
+        cost: Decimal,
+    ) -> CostLayer {
+        repo.create_cost_layer(CreateCostLayer {
+            sku: sku.into(),
+            quantity: qty,
+            unit_cost: cost,
+            source_type: CostLayerSource::Purchase,
+            source_id: None,
+            lot_id: None,
+            location_id: Some(1),
+        })
+        .expect("create layer")
+    }
+
+    #[test]
+    fn set_item_cost_persists_and_round_trips() {
+        let repo = fresh_repo();
+        let cost = repo
+            .set_item_cost(SetItemCost {
+                sku: "WIDGET-1".into(),
+                cost_method: Some(CostMethod::Standard),
+                standard_cost: Some(dec!(12.50)),
+                material_cost: Some(dec!(5.00)),
+                labor_cost: Some(dec!(3.00)),
+                overhead_cost: Some(dec!(4.50)),
+                currency: None,
+            })
+            .expect("set");
+        assert_eq!(cost.sku, "WIDGET-1");
+        assert_eq!(cost.cost_method, CostMethod::Standard);
+        assert_eq!(cost.standard_cost, dec!(12.50));
+
+        let by_sku = repo.get_item_cost("WIDGET-1").expect("ok").expect("found");
+        assert_eq!(by_sku.sku, "WIDGET-1");
+        assert!(repo.get_item_cost("MISSING").expect("ok").is_none());
+    }
+
+    #[test]
+    fn set_item_cost_upserts_on_existing_sku() {
+        let repo = fresh_repo();
+        repo.set_item_cost(SetItemCost {
+            sku: "UP-1".into(),
+            standard_cost: Some(dec!(10)),
+            ..Default::default()
+        })
+        .expect("first");
+        let updated = repo
+            .set_item_cost(SetItemCost {
+                sku: "UP-1".into(),
+                standard_cost: Some(dec!(15)),
+                ..Default::default()
+            })
+            .expect("second");
+        assert_eq!(updated.standard_cost, dec!(15));
+        let listed = repo
+            .list_item_costs(ItemCostFilter { sku: Some("UP-1".into()), ..Default::default() })
+            .expect("list");
+        assert_eq!(listed.len(), 1, "upsert, not duplicate");
+    }
+
+    #[test]
+    fn list_item_costs_filters_by_sku() {
+        let repo = fresh_repo();
+        repo.set_item_cost(SetItemCost {
+            sku: "FILTER-A".into(),
+            standard_cost: Some(dec!(1)),
+            ..Default::default()
+        })
+        .expect("a");
+        repo.set_item_cost(SetItemCost {
+            sku: "FILTER-B".into(),
+            standard_cost: Some(dec!(2)),
+            ..Default::default()
+        })
+        .expect("b");
+
+        let only_a = repo
+            .list_item_costs(ItemCostFilter { sku: Some("FILTER-A".into()), ..Default::default() })
+            .expect("list");
+        assert_eq!(only_a.len(), 1);
+        assert_eq!(only_a[0].sku, "FILTER-A");
+    }
+
+    #[test]
+    fn create_cost_layer_persists_and_remaining_starts_full() {
+        let repo = fresh_repo();
+        let layer = make_layer(&repo, "L-1", dec!(10), dec!(7.50));
+        assert_eq!(layer.sku, "L-1");
+        assert_eq!(layer.quantity, dec!(10));
+        assert_eq!(layer.unit_cost, dec!(7.50));
+        assert_eq!(layer.remaining_quantity, dec!(10));
+
+        let by_id = repo.get_cost_layer(layer.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, layer.id);
+
+        let remaining = repo.get_layers_remaining("L-1").expect("ok");
+        assert_eq!(remaining, dec!(10));
+    }
+
+    #[test]
+    fn list_cost_layers_filters_by_sku_and_has_remaining() {
+        let repo = fresh_repo();
+        make_layer(&repo, "LL-A", dec!(5), dec!(1));
+        make_layer(&repo, "LL-A", dec!(8), dec!(2));
+        make_layer(&repo, "LL-B", dec!(3), dec!(3));
+
+        let a = repo
+            .list_cost_layers(CostLayerFilter { sku: Some("LL-A".into()), ..Default::default() })
+            .expect("a");
+        assert_eq!(a.len(), 2);
+
+        let with_remaining = repo
+            .list_cost_layers(CostLayerFilter {
+                sku: Some("LL-A".into()),
+                has_remaining: Some(true),
+                ..Default::default()
+            })
+            .expect("rem");
+        assert_eq!(with_remaining.len(), 2);
+    }
+
+    #[test]
+    fn issue_fifo_consumes_oldest_layer_first() {
+        let repo = fresh_repo();
+        // First (oldest) layer at $5; second at $8
+        let oldest = make_layer(&repo, "FIFO-1", dec!(10), dec!(5));
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let _newer = make_layer(&repo, "FIFO-1", dec!(10), dec!(8));
+
+        let txns = repo
+            .issue_fifo(IssueCostLayers {
+                sku: "FIFO-1".into(),
+                quantity: dec!(7),
+                reference_type: Some("order".into()),
+                reference_id: None,
+                notes: None,
+            })
+            .expect("issue fifo");
+
+        // Should issue 7 from oldest layer at $5
+        assert!(!txns.is_empty());
+        // Oldest layer should now have 3 remaining
+        let layer = repo.get_cost_layer(oldest.id).expect("ok").expect("found");
+        assert_eq!(layer.remaining_quantity, dec!(3));
+    }
+
+    #[test]
+    fn issue_lifo_consumes_newest_layer_first() {
+        let repo = fresh_repo();
+        let _oldest = make_layer(&repo, "LIFO-1", dec!(10), dec!(5));
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let newest = make_layer(&repo, "LIFO-1", dec!(10), dec!(8));
+
+        let txns = repo
+            .issue_lifo(IssueCostLayers {
+                sku: "LIFO-1".into(),
+                quantity: dec!(4),
+                reference_type: Some("issue".into()),
+                reference_id: None,
+                notes: None,
+            })
+            .expect("issue lifo");
+
+        assert!(!txns.is_empty());
+        let layer = repo.get_cost_layer(newest.id).expect("ok").expect("found");
+        assert_eq!(layer.remaining_quantity, dec!(6));
+    }
+
+    #[test]
+    fn record_variance_persists_and_summary_aggregates() {
+        let repo = fresh_repo();
+        repo.record_variance(RecordCostVariance {
+            sku: "V-1".into(),
+            variance_type: VarianceType::Purchase,
+            standard_cost: dec!(10),
+            actual_cost: dec!(12),
+            quantity: dec!(5),
+            reference_type: None,
+            reference_id: None,
+            notes: None,
+        })
+        .expect("record");
+
+        let from = Utc::now() - Duration::days(1);
+        let to = Utc::now() + Duration::days(1);
+        let summary = repo.get_variance_summary(from, to).expect("ok");
+        // (12-10) * 5 = 10 unfavourable
+        assert_eq!(summary, dec!(10));
+    }
+
+    #[test]
+    fn create_adjustment_starts_pending_then_apply_completes() {
+        let repo = fresh_repo();
+        let adj = repo
+            .create_adjustment(CreateCostAdjustment {
+                sku: "ADJ-1".into(),
+                adjustment_type: CostAdjustmentType::Revaluation,
+                new_cost: dec!(20),
+                reason: "year-end revaluation".into(),
+                created_by: Some("alice".into()),
+            })
+            .expect("create adj");
+        assert_eq!(adj.sku, "ADJ-1");
+
+        let approved = repo.approve_adjustment(adj.id, "manager").expect("approve");
+        assert_eq!(approved.id, adj.id);
+
+        let applied = repo.apply_adjustment(adj.id).expect("apply");
+        assert_eq!(applied.id, adj.id);
+    }
+
+    #[test]
+    fn reject_adjustment_marks_rejected() {
+        let repo = fresh_repo();
+        let adj = repo
+            .create_adjustment(CreateCostAdjustment {
+                sku: "REJ-1".into(),
+                adjustment_type: CostAdjustmentType::Revaluation,
+                new_cost: dec!(99),
+                reason: "wrong amount".into(),
+                created_by: Some("alice".into()),
+            })
+            .expect("create adj");
+        let rejected = repo.reject_adjustment(adj.id).expect("reject");
+        assert_eq!(rejected.id, adj.id);
+    }
+
+    #[test]
+    fn list_adjustments_filters_by_sku() {
+        let repo = fresh_repo();
+        repo.create_adjustment(CreateCostAdjustment {
+            sku: "F-1".into(),
+            adjustment_type: CostAdjustmentType::Revaluation,
+            new_cost: dec!(5),
+            reason: "r".into(),
+            created_by: None,
+        })
+        .expect("a");
+        repo.create_adjustment(CreateCostAdjustment {
+            sku: "F-2".into(),
+            adjustment_type: CostAdjustmentType::Revaluation,
+            new_cost: dec!(5),
+            reason: "r".into(),
+            created_by: None,
+        })
+        .expect("b");
+
+        let only_f1 = repo
+            .list_adjustments(CostAdjustmentFilter {
+                sku: Some("F-1".into()),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(only_f1.len(), 1);
+    }
+
+    #[test]
+    fn get_total_inventory_value_zero_on_empty_db() {
+        let repo = fresh_repo();
+        assert_eq!(repo.get_total_inventory_value().expect("ok"), dec!(0));
+    }
+
+    #[test]
+    fn get_inventory_valuation_uses_supplied_method() {
+        let repo = fresh_repo();
+        let v = repo.get_inventory_valuation(CostMethod::Average).expect("ok");
+        assert_eq!(v.valuation_method, CostMethod::Average);
+        assert_eq!(v.total_value, dec!(0));
+    }
+
+    #[test]
+    fn get_sku_cost_summary_for_unknown_sku_is_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_sku_cost_summary("NOPE").expect("ok").is_none());
     }
 }

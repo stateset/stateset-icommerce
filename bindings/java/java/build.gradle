@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.stateset'
-version = '1.0.3'
+version = '1.0.4'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -21,6 +21,9 @@ repositories {
 dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // Gson is only used by CryptoVectorTests to read the cross-binding
+    // corpus; production code has no JSON dependency.
+    testImplementation 'com.google.code.gson:gson:2.10.1'
 }
 
 tasks.named('test') {

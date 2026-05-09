@@ -1,0 +1,39 @@
+[package]
+name = "stateset-crypto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+# Standalone workspace so cargo-fuzz can manage its own deps without inheriting
+# the parent workspace's lockfile and lint set. Required by cargo-fuzz layout.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+stateset-crypto = { path = ".." }
+
+# All fuzz targets share the same harness binary layout.
+[[bin]]
+name = "canonicalize_json"
+path = "fuzz_targets/canonicalize_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compute_payload_plain_hash"
+path = "fuzz_targets/compute_payload_plain_hash.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compute_merkle_root"
+path = "fuzz_targets/compute_merkle_root.rs"
+test = false
+doc = false
+bench = false

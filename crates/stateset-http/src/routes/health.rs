@@ -16,7 +16,7 @@ use axum::{
     routing::get,
 };
 
-use crate::dto::{HealthResponse, ReadyResponse};
+use crate::dto::{HealthResponse, ReadyResponse, VersionResponse};
 use crate::error::HttpError;
 use crate::state::{AppState, MetricsHeaderLimits};
 
@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
         .route("/health/ready", get(readiness))
         .route("/health/deep", get(deep_health))
         .route("/metrics", get(metrics))
+        .route("/version", get(version))
 }
 
 /// `GET /health` — simple liveness probe.
@@ -42,6 +43,45 @@ pub fn router() -> Router<AppState> {
 pub(crate) async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let _ = state;
     Json(HealthResponse { status: "ok", tenant_cache: None })
+}
+
+/// `GET /version` — build & release metadata.
+///
+/// All fields except `version` are best-effort: they're populated from
+/// environment variables the release pipeline injects at compile time
+/// (`GITHUB_SHA`, `GITHUB_REF_NAME`, `STATESET_RELEASE_TAG`,
+/// `STATESET_BUILD_TIMESTAMP`, `STATESET_SIGNED`). Local `cargo build`
+/// runs leave the optional fields unset and `signed = false`, which the
+/// admin UI surfaces as "this binary did not come from a verified
+/// release pipeline".
+#[utoipa::path(
+    get,
+    path = "/version",
+    tag = "health",
+    responses(
+        (status = 200, description = "Build & release metadata", body = VersionResponse),
+    )
+)]
+#[tracing::instrument]
+pub(crate) async fn version() -> Json<VersionResponse> {
+    Json(version_response())
+}
+
+/// Pure constructor for the `/version` body. Compile-time `option_env!`
+/// reads happen here so test bodies can call this directly without
+/// involving Axum or the `AppState`.
+fn version_response() -> VersionResponse {
+    // `option_env!` evaluates at compile time. None of these env vars
+    // need to exist at runtime — that's the point.
+    let signed = matches!(option_env!("STATESET_SIGNED"), Some("true" | "1" | "yes"));
+    VersionResponse {
+        version: env!("CARGO_PKG_VERSION"),
+        git_commit: option_env!("GITHUB_SHA"),
+        git_ref: option_env!("GITHUB_REF_NAME"),
+        release_tag: option_env!("STATESET_RELEASE_TAG"),
+        built_at: option_env!("STATESET_BUILD_TIMESTAMP"),
+        signed,
+    }
 }
 
 /// `GET /health/ready` — readiness probe that checks DB connectivity.
@@ -2200,5 +2240,40 @@ mod tests {
     fn escape_prometheus_label_escapes_control_characters() {
         let escaped = escape_prometheus_label_value("checkout\"v2\\canary\n");
         assert_eq!(escaped, "checkout\\\"v2\\\\canary\\n");
+    }
+
+    // ----- /version --------------------------------------------------
+
+    #[test]
+    fn version_response_always_carries_package_version() {
+        let body = version_response();
+        // CARGO_PKG_VERSION is always set; never None / empty.
+        assert!(!body.version.is_empty());
+        // Sanity: matches the env var the macro reads.
+        assert_eq!(body.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn version_response_signed_flag_defaults_to_false_in_tests() {
+        // Local cargo test runs do not inject STATESET_SIGNED, so the
+        // boolean must default to false. This test guards against a
+        // regression where someone changes the parsing to default-true.
+        let body = version_response();
+        assert!(!body.signed);
+    }
+
+    #[tokio::test]
+    async fn version_endpoint_returns_200_with_version_body() {
+        let app = router()
+            .with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")));
+        let resp =
+            app.oneshot(Request::get("/version").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(parsed["version"].is_string());
+        // `signed` is always present; optional fields are omitted when None.
+        assert_eq!(parsed["signed"], false);
     }
 }

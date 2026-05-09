@@ -6,8 +6,8 @@ use stateset_primitives::{CurrencyCode, Money};
 
 /// Benchmark: `ValidationBuilder` with multiple field checks.
 ///
-/// Exercises the full chain: required, email, max_length, positive, sku,
-/// phone, postal_code, non_empty_list, uuid_not_nil.
+/// Exercises the full chain: `required`, `email`, `max_length`, `positive`,
+/// `sku`, `phone`, `postal_code`, `non_empty_list`, `uuid_not_nil`.
 fn bench_validation_builder(c: &mut Criterion) {
     let items = vec!["a", "b", "c"];
     let item_id = uuid::Uuid::new_v4();

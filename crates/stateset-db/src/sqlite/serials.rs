@@ -1571,3 +1571,274 @@ impl SerialRepository for SqliteSerialRepository {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use stateset_core::{
+        ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, ReserveSerialNumber,
+        SerialFilter, SerialRepository, SerialStatus,
+    };
+
+    fn fresh_repo() -> SqliteSerialRepository {
+        SqliteDatabase::in_memory().expect("in-memory").serials()
+    }
+
+    fn make_serial(repo: &SqliteSerialRepository, sku: &str, serial: &str) -> SerialNumber {
+        repo.create(CreateSerialNumber {
+            serial: Some(serial.into()),
+            sku: sku.into(),
+            lot_id: None,
+            lot_number: Some("LOT-1".into()),
+            location_id: Some(1),
+            manufactured_at: None,
+            notes: None,
+            attributes: None,
+        })
+        .expect("create")
+    }
+
+    #[test]
+    fn create_with_explicit_serial_starts_available() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-A", "S-001");
+        assert_eq!(s.serial, "S-001");
+        assert_eq!(s.sku, "SKU-A");
+        assert_eq!(s.status, SerialStatus::Available);
+    }
+
+    #[test]
+    fn create_with_no_serial_generates_unique_one() {
+        let repo = fresh_repo();
+        let s1 = repo
+            .create(CreateSerialNumber {
+                serial: None,
+                sku: "SKU-X".into(),
+                lot_id: None,
+                lot_number: None,
+                location_id: None,
+                manufactured_at: None,
+                notes: None,
+                attributes: None,
+            })
+            .expect("c1");
+        let s2 = repo
+            .create(CreateSerialNumber {
+                serial: None,
+                sku: "SKU-X".into(),
+                lot_id: None,
+                lot_number: None,
+                location_id: None,
+                manufactured_at: None,
+                notes: None,
+                attributes: None,
+            })
+            .expect("c2");
+        assert_ne!(s1.serial, s2.serial);
+    }
+
+    #[test]
+    fn get_and_get_by_serial_round_trip() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-RT", "S-RT-1");
+        let by_id = repo.get(s.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, s.id);
+        let by_serial = repo.get_by_serial("S-RT-1").expect("ok").expect("found");
+        assert_eq!(by_serial.id, s.id);
+        assert!(repo.get_by_serial("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn create_bulk_creates_n_serials_with_prefix() {
+        let repo = fresh_repo();
+        let serials = repo
+            .create_bulk(CreateSerialNumbersBulk {
+                sku: "SKU-BULK".into(),
+                quantity: 5,
+                prefix: Some("BLK".into()),
+                lot_id: None,
+                lot_number: None,
+                location_id: Some(1),
+                manufactured_at: None,
+            })
+            .expect("bulk");
+        assert_eq!(serials.len(), 5);
+        for (i, s) in serials.iter().enumerate() {
+            assert_eq!(s.serial, format!("BLK-{:06}", i + 1));
+            assert_eq!(s.status, SerialStatus::Available);
+        }
+    }
+
+    #[test]
+    fn list_filters_by_sku() {
+        let repo = fresh_repo();
+        make_serial(&repo, "SKU-L1", "S-L1-1");
+        make_serial(&repo, "SKU-L1", "S-L1-2");
+        make_serial(&repo, "SKU-L2", "S-L2-1");
+
+        let l1 = repo
+            .list(SerialFilter { sku: Some("SKU-L1".into()), ..Default::default() })
+            .expect("list");
+        assert_eq!(l1.len(), 2);
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        let s_available = make_serial(&repo, "SKU-S", "S-AV");
+        let s_to_reserve = make_serial(&repo, "SKU-S", "S-TR");
+        repo.change_status(ChangeSerialStatus {
+            serial_id: s_to_reserve.id,
+            new_status: SerialStatus::Reserved,
+            ..Default::default()
+        })
+        .expect("change status");
+
+        let available = repo
+            .list(SerialFilter { status: Some(SerialStatus::Available), ..Default::default() })
+            .expect("list available");
+        let reserved = repo
+            .list(SerialFilter { status: Some(SerialStatus::Reserved), ..Default::default() })
+            .expect("list reserved");
+        let av_ids: Vec<_> = available.iter().map(|s| s.id).collect();
+        let res_ids: Vec<_> = reserved.iter().map(|s| s.id).collect();
+        assert!(av_ids.contains(&s_available.id));
+        assert!(res_ids.contains(&s_to_reserve.id));
+    }
+
+    #[test]
+    fn change_status_transitions() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-T", "S-T-1");
+        let updated = repo
+            .change_status(ChangeSerialStatus {
+                serial_id: s.id,
+                new_status: SerialStatus::Sold,
+                performed_by: Some("alice".into()),
+                ..Default::default()
+            })
+            .expect("change");
+        assert_eq!(updated.status, SerialStatus::Sold);
+    }
+
+    #[test]
+    fn reserve_serial_creates_reservation_and_changes_status() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-R", "S-R-1");
+        let order_id = Uuid::new_v4();
+        let res = repo
+            .reserve(ReserveSerialNumber {
+                serial_id: s.id,
+                reference_type: "order".into(),
+                reference_id: order_id,
+                reserved_by: Some("alice".into()),
+                expires_in_seconds: Some(60),
+            })
+            .expect("reserve");
+        assert_eq!(res.serial_id, s.id);
+        let after = repo.get(s.id).expect("ok").expect("found");
+        assert_eq!(after.status, SerialStatus::Reserved);
+
+        repo.release_reservation(res.id).expect("release");
+        let after_release = repo.get(s.id).expect("ok").expect("found");
+        assert_eq!(after_release.status, SerialStatus::Available);
+    }
+
+    #[test]
+    fn quarantine_marks_quarantined_then_release() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-Q", "S-Q-1");
+        let q = repo.quarantine(s.id, "qc fail").expect("quarantine");
+        assert_eq!(q.status, SerialStatus::Quarantined);
+        let r = repo.release_quarantine(s.id).expect("release");
+        assert_eq!(r.status, SerialStatus::Available);
+    }
+
+    #[test]
+    fn get_for_customer_filters_by_owner() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-O", "S-O-1");
+        let cust = Uuid::new_v4();
+        repo.change_status(ChangeSerialStatus {
+            serial_id: s.id,
+            new_status: SerialStatus::Sold,
+            owner_id: Some(cust),
+            owner_type: Some("customer".into()),
+            ..Default::default()
+        })
+        .expect("change");
+
+        let owned = repo.get_for_customer(cust).expect("ok");
+        let ids: Vec<_> = owned.iter().map(|s| s.id).collect();
+        assert!(ids.contains(&s.id));
+
+        let none = repo.get_for_customer(Uuid::new_v4()).expect("ok");
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn get_available_for_sku_returns_only_available() {
+        let repo = fresh_repo();
+        make_serial(&repo, "SKU-AV", "S-AV-1");
+        let s2 = make_serial(&repo, "SKU-AV", "S-AV-2");
+        repo.change_status(ChangeSerialStatus {
+            serial_id: s2.id,
+            new_status: SerialStatus::Sold,
+            ..Default::default()
+        })
+        .expect("change");
+
+        let available = repo.get_available_for_sku("SKU-AV", 10).expect("ok");
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0].status, SerialStatus::Available);
+    }
+
+    #[test]
+    fn get_for_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_batch_returns_only_existing() {
+        let repo = fresh_repo();
+        let s1 = make_serial(&repo, "SKU-B", "S-B-1");
+        let s2 = make_serial(&repo, "SKU-B", "S-B-2");
+        let stranger = Uuid::new_v4();
+
+        let batch = repo.get_batch(vec![s1.id, s2.id, stranger]).expect("batch");
+        assert_eq!(batch.len(), 2);
+    }
+
+    #[test]
+    fn create_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let result = repo
+            .create_batch(vec![
+                CreateSerialNumber {
+                    serial: Some("S-CB-1".into()),
+                    sku: "SKU-CB".into(),
+                    lot_id: None,
+                    lot_number: None,
+                    location_id: None,
+                    manufactured_at: None,
+                    notes: None,
+                    attributes: None,
+                },
+                CreateSerialNumber {
+                    serial: Some("S-CB-2".into()),
+                    sku: "SKU-CB".into(),
+                    lot_id: None,
+                    lot_number: None,
+                    location_id: None,
+                    manufactured_at: None,
+                    notes: None,
+                    attributes: None,
+                },
+            ])
+            .expect("batch");
+        assert_eq!(result.success_count, 2);
+        assert_eq!(result.failure_count, 0);
+    }
+}

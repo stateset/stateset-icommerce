@@ -6,19 +6,56 @@
  */
 
 import { createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'path';
-import { z } from 'zod';
+// `z` (zod) is now only used inside `./mcp/agentic-runtime-tools.js` and
+// the per-domain tool modules; mcp-server.js no longer needs it directly.
 import { getSharedRuntime } from './channels/plugin-runtime.js';
 import { A2AStore } from './a2a/store.js';
 import { PolicyEngine } from './policies/engine.js';
 import { createMcpEventStreamer } from './mcp-event-streamer.js';
 import { ToolDiscoveryEngine } from './mcp-tool-discovery.js';
+import {
+  compactReplayValue,
+  sanitizeReplayValue,
+  sha256,
+  stableStringify,
+} from './mcp/replay-sanitizer.js';
+import {
+  addCostSummaryEntry,
+  createCostSummary,
+  normalizeCostBudget,
+  resolveCostBudgetLimit,
+} from './mcp/cost-budget.js';
+import { MAX_PLAN_STEPS, normalizeSlaLevel, resolveAgenticPlanValue } from './mcp/plan-resolver.js';
+import { AGENTIC_RUNTIME_TOOLS } from './mcp/agentic-runtime-tools.js';
+import {
+  AGENTIC_COMPENSATION_HINTS,
+  AGENTIC_IDEMPOTENCY_HINTS,
+  buildCompensationParams,
+} from './mcp/compensation.js';
+import {
+  inferPolicyDomain as inferPolicyDomainImpl,
+  inferStaticPolicyDomain,
+} from './mcp/policy-domain.js';
+import { applyPolicyTransform, normalizeToolName } from './mcp/policy-helpers.js';
+import { autoIndexEntity as autoIndexEntityImpl } from './mcp/auto-index.js';
+import { adaptCommerceForTools, extendCommerceWithApis } from './mcp/commerce-adapter.js';
+import { buildPlanStepRouting as buildPlanStepRoutingImpl } from './mcp/plan-step-routing.js';
+import { signAuditArtifact as signAuditArtifactImpl } from './mcp/audit-signing.js';
+import {
+  buildApprovalStagesFromActions,
+  buildRollbackContract,
+  normalizePolicyAction,
+  normalizePolicyExplanation,
+  replayEventHash,
+} from './mcp/audit-envelope.js';
+import { buildDeterministicMutationManifest } from './mcp/mutation-manifest.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
 import { adaptCommerceApis } from './commerce.js';
 import { getCommerce } from './database.js';
-import { SUPPORTED_AGENT_NAMES, SUPPORTED_AGENT_NAMES_DESCRIPTION } from './agent-catalog.js';
+// SUPPORTED_AGENT_NAMES* now consumed by `./mcp/agentic-runtime-tools.js`.
 import {
   MPP_PROTOCOL,
   MPP_JSONRPC_PAYMENT_REQUIRED_CODE,
@@ -47,7 +84,7 @@ import {
 
 const AGENTIC_TOOL_RESULT_SCHEMA_VERSION = '1.0.0';
 const AGENTIC_POLICY_DECISION_BUNDLE_VERSION = '2026-03-01';
-const AGENTIC_SLA_LEVELS = ['standard', 'expedited', 'critical'];
+// AGENTIC_SLA_LEVELS now lives in `./mcp/plan-resolver.js` (imported above).
 const MPP_SERVICE_INFO = buildMppServiceInfo({
   serviceId: 'stateset-commerce-mcp',
   serviceName: 'StateSet Commerce MCP',
@@ -56,1326 +93,76 @@ const MPP_SERVICE_INFO = buildMppServiceInfo({
   serverUrl: '/mcp',
 });
 
-function createCallableApiAccessor(resolveValue) {
-  return new Proxy(
-    function accessor() {
-      return resolveValue();
-    },
-    {
-      apply() {
-        return resolveValue();
-      },
-      get(target, prop, receiver) {
-        if (prop in target) {
-          return Reflect.get(target, prop, receiver);
-        }
-        const api = resolveValue();
-        const value = api?.[prop];
-        return typeof value === 'function' ? value.bind(api) : value;
-      },
-      has(_target, prop) {
-        const api = resolveValue();
-        return prop in (api || {});
-      },
-      ownKeys() {
-        const api = resolveValue();
-        return Reflect.ownKeys(api || {});
-      },
-      getOwnPropertyDescriptor(_target, prop) {
-        const api = resolveValue();
-        const descriptor = Object.getOwnPropertyDescriptor(api || {}, prop);
-        return descriptor ? { ...descriptor, configurable: true } : undefined;
-      },
-    },
-  );
-}
-
-function adaptCommerceForTools(commerce) {
-  if (!commerce || typeof commerce !== 'object') {
-    return commerce;
-  }
-
-  const adapted = { ...commerce };
-  const accessorCache = new Map();
-  const seen = new Set(Object.keys(adapted));
-
-  const getAccessor = (name) => {
-    if (!accessorCache.has(name)) {
-      accessorCache.set(
-        name,
-        createCallableApiAccessor(() => commerce[name]),
-      );
-    }
-    return accessorCache.get(name);
-  };
-
-  for (
-    let proto = Object.getPrototypeOf(commerce);
-    proto && proto !== Object.prototype;
-    proto = Object.getPrototypeOf(proto)
-  ) {
-    for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(proto))) {
-      if (name === 'constructor' || seen.has(name)) {
-        continue;
-      }
-
-      if (typeof descriptor.get === 'function') {
-        Object.defineProperty(adapted, name, {
-          enumerable: true,
-          configurable: true,
-          get() {
-            return getAccessor(name);
-          },
-        });
-        seen.add(name);
-        continue;
-      }
-
-      if (typeof descriptor.value === 'function') {
-        Object.defineProperty(adapted, name, {
-          enumerable: true,
-          configurable: true,
-          writable: false,
-          value: descriptor.value.bind(commerce),
-        });
-        seen.add(name);
-      }
-    }
-  }
-
-  return adapted;
-}
-
-function extendCommerceWithApis(commerce, apis = {}) {
-  const base =
-    commerce && (typeof commerce === 'object' || typeof commerce === 'function')
-      ? commerce
-      : Object.prototype;
-  const wrapper = Object.create(base);
-
-  for (const [name, value] of Object.entries(apis)) {
-    Object.defineProperty(wrapper, name, {
-      enumerable: true,
-      configurable: true,
-      writable: true,
-      value,
-    });
-  }
-
-  return wrapper;
-}
-
-/**
- * All domain tool definitions, collected from modules.
- */
-const AGENTIC_RUNTIME_TOOLS = [
-  {
-    name: 'agentic_runtime_contract',
-    description:
-      'Return a deterministic runtime contract for AI agents: capabilities, side effects, and replay metadata.',
-    inputSchema: {
-      tool: z.string().optional().describe('Optional tool name to filter contract metadata'),
-      includeLegacyDefaults: z.boolean().optional().default(false),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, getAgenticRuntimeContract }) => {
-      const payload = getAgenticRuntimeContract({
-        tool: params?.tool,
-        includeLegacyDefaults: params?.includeLegacyDefaults || false,
-      });
-      return payload;
-    },
-  },
-  {
-    name: 'agentic_tool_catalog',
-    description:
-      'Return a machine-readable tool catalog with runtime metadata and optional Machine Payments Protocol pricing info.',
-    inputSchema: {
-      tool: z.string().optional().describe('Optional tool name to filter the catalog'),
-      format: z
-        .enum(['generic', 'mcp', 'openai'])
-        .optional()
-        .default('generic')
-        .describe('Catalog output format'),
-      payableOnly: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Only include tools with configured payment pricing'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, getToolCatalog }) => {
-      return getToolCatalog({
-        tool: params?.tool || null,
-        format: params?.format || 'generic',
-        payableOnly: params?.payableOnly ?? false,
-      });
-    },
-  },
-  {
-    name: 'agentic_payment_discovery',
-    description:
-      'Discover payable MCP tools with Machine Payments Protocol metadata, pricing, and optional OpenAPI output.',
-    inputSchema: {
-      tool: z.string().optional().describe('Optional tool name to filter discovery output'),
-      format: z
-        .enum(['json', 'openapi'])
-        .optional()
-        .default('json')
-        .describe('Discovery output format'),
-      pricedOnly: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe('Return only tools with configured pricing'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, getPaymentDiscovery }) => {
-      return getPaymentDiscovery({
-        tool: params?.tool || null,
-        format: params?.format || 'json',
-        pricedOnly: params?.pricedOnly ?? true,
-      });
-    },
-  },
-  {
-    name: 'agentic_prepare_payment',
-    description:
-      'Prepare a Machine Payments Protocol challenge and retry template for a priced MCP tool call.',
-    inputSchema: {
-      tool: z.string().min(1).describe('Tool name without server prefix'),
-      params: z
-        .record(z.string(), z.any())
-        .optional()
-        .default({})
-        .describe('Tool parameters to bind into the challenge'),
-      requestId: z.string().optional().describe('Optional correlation id'),
-      sessionId: z.string().optional().describe('Optional MCP session id'),
-      includeSchema: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include the tool input JSON Schema in the response'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, preparePaymentForTool }) => {
-      return preparePaymentForTool({
-        tool: params?.tool,
-        params: params?.params || {},
-        requestId: params?.requestId || null,
-        sessionId: params?.sessionId || null,
-        includeSchema: params?.includeSchema ?? false,
-      });
-    },
-  },
-  {
-    name: 'agentic_plan',
-    description:
-      'Evaluate a proposed tool sequence for deterministic simulation: policy, permission, and replayability checks.',
-    inputSchema: {
-      steps: z.array(
-        z.object({
-          tool: z.string().describe('Tool name without server prefix'),
-          params: z.record(z.string(), z.any()).default({}).describe('Tool parameters'),
-          policyDomain: z.string().optional().describe('Optional override policy domain'),
-        }),
-      ),
-      slaLevel: z
-        .enum(AGENTIC_SLA_LEVELS)
-        .optional()
-        .describe('Optional SLA priority for routing-aware planning'),
-      costBudget: z
-        .record(
-          z.string().describe('Currency key (tokenSymbol or chainId:tokenSymbol)'),
-          z.union([z.number(), z.string()]),
-        )
-        .optional()
-        .describe('Optional plan-level per-currency cost cap values'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, simulateAgenticPlan }) => {
-      return simulateAgenticPlan({
-        steps: params?.steps || [],
-        slaLevel: params?.slaLevel || null,
-        costBudget: params?.costBudget,
-      });
-    },
-  },
-  {
-    name: 'agentic_simulate_mutation',
-    description:
-      'Run deterministic dry-run simulation for a mutating tool with policy, permission, rollback, and replay metadata.',
-    inputSchema: {
-      tool: z.string().min(1).describe('Mutating tool name without server prefix'),
-      params: z.record(z.string(), z.any()).default({}).describe('Tool parameters'),
-      policyDomain: z.string().optional().describe('Optional override policy domain'),
-      requestId: z.string().optional().describe('Optional correlation id'),
-      sessionId: z.string().optional().describe('Optional correlation session id'),
-      includeHooks: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include before/after hook execution in simulation'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, simulateMutationToolCall }) => {
-      return simulateMutationToolCall({
-        tool: params?.tool,
-        params: params?.params || {},
-        policyDomain: params?.policyDomain || null,
-        requestId: params?.requestId || null,
-        sessionId: params?.sessionId || null,
-        includeHooks: params?.includeHooks ?? false,
-      });
-    },
-  },
-  {
-    name: 'agentic_replay_mutation',
-    description:
-      'Replay a previously logged mutating tool call from the deterministic replay log, with dry-run by default.',
-    inputSchema: {
-      eventId: z.string().optional().describe('Replay a specific event id'),
-      requestId: z.string().optional().describe('Replay the latest mutation for this request id'),
-      tool: z.string().optional().describe('Replay the latest mutation for this tool'),
-      dryRun: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe('Dry-run by default. Set false to execute if --apply is enabled'),
-      includeHooks: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include before/after hook execution during replay'),
-      sessionId: z.string().optional().describe('Optional correlation session id'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, replayMutationToolCall }) => {
-      return replayMutationToolCall({
-        eventId: params?.eventId || null,
-        requestId: params?.requestId || null,
-        tool: params?.tool || null,
-        dryRun: params?.dryRun ?? true,
-        includeHooks: params?.includeHooks ?? false,
-        sessionId: params?.sessionId || null,
-      });
-    },
-  },
-  {
-    name: 'agentic_replay',
-    description: 'Read recent deterministic execution events for auditability and replay tooling.',
-    inputSchema: {
-      limit: z.number().optional().default(20).describe('Max events to return'),
-      tool: z.string().optional().describe('Filter by tool name'),
-      eventId: z.string().optional().describe('Filter by replay event id'),
-      requestId: z.string().optional().describe('Filter by request/session id'),
-      sessionId: z.string().optional().describe('Filter by MCP session id'),
-      planSignature: z.string().optional().describe('Filter by plan signature'),
-      executionSignature: z.string().optional().describe('Filter by execution signature'),
-      status: z
-        .enum([
-          'success',
-          'error',
-          'blocked',
-          'preview',
-          'policy_block',
-          'permission_block',
-          'treasury_block',
-          'rollback_success',
-          'rollback_failed',
-          'dry_run_success',
-          'dry_run_blocked',
-          'invalid',
-        ])
-        .optional(),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, getAgenticReplayLog }) => {
-      return getAgenticReplayLog({
-        limit: params?.limit,
-        tool: params?.tool,
-        eventId: params?.eventId,
-        requestId: params?.requestId,
-        sessionId: params?.sessionId,
-        planSignature: params?.planSignature,
-        executionSignature: params?.executionSignature,
-        status: params?.status,
-      });
-    },
-  },
-  {
-    name: 'agentic_subscribe_events',
-    description: 'Subscribe to MCP execution events for a session or global stream.',
-    inputSchema: {
-      sessionId: z
-        .string()
-        .optional()
-        .describe('Optional session id for filtered subscription; omitted for global stream'),
-      eventTypes: z
-        .array(z.string())
-        .optional()
-        .describe('Optional event types to receive, e.g. ["success", "error"] or ["*"]'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, mcpEventStream }) => {
-      if (!mcpEventStream || typeof mcpEventStream.subscribe !== 'function') {
-        return {
-          success: false,
-          error: 'MCP event stream service is unavailable',
-        };
-      }
-      return mcpEventStream.subscribe({
-        sessionId: params?.sessionId,
-        eventTypes: params?.eventTypes,
-      });
-    },
-  },
-  {
-    name: 'agentic_unsubscribe_events',
-    description: 'Unsubscribe from a previously-created MCP event subscription.',
-    inputSchema: {
-      subscriptionId: z.string().describe('Subscription id returned by agentic_subscribe_events'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, mcpEventStream }) => {
-      if (!mcpEventStream || typeof mcpEventStream.unsubscribe !== 'function') {
-        return {
-          success: false,
-          error: 'MCP event stream service is unavailable',
-        };
-      }
-      return mcpEventStream.unsubscribe(params?.subscriptionId);
-    },
-  },
-  {
-    name: 'agentic_list_event_subscriptions',
-    description: 'List active MCP event subscriptions.',
-    inputSchema: {
-      sessionId: z
-        .string()
-        .optional()
-        .describe('Optional session id filter; omitted returns global stream subscriptions only'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, mcpEventStream }) => {
-      if (!mcpEventStream || typeof mcpEventStream.listSubscriptions !== 'function') {
-        return {
-          success: false,
-          error: 'MCP event stream service is unavailable',
-        };
-      }
-      const subscriptions = await mcpEventStream.listSubscriptions({
-        sessionId: params?.sessionId,
-      });
-      return {
-        subscriptions,
-        count: Array.isArray(subscriptions) ? subscriptions.length : 0,
-      };
-    },
-  },
-  {
-    name: 'agentic_get_event_history',
-    description: 'Fetch recent MCP event history for debugging and replay.',
-    inputSchema: {
-      sessionId: z.string().optional().describe('Optional session id filter'),
-      eventTypes: z.array(z.string()).optional().describe('Optional event type filters'),
-      since: z
-        .string()
-        .optional()
-        .describe('Optional ISO timestamp to fetch events after this time'),
-      limit: z.number().optional().describe('Max events to return'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, mcpEventStream }) => {
-      if (!mcpEventStream || typeof mcpEventStream.getEventHistory !== 'function') {
-        return {
-          success: false,
-          error: 'MCP event stream service is unavailable',
-        };
-      }
-      return mcpEventStream.getEventHistory({
-        sessionId: params?.sessionId,
-        eventTypes: params?.eventTypes,
-        since: params?.since,
-        limit: params?.limit,
-      });
-    },
-  },
-  {
-    name: 'agentic_execute_plan',
-    description:
-      'Execute a tool sequence deterministically with optional dry-run and best-effort rollback.',
-    inputSchema: {
-      steps: z.array(
-        z.object({
-          tool: z.string().describe('Tool name without server prefix'),
-          params: z.record(z.string(), z.any()).default({}).describe('Tool parameters'),
-          policyDomain: z.string().optional().describe('Optional override policy domain'),
-        }),
-      ),
-      dryRun: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe('Dry-run only; do not execute write calls'),
-      sessionId: z.string().optional().describe('Correlation session id'),
-      stopOnFailure: z.boolean().optional().default(true).describe('Stop when a step fails'),
-      rollbackOnFailure: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe('Attempt best-effort rollback using compensation hints'),
-      requestId: z.string().optional().describe('Optional correlation id'),
-      slaLevel: z
-        .enum(AGENTIC_SLA_LEVELS)
-        .optional()
-        .describe('Optional SLA priority for routing-aware execution'),
-      costBudget: z
-        .record(
-          z.string().describe('Currency key (tokenSymbol or chainId:tokenSymbol)'),
-          z.union([z.number(), z.string()]),
-        )
-        .optional()
-        .describe('Optional plan-level per-currency cost cap values'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, executeAgenticPlan }) => {
-      return executeAgenticPlan({
-        steps: params?.steps || [],
-        dryRun: params?.dryRun ?? true,
-        stopOnFailure: params?.stopOnFailure ?? true,
-        rollbackOnFailure: params?.rollbackOnFailure ?? true,
-        requestId: params?.requestId,
-        sessionId: params?.sessionId,
-        slaLevel: params?.slaLevel || null,
-        costBudget: params?.costBudget,
-      });
-    },
-  },
-  {
-    name: 'discover_tools',
-    description:
-      'Discover relevant MCP tools by intent description. Returns the top matching tools for a given natural language query.',
-    inputSchema: {
-      intent: z.string().min(1).describe('Natural language description of what you want to do'),
-      limit: z
-        .number()
-        .int()
-        .positive()
-        .max(20)
-        .optional()
-        .default(5)
-        .describe('Maximum number of tools to return'),
-    },
-    permission: 'read',
-    policyDomain: 'agentic',
-    handler: async ({ params, getToolDiscoveryEngine }) => {
-      const engine = await getToolDiscoveryEngine();
-      const results = engine.discover(params.intent, params.limit || 5);
-      return { success: true, tools: results };
-    },
-  },
-  {
-    name: 'delegate_to_agent',
-    description: `Delegate a sub-task to a specialized commerce agent. Available agents: ${SUPPORTED_AGENT_NAMES_DESCRIPTION}.`,
-    inputSchema: {
-      agent_name: z
-        .enum(SUPPORTED_AGENT_NAMES)
-        .describe(
-          `Name of the specialized agent to delegate to. One of: ${SUPPORTED_AGENT_NAMES_DESCRIPTION}.`,
-        ),
-      task_description: z.string().min(1).max(2000).describe('Description of the task to delegate'),
-      context: z
-        .record(z.string(), z.any())
-        .optional()
-        .default({})
-        .describe('Additional context data for the agent'),
-    },
-    permission: 'write',
-    policyDomain: 'agentic',
-    handler: async ({ params, autonomousEngine }) => {
-      if (!autonomousEngine) {
-        return {
-          success: false,
-          error:
-            'Autonomous engine not available. Agent delegation requires the autonomous engine to be initialized.',
-        };
-      }
-      try {
-        const result = await autonomousEngine.executeAgentRequest(
-          params.agent_name,
-          params.task_description,
-          params.context || {},
-        );
-        return {
-          success: true,
-          delegatedTo: params.agent_name,
-          task: params.task_description,
-          result,
-        };
-      } catch (err) {
-        return {
-          success: false,
-          error: `Delegation to '${params.agent_name}' failed: ${err.message}`,
-        };
-      }
-    },
-  },
-];
+// `createCallableApiAccessor`, `adaptCommerceForTools`, and
+// `extendCommerceWithApis` now live in `./mcp/commerce-adapter.js`. The
+// two used by the orchestrator are imported at the top of the file.
 
 const AGENTIC_REPLAY_LOG_FILE = 'agentic-tool-calls.jsonl';
 const AGENTIC_REPLAY_BUFFER_SIZE = 400;
 
 const ALL_TOOL_DEFS = [...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS];
 
-const AGENTIC_COMPENSATION_HINTS = {
-  create_order: ['cancel_order'],
-  create_cart: ['cancel_cart'],
-  ship_order: ['cancel_order'],
-  reserve_inventory: ['release_reservation'],
-  confirm_reservation: ['release_reservation'],
-  add_cart_item: ['remove_cart_item'],
-  create_return: ['reject_return'],
-  approve_return: ['reject_return'],
-  create_payment: ['create_refund'],
-};
-
-const AGENTIC_COMPENSATION_PARAM_HINTS = {
-  cancel_order: ['orderId'],
-  cancel_cart: ['cartId'],
-  release_reservation: ['reservationId'],
-  remove_cart_item: ['itemId'],
-  reject_return: ['returnId'],
-  create_refund: ['paymentId'],
-};
-
-const AGENTIC_IDEMPOTENCY_HINTS = new Set([
-  'create_payment',
-  'create_stablecoin_payment',
-  'create_refund',
-]);
+// AGENTIC_COMPENSATION_HINTS, AGENTIC_IDEMPOTENCY_HINTS, coerceReplayIdSource,
+// extractReplayIdFromSource, _extractFirstIdLikeValue, and
+// buildCompensationParams now live in `./mcp/compensation.js`. The imported
+// helpers are declared at the top of the file.
 
 const TOOL_DEFS_BY_NAME = new Map(ALL_TOOL_DEFS.map((tool) => [tool?.name, tool]).filter(Boolean));
 
-const coerceReplayIdSource = (value) => {
-  if (value === null || value === undefined) return undefined;
-  if (typeof value === 'string' && value.length > 0) return value;
-  if (typeof value === 'number') return `${value}`;
-  return undefined;
-};
+// Module-scope binding for `inferPolicyDomain`. Used by ~17 call sites
+// inside `createStatesetMcpServer`. The pure logic lives in
+// `./mcp/policy-domain.js`; this just curries the per-tool def map.
+const inferPolicyDomain = (toolName) => inferPolicyDomainImpl(toolName, TOOL_DEFS_BY_NAME);
 
-const extractReplayIdFromSource = (source, keyCandidates) => {
-  if (!source || typeof source !== 'object') return undefined;
-  for (const key of keyCandidates) {
-    const candidate = coerceReplayIdSource(source[key]);
-    if (candidate) return candidate;
-  }
-  return undefined;
-};
+// Replay-log sanitization helpers are now in `./mcp/replay-sanitizer.js`.
+// stableStringify, sha256, REDACT_REPLAY_KEYS, sanitizeReplayValue,
+// compactReplayValue, MAX_REPLAY_ARRAY_ITEMS, MAX_REPLAY_OBJECT_KEYS, and
+// MAX_REPLAY_STRING_CHARS are imported at the top of the file.
 
-const _extractFirstIdLikeValue = (source) => {
-  if (!source || typeof source !== 'object') return undefined;
-  const directId = coerceReplayIdSource(source.id);
-  if (directId) return directId;
-  for (const [key, value] of Object.entries(source)) {
-    if (!key.toLowerCase().endsWith('id')) continue;
-    const candidate = coerceReplayIdSource(value);
-    if (candidate) return candidate;
-  }
-  return undefined;
-};
+// MAX_PLAN_STEPS, AGENTIC_PLAN_PARAM_TEMPLATE, normalizeSlaLevel, getByPath,
+// resolveAgenticPlanPath, and resolveAgenticPlanValue now live in
+// `./mcp/plan-resolver.js`. Imported at the top of the file.
+//
+// `buildPlanStepRouting`'s pure logic lives in `./mcp/plan-step-routing.js`.
+// We curry the runtime-injected agent router (`routeToAgentWithConfidence`)
+// here so the 2 call sites below pass step args only.
+const buildPlanStepRouting = (step) => buildPlanStepRoutingImpl(step, routeToAgentWithConfidence);
 
-const buildCompensationParams = (compensationTool, params, result) => {
-  const sources = [
-    params || {},
-    result || {},
-    result?.order || {},
-    result?.cart || {},
-    result?.reservation || {},
-    result?.item || {},
-    result?.payment || {},
-    result?.invoice || {},
-    result?.customer || {},
-    result?.return || {},
-    result?.refund || {},
-  ];
-  const candidates = AGENTIC_COMPENSATION_PARAM_HINTS[compensationTool];
-  const output = {};
-  if (Array.isArray(candidates) && candidates.length > 0) {
-    for (const key of candidates) {
-      if (!key || typeof key !== 'string') continue;
-      for (const source of sources) {
-        const exact = extractReplayIdFromSource(source, [key]);
-        if (exact) {
-          output[key] = exact;
-          break;
-        }
-        const idLike = extractReplayIdFromSource(source, ['id']);
-        if (idLike && key.toLowerCase().endsWith('id')) {
-          output[key] = idLike;
-          break;
-        }
-      }
-    }
-  }
+// Cost budget helpers (addCostSummaryEntry, createCostSummary, normalizeCostBudget,
+// normalizeCostBudgetKey, normalizeCostBudgetValue, resolveCostBudgetLimit) now
+// live in `./mcp/cost-budget.js`.
 
-  if (!Object.keys(output).length) {
-    const fallback = extractReplayIdFromSource(
-      {
-        ...params,
-        ...(result || {}),
-      },
-      [
-        'id',
-        'orderId',
-        'paymentId',
-        'cartId',
-        'reservationId',
-        'returnId',
-        'invoiceId',
-        'customerId',
-        'itemId',
-      ],
-    );
-    if (fallback) {
-      output.id = fallback;
-    }
-  }
+// `replayEventHash`, `normalizePolicyAction`, `normalizePolicyExplanation`,
+// `buildRollbackContract`, and `buildApprovalStagesFromActions` now live in
+// `./mcp/audit-envelope.js`. All five are imported at the top of the file.
 
-  if (!Object.keys(output).length) return null;
-  return output;
-};
+// `extractIdempotencyKeyFromParams` and `buildDeterministicMutationManifest`
+// now live in `./mcp/mutation-manifest.js`; the orchestrator imports the
+// manifest builder above.
 
-const stableStringify = (value) => {
-  const normalize = (input) => {
-    if (input === null || input === undefined) return input;
-    if (Array.isArray(input)) {
-      return input.map((item) => normalize(item));
-    }
-    if (typeof input !== 'object') return input;
-    const sorted = Object.keys(input)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = normalize(input[key]);
-        return acc;
-      }, {});
-    return sorted;
-  };
+// `normalizePolicyAction`, `normalizePolicyExplanation`,
+// `buildRollbackContract`, and `buildApprovalStagesFromActions` now live in
+// `./mcp/audit-envelope.js`. All four are imported at the top of the file.
 
-  return JSON.stringify(normalize(value));
-};
-
-const sha256 = (value) => createHash('sha256').update(String(value)).digest('hex');
-
-const REDACT_REPLAY_KEYS = new Set([
-  'api_key',
-  'apiKey',
-  'apikey',
-  'auth',
-  'authorization',
-  'credential',
-  'credentials',
-  'password',
-  'private',
-  'private_key',
-  'privateKey',
-  'secret',
-  'secret_key',
-  'secretKey',
-  'seed',
-  'signature',
-  'token',
-  'wallet_private_key',
-]);
-
-const MAX_REPLAY_ARRAY_ITEMS = 25;
-const MAX_REPLAY_OBJECT_KEYS = 80;
-const MAX_REPLAY_STRING_CHARS = 240;
-
-const sanitizeReplayValue = (value, depth = 4, seen = new Set()) => {
-  if (value === null || value === undefined) return value;
-  if (typeof value === 'string') {
-    if (value.length <= MAX_REPLAY_STRING_CHARS) return value;
-    return `${value.slice(0, MAX_REPLAY_STRING_CHARS)}...`;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
-  if (typeof value === 'bigint') return `${value.toString()}n`;
-  if (typeof value === 'symbol' || typeof value === 'function') return String(value);
-  if (value instanceof Date) return value.toISOString();
-  if (value instanceof Map)
-    return {
-      _type: 'Map',
-      size: value.size,
-      entries: Array.from(value.entries()).map(([k, v]) => [
-        sanitizeReplayValue(k, depth - 1, seen),
-        sanitizeReplayValue(v, depth - 1, seen),
-      ]),
-    };
-  if (value instanceof Set)
-    return {
-      _type: 'Set',
-      size: value.size,
-      values: Array.from(value.values()).map((entry) =>
-        sanitizeReplayValue(entry, depth - 1, seen),
-      ),
-    };
-  if (Buffer.isBuffer(value)) return `<Buffer ${value.length}>`;
-  if (Array.isArray(value)) return compactReplayValue(value, depth, seen);
-
-  if (typeof value !== 'object') return String(value);
-  if (depth <= 0 || seen.has(value)) return '[truncated]';
-  seen.add(value);
-
-  const output = {};
-  const keys = Object.keys(value);
-  const keysToCopy = keys.slice(0, MAX_REPLAY_OBJECT_KEYS);
-  for (const key of keysToCopy) {
-    if (REDACT_REPLAY_KEYS.has(key) || key.toLowerCase().includes('secret')) {
-      output[key] = '[REDACTED]';
-      continue;
-    }
-    output[key] = sanitizeReplayValue(value[key], depth - 1, seen);
-  }
-  if (keys.length > MAX_REPLAY_OBJECT_KEYS) {
-    output.__truncatedKeys = keys.length - MAX_REPLAY_OBJECT_KEYS;
-  }
-  return output;
-};
-
-const compactReplayValue = (value, depth = 4, seen = new Set()) => {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) {
-    if (depth <= 0 || seen.has(value)) return '[truncated]';
-    seen.add(value);
-    const values = value
-      .slice(0, MAX_REPLAY_ARRAY_ITEMS)
-      .map((entry) => compactReplayValue(entry, depth - 1, seen));
-    if (value.length > MAX_REPLAY_ARRAY_ITEMS) {
-      values.push(`[+${value.length - MAX_REPLAY_ARRAY_ITEMS} more items]`);
-    }
-    return values;
-  }
-  return sanitizeReplayValue(value, depth, seen);
-};
-
-const MAX_PLAN_STEPS = 200;
-const AGENTIC_PLAN_PARAM_TEMPLATE = /^\{\{\s*([^}]+)\s*\}\}$/;
-
-const normalizeSlaLevel = (value) => {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  return AGENTIC_SLA_LEVELS.includes(normalized) ? normalized : null;
-};
-
-const getByPath = (value, pathSegments) => {
-  let current = value;
-  for (const segment of pathSegments) {
-    if (current === null || current === undefined) return undefined;
-    if (typeof current === 'object' || Array.isArray(current)) {
-      current = current?.[segment];
-      continue;
-    }
-    return undefined;
-  }
-  return current;
-};
-
-const resolveAgenticPlanPath = (context, rawPath) => {
-  if (!context || typeof rawPath !== 'string') return undefined;
-  const pathExpression = rawPath.trim().replace(/\[(\d+)\]/g, '.$1');
-  const pathParts = pathExpression.split('.').filter(Boolean);
-  if (!pathParts.length) return undefined;
-
-  if (pathParts[0] === 'steps') {
-    if (pathParts.length < 2) return undefined;
-    const stepIndex = Number(pathParts[1]);
-    if (!Number.isInteger(stepIndex) || stepIndex < 0) return undefined;
-    return getByPath(context.steps?.[stepIndex], pathParts.slice(2));
-  }
-
-  if (pathParts[0] === 'latest') {
-    return getByPath(context.latest, pathParts.slice(1));
-  }
-
-  if (pathParts[0] === 'tool') {
-    if (pathParts.length < 2) return undefined;
-    return getByPath(context.byTool?.[pathParts[1]], pathParts.slice(2));
-  }
-
-  if (pathParts[0] === 'sla') {
-    return getByPath(context.sla, pathParts.slice(1));
-  }
-
-  if (pathParts[0] === 'slaLevel') {
-    return context.sla?.level;
-  }
-
-  return undefined;
-};
-
-const buildPlanStepRouting = ({ tool, params, slaLevel }) => {
-  const normalizedSlaLevel = normalizeSlaLevel(slaLevel);
-  const routeIntent = `${String(tool || '').replaceAll('_', ' ')} ${stableStringify(compactReplayValue(params || {}))}`;
-  const routing = routeToAgentWithConfidence(routeIntent, {
-    slaLevel: normalizedSlaLevel || undefined,
-  });
-  return {
-    slaLevel: routing?.routingContext?.slaLevel || null,
-    primary: routing?.primary
-      ? {
-          agent: routing.primary.agent,
-          score: routing.primary.score,
-          confidence: routing.primary.confidence,
-          level: routing.primary.level,
-        }
-      : {
-          agent: 'customer-service',
-          score: 0,
-          confidence: 0,
-          level: 'default',
-        },
-    alternatives: Array.isArray(routing?.alternatives)
-      ? routing.alternatives.map((entry) => ({
-          agent: entry.agent,
-          score: entry.score,
-          confidence: entry.confidence,
-          level: entry.level,
-        }))
-      : [],
-    ambiguous: Boolean(routing?.ambiguous),
-  };
-};
-
-const resolveAgenticPlanValue = (value, context, location = '$') => {
-  if (value === null || value === undefined) return { value, unresolved: [] };
-  if (typeof value === 'string') {
-    const match = value.match(AGENTIC_PLAN_PARAM_TEMPLATE);
-    if (!match) return { value, unresolved: [] };
-
-    const resolved = resolveAgenticPlanPath(context, match[1]);
-    if (resolved === undefined) {
-      return {
-        value: null,
-        unresolved: [`${location} -> ${match[1]}`],
-      };
-    }
-
-    return { value: resolved, unresolved: [] };
-  }
-
-  if (typeof value !== 'object') return { value, unresolved: [] };
-  if (
-    value instanceof Date ||
-    Buffer.isBuffer(value) ||
-    value instanceof Map ||
-    value instanceof Set
-  ) {
-    return { value, unresolved: [] };
-  }
-
-  if (Array.isArray(value)) {
-    const output = [];
-    const unresolved = [];
-    for (let i = 0; i < value.length; i += 1) {
-      const child = resolveAgenticPlanValue(value[i], context, `${location}[${i}]`);
-      output.push(child.value);
-      unresolved.push(...child.unresolved);
-    }
-    return { value: output, unresolved };
-  }
-
-  const output = {};
-  const unresolved = [];
-  for (const [key, childValue] of Object.entries(value)) {
-    const child = resolveAgenticPlanValue(childValue, context, `${location}.${key}`);
-    output[key] = child.value;
-    unresolved.push(...child.unresolved);
-  }
-
-  return { value: output, unresolved };
-};
-
-const addCostSummaryEntry = (summary, entry = {}) => {
-  const chainId = entry.chainId || 'unknown';
-  const tokenSymbol = entry.tokenSymbol || 'UNKNOWN';
-  const key = `${chainId}:${tokenSymbol}`;
-  const amount = entry.amount;
-  const parsedAmount =
-    typeof amount === 'number' || typeof amount === 'string' ? Number(amount) : NaN;
-  if (!summary.totals[key]) {
-    summary.totals[key] = {
-      chainId,
-      tokenSymbol,
-      amount: 0,
-      amountText: null,
-      entries: 0,
-    };
-  }
-  const bucket = summary.totals[key];
-  bucket.entries += 1;
-  if (Number.isFinite(parsedAmount)) {
-    bucket.amount += parsedAmount;
-  } else if (amount !== undefined && amount !== null) {
-    bucket.amountText = amount;
-  }
-
-  summary.entries.push({
-    step: entry.stepIndex ?? null,
-    tool: entry.tool || null,
-    status: entry.status || null,
-    chainId,
-    tokenSymbol,
-    amount: amount ?? null,
-    amountNumeric: Number.isFinite(parsedAmount) ? parsedAmount : null,
-    charged: Boolean(entry.charged),
-    blocked: Boolean(entry.blocked),
-    blockedReason: entry.blockedReason || null,
-    source: entry.source || null,
-    rule: entry.rule || null,
+// `signAuditArtifact`'s pure logic now lives in `./mcp/audit-signing.js`.
+// We read the env vars here so the module stays pure + unit-testable.
+const signAuditArtifact = (payload) =>
+  signAuditArtifactImpl(payload, {
+    signingKey:
+      process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY ||
+      process.env.STATESET_AUDIT_SIGNING_KEY ||
+      '',
+    keyId: process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY_ID || 'stateset-default',
   });
 
-  summary.totalEntries = (summary.totalEntries || 0) + 1;
-  if (entry.charged) summary.chargedEntries = (summary.chargedEntries || 0) + 1;
-  if (entry.blocked) summary.blockedEntries = (summary.blockedEntries || 0) + 1;
-};
+// `buildDeterministicMutationManifest` now lives in
+// `./mcp/mutation-manifest.js` (imported at the top of the file).
 
-const normalizeCostBudgetValue = (value) => {
-  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : null;
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value.trim());
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-  }
-  return null;
-};
-
-const normalizeCostBudgetKey = (rawKey) => {
-  if (typeof rawKey !== 'string') return null;
-  const trimmed = rawKey.trim();
-  if (!trimmed) return null;
-  const upper = trimmed.toUpperCase();
-  if (!upper.includes(':')) return upper;
-  const [rawChain, rawToken] = upper.split(':').map((part) => part.trim());
-  if (!rawChain || !rawToken) return null;
-  return `${rawChain}:${rawToken}`;
-};
-
-const normalizeCostBudget = (costBudget = null) => {
-  if (!costBudget || typeof costBudget !== 'object' || Array.isArray(costBudget)) return {};
-  const normalized = {};
-  for (const [rawKey, rawLimit] of Object.entries(costBudget)) {
-    const key = normalizeCostBudgetKey(rawKey);
-    const limit = normalizeCostBudgetValue(rawLimit);
-    if (!key || !Number.isFinite(limit)) continue;
-    normalized[key] = limit;
-  }
-  return normalized;
-};
-
-const resolveCostBudgetLimit = (costBudget = {}, chainId = null, tokenSymbol = null) => {
-  const chain = String(chainId || '*').trim();
-  const token = String(tokenSymbol || '*')
-    .trim()
-    .toUpperCase();
-  const exact = costBudget[`${chain}:${token}`];
-  if (Number.isFinite(exact)) return exact;
-  const tokenOnly = costBudget[token];
-  if (Number.isFinite(tokenOnly)) return tokenOnly;
-  const chainOnly = costBudget[`${chain}:*`];
-  if (Number.isFinite(chainOnly)) return chainOnly;
-  const global = costBudget['*'];
-  if (Number.isFinite(global)) return global;
-  return null;
-};
-
-const createCostSummary = (mode) => ({
-  mode,
-  totalEntries: 0,
-  chargedEntries: 0,
-  blockedEntries: 0,
-  entries: [],
-  totals: {},
-});
-
-const replayEventHash = (value) => sha256(stableStringify(compactReplayValue(value)));
-
-const extractIdempotencyKeyFromParams = (params = {}) => {
-  if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
-  const candidates = [
-    'idempotencyKey',
-    'idempotency_key',
-    'idempotencyToken',
-    'requestId',
-    'request_id',
-    'externalId',
-    'external_id',
-  ];
-  for (const key of candidates) {
-    const value = params[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return null;
-};
-
-const normalizePolicyAction = (action) => {
-  if (!action) return null;
-  if (typeof action?.toJSON === 'function') {
-    try {
-      return action.toJSON();
-    } catch {
-      return null;
-    }
-  }
-  if (typeof action !== 'object' || Array.isArray(action)) return null;
-  return action;
-};
-
-const normalizePolicyExplanation = (explanation) => {
-  if (!explanation) return null;
-  if (typeof explanation?.toJSON === 'function') {
-    try {
-      return explanation.toJSON();
-    } catch {
-      return null;
-    }
-  }
-  if (typeof explanation !== 'object' || Array.isArray(explanation)) return null;
-  return explanation;
-};
-
-const buildRollbackContract = (toolName) => {
-  const compensationTools = AGENTIC_COMPENSATION_HINTS[toolName] || [];
-  const compensationContracts = compensationTools.map((tool) => ({
-    tool,
-    params: AGENTIC_COMPENSATION_PARAM_HINTS[tool] || ['id'],
-  }));
-
-  const contract = {
-    strategy: compensationContracts.length > 0 ? 'best_effort_compensation' : 'none',
-    sourceTool: toolName,
-    compensation: compensationContracts,
-    reversible: compensationContracts.length > 0,
-  };
-
-  return {
-    ...contract,
-    contractHash: replayEventHash(contract),
-  };
-};
-
-const buildApprovalStagesFromActions = (actions = []) => {
-  const stages = [];
-  for (const rawAction of actions) {
-    const action = normalizePolicyAction(rawAction);
-    if (!action) continue;
-    const approval = action.approval || action?.metadata?.approval || null;
-    const requiresApproval = Boolean(action?.metadata?.requiresApproval) || Boolean(approval);
-    if (!requiresApproval) continue;
-
-    if (Array.isArray(approval?.stages) && approval.stages.length > 0) {
-      for (const stage of approval.stages) {
-        if (!stage || typeof stage !== 'object') continue;
-        stages.push({
-          level: Number.isFinite(Number(stage.level)) ? Number(stage.level) : stages.length + 1,
-          name: stage.name || `stage-${stages.length + 1}`,
-          requiredApprovals: Number(stage.requiredApprovals || 1),
-          approvers: Array.isArray(stage.approvers) ? stage.approvers : [],
-          timeout: stage.timeout || null,
-          timeoutAction: stage.timeoutAction || null,
-          source: 'policy_action',
-        });
-      }
-      continue;
-    }
-
-    stages.push({
-      level: Number.isFinite(Number(approval?.level)) ? Number(approval.level) : stages.length + 1,
-      name: approval?.name || action?.metadata?.approvalTier || 'approval-required',
-      requiredApprovals: Number(approval?.requiredApprovals || 1),
-      approvers: Array.isArray(approval?.approvers) ? approval.approvers : [],
-      timeout: approval?.timeout || null,
-      timeoutAction: approval?.timeoutAction || null,
-      source: 'policy_action',
-    });
-  }
-
-  const deduped = [];
-  const seen = new Set();
-  for (const stage of stages) {
-    const key = `${stage.level}:${stage.name}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(stage);
-  }
-  return deduped.sort((a, b) => a.level - b.level);
-};
-
-const signAuditArtifact = (payload) => {
-  const canonical = stableStringify(payload);
-  const payloadHash = sha256(canonical);
-  const signingKey =
-    process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY || process.env.STATESET_AUDIT_SIGNING_KEY || '';
-  const keyId = process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY_ID || 'stateset-default';
-
-  if (signingKey) {
-    return {
-      payloadHash,
-      signature: createHmac('sha256', signingKey).update(canonical).digest('hex'),
-      algorithm: 'hmac-sha256',
-      keyId,
-      signed: true,
-    };
-  }
-
-  return {
-    payloadHash,
-    signature: sha256(`unsigned:${payloadHash}`),
-    algorithm: 'sha256',
-    keyId: 'unsigned-deterministic',
-    signed: false,
-  };
-};
-
-const buildDeterministicMutationManifest = ({
-  toolName,
-  params = {},
-  policy = null,
-  permission = null,
-  runtimeMeta = null,
-  phase = 'execute',
-} = {}) => {
-  if (!runtimeMeta || runtimeMeta.sideEffect === 'read' || runtimeMeta.permission === 'unknown') {
-    return null;
-  }
-
-  const paramsHash = replayEventHash(params || {});
-  const policyHash = replayEventHash(policy || {});
-  const permissionHash = replayEventHash(permission || {});
-  const idempotencyKey =
-    extractIdempotencyKeyFromParams(params) ||
-    (runtimeMeta.idempotent ? `ik_${toolName}_${paramsHash.slice(0, 16)}` : null);
-  const rollback = buildRollbackContract(toolName);
-  const core = {
-    version: '1.0.0',
-    tool: toolName,
-    phase,
-    sideEffect: runtimeMeta.sideEffect,
-    policyDomain: runtimeMeta.policyDomain || null,
-    idempotent: Boolean(runtimeMeta.idempotent),
-    idempotencyKey,
-    paramsHash,
-    policyHash,
-    permissionHash,
-    rollbackContractHash: rollback.contractHash,
-    compensationTools: runtimeMeta.compensations || [],
-  };
-
-  return {
-    ...core,
-    deterministicSignature: replayEventHash(core),
-    rollback,
-  };
-};
-
+// `inferStaticPolicyDomain` and `STATIC_POLICY_DOMAIN_BY_TOKEN` now live in
+// `./mcp/policy-domain.js`. `inferStaticPolicyDomain` is imported at the
+// top of the file. `TOOL_DOMAIN_BY_TOOL_NAME` is kept as a local alias for
+// the same registry map since several call sites reach into it directly.
 const TOOL_DOMAIN_BY_TOOL_NAME = TOOL_POLICY_DOMAIN_BY_NAME;
-
-const STATIC_POLICY_DOMAIN_BY_TOKEN = {
-  customer: 'customers',
-  customers: 'customers',
-  order: 'orders',
-  orders: 'orders',
-  product: 'products',
-  products: 'products',
-  inventory: 'inventory',
-  custom: 'custom_objects',
-  custom_object: 'custom_objects',
-  custom_objects: 'custom_objects',
-  returns: 'returns',
-  return: 'returns',
-  cart: 'carts',
-  carts: 'carts',
-  analytics: 'analytics',
-  currency: 'currency',
-  currencies: 'currency',
-  tax: 'tax',
-  promotion: 'promotions',
-  promotions: 'promotions',
-  subscription: 'subscriptions',
-  subscriptions: 'subscriptions',
-  sync: 'sync',
-  manufacturing: 'manufacturing',
-  payment: 'payments',
-  payments: 'payments',
-  stablecoin: 'stablecoin',
-  treasury: 'treasury',
-  erc8004: 'erc8004',
-  x402: 'x402',
-  agent: 'agent_cards',
-  agent_card: 'agent_cards',
-  agent_cards: 'agent_cards',
-  a2a: 'a2a',
-  shipment: 'shipments',
-  shipments: 'shipments',
-  supplier: 'suppliers',
-  suppliers: 'suppliers',
-  invoice: 'invoices',
-  invoices: 'invoices',
-  warranty: 'warranties',
-  warranties: 'warranties',
-  vector: 'vector',
-  create: 'commerce',
-  get: 'commerce',
-  list: 'commerce',
-  update: 'commerce',
-  delete: 'commerce',
-  set: 'commerce',
-  ship: 'orders',
-  cancel: 'orders',
-  request: 'a2a',
-  provide: 'a2a',
-  accept: 'a2a',
-  decline: 'a2a',
-  pause: 'subscriptions',
-  resume: 'subscriptions',
-  skip: 'subscriptions',
-};
-
-function inferStaticPolicyDomain(toolName) {
-  if (!toolName || typeof toolName !== 'string') return 'commerce';
-
-  if (TOOL_DOMAIN_BY_TOOL_NAME[toolName]) {
-    return TOOL_DOMAIN_BY_TOOL_NAME[toolName];
-  }
-
-  const parts = toolName.split('_').filter(Boolean);
-  if (parts.length === 0) return 'commerce';
-
-  if (parts.length >= 2 && parts[0] === 'a2a') return 'a2a';
-  if (parts.length >= 2 && parts[0] === 'agent' && parts[1] === 'card') return 'agent_cards';
-  if (parts.length >= 2 && parts[0] === 'custom' && parts[1] === 'object') {
-    return 'custom_objects';
-  }
-
-  for (const part of parts) {
-    if (STATIC_POLICY_DOMAIN_BY_TOKEN[part]) {
-      return STATIC_POLICY_DOMAIN_BY_TOKEN[part];
-    }
-  }
-
-  return 'commerce';
-}
 
 export function getStaticMcpToolDefinitions() {
   return ALL_TOOL_DEFS.map((toolDef) => ({
@@ -1403,24 +190,16 @@ const READ_ONLY_TOOLS = new Set(
 );
 
 /**
- * Auto-index a newly created entity if vectorAutoIndex is enabled.
- * Runs in the background — failures are logged but do not block the response.
+ * Wrapper that pulls `vectorAutoIndex` off the shared runtime on each call,
+ * then delegates to the pure helper in `./mcp/auto-index.js`. This avoids
+ * threading the runtime through every tool handler while keeping the core
+ * logic injection-friendly + unit-testable.
+ *
  * @param {'product'|'customer'|'order'} entityType
  * @param {Object} entity - The created entity (must have .id)
  */
 function autoIndexEntity(entityType, entity) {
-  const vectorAutoIndex = getSharedRuntime()?.vectorAutoIndex;
-  if (!vectorAutoIndex || !entity?.id) return;
-  const indexFn = {
-    product: () => vectorAutoIndex.indexProduct(entity.id.toString()),
-    customer: () => vectorAutoIndex.indexCustomer(entity.id.toString()),
-    order: () => vectorAutoIndex.indexOrder(entity.id.toString()),
-  }[entityType];
-  if (indexFn) {
-    indexFn().catch((err) =>
-      console.error(`[AutoIndex] Failed to index ${entityType} ${entity.id}: ${err.message}`),
-    );
-  }
+  autoIndexEntityImpl(getSharedRuntime()?.vectorAutoIndex, entityType, entity);
 }
 
 /**
@@ -1703,50 +482,13 @@ export function createStatesetMcpServer({
     return result;
   };
 
-  const inferPolicyDomain = (toolName) => {
-    const candidate = TOOL_DEFS_BY_NAME.get(toolName);
-    if (candidate?.policyDomain) {
-      return candidate.policyDomain;
-    }
-    return inferStaticPolicyDomain(toolName);
-  };
+  // `inferPolicyDomain` is bound at module scope (see top of file). Its
+  // pure logic lives in `./mcp/policy-domain.js`. Kept the same name so
+  // the ~17 call sites below continue to work without churn.
 
-  const normalizeToolName = (toolName) => {
-    if (!toolName || typeof toolName !== 'string') return '';
-    return toolName.trim().replace(/^mcp__[a-z0-9_-]+__/, '');
-  };
-
-  const applyPolicyTransform = (input, transform, auditEntries = []) => {
-    if (!transform || typeof transform !== 'object' || Array.isArray(transform)) {
-      return { output: input, auditEntries };
-    }
-
-    const output = { ...(input || {}) };
-    for (const [key, value] of Object.entries(transform)) {
-      const before = output[key];
-      if (
-        output[key] !== null &&
-        output[key] !== undefined &&
-        typeof output[key] === 'object' &&
-        !Array.isArray(output[key]) &&
-        value &&
-        typeof value === 'object' &&
-        !Array.isArray(value)
-      ) {
-        output[key] = { ...output[key], ...value };
-      } else {
-        output[key] = value;
-      }
-      auditEntries.push({
-        field: key,
-        before,
-        after: output[key],
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    return { output, auditEntries };
-  };
+  // `normalizeToolName` and `applyPolicyTransform` now live in
+  // `./mcp/policy-helpers.js` — both are pure (no closure deps) and are
+  // imported at the top of the file.
 
   const resolvePolicyPath =
     policyStorePath || (dbPath ? path.join(path.dirname(path.resolve(dbPath)), '.stateset') : null);

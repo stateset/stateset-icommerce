@@ -1259,3 +1259,182 @@ impl TaxRepository for SqliteTaxRepository {
         Self::save_calculation(self, result, order_id, cart_id, customer_id, address, currency)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use chrono::NaiveDate;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ExemptionType, JurisdictionLevel,
+        ProductTaxCategory, TaxJurisdictionFilter, TaxRateFilter, TaxType,
+    };
+
+    fn fresh_repo() -> SqliteTaxRepository {
+        SqliteDatabase::in_memory().expect("in-memory").tax()
+    }
+
+    fn make_state_jur(repo: &SqliteTaxRepository, state: &str) -> TaxJurisdiction {
+        // Use ZZ-* prefix so we don't collide with the 50 pre-seeded US states.
+        repo.create_jurisdiction(CreateTaxJurisdiction {
+            parent_id: None,
+            name: format!("{state} Test State"),
+            code: format!("ZZ-{state}"),
+            level: JurisdictionLevel::State,
+            country_code: "ZZ".into(),
+            state_code: Some(state.into()),
+            county: None,
+            city: None,
+            postal_codes: vec![],
+        })
+        .expect("create jurisdiction")
+    }
+
+    fn make_rate(repo: &SqliteTaxRepository, jur_id: Uuid, rate: Decimal) -> TaxRate {
+        repo.create_rate(CreateTaxRate {
+            jurisdiction_id: jur_id,
+            tax_type: TaxType::SalesTax,
+            product_category: ProductTaxCategory::Standard,
+            rate,
+            name: "Sales Tax".into(),
+            description: None,
+            is_compound: false,
+            priority: 1,
+            threshold_min: None,
+            threshold_max: None,
+            fixed_amount: None,
+            effective_from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("date"),
+            effective_to: None,
+        })
+        .expect("create rate")
+    }
+
+    #[test]
+    fn create_jurisdiction_round_trips() {
+        let repo = fresh_repo();
+        let j = make_state_jur(&repo, "CA");
+        assert_eq!(j.code, "ZZ-CA");
+        assert_eq!(j.level, JurisdictionLevel::State);
+
+        let by_id = repo.get_jurisdiction(j.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, j.id);
+        let by_code = repo.get_jurisdiction_by_code("ZZ-CA").expect("ok").expect("found");
+        assert_eq!(by_code.id, j.id);
+        assert!(repo.get_jurisdiction_by_code("missing-xyz").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_jurisdictions_filters_by_country_and_state() {
+        let repo = fresh_repo();
+        make_state_jur(&repo, "AA");
+        make_state_jur(&repo, "BB");
+        repo.create_jurisdiction(CreateTaxJurisdiction {
+            parent_id: None,
+            name: "Test BC".into(),
+            code: "YY-BC".into(),
+            level: JurisdictionLevel::State,
+            country_code: "YY".into(),
+            state_code: Some("BC".into()),
+            county: None,
+            city: None,
+            postal_codes: vec![],
+        })
+        .expect("yy-bc");
+
+        let zz = repo
+            .list_jurisdictions(TaxJurisdictionFilter {
+                country_code: Some("ZZ".into()),
+                ..Default::default()
+            })
+            .expect("zz");
+        assert_eq!(zz.len(), 2);
+
+        let zz_aa = repo
+            .list_jurisdictions(TaxJurisdictionFilter {
+                country_code: Some("ZZ".into()),
+                state_code: Some("AA".into()),
+                ..Default::default()
+            })
+            .expect("aa");
+        assert_eq!(zz_aa.len(), 1);
+        assert_eq!(zz_aa[0].state_code.as_deref(), Some("AA"));
+    }
+
+    #[test]
+    fn create_rate_round_trips() {
+        let repo = fresh_repo();
+        let j = make_state_jur(&repo, "CA");
+        let r = make_rate(&repo, j.id, dec!(0.0725));
+        assert_eq!(r.rate, dec!(0.0725));
+        let by_id = repo.get_rate(r.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, r.id);
+    }
+
+    #[test]
+    fn list_rates_filters_by_jurisdiction() {
+        let repo = fresh_repo();
+        let j_a = make_state_jur(&repo, "AA");
+        let j_b = make_state_jur(&repo, "BB");
+        make_rate(&repo, j_a.id, dec!(0.0725));
+        make_rate(&repo, j_a.id, dec!(0.01));
+        make_rate(&repo, j_b.id, dec!(0.04));
+
+        let a_rates = repo
+            .list_rates(TaxRateFilter { jurisdiction_id: Some(j_a.id), ..Default::default() })
+            .expect("a");
+        assert_eq!(a_rates.len(), 2);
+    }
+
+    #[test]
+    fn create_exemption_requires_existing_customer() {
+        // tax_exemptions has a FK to customers — creating against a nonexistent
+        // customer must surface a clear validation error rather than silently
+        // inserting an orphan row.
+        let repo = fresh_repo();
+        let j = make_state_jur(&repo, "AA");
+        let result = repo.create_exemption(CreateTaxExemption {
+            customer_id: Uuid::new_v4(),
+            exemption_type: ExemptionType::Resale,
+            certificate_number: Some("RES-12345".into()),
+            issuing_authority: None,
+            jurisdiction_ids: vec![j.id],
+            exempt_categories: vec![ProductTaxCategory::Standard],
+            effective_from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("date"),
+            expires_at: Some(NaiveDate::from_ymd_opt(2027, 1, 1).expect("date")),
+            notes: None,
+        });
+        assert!(result.is_err(), "expected FK rejection for unknown customer");
+    }
+
+    #[test]
+    fn get_customer_exemptions_unknown_customer_is_empty() {
+        let repo = fresh_repo();
+        let exemptions = repo.get_customer_exemptions(Uuid::new_v4()).expect("ok");
+        assert!(exemptions.is_empty());
+    }
+
+    #[test]
+    fn get_settings_returns_defaults() {
+        let repo = fresh_repo();
+        let _ = repo.get_settings().expect("settings");
+    }
+
+    #[test]
+    fn get_jurisdiction_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_jurisdiction(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_rate_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_rate(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_exemption_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_exemption(Uuid::new_v4()).expect("ok").is_none());
+    }
+}

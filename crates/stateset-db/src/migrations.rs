@@ -150,5 +150,11 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("034_x402_nonce_integrity", include_str!("../migrations/034_x402_nonce_integrity.sql")),
         // x402 PQC signature metadata
         ("035_x402_pqc", include_str!("../migrations/035_x402_pqc.sql")),
+        // Fix updated_at triggers to write RFC3339 (was 'YYYY-MM-DD HH:MM:SS' which
+        // failed to parse on subsequent reads)
+        (
+            "036_fix_updated_at_triggers",
+            include_str!("../migrations/036_fix_updated_at_triggers.sql"),
+        ),
     ]
 }

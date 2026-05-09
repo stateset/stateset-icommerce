@@ -396,13 +396,19 @@ pub struct WarrantyClaimFilter {
 /// Generate a unique warranty number
 #[must_use]
 pub fn generate_warranty_number() -> String {
+    // Millisecond timestamp + random UUID suffix so concurrent or rapid-fire
+    // warranty creation cannot collide on the UNIQUE constraint.
     let now = chrono::Utc::now();
-    format!("WRN-{}", now.format("%Y%m%d%H%M%S%3f"))
+    let suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    format!("WRN-{}-{suffix}", now.format("%Y%m%d%H%M%S%3f"))
 }
 
 /// Generate a unique claim number
 #[must_use]
 pub fn generate_claim_number() -> String {
+    // Millisecond timestamp + random UUID suffix so concurrent or rapid-fire
+    // claim creation cannot collide on the UNIQUE constraint.
     let now = chrono::Utc::now();
-    format!("CLM-{}", now.format("%Y%m%d%H%M%S%3f"))
+    let suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    format!("CLM-{}-{suffix}", now.format("%Y%m%d%H%M%S%3f"))
 }

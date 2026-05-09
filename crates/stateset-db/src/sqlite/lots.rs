@@ -34,10 +34,16 @@ impl SqliteLotRepository {
     }
 
     fn generate_lot_number(sku: &str) -> String {
+        // Include millisecond timestamp + random uuid suffix so concurrent lot creation
+        // (or multiple in the same second, common in tests/batch flows) cannot collide
+        // on the UNIQUE constraint.
+        let timestamp_ms = Utc::now().timestamp_millis();
+        let random_suffix = (Uuid::new_v4().as_u128() & 0xFFFF_FFFF) as u32;
         format!(
-            "LOT-{}-{}",
+            "LOT-{}-{}-{:08x}",
             sku.chars().take(6).collect::<String>().to_uppercase(),
-            Utc::now().format("%Y%m%d%H%M%S")
+            timestamp_ms,
+            random_suffix
         )
     }
 
@@ -1461,5 +1467,268 @@ impl LotRepository for SqliteLotRepository {
             }
         }
         Ok(lots)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use chrono::Duration;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateLot, LotFilter, LotRepository, LotStatus, MergeLots, ReserveLot, SplitLot, UpdateLot,
+    };
+
+    fn fresh_repo() -> SqliteLotRepository {
+        SqliteDatabase::in_memory().expect("in-memory").lots()
+    }
+
+    fn make_lot(repo: &SqliteLotRepository, sku: &str, qty: Decimal) -> Lot {
+        repo.create(CreateLot {
+            sku: sku.into(),
+            quantity: qty,
+            initial_location_id: Some(1),
+            ..Default::default()
+        })
+        .expect("create lot")
+    }
+
+    #[test]
+    fn create_lot_starts_active_with_full_remaining() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-A", dec!(100));
+        assert_eq!(lot.sku, "SKU-A");
+        assert_eq!(lot.quantity_produced, dec!(100));
+        assert_eq!(lot.quantity_remaining, dec!(100));
+        assert_eq!(lot.quantity_reserved, dec!(0));
+        assert_eq!(lot.status, LotStatus::Active);
+        assert!(!lot.lot_number.is_empty());
+    }
+
+    #[test]
+    fn get_and_get_by_number_round_trip() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-RT", dec!(50));
+        let by_id = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, lot.id);
+        let by_num = repo.get_by_number(&lot.lot_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, lot.id);
+        assert!(repo.get_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn update_lot_status_persists() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-UP", dec!(20));
+        let updated = repo
+            .update(
+                lot.id,
+                UpdateLot {
+                    status: Some(LotStatus::OnHold),
+                    notes: Some("on hold for QA".into()),
+                    ..Default::default()
+                },
+            )
+            .expect("update");
+        assert_eq!(updated.status, LotStatus::OnHold);
+    }
+
+    #[test]
+    fn list_filters_by_sku() {
+        let repo = fresh_repo();
+        make_lot(&repo, "SKU-L1", dec!(10));
+        make_lot(&repo, "SKU-L1", dec!(20));
+        make_lot(&repo, "SKU-L2", dec!(30));
+
+        let filtered = repo
+            .list(LotFilter { sku: Some("SKU-L1".into()), ..Default::default() })
+            .expect("list");
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        let active = make_lot(&repo, "SKU-S", dec!(10));
+        let to_hold = make_lot(&repo, "SKU-S", dec!(10));
+        repo.update(
+            to_hold.id,
+            UpdateLot { status: Some(LotStatus::OnHold), ..Default::default() },
+        )
+        .expect("hold");
+
+        let actives = repo
+            .list(LotFilter { status: Some(LotStatus::Active), ..Default::default() })
+            .expect("active");
+        let on_hold = repo
+            .list(LotFilter { status: Some(LotStatus::OnHold), ..Default::default() })
+            .expect("hold");
+        assert!(actives.iter().any(|l| l.id == active.id));
+        assert!(on_hold.iter().any(|l| l.id == to_hold.id));
+    }
+
+    #[test]
+    fn reserve_decrements_remaining_and_release_restores() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-R", dec!(50));
+        let order_id = Uuid::new_v4();
+        let res_id = repo
+            .reserve(ReserveLot {
+                lot_id: lot.id,
+                quantity: dec!(15),
+                reference_type: "order".into(),
+                reference_id: order_id,
+                expires_in_seconds: Some(60),
+            })
+            .expect("reserve");
+
+        let after = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.quantity_reserved, dec!(15));
+        // remaining is on-hand minus reserved depending on impl; assert reserved is right
+        repo.release_reservation(res_id).expect("release");
+        let restored = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(restored.quantity_reserved, dec!(0));
+    }
+
+    #[test]
+    fn quarantine_then_release_changes_status() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-Q", dec!(10));
+        let q = repo.quarantine(lot.id, "qc fail").expect("quarantine");
+        assert_eq!(q.status, LotStatus::Quarantine);
+        let r = repo.release_quarantine(lot.id).expect("release");
+        assert_eq!(r.status, LotStatus::Active);
+    }
+
+    #[test]
+    fn split_creates_new_lot_with_split_quantity() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-SP", dec!(100));
+        let new_lot = repo
+            .split(SplitLot {
+                lot_id: lot.id,
+                quantity: dec!(40),
+                new_lot_number: Some("SP-001".into()),
+                reason: Some("split for transfer".into()),
+            })
+            .expect("split");
+        assert_eq!(new_lot.lot_number, "SP-001");
+        assert_eq!(new_lot.sku, "SKU-SP");
+        // Source lot should have less remaining
+        let original = repo.get(lot.id).expect("ok").expect("found");
+        assert!(
+            original.quantity_remaining < dec!(100),
+            "source lot remaining should decrement after split"
+        );
+    }
+
+    #[test]
+    fn merge_creates_target_from_sources() {
+        let repo = fresh_repo();
+        let l1 = make_lot(&repo, "SKU-M", dec!(30));
+        let l2 = make_lot(&repo, "SKU-M", dec!(20));
+        let merged = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![l1.id, l2.id],
+                target_lot_number: Some("MERGED-001".into()),
+                reason: Some("consolidate".into()),
+            })
+            .expect("merge");
+        assert_eq!(merged.lot_number, "MERGED-001");
+    }
+
+    #[test]
+    fn get_expiring_lots_returns_within_window() {
+        let repo = fresh_repo();
+        let soon = repo
+            .create(CreateLot {
+                sku: "SKU-EXP".into(),
+                quantity: dec!(10),
+                expiration_date: Some(Utc::now() + Duration::days(3)),
+                initial_location_id: Some(1),
+                ..Default::default()
+            })
+            .expect("soon");
+        let later = repo
+            .create(CreateLot {
+                sku: "SKU-EXP".into(),
+                quantity: dec!(10),
+                expiration_date: Some(Utc::now() + Duration::days(60)),
+                initial_location_id: Some(1),
+                ..Default::default()
+            })
+            .expect("later");
+        let no_exp = make_lot(&repo, "SKU-NOEXP", dec!(10));
+
+        let expiring = repo.get_expiring_lots(7).expect("ok");
+        let ids: Vec<_> = expiring.iter().map(|l| l.id).collect();
+        assert!(ids.contains(&soon.id));
+        assert!(!ids.contains(&later.id));
+        assert!(!ids.contains(&no_exp.id));
+    }
+
+    #[test]
+    fn get_available_lots_for_sku_filters_status() {
+        let repo = fresh_repo();
+        let active = make_lot(&repo, "SKU-AV", dec!(10));
+        let scrapped = make_lot(&repo, "SKU-AV", dec!(5));
+        repo.update(
+            scrapped.id,
+            UpdateLot { status: Some(LotStatus::Scrapped), ..Default::default() },
+        )
+        .expect("scrap");
+
+        let available = repo.get_available_lots_for_sku("SKU-AV").expect("ok");
+        let ids: Vec<_> = available.iter().map(|l| l.id).collect();
+        assert!(ids.contains(&active.id));
+        assert!(!ids.contains(&scrapped.id));
+    }
+
+    #[test]
+    fn get_transactions_records_creation() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-TX", dec!(25));
+        let txns = repo.get_transactions(lot.id, 10).expect("txns");
+        assert!(!txns.is_empty(), "creation should record at least one transaction");
+    }
+
+    #[test]
+    fn create_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let result = repo
+            .create_batch(vec![
+                CreateLot {
+                    sku: "SKU-CB".into(),
+                    quantity: dec!(10),
+                    initial_location_id: Some(1),
+                    ..Default::default()
+                },
+                CreateLot {
+                    sku: "SKU-CB".into(),
+                    quantity: dec!(20),
+                    initial_location_id: Some(1),
+                    ..Default::default()
+                },
+            ])
+            .expect("batch");
+        assert_eq!(result.success_count, 2);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn get_batch_returns_only_existing() {
+        let repo = fresh_repo();
+        let l1 = make_lot(&repo, "SKU-GB", dec!(5));
+        let l2 = make_lot(&repo, "SKU-GB", dec!(5));
+        let stranger = Uuid::new_v4();
+        let fetched = repo.get_batch(vec![l1.id, l2.id, stranger]).expect("ok");
+        assert_eq!(fetched.len(), 2);
+    }
+
+    #[test]
+    fn get_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(Uuid::new_v4()).expect("ok").is_none());
     }
 }

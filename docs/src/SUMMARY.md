@@ -81,6 +81,7 @@
 
 # Cryptography & Security
 
+- [Security Overview](security/overview.md)
 - [VES v1.0 Specification](security/ves.md)
 - [Security Architecture](security/architecture.md)
 - [ERC-8004 Agent Identity](security/erc8004-identity.md)
@@ -121,6 +122,7 @@
 - [Compliance & Audit](advanced/compliance.md)
 - [Admin Dashboard](advanced/admin-dashboard.md)
 - [Deployment](advanced/deployment.md)
+- [Build Info Recipe](advanced/build-info-recipe.md)
 - [WASM Connectors](advanced/wasm-connectors.md)
 
 # API Reference

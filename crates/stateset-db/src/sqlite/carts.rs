@@ -1975,3 +1975,280 @@ fn split_customer_name(name: Option<&str>) -> (String, String) {
         (first_name.to_string(), last_name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{CartStatus, CommerceError};
+
+    fn fresh_repo() -> SqliteCartRepository {
+        SqliteDatabase::in_memory().expect("in-memory sqlite").carts()
+    }
+
+    fn addr() -> CartAddress {
+        CartAddress {
+            first_name: "Ada".into(),
+            last_name: "Lovelace".into(),
+            company: None,
+            line1: "1 Babbage Way".into(),
+            line2: None,
+            city: "London".into(),
+            state: None,
+            postal_code: "NW1".into(),
+            country: "GB".into(),
+            phone: Some("+44 20 7946 0000".into()),
+            email: Some("ada@example.com".into()),
+        }
+    }
+
+    fn add_item(sku: &str, qty: i32, price: Decimal) -> AddCartItem {
+        AddCartItem {
+            sku: sku.into(),
+            name: format!("Item {sku}"),
+            quantity: qty,
+            unit_price: price,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn create_cart_minimal_starts_active_and_zeroed() {
+        let repo = fresh_repo();
+        let cart = repo
+            .create(CreateCart {
+                customer_email: Some("buyer@example.com".into()),
+                customer_name: Some("Test Buyer".into()),
+                ..Default::default()
+            })
+            .expect("create");
+        assert_eq!(cart.status, CartStatus::Active);
+        assert_eq!(cart.subtotal, dec!(0));
+        assert_eq!(cart.tax_amount, dec!(0));
+        assert_eq!(cart.shipping_amount, dec!(0));
+        assert_eq!(cart.grand_total, dec!(0));
+        assert!(cart.items.is_empty());
+        assert!(cart.cart_number.starts_with("CART-"));
+    }
+
+    #[test]
+    fn create_cart_with_items_persists_them() {
+        let repo = fresh_repo();
+        let cart = repo
+            .create(CreateCart {
+                customer_email: Some("with-items@example.com".into()),
+                items: Some(vec![add_item("SKU-A", 2, dec!(10)), add_item("SKU-B", 1, dec!(5))]),
+                ..Default::default()
+            })
+            .expect("create");
+        let items = repo.get_items(cart.id).expect("get_items");
+        assert_eq!(items.len(), 2);
+        let fresh = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(fresh.subtotal, dec!(25));
+    }
+
+    #[test]
+    fn get_by_number_round_trips() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        let by_num = repo.get_by_number(&cart.cart_number).expect("get_by_number").expect("found");
+        assert_eq!(by_num.id, cart.id);
+        assert!(repo.get_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn add_item_recomputes_subtotal() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        repo.add_item(cart.id, add_item("SKU-X", 3, dec!(7))).expect("add");
+        let fresh = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(fresh.subtotal, dec!(21));
+    }
+
+    #[test]
+    fn update_item_changes_quantity_and_recomputes() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        let item = repo.add_item(cart.id, add_item("SKU-U", 1, dec!(10))).expect("add");
+        let updated = repo
+            .update_item(item.id, UpdateCartItem { quantity: Some(5), ..Default::default() })
+            .expect("update");
+        assert_eq!(updated.quantity, 5);
+        let fresh = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(fresh.subtotal, dec!(50));
+    }
+
+    #[test]
+    fn remove_item_drops_line_and_decrements_subtotal() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        let item_a = repo.add_item(cart.id, add_item("SKU-A", 1, dec!(8))).expect("a");
+        let _item_b = repo.add_item(cart.id, add_item("SKU-B", 1, dec!(2))).expect("b");
+        repo.remove_item(item_a.id).expect("remove");
+        let items = repo.get_items(cart.id).expect("items");
+        assert_eq!(items.len(), 1);
+        let fresh = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(fresh.subtotal, dec!(2));
+    }
+
+    #[test]
+    fn set_shipping_address_persists() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        let updated = repo.set_shipping_address(cart.id, addr()).expect("set");
+        assert!(updated.shipping_address.is_some());
+        let stored = updated.shipping_address.expect("addr");
+        assert_eq!(stored.first_name, "Ada");
+        assert_eq!(stored.country, "GB");
+    }
+
+    #[test]
+    fn set_shipping_applies_amount_to_total() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        repo.add_item(cart.id, add_item("SKU-S", 1, dec!(20))).expect("add");
+        let updated = repo
+            .set_shipping(
+                cart.id,
+                SetCartShipping {
+                    shipping_address: addr(),
+                    shipping_method: Some("standard".into()),
+                    shipping_carrier: Some("usps".into()),
+                    shipping_amount: Some(dec!(7)),
+                },
+            )
+            .expect("set shipping");
+        assert_eq!(updated.shipping_amount, dec!(7));
+        assert!(updated.grand_total >= dec!(27));
+    }
+
+    #[test]
+    fn set_payment_records_method_and_token() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        let updated = repo
+            .set_payment(
+                cart.id,
+                SetCartPayment {
+                    payment_method: "credit_card".into(),
+                    payment_token: Some("tok_123".into()),
+                    billing_address: None,
+                },
+            )
+            .expect("set payment");
+        assert_eq!(updated.payment_method.as_deref(), Some("credit_card"));
+    }
+
+    #[test]
+    fn apply_discount_with_invalid_coupon_returns_validation_error() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        let err = repo.apply_discount(cart.id, "DOES-NOT-EXIST").expect_err("err");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
+    }
+
+    #[test]
+    fn abandon_marks_status_abandoned() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        let abandoned = repo.abandon(cart.id).expect("abandon");
+        assert_eq!(abandoned.status, CartStatus::Abandoned);
+    }
+
+    #[test]
+    fn delete_removes_cart() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        repo.delete(cart.id).expect("delete");
+        assert!(repo.get(cart.id).expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_filters_by_customer_email() {
+        let repo = fresh_repo();
+        repo.create(CreateCart {
+            customer_email: Some("alice@example.com".into()),
+            ..Default::default()
+        })
+        .expect("alice");
+        repo.create(CreateCart {
+            customer_email: Some("bob@example.com".into()),
+            ..Default::default()
+        })
+        .expect("bob");
+        repo.create(CreateCart {
+            customer_email: Some("alice@example.com".into()),
+            ..Default::default()
+        })
+        .expect("alice2");
+
+        let alices = repo
+            .list(CartFilter {
+                customer_email: Some("alice@example.com".into()),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(alices.len(), 2);
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        let cart_a = repo.create(CreateCart::default()).expect("a");
+        let _cart_b = repo.create(CreateCart::default()).expect("b");
+        repo.abandon(cart_a.id).expect("abandon");
+
+        let active = repo
+            .list(CartFilter { status: Some(CartStatus::Active), ..Default::default() })
+            .expect("active");
+        let abandoned = repo
+            .list(CartFilter { status: Some(CartStatus::Abandoned), ..Default::default() })
+            .expect("abandoned");
+        assert_eq!(active.len(), 1);
+        assert_eq!(abandoned.len(), 1);
+    }
+
+    #[test]
+    fn create_batch_returns_all_succeeded() {
+        let repo = fresh_repo();
+        let batch = repo
+            .create_batch(vec![
+                CreateCart { customer_email: Some("c1@example.com".into()), ..Default::default() },
+                CreateCart { customer_email: Some("c2@example.com".into()), ..Default::default() },
+                CreateCart { customer_email: Some("c3@example.com".into()), ..Default::default() },
+            ])
+            .expect("batch");
+        assert_eq!(batch.success_count, 3);
+        assert_eq!(batch.failure_count, 0);
+    }
+
+    #[test]
+    fn get_batch_returns_only_existing() {
+        let repo = fresh_repo();
+        let cart_a = repo.create(CreateCart::default()).expect("a");
+        let cart_b = repo.create(CreateCart::default()).expect("b");
+        let stranger = CartId::new();
+        let fetched = repo.get_batch(vec![cart_a.id, cart_b.id, stranger]).expect("get_batch");
+        assert_eq!(fetched.len(), 2);
+    }
+
+    #[test]
+    fn get_returns_none_for_missing_id() {
+        let repo = fresh_repo();
+        assert!(repo.get(CartId::new()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_abandoned_returns_only_abandoned() {
+        let repo = fresh_repo();
+        let active = repo.create(CreateCart::default()).expect("active");
+        let to_abandon = repo.create(CreateCart::default()).expect("to-abandon");
+        repo.abandon(to_abandon.id).expect("abandon");
+
+        let abandoned = repo.get_abandoned().expect("get_abandoned");
+        let ids: Vec<CartId> = abandoned.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&to_abandon.id));
+        assert!(!ids.contains(&active.id));
+    }
+}

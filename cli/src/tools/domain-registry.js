@@ -58,6 +58,7 @@ import { costAccountingTools } from './cost-accounting.js';
 import { creditTools } from './credit.js';
 import { backorderTools } from './backorders.js';
 import { generalLedgerTools } from './general-ledger.js';
+import { agentReceiptTools } from './agent-receipt.js';
 
 export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['customers', customerTools],
@@ -120,6 +121,7 @@ export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['credit', creditTools],
   ['backorders', backorderTools],
   ['general-ledger', generalLedgerTools],
+  ['agent-receipt', agentReceiptTools],
 ]);
 
 export const DOMAIN_TOOL_ARRAYS = Object.freeze(Object.fromEntries(DOMAIN_TOOL_ENTRIES));

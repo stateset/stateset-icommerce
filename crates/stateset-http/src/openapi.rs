@@ -15,7 +15,7 @@ use crate::dto::{
     OrderItemResponse, OrderListResponse, OrderResponse, PaymentListResponse, PaymentResponse,
     ProductListResponse, ProductResponse, ReadyResponse, RecordInvoicePaymentRequest,
     ReturnListResponse, ReturnResponse, ShipmentListResponse, ShipmentResponse,
-    TenantCacheResponse, UpdateCustomerRequest, UpdateProductRequest,
+    TenantCacheResponse, UpdateCustomerRequest, UpdateProductRequest, VersionResponse,
 };
 use crate::error::ErrorBody;
 use crate::routes::gift_cards::{CreateGiftCardRequest, GiftCardListResponse, GiftCardResponse};
@@ -36,7 +36,7 @@ use crate::state::AppState;
     info(
         title = "StateSet Commerce API",
         description = "REST API for the StateSet embedded commerce engine.",
-        version = "1.0.3",
+        version = "1.0.4",
         contact(name = "StateSet", url = "https://stateset.io"),
         license(name = "MIT", url = "https://opensource.org/licenses/MIT"),
     ),
@@ -45,6 +45,7 @@ use crate::state::AppState;
         crate::routes::health::health,
         crate::routes::health::readiness,
         crate::routes::health::metrics,
+        crate::routes::health::version,
         // Orders
         crate::routes::orders::create_order,
         crate::routes::orders::get_order,
@@ -150,6 +151,7 @@ use crate::state::AppState;
         ReturnListResponse,
         HealthResponse,
         ReadyResponse,
+        VersionResponse,
         TenantCacheResponse,
         // Reviews
         CreateReviewRequest,
@@ -230,7 +232,7 @@ mod tests {
         let spec = ApiDoc::openapi();
         let json = serde_json::to_value(&spec).unwrap();
         assert_eq!(json["info"]["title"], "StateSet Commerce API");
-        assert_eq!(json["info"]["version"], "1.0.3");
+        assert_eq!(json["info"]["version"], "1.0.4");
     }
 
     #[test]
@@ -242,6 +244,7 @@ mod tests {
         assert!(paths.contains_key("/health"), "missing /health");
         assert!(paths.contains_key("/health/ready"), "missing /health/ready");
         assert!(paths.contains_key("/metrics"), "missing /metrics");
+        assert!(paths.contains_key("/version"), "missing /version");
         assert!(paths.contains_key("/api/v1/orders"), "missing /api/v1/orders");
         assert!(paths.contains_key("/api/v1/orders/{id}"), "missing /api/v1/orders/{{id}}");
         assert!(paths.contains_key("/api/v1/customers"), "missing /api/v1/customers");

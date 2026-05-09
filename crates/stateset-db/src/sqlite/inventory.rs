@@ -1878,3 +1878,255 @@ impl InventoryRepository for SqliteInventoryRepository {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{CommerceError, InventoryRepository};
+
+    fn fresh_repo() -> SqliteInventoryRepository {
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        db.inventory()
+    }
+
+    fn item(sku: &str) -> CreateInventoryItem {
+        CreateInventoryItem {
+            sku: sku.into(),
+            name: format!("Item {sku}"),
+            description: Some("test".into()),
+            unit_of_measure: Some("EA".into()),
+            initial_quantity: Some(dec!(10)),
+            location_id: None,
+            reorder_point: Some(dec!(5)),
+            safety_stock: Some(dec!(2)),
+        }
+    }
+
+    #[test]
+    fn create_item_persists_basic_fields() {
+        let repo = fresh_repo();
+        let created = repo.create_item(item("WIDGET-001")).expect("create");
+        assert_eq!(created.sku, "WIDGET-001");
+        assert_eq!(created.name, "Item WIDGET-001");
+        assert_eq!(created.unit_of_measure, "EA");
+        assert!(created.is_active);
+    }
+
+    #[test]
+    fn create_item_with_zero_initial_quantity_records_no_transaction() {
+        let repo = fresh_repo();
+        let mut input = item("ZERO-INIT");
+        input.initial_quantity = Some(Decimal::ZERO);
+        let created = repo.create_item(input).expect("create");
+        let txns = repo.get_transactions(created.id, 10).expect("transactions");
+        assert!(txns.is_empty(), "no transaction expected for zero initial qty");
+    }
+
+    #[test]
+    fn create_item_records_initial_receipt_transaction() {
+        let repo = fresh_repo();
+        let created = repo.create_item(item("INIT-001")).expect("create");
+        let txns = repo.get_transactions(created.id, 10).expect("transactions");
+        assert_eq!(txns.len(), 1, "initial receipt expected");
+    }
+
+    #[test]
+    fn create_item_rejects_duplicate_sku() {
+        let repo = fresh_repo();
+        repo.create_item(item("DUPE-001")).expect("first create");
+        let err = repo.create_item(item("DUPE-001")).expect_err("dup err");
+        assert!(matches!(err, CommerceError::DuplicateSku(s) if s == "DUPE-001"));
+    }
+
+    #[test]
+    fn create_item_rejects_invalid_sku() {
+        let repo = fresh_repo();
+        let mut input = item("");
+        input.sku = "bad sku!!".into();
+        let err = repo.create_item(input).expect_err("invalid");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
+    }
+
+    #[test]
+    fn get_item_by_sku_round_trips() {
+        let repo = fresh_repo();
+        let created = repo.create_item(item("ROUND-001")).expect("create");
+        let by_sku = repo.get_item_by_sku("ROUND-001").expect("get by sku").expect("found");
+        assert_eq!(by_sku.id, created.id);
+        let by_id = repo.get_item(created.id).expect("get").expect("found");
+        assert_eq!(by_id.sku, "ROUND-001");
+        assert!(repo.get_item_by_sku("MISSING").expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_stock_aggregates_by_location() {
+        let repo = fresh_repo();
+        repo.create_item(item("STOCK-001")).expect("create");
+        let stock = repo.get_stock("STOCK-001").expect("get stock").expect("found");
+        assert_eq!(stock.sku, "STOCK-001");
+        assert_eq!(stock.total_on_hand, dec!(10));
+        assert_eq!(stock.total_available, dec!(10));
+        assert_eq!(stock.total_allocated, dec!(0));
+        assert_eq!(stock.locations.len(), 1);
+    }
+
+    #[test]
+    fn adjust_increases_and_decreases_on_hand() {
+        let repo = fresh_repo();
+        repo.create_item(item("ADJ-001")).expect("create");
+        repo.adjust(AdjustInventory {
+            sku: "ADJ-001".into(),
+            location_id: Some(1),
+            quantity: dec!(5),
+            reason: "receipt".into(),
+            reference_type: None,
+            reference_id: None,
+        })
+        .expect("receipt");
+        let stock = repo.get_stock("ADJ-001").expect("ok").expect("found");
+        assert_eq!(stock.total_on_hand, dec!(15));
+
+        repo.adjust(AdjustInventory {
+            sku: "ADJ-001".into(),
+            location_id: Some(1),
+            quantity: dec!(-3),
+            reason: "shrink".into(),
+            reference_type: None,
+            reference_id: None,
+        })
+        .expect("decrement");
+        let stock = repo.get_stock("ADJ-001").expect("ok").expect("found");
+        assert_eq!(stock.total_on_hand, dec!(12));
+    }
+
+    #[test]
+    fn reserve_then_release_round_trip() {
+        let repo = fresh_repo();
+        repo.create_item(item("RESERVE-001")).expect("create");
+        let res = repo
+            .reserve(ReserveInventory {
+                sku: "RESERVE-001".into(),
+                location_id: Some(1),
+                quantity: dec!(4),
+                reference_type: "order".into(),
+                reference_id: "ord-1".into(),
+                expires_in_seconds: Some(60),
+            })
+            .expect("reserve");
+
+        let after_reserve = repo.get_stock("RESERVE-001").expect("ok").expect("found");
+        assert_eq!(after_reserve.total_allocated, dec!(4));
+        assert_eq!(after_reserve.total_available, dec!(6));
+
+        let fetched = repo.get_reservation(res.id).expect("get res").expect("found");
+        assert_eq!(fetched.id, res.id);
+
+        repo.release_reservation(res.id).expect("release");
+        let after_release = repo.get_stock("RESERVE-001").expect("ok").expect("found");
+        assert_eq!(after_release.total_allocated, dec!(0));
+        assert_eq!(after_release.total_available, dec!(10));
+    }
+
+    #[test]
+    fn list_reservations_by_reference_filters_correctly() {
+        let repo = fresh_repo();
+        repo.create_item(item("MULTI-RES-001")).expect("create");
+        repo.reserve(ReserveInventory {
+            sku: "MULTI-RES-001".into(),
+            location_id: Some(1),
+            quantity: dec!(1),
+            reference_type: "order".into(),
+            reference_id: "ord-A".into(),
+            expires_in_seconds: None,
+        })
+        .expect("res 1");
+        repo.reserve(ReserveInventory {
+            sku: "MULTI-RES-001".into(),
+            location_id: Some(1),
+            quantity: dec!(2),
+            reference_type: "order".into(),
+            reference_id: "ord-A".into(),
+            expires_in_seconds: None,
+        })
+        .expect("res 2");
+        repo.reserve(ReserveInventory {
+            sku: "MULTI-RES-001".into(),
+            location_id: Some(1),
+            quantity: dec!(1),
+            reference_type: "order".into(),
+            reference_id: "ord-B".into(),
+            expires_in_seconds: None,
+        })
+        .expect("res 3");
+
+        let by_a = repo.list_reservations_by_reference("order", "ord-A").expect("list");
+        assert_eq!(by_a.len(), 2);
+        let by_b = repo.list_reservations_by_reference("order", "ord-B").expect("list");
+        assert_eq!(by_b.len(), 1);
+    }
+
+    #[test]
+    fn list_filters_by_sku() {
+        let repo = fresh_repo();
+        repo.create_item(item("LIST-001")).expect("c1");
+        repo.create_item(item("LIST-002")).expect("c2");
+        repo.create_item(item("OTHER-001")).expect("c3");
+
+        let listed = repo
+            .list(InventoryFilter { sku: Some("LIST".into()), ..Default::default() })
+            .expect("list");
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().all(|i| i.sku.starts_with("LIST")));
+    }
+
+    #[test]
+    fn get_reorder_needed_returns_below_threshold() {
+        let repo = fresh_repo();
+
+        let mut healthy = item("HEALTHY-001");
+        healthy.initial_quantity = Some(dec!(100));
+        healthy.reorder_point = Some(dec!(10));
+        repo.create_item(healthy).expect("healthy");
+
+        let mut low = item("LOW-001");
+        low.initial_quantity = Some(dec!(2));
+        low.reorder_point = Some(dec!(10));
+        repo.create_item(low).expect("low");
+
+        let needs = repo.get_reorder_needed().expect("reorder");
+        let skus: Vec<&str> = needs.iter().map(|s| s.sku.as_str()).collect();
+        assert!(skus.contains(&"LOW-001"));
+        assert!(!skus.contains(&"HEALTHY-001"));
+    }
+
+    #[test]
+    fn get_transactions_returns_in_recent_first_order() {
+        let repo = fresh_repo();
+        let created = repo.create_item(item("TX-001")).expect("create");
+        repo.adjust(AdjustInventory {
+            sku: "TX-001".into(),
+            location_id: Some(1),
+            quantity: dec!(3),
+            reason: "receipt".into(),
+            reference_type: None,
+            reference_id: None,
+        })
+        .expect("adjust");
+
+        let txns = repo.get_transactions(created.id, 10).expect("txns");
+        assert_eq!(txns.len(), 2);
+    }
+
+    #[test]
+    fn create_item_batch_creates_all() {
+        let repo = fresh_repo();
+        let result = repo
+            .create_item_batch(vec![item("BATCH-001"), item("BATCH-002"), item("BATCH-003")])
+            .expect("batch");
+        assert_eq!(result.success_count, 3);
+        assert_eq!(result.failure_count, 0);
+        assert_eq!(result.succeeded.len(), 3);
+    }
+}

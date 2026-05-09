@@ -536,4 +536,30 @@ internal static partial class NativeMethods
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern IntPtr stateset_currency_get_settings(IntPtr handle);
+
+    // =============================================================================
+    // Cross-binding crypto primitives
+    // =============================================================================
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void stateset_crypto_free_buffer(IntPtr ptr, nuint len);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int stateset_crypto_jcs_canonicalize(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string jsonIn,
+        out IntPtr outPtr,
+        out nuint outLen);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int stateset_crypto_payload_plain_hash(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string jsonIn,
+        IntPtr saltIn,
+        nuint saltLen,
+        IntPtr outBuf32);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int stateset_crypto_merkle_root(
+        IntPtr leavesIn,
+        nuint leafCount,
+        IntPtr outBuf32);
 }

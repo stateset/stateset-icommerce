@@ -90,11 +90,21 @@ export function withErrorHandler(
       method: request.method,
     };
 
-    // Extract orgId from auth header if present
+    // Extract orgId from explicit header, then fall back to the
+    // operator's active-org cookie (set by `<OrgSwitcher />`). This
+    // is what carries the operator's scope through to upstream API
+    // calls as `x-org-id` and into log entries via `request-context`.
     const authHeader = request.headers.get('Authorization');
     if (authHeader) {
-      // orgId extraction could be done from JWT claims in production
-      reqContext.orgId = request.headers.get('x-org-id') ?? undefined;
+      const headerOrg = request.headers.get('x-org-id');
+      if (headerOrg) {
+        reqContext.orgId = headerOrg;
+      } else {
+        const cookieOrg = request.cookies.get('stateset_active_org')?.value;
+        if (cookieOrg && /^[A-Za-z0-9_.-]{1,128}$/.test(cookieOrg)) {
+          reqContext.orgId = cookieOrg;
+        }
+      }
     }
 
     return requestStore.run(reqContext, async () => {

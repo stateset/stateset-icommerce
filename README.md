@@ -19,10 +19,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.0.3     # Python
-npm install @stateset/embedded@1.0.3     # Node.js
-npm install -g @stateset/cli@1.0.3       # CLI
-gem install stateset_embedded -v 1.0.3   # Ruby
+pip install stateset-embedded==1.0.4     # Python
+npm install @stateset/embedded@1.0.4     # Node.js
+npm install -g @stateset/cli@1.0.4       # CLI
+gem install stateset_embedded -v 1.0.4   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -52,7 +52,66 @@ println!("Order {} — ${}", order.order_number, order.total_amount);
 
 No database setup. No config files. No migrations to run. It just works.
 
-**[10-Minute Quickstart →](./QUICKSTART.md)** | **[API Reference](https://docs.rs/stateset-sdk)** | **[OpenAPI Spec](http://localhost:3000/api/v1/docs)** | **[Trust Foundation](./TRUST_FOUNDATION.md)**
+**[10-Minute Quickstart →](./QUICKSTART.md)** | **[API Reference](https://docs.rs/stateset-sdk)** | **[OpenAPI Spec](http://localhost:8080/api/v1/openapi.json)** | **[Security](./docs/src/security/overview.md)** | **[Trust Foundation](./TRUST_FOUNDATION.md)**
+
+<details>
+<summary><b>Table of contents</b></summary>
+
+- [Why iCommerce](#why-icommerce) — what's different about a commerce engine built for AI agents
+- [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
+- [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
+- [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
+- [What's New in v1.0.4](#whats-new-in-v104)
+- [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
+- [Quick Start](#quick-start) — working snippets in every language
+- [Production Notes](#production-notes) — running on Postgres, scaling, observability
+- [Domain Models, MCP Tools, AI Agents](#domain-models)
+- [Key Features](#key-features) — full feature matrix grouped by domain
+- [Installation](#installation) — package commands + per-language gotchas
+- [Language Bindings](#language-bindings) — Rust, Node, Python, Go, Java, Kotlin, Swift, .NET, Ruby, PHP, WASM
+- [Configuration](#configuration) — SQLite vs Postgres, env vars
+- [Examples & Development](#examples)
+- [Project Structure](#project-structure) — how the monorepo is laid out
+- [Core Concepts](#core-concepts) — ACP, safety architecture, event-driven design
+
+</details>
+
+---
+
+## Why iCommerce
+
+Most commerce platforms expose APIs that AI agents can call. iCommerce is built
+*for* AI agents — with the protocol, runtime, and economic primitives that
+autonomous agents actually need to transact safely:
+
+- **🤝 [Agent-to-Agent (A2A) Commerce](./AGENTIC_COMMERCE.md)** — agents
+  negotiate, quote, escrow, and settle directly. Reputation and verification
+  built in. Splits, subscriptions, conditional payments, webhook events.
+- **💳 [x402 Payment Protocol](./docs/src/payments/x402.md)** — cryptographically
+  verifiable AI-agent payment intents (Ed25519, replay-protected nonces, optional
+  PQC). On-chain settlement on Solana, SET Chain, Base, Ethereum, Arbitrum.
+- **🧠 [Autonomous Engine](./cli/src/autonomous/)** — scheduled jobs, state-machine
+  workflows, policy-as-code rules, webhook event handlers, and human-in-the-loop
+  approvals. One stack to run a business unattended.
+- **📜 [Policy DSL](./crates/stateset-policy/)** — declarative, deny-overrides
+  rules with explainable denials. Block agents from writes when limits are
+  exceeded; record the reason for every decision.
+- **🛠️ [700+ MCP Tools](./docs/whitepaper.md#mcp-tools) across 63 domain modules** —
+  the largest known domain-specific MCP surface. Discoverable, payable per call
+  via Machine Payments Protocol, replayable, audit-logged.
+- **🔐 [Verifiable Encrypted Signatures (VES v1.0)](./docs/PQC_INITIAL_SPEC.md)**
+  — Merkle-anchored event log with Ed25519 + ML-DSA-65 hybrid signatures and
+  X25519 + ML-KEM-768 hybrid encryption. Every state change is signed and
+  reconstructable.
+- **⚙️ Embedded engine, not a service** — single-process SQLite by default,
+  PostgreSQL when you scale up. No separate database to provision. No network
+  hops between agent and runtime.
+
+Most of the differentiators above are *not* "coming soon" — they're shipping in
+v1.0.x. See [`AGENTIC_COMMERCE.md`](./AGENTIC_COMMERCE.md) for the full A2A
+case study and [`TRUST_FOUNDATION.md`](./TRUST_FOUNDATION.md) for the security
+and verification architecture (including the explicit gap inventory: PQC hard
+finality and SOC 2 are honest "in progress" items, not aspirational claims).
 
 ---
 
@@ -98,7 +157,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.0.3 @stateset/cli@1.0.3
+npm install @stateset/embedded@1.0.4 @stateset/cli@1.0.4
 ```
 
 ```javascript
@@ -248,23 +307,12 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.0.3
+## What's New in v1.0.4
 
-**CLI Security Hardening Patch** - `1.0.3` keeps the stable `v1` compatibility contract intact while hardening outbound CLI network paths and remote skill marketplace installs.
-
-### Outbound Network Safety
-- Blocked private and loopback DNS resolution across A2A webhook, MPP, x402, and marketplace fetch flows
-- Validated redirects so approved outbound requests cannot be bounced to private hosts
-- Added regression coverage for SSRF blocking, DNS rebinding-style resolution, and webhook retry validation
-
-### Marketplace and iMessage
-- Hardened remote skill marketplace installs with package size caps, checksum enforcement, and archive path preflight
-- Changed BlueBubbles authentication to prefer header delivery while retaining the legacy query-token fallback
-- Added regression coverage for marketplace package limits and iMessage auth fallback behavior
-
-### Versioned 1.0 Patch
-- Synced workspace versions, install snippets, deployment references, examples, templates, and current-release docs to `1.0.3`
-- Kept the release preflight green across bindings, docs, examples, inventories, admin, and CLI surfaces
+The current release is **v1.0.4** — a CLI security hardening patch that
+preserves the stable `v1` compatibility contract. See
+[`CHANGELOG.md`](./CHANGELOG.md) for the full release history,
+including the per-release security and feature notes.
 
 ---
 
@@ -299,20 +347,6 @@ must not be released from a commit without a green `CI Success` aggregate.
   checked command above plus the protected CI aggregate
 
 Production note: use `config/stateset.production.properties` as the baseline for secure defaults.
-
----
-
-## The Shift: From eCommerce to iCommerce
-
-Commerce is undergoing a fundamental shift. Where eCommerce was built for humans clicking buttons in dashboards, **iCommerce** (Intelligent Commerce) is built for AI agents making decisions.
-
-| The Old Way | The New Way |
-|-------------|-------------|
-| Tickets & manual operations | Autonomous agents |
-| Brittle automation scripts | Deterministic execution |
-| Scaling headcount for exceptions | AI reasoning against constraints |
-
-StateSet enables this shift by providing a portable, embeddable commerce engine that agents can carry with them.
 
 ---
 
@@ -478,151 +512,89 @@ for f in forecasts:
         print(f"WARNING: {f.sku} will stock out in {f.days_until_stockout} days")
 ```
 
-### Ruby
+### Other bindings
+
+Same `Commerce` API surface, idiomatic per language. Expand any block
+to see the snippet — all ten bindings ship from the same Rust core
+and pass the same [cross-binding parity tests](./bindings/test-vectors/v1.json).
+
+<details>
+<summary><b>Ruby</b></summary>
 
 ```ruby
 require 'stateset_embedded'
 
 commerce = StateSet::Commerce.new('./store.db')
 
-# Create a customer
 customer = commerce.customers.create(
-  email: 'alice@example.com',
-  first_name: 'Alice',
-  last_name: 'Smith'
+  email: 'alice@example.com', first_name: 'Alice', last_name: 'Smith'
 )
-
-# Create an order
 order = commerce.orders.create(
   customer_id: customer.id,
-  items: [
-    { sku: 'SKU-001', name: 'Widget', quantity: 2, unit_price: 29.99 }
-  ]
+  items: [{ sku: 'SKU-001', name: 'Widget', quantity: 2, unit_price: 29.99 }]
 )
-
-# Manage subscriptions
-plan = commerce.subscriptions.create_plan(
-  name: 'Pro Monthly',
-  price: 29.99,
-  interval: 'month'
-)
-
-subscription = commerce.subscriptions.subscribe(
-  plan_id: plan.id,
-  customer_id: customer.id
-)
+plan = commerce.subscriptions.create_plan(name: 'Pro', price: 29.99, interval: 'month')
+commerce.subscriptions.subscribe(plan_id: plan.id, customer_id: customer.id)
 ```
+</details>
 
-### PHP
+<details>
+<summary><b>PHP</b></summary>
 
 ```php
 <?php
 use StateSet\Commerce;
 
 $commerce = new Commerce('./store.db');
-
-// Create a customer
 $customer = $commerce->customers()->create(
-    email: 'alice@example.com',
-    firstName: 'Alice',
-    lastName: 'Smith'
+    email: 'alice@example.com', firstName: 'Alice', lastName: 'Smith'
 );
-
-// Create an order
 $order = $commerce->orders()->create(
     customerId: $customer->getId(),
-    items: [
-        ['sku' => 'SKU-001', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 29.99]
-    ]
+    items: [['sku' => 'SKU-001', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 29.99]]
 );
-
-// Calculate tax
-$tax = $commerce->tax()->calculate(
-    amount: 100.00,
-    jurisdictionId: $jurisdiction->getId()
-);
-
-// Apply promotions
-$promo = $commerce->promotions()->create(
-    code: 'SUMMER20',
-    name: 'Summer Sale',
-    discountType: 'percentage',
-    discountValue: 20.0
-);
+$tax = $commerce->tax()->calculate(amount: 100.00, jurisdictionId: $jur->getId());
 ```
+</details>
 
-### Java
+<details>
+<summary><b>Java</b></summary>
 
 ```java
 import com.stateset.embedded.*;
 
 try (Commerce commerce = new Commerce("./store.db")) {
-    // Create a customer
-    Customer customer = commerce.customers().create(
-        "alice@example.com",
-        "Alice",
-        "Smith"
-    );
-
-    // Create an order
-    Order order = commerce.orders().create(
-        customer.getId(),
-        "USD"
-    );
-
-    // Process payments
-    commerce.payments().recordPayment(
-        order.getId(),
-        order.getTotalAmount(),
-        "card",
-        "txn_123456"
-    );
-
-    // Get analytics
-    SalesSummary summary = commerce.analytics().salesSummary(30);
-    System.out.println("Revenue: $" + summary.getTotalRevenue());
+    Customer customer = commerce.customers().create("alice@example.com", "Alice", "Smith");
+    Order order = commerce.orders().create(customer.getId(), "USD");
+    commerce.payments().recordPayment(order.getId(), order.getTotalAmount(), "card", "txn_123");
+    SalesSummary s = commerce.analytics().salesSummary(30);
+    System.out.println("Revenue: $" + s.getTotalRevenue());
 }
 ```
+</details>
 
-### Kotlin
+<details>
+<summary><b>Kotlin</b></summary>
 
 ```kotlin
 import com.stateset.embedded.*
 
 val commerce = StateSetCommerce("./store.db")
-
-// Create a customer
 val customer = commerce.customers.create(
-    email = "alice@example.com",
-    firstName = "Alice",
-    lastName = "Smith"
+    email = "alice@example.com", firstName = "Alice", lastName = "Smith"
 )
-
-// Create a product
-val product = commerce.products.create(
-    name = "Widget",
-    sku = "SKU-001",
-    price = 29.99,
-    description = "A premium widget"
-)
-
-// Create an order
-val order = commerce.orders.create(
+val product = commerce.products.create(name = "Widget", sku = "SKU-001", price = 29.99)
+commerce.orders.create(
     customerId = customer.id,
-    items = listOf(
-        OrderItem(productId = product.id, sku = "SKU-001", name = "Widget", quantity = 2, unitPrice = "29.99")
-    ),
-    currency = "USD"
+    items = listOf(OrderItem(product.id, "SKU-001", "Widget", 2, "29.99")),
+    currency = "USD",
 )
-
-// Get analytics
-val summary = commerce.analytics.getSalesSummary(TimePeriod.MONTH)
-println("Revenue: $${summary.totalRevenue}")
-
 commerce.close()
 ```
+</details>
 
-### Swift
+<details>
+<summary><b>Swift</b></summary>
 
 ```swift
 import StateSet
@@ -630,72 +602,42 @@ import StateSet
 let commerce = try StateSetCommerce(path: "./store.db")
 defer { commerce.close() }
 
-// Create a customer
 let customer = try commerce.customers.create(
-    email: "alice@example.com",
-    firstName: "Alice",
-    lastName: "Smith",
-    phone: "+1-555-0123"
+    email: "alice@example.com", firstName: "Alice", lastName: "Smith"
 )
-
-// Create a product
-let product = try commerce.products.create(
-    name: "Widget",
-    sku: "SKU-001",
-    price: 29.99,
-    description: "A premium widget"
-)
-
-// Create an order
+let product = try commerce.products.create(name: "Widget", sku: "SKU-001", price: 29.99)
 let order = try commerce.orders.create(
     customerId: customer.id,
-    items: [
-        OrderItem(productId: product.id, sku: "SKU-001", name: "Widget", quantity: 2, unitPrice: "29.99")
-    ],
-    currency: "USD"
+    items: [OrderItem(productId: product.id, sku: "SKU-001", name: "Widget", quantity: 2, unitPrice: "29.99")],
+    currency: "USD",
 )
-
-// Update order status
 try commerce.orders.updateStatus(id: order.id, status: .shipped)
 ```
+</details>
 
-### C# / .NET
+<details>
+<summary><b>C# / .NET</b></summary>
 
 ```csharp
 using StateSet;
 
 using var commerce = new StateSetCommerce("./store.db");
-
-// Create a customer
 var customer = commerce.Customers.Create(
-    email: "alice@example.com",
-    firstName: "Alice",
-    lastName: "Smith"
+    email: "alice@example.com", firstName: "Alice", lastName: "Smith"
 );
-
-// Create a product
-var product = commerce.Products.Create(
-    name: "Widget",
-    sku: "SKU-001",
-    price: 29.99m,
-    description: "A premium widget"
-);
-
-// Create an order
-var order = commerce.Orders.Create(
+var product = commerce.Products.Create(name: "Widget", sku: "SKU-001", price: 29.99m);
+commerce.Orders.Create(
     customerId: customer.Id,
     items: new[] {
         new OrderItem { ProductId = product.Id, Sku = "SKU-001", Name = "Widget", Quantity = 2, UnitPrice = "29.99" }
     },
-    currency: "USD"
+    currency: "USD",
 );
-
-// Get analytics
-var summary = commerce.Analytics.GetSalesSummary(TimePeriod.Month);
-Console.WriteLine($"Revenue: ${summary.TotalRevenue}");
 ```
+</details>
 
-### Go
+<details>
+<summary><b>Go</b></summary>
 
 ```go
 package main
@@ -709,28 +651,14 @@ func main() {
     commerce, _ := stateset.New("./store.db")
     defer commerce.Close()
 
-    // Create a customer
-    customer, _ := commerce.Customers().Create(
-        "alice@example.com", "Alice", "Smith", "+1-555-0123",
-    )
-
-    // Create a product
-    product, _ := commerce.Products().Create(
-        "Widget", "SKU-001", 29.99, "A premium widget",
-    )
-
-    // Create an order
-    items := []stateset.OrderItem{
-        {ProductID: product.ID, SKU: "SKU-001", Name: "Widget", Quantity: 2, UnitPrice: "29.99"},
-    }
+    customer, _ := commerce.Customers().Create("alice@example.com", "Alice", "Smith", "")
+    product, _ := commerce.Products().Create("Widget", "SKU-001", 29.99, "")
+    items := []stateset.OrderItem{{ProductID: product.ID, SKU: "SKU-001", Name: "Widget", Quantity: 2, UnitPrice: "29.99"}}
     order, _ := commerce.Orders().Create(customer.ID, items, "USD")
-    fmt.Printf("Order created: %s\n", order.OrderNumber)
-
-    // Get analytics
-    summary, _ := commerce.Analytics().GetSalesSummary(stateset.TimePeriodMonth)
-    fmt.Printf("Revenue: $%s\n", summary.TotalRevenue)
+    fmt.Printf("Order: %s\n", order.OrderNumber)
 }
 ```
+</details>
 
 ### CLI (AI-Powered)
 
@@ -1021,33 +949,27 @@ stateset-daemon tunnel remove <name>
 
 ### Voice Mode
 
-Enable voice interactions with speech-to-text input and text-to-speech output.
+Hands-free chat with pluggable STT/TTS (ElevenLabs, OpenAI Whisper).
+Per-session settings + 30-min inactivity TTL — see the
+[Key Features](#key-features) row for the full capability list.
 
 ```bash
-# Enable voice mode in chat
 stateset-chat --voice
-
-# Configure voice provider
 stateset-chat --voice --tts-provider elevenlabs --stt-provider whisper
 ```
 
-Voice mode features per-session settings, 30-minute inactivity TTL, pluggable STT/TTS providers (ElevenLabs, OpenAI Whisper), and automatic stale session cleanup.
-
 ### Multi-Provider AI
 
-Swap between AI providers or configure fallback chains.
+Claude is the default with full MCP tool integration. OpenAI, Gemini,
+and local Ollama work in chat-only mode. For embedded server-side
+agents, use `@stateset/embedded/*` entrypoints (or
+`@stateset/embedded/agent-toolkit` for advanced runtime controls).
 
 ```bash
-# Use a specific provider
-stateset --provider openai "list orders"
-stateset --provider gemini "show revenue"
-stateset --provider ollama --model llama3 "check inventory"
-
-# Claude (default) — full MCP tool integration
-stateset "ship order #12345"
+stateset "ship order #12345"                    # Claude (default, full MCP)
+stateset --provider openai "list orders"        # chat-only
+stateset --provider ollama --model llama3 "…"   # local-only
 ```
-
-Non-Claude providers in the CLI operate in chat-only mode. For embedded OpenAI, LangGraph, LangChain, or other server-side agents, use the `@stateset/embedded/*` helper entrypoints for the engine-first tool surface, and reach for `@stateset/embedded/agent-toolkit` when you need advanced runtime controls.
 
 ### Validation & Errors
 
@@ -1082,52 +1004,28 @@ Order status updates enforce the core state machine (cancel before shipment, ref
 
 ## Domain Models
 
-| Domain | Models | Description |
-|--------|--------|-------------|
-| **Orders** | Order, OrderItem, OrderStatus | Full order lifecycle management |
-| **Customers** | Customer, CustomerAddress | Profiles, preferences, history |
-| **Products** | Product, ProductVariant | Catalog with variants and attributes |
-| **Inventory** | InventoryItem, Balance, Reservation | Multi-location stock tracking |
-| **Carts** | Cart, CartItem, CheckoutResult | Shopping cart with ACP checkout |
-| **Payments** | Payment, Refund, PaymentMethod | Payment records and refunds |
-| **Returns** | Return, ReturnItem | RMA processing and refunds |
-| **Shipments** | Shipment, ShipmentEvent | Fulfillment and tracking |
-| **Manufacturing** | BOM, WorkOrder, Task | Bill of materials and production |
-| **Purchase Orders** | PurchaseOrder, Supplier | Procurement management |
-| **Warranties** | Warranty, WarrantyClaim | Coverage and claims |
-| **Invoices** | Invoice, InvoiceItem | Billing and accounts receivable |
-| **Currency** | ExchangeRate, Money | Multi-currency (35+ currencies) |
-| **Analytics** | SalesSummary, DemandForecast | Business intelligence |
-| **Tax** | TaxJurisdiction, TaxRate, TaxExemption | US/EU/CA tax calculation |
-| **Promotions** | Promotion, Coupon, DiscountRule | Campaigns, coupons, discounts |
-| **Subscriptions** | SubscriptionPlan, Subscription, BillingCycle | Recurring billing management |
-| **Stablecoin** | AgentWallet, StablecoinPayment | Native crypto payments (USDC, ssUSD) |
-| **x402** | PaymentIntent, IntentSignature | AI agent payment protocol |
-| **A2A Commerce** | AgentCard, A2APayment, Quote, Escrow, Split | Agent-to-Agent autonomous commerce |
+20 first-class domains: Orders, Customers, Products, Inventory, Carts,
+Payments, Returns, Shipments, Manufacturing, Purchase Orders, Warranties,
+Invoices, Currency, Analytics, Tax, Promotions, Subscriptions, Stablecoin,
+x402, A2A Commerce.
+
+Each domain ships with strongly-typed Rust models, generated language
+bindings, MCP tool descriptors, and OpenAPI schemas. The authoritative
+inventory lives in the [OpenAPI spec](http://localhost:8080/api/v1/openapi.json)
+and the source crates under `crates/stateset-core/src/models/`.
 
 ---
 
-## Database Schema (60 Tables)
+## Database Schema
 
-**Core:** customers, customer_addresses, products, product_variants, orders, order_items
-
-**Inventory:** inventory_items, inventory_locations, inventory_balances, inventory_transactions, inventory_reservations
-
-**Financial:** payments, refunds, payment_methods, invoices, invoice_items, purchase_orders, purchase_order_items
-
-**Fulfillment:** shipments, shipment_items, shipment_events, returns, return_items
-
-**Manufacturing:** manufacturing_boms, manufacturing_bom_components, manufacturing_work_orders, manufacturing_work_order_tasks, manufacturing_work_order_materials
-
-**Tax:** tax_jurisdictions, tax_rates, tax_exemptions, tax_settings
-
-**Promotions:** promotions, promotion_rules, promotion_actions, coupons, coupon_usages, promotion_applications
-
-**Subscriptions:** subscription_plans, subscriptions, billing_cycles, subscription_events
-
-**A2A Commerce:** notification_log, webhook_config, subscriptions (a2a), split_payments, split_recipients, event_subscriptions, event_log
-
-**Other:** warranties, warranty_claims, carts, cart_items, exchange_rates, store_currency_settings, product_currency_prices, exchange_rate_history, events
+60+ tables grouped into Core, Inventory, Financial, Fulfillment,
+Manufacturing, Tax, Promotions, Subscriptions, A2A Commerce, and
+Cross-cutting (warranties, carts, currency, event log). Migrations are
+the authoritative source — see
+[`crates/stateset-db/migrations/`](./crates/stateset-db/migrations/)
+for the full schema with indexes and foreign keys, and
+[`docs/src/guides/dependency-direction.md`](./docs/src/guides/dependency-direction.md)
+for how the schema layers map onto the Rust kernel.
 
 ---
 
@@ -1150,255 +1048,63 @@ tool access are generated from code in the
 
 ## Key Features
 
-### Commerce Operations
-- Full order lifecycle (create → confirm → ship → deliver)
-- Multi-location inventory with reservations
-- Customer profiles with addresses
-- Product catalog with variants and attributes
+A capability matrix — what ships in v1.0.x, with depth links. The agentic
+primitives that distinguish iCommerce from a generic commerce engine
+([A2A](./AGENTIC_COMMERCE.md), [x402](./docs/src/payments/x402.md),
+[VES v1.0](./docs/PQC_INITIAL_SPEC.md), [Policy DSL](./crates/stateset-policy/),
+[700+ MCP tools](./docs/whitepaper.md#mcp-tools)) are summarized in
+[Why iCommerce](#why-icommerce) and not duplicated here.
 
-### Financial Operations
-- Multi-currency support (35+ currencies including BTC, ETH, USDC)
-- Payment processing with multiple methods
-- Refund management
-- Invoice generation
-- Purchase orders with suppliers
-
-### Tax Management
-- Multi-jurisdiction tax calculation (US, EU, Canada)
-- State/province tax rates with automatic lookup
-- Tax exemptions and certificates
-- VAT support for EU countries
-- GST/HST/PST for Canadian provinces
-
-### Promotions & Discounts
-- Percentage and fixed-amount discounts
-- Coupon codes with usage limits
-- Buy-X-Get-Y promotions
-- Free shipping promotions
-- Time-limited campaigns
-
-### Subscriptions & Recurring Billing
-- Flexible subscription plans (daily, weekly, monthly, annual)
-- Free trial periods
-- Billing cycle management
-- Pause/resume/cancel lifecycle
-- Skip billing cycles
-
-### Supply Chain
-- Manufacturing BOMs (Bill of Materials)
-- Work orders with task tracking
-- Shipment tracking with carrier integration
-- Returns/RMA processing
-
-### Analytics & Forecasting
-- Sales summaries and revenue trends
-- Demand forecasting per SKU
-- Revenue projections with confidence intervals
-- Inventory health monitoring
-- Customer metrics and LTV
-
-### Verifiable Event Sync (VES v1.0)
-- Local-first with sequencer synchronization
-- Ed25519 agent signatures for event authenticity
-- X25519 encryption for payload confidentiality
-- Key rotation policies (time-based, usage-based)
-- Encryption groups for multi-agent collaboration
-- Merkle proofs for on-chain commitment verification
-- Conflict detection and resolution (remote-wins, local-wins, merge)
-
-### Multi-Channel Messaging Gateway
-- 10 platforms: WhatsApp, Telegram, Discord, Slack, Signal, Google Chat, WebChat, iMessage, Teams, Matrix
-- Persistent sessions across gateway restarts (SQLite-backed)
-- Koa-style middleware pipeline (rate limiter, content filter, logger, language detect)
-- Platform-aware rich messages (Embeds, Block Kit, HTML, plain text)
-- 15+ instant bot commands for orders, inventory, analytics, identity
-- Customer identity resolution (auto by phone, manual by email)
-- Proactive notifications routed from engine events to channels
-- AI-to-human handoff with conversation history
-- Config-driven multi-gateway orchestrator (YAML/JSON)
-- Per-channel conversation metrics and command tracking
-- Interactive action handlers (Telegram buttons, Discord buttons, Slack Block Kit)
-- Pre-built message templates for order lifecycle, alerts, and engagement
-
-### Skills System
-- 38 domain-specific commerce skills with SKILL.md references, helper scripts, and runbooks
-- Skills marketplace for browsing, installing, and managing skill packs
-- Covers accounts payable/receivable, fulfillment, quality, warehouse, cost accounting, credit, lots/serials, and more
-- Each skill provides contextual knowledge, troubleshooting, and usage examples
-
-### Voice Mode
-- Speech-to-text input and text-to-speech output for hands-free commerce operations
-- Pluggable providers (ElevenLabs, OpenAI Whisper)
-- Per-session voice settings with 30-minute inactivity TTL
-- Integrated with agent pipeline for natural voice-driven workflows
-
-### Multi-Provider AI
-- Support for Claude (full MCP tools), OpenAI, Google Gemini, and local Ollama models
-- Auto-detection of provider availability and model resolution
-- Configurable fallback chains (try providers in order)
-- Non-Claude providers operate in chat-only mode
-
-### Conversation Memory
-- SQLite-backed persistent memory across sessions
-- Stores summaries, facts, and token counts per conversation
-- Keyword search across memory store
-- Auto-cleanup of aged memories
-
-### Browser Automation
-- Chrome DevTools Protocol (CDP) integration — no Puppeteer dependency
-- Headless Chrome spawning and lifecycle management
-- Navigation, DOM queries, JavaScript evaluation, screenshots
-- Useful for web scraping, storefront testing, and catalog sync
-
-### Heartbeat Monitor
-- 6 proactive health checkers: low-stock, abandoned-carts, revenue-milestone, pending-returns, overdue-invoices, subscription-churn
-- EventBridge routing to all messaging channels
-- HTTP API for status, manual runs, and enable/disable at runtime
-
-### Permission Sandboxing
-- API key authentication (Bearer token and query param)
-- Per-route permission levels: none < read < preview < write < delete < admin
-- Sandbox mode to block dangerous routes (browser automation, shell execution)
-
-### Agent-to-Agent (A2A) Commerce
-- Direct agent-to-agent payments (USDC, USDT, ssUSD, DAI across SET Chain, Base, Ethereum, Arbitrum)
-- Quote/negotiate workflow (request → provide → accept/decline → fulfill)
-- Recurring subscriptions between agents (weekly → annual intervals, trial periods, pause/resume)
-- Multi-party split payments with percentage or fixed-amount splits and platform fees
-- Conditional payments with escrow (seller_fulfilled, buyer_confirmed, time_lock, milestone)
-- HMAC-SHA256 signed webhook notifications with SSRF validation and exponential backoff retry
-- Real-time SSE event streaming with wildcard/prefix filtering and persistent event log
-- Agent discovery by capability, reputation scoring, and trust-level gating
-- Idempotency keys to prevent duplicate payments
-- Registry-generated A2A tooling plus the broader MCP runtime surface
-
-### AI-Ready Architecture
-- Deterministic operations for agent reliability
-- MCP protocol integration with a registry-generated tool inventory
-- Safety architecture (--apply flag for writes)
-- Event-driven for full auditability
-- Portable state in single database file
+| Domain | Capabilities |
+| --- | --- |
+| **Commerce** | Order lifecycle (create → confirm → ship → deliver) · multi-location inventory with reservations · customer profiles · product catalog with variants/attributes |
+| **Financial** | 35+ currencies (BTC, ETH, USDC included) · multi-method payments + refunds · invoice generation · supplier purchase orders |
+| **Tax** | US/EU/Canada multi-jurisdiction calc · state/province auto-lookup · exemptions & certificates · EU VAT · CA GST/HST/PST |
+| **Promotions** | %/fixed discounts · coupon codes with usage limits · BXGY · free shipping · time-limited campaigns |
+| **Subscriptions** | Daily/weekly/monthly/annual plans · trial periods · pause/resume/cancel/skip · billing cycle management |
+| **Supply chain** | Manufacturing BOMs · work orders with task tracking · carrier shipment tracking · RMA processing |
+| **Analytics** | Sales summaries · demand forecast per SKU · revenue projections (with confidence intervals) · inventory health · customer LTV |
+| **A2A commerce** | Direct agent-to-agent payments (USDC/USDT/ssUSD/DAI on SET Chain, Base, Ethereum, Arbitrum) · quote/negotiate · recurring subscriptions · split payments · escrow with conditional release · HMAC-signed webhooks · SSE event streaming · agent discovery + reputation. See [`AGENTIC_COMMERCE.md`](./AGENTIC_COMMERCE.md). |
+| **VES v1.0** | Local-first with sequencer sync · Ed25519 + ML-DSA-65 hybrid signatures · X25519 + ML-KEM-768 hybrid encryption · key rotation · encryption groups · Merkle proofs · conflict resolution (remote-wins/local-wins/merge). See [`PQC_INITIAL_SPEC.md`](./docs/PQC_INITIAL_SPEC.md). |
+| **Messaging** | 10 platforms (WhatsApp, Telegram, Discord, Slack, Signal, Google Chat, WebChat, iMessage, Teams, Matrix) · SQLite-backed sessions · Koa-style middleware · rich messages (Embeds, Block Kit, HTML) · 15+ bot commands · proactive notifications · AI↔human handoff |
+| **Skills system** | 38 domain skills (AP/AR, fulfillment, quality, warehouse, cost accounting, credit, lots/serials, …) · skills marketplace for browse/install/manage |
+| **Voice mode** | STT input + TTS output · pluggable providers (ElevenLabs, OpenAI Whisper) · 30-min inactivity TTL on per-session settings |
+| **Multi-provider AI** | Claude (full MCP), OpenAI, Gemini, local Ollama · auto-detection · fallback chains. Non-Claude providers run chat-only. |
+| **Conversation memory** | SQLite-backed across sessions · summaries + facts + token counts · keyword search · age-based auto-cleanup |
+| **Browser automation** | CDP integration (no Puppeteer) · headless Chrome lifecycle · navigation, DOM, JS eval, screenshots — for scraping, storefront tests, catalog sync |
+| **Heartbeat monitor** | 6 proactive checkers: low-stock, abandoned-carts, revenue-milestone, pending-returns, overdue-invoices, subscription-churn · EventBridge → channels · HTTP API for status / manual runs / enable+disable |
+| **Permission sandboxing** | Bearer + query-param API keys · 6 levels: none < read < preview < write < delete < admin · sandbox mode blocks dangerous routes |
+| **AI-ready architecture** | Deterministic operations · registry-generated MCP tool inventory · `--apply` write gate · event-driven full auditability · portable single-file state |
 
 ---
 
 ## Installation
 
-### Rust
+Per-language install commands and working code samples live under
+[Quick Start](#quick-start) above. The [Language Bindings](#language-bindings)
+table immediately below summarizes every package and links to its docs.
+Platform-specific notes that don't fit either:
 
-```toml
-[dependencies]
-stateset-embedded = "1.0.3"
-rust_decimal = "1.36"
-rust_decimal_macros = "1.36"
-```
+- **Java (Maven)** — alternative to the Gradle line in the table:
 
-### Node.js
-
-```bash
-npm install @stateset/embedded
-```
-
-### Python
-
-```bash
-pip install stateset-embedded
-```
-
-### Ruby
-
-```bash
-gem install stateset_embedded
-```
-
-Or add to your Gemfile:
-
-```ruby
-gem 'stateset_embedded'
-```
-
-### PHP
-
-```bash
-composer require stateset/embedded
-
-# Install the native extension for best performance
-composer install-extension
-```
-
-Then add to your `php.ini`:
-
-```ini
-extension=stateset_embedded
-```
-
-### Java (Maven)
-
-```xml
-<dependency>
+  ```xml
+  <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.0.3</version>
-</dependency>
-```
+    <version>1.0.4</version>
+  </dependency>
+  ```
 
-### Java (Gradle)
+- **PHP** — after `composer require stateset/embedded`, enable the native
+  extension by running `composer install-extension` and adding
+  `extension=stateset_embedded` to your `php.ini`. Without the extension
+  the autoloaded stubs throw at runtime.
 
-```groovy
-implementation 'com.stateset:embedded:1.0.3'
-```
+- **Swift** — Swift Package Manager is the supported path. CocoaPods is
+  community-maintained at `pod 'StateSet', '~> 1.0.4'`.
 
-### Kotlin (Gradle)
-
-```kotlin
-// build.gradle.kts
-dependencies {
-    implementation("com.stateset:embedded-kotlin:1.0.3")
-}
-```
-
-### Swift (Swift Package Manager)
-
-```swift
-// Package.swift
-dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "1.0.3")
-]
-```
-
-Or with CocoaPods:
-
-```ruby
-pod 'StateSet', '~> 1.0.3'
-```
-
-### C# / .NET (NuGet)
-
-```bash
-dotnet add package StateSet.Embedded --version 1.0.3
-```
-
-Or in your `.csproj`:
-
-```xml
-<PackageReference Include="StateSet.Embedded" Version="1.0.3" />
-```
-
-### Go
-
-```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.0.3
-```
-
-### CLI
-
-```bash
-cd cli
-npm install
-npm link
-
-# Verify installation
-stateset --help
-```
+- **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
+  that, `stateset --help` works anywhere.
 
 ---
 
@@ -1408,16 +1114,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-sdk` | `cargo add stateset-sdk --features full` | [docs.rs](https://docs.rs/stateset-sdk) |
-| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.0.4"` | [docs.rs](https://docs.rs/stateset-sdk) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.0.4` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
-| **Java** | `com.stateset:embedded` | Maven/Gradle | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
-| **Kotlin** | `com.stateset:embedded-kotlin` | Gradle | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
-| **Swift** | `StateSet` | Swift PM / CocoaPods | [GitHub](https://github.com/stateset/stateset-swift) |
-| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
-| **Go** | `stateset` | `go get github.com/stateset/.../stateset` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.0.4'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.0.4")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.0.4")` | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.0.4` / `<PackageReference Include="StateSet.Embedded" Version="1.0.4" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.0.4` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use

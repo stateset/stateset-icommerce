@@ -705,7 +705,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, invoice_number, order_id, customer_id, status, issue_date, due_date, subtotal, tax, shipping, discount, total, amount_paid, balance_due, currency, notes, terms, created_at, updated_at
+            "SELECT id, invoice_number, order_id, customer_id, status, invoice_date, due_date, subtotal, tax_amount, shipping_amount, discount_amount, total, amount_paid, balance_due, currency, notes, terms, created_at, updated_at
              FROM invoices
              WHERE status NOT IN ('paid', 'voided', 'written_off')
                AND CAST(balance_due AS REAL) > 0
@@ -1587,7 +1587,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let result: rusqlite::Result<f64> = conn.query_row(
-            "SELECT AVG(JULIANDAY(pa.applied_date) - JULIANDAY(i.issue_date))
+            "SELECT AVG(JULIANDAY(pa.applied_date) - JULIANDAY(i.invoice_date))
              FROM ar_payment_applications pa
              JOIN invoices i ON pa.invoice_id = i.id
              WHERE i.customer_id = ?1 AND i.status = 'paid'",
@@ -1611,5 +1611,197 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             }
         }
         Ok(summaries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        AccountsReceivableRepository, ApplyCreditMemo, ArAgingFilter, CreateCreditMemo,
+        CreditMemoFilter, CreditMemoReason, CreditMemoStatus,
+    };
+
+    fn fresh_repo() -> SqliteAccountsReceivableRepository {
+        SqliteDatabase::in_memory().expect("in-memory").accounts_receivable()
+    }
+
+    fn make_memo(
+        repo: &SqliteAccountsReceivableRepository,
+        customer_id: Uuid,
+        amount: Decimal,
+        reason: CreditMemoReason,
+    ) -> CreditMemo {
+        repo.create_credit_memo(CreateCreditMemo {
+            customer_id,
+            original_invoice_id: None,
+            reason,
+            amount,
+            notes: Some("test".into()),
+        })
+        .expect("create memo")
+    }
+
+    #[test]
+    fn empty_aging_summary_is_zero() {
+        let repo = fresh_repo();
+        let summary = repo.get_aging_summary().expect("ok");
+        assert_eq!(summary.total, dec!(0));
+        assert_eq!(summary.current, dec!(0));
+        assert_eq!(summary.days_over_90, dec!(0));
+    }
+
+    #[test]
+    fn empty_aging_report_returns_empty() {
+        let repo = fresh_repo();
+        let rows = repo.get_aging_report(ArAgingFilter::default()).expect("ok");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn empty_total_outstanding_is_zero() {
+        let repo = fresh_repo();
+        assert_eq!(repo.get_total_outstanding().expect("ok"), dec!(0));
+    }
+
+    #[test]
+    fn empty_dso_is_zero() {
+        let repo = fresh_repo();
+        assert_eq!(repo.get_dso(30).expect("ok"), dec!(0));
+    }
+
+    #[test]
+    fn average_days_to_pay_for_unknown_customer_is_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_average_days_to_pay(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn create_credit_memo_starts_open_with_full_unapplied() {
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let memo = make_memo(&repo, cust, dec!(100), CreditMemoReason::ReturnedGoods);
+        assert_eq!(memo.amount, dec!(100));
+        assert_eq!(memo.applied_amount, dec!(0));
+        assert_eq!(memo.unapplied_amount, dec!(100));
+        assert_eq!(memo.status, CreditMemoStatus::Open);
+        assert!(memo.credit_memo_number.starts_with("CM-"));
+    }
+
+    #[test]
+    fn get_credit_memo_round_trips() {
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let memo = make_memo(&repo, cust, dec!(50), CreditMemoReason::PricingError);
+        let by_id = repo.get_credit_memo(memo.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, memo.id);
+        let by_num =
+            repo.get_credit_memo_by_number(&memo.credit_memo_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, memo.id);
+        assert!(repo.get_credit_memo_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_credit_memos_filters_by_customer() {
+        let repo = fresh_repo();
+        let cust_a = Uuid::new_v4();
+        let cust_b = Uuid::new_v4();
+        make_memo(&repo, cust_a, dec!(10), CreditMemoReason::Damaged);
+        make_memo(&repo, cust_a, dec!(20), CreditMemoReason::Overpayment);
+        make_memo(&repo, cust_b, dec!(30), CreditMemoReason::ReturnedGoods);
+
+        let for_a = repo
+            .list_credit_memos(CreditMemoFilter { customer_id: Some(cust_a), ..Default::default() })
+            .expect("list");
+        assert_eq!(for_a.len(), 2);
+        assert!(for_a.iter().all(|m| m.customer_id == cust_a));
+    }
+
+    #[test]
+    fn list_credit_memos_filters_by_status() {
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let to_void = make_memo(&repo, cust, dec!(10), CreditMemoReason::ReturnedGoods);
+        let _staying_open = make_memo(&repo, cust, dec!(20), CreditMemoReason::ReturnedGoods);
+        repo.void_credit_memo(to_void.id).expect("void");
+
+        let opens = repo
+            .list_credit_memos(CreditMemoFilter {
+                status: Some(CreditMemoStatus::Open),
+                ..Default::default()
+            })
+            .expect("opens");
+        let voided = repo
+            .list_credit_memos(CreditMemoFilter {
+                status: Some(CreditMemoStatus::Voided),
+                ..Default::default()
+            })
+            .expect("voided");
+        assert_eq!(opens.len(), 1);
+        assert_eq!(voided.len(), 1);
+    }
+
+    #[test]
+    fn void_credit_memo_changes_status() {
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let memo = make_memo(&repo, cust, dec!(15), CreditMemoReason::ReturnedGoods);
+        let voided = repo.void_credit_memo(memo.id).expect("void");
+        assert_eq!(voided.status, CreditMemoStatus::Voided);
+    }
+
+    #[test]
+    fn get_unapplied_credits_filters_by_customer() {
+        let repo = fresh_repo();
+        let cust_a = Uuid::new_v4();
+        let cust_b = Uuid::new_v4();
+        make_memo(&repo, cust_a, dec!(40), CreditMemoReason::ReturnedGoods);
+        make_memo(&repo, cust_b, dec!(50), CreditMemoReason::ReturnedGoods);
+
+        let unapplied = repo.get_unapplied_credits(cust_a).expect("ok");
+        assert_eq!(unapplied.len(), 1);
+        assert_eq!(unapplied[0].customer_id, cust_a);
+    }
+
+    #[test]
+    fn apply_credit_memo_to_nonexistent_invoice_errors() {
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let memo = make_memo(&repo, cust, dec!(10), CreditMemoReason::ReturnedGoods);
+        let result = repo.apply_credit_memo(ApplyCreditMemo {
+            credit_memo_id: memo.id,
+            invoice_id: Uuid::new_v4(),
+            amount: dec!(5),
+        });
+        assert!(result.is_err(), "should fail without an invoice");
+    }
+
+    #[test]
+    fn customer_summary_for_unknown_customer_is_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_customer_summary(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_payment_applications_empty_for_unknown_payment() {
+        let repo = fresh_repo();
+        let apps = repo.get_payment_applications(Uuid::new_v4()).expect("ok");
+        assert!(apps.is_empty());
+    }
+
+    #[test]
+    fn get_invoices_due_for_dunning_empty_on_fresh_db() {
+        let repo = fresh_repo();
+        let invoices = repo.get_invoices_due_for_dunning().expect("ok");
+        assert!(invoices.is_empty());
+    }
+
+    #[test]
+    fn get_customers_batch_returns_only_existing() {
+        let repo = fresh_repo();
+        let result = repo.get_customers_batch(vec![Uuid::new_v4(), Uuid::new_v4()]).expect("ok");
+        assert!(result.is_empty());
     }
 }

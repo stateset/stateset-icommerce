@@ -560,19 +560,24 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let conn = self.conn()?;
         let threshold_val = threshold.unwrap_or(Decimal::from(10)).to_string();
 
+        // inventory_balances stores `quantity_on_hand` and `quantity_allocated` (per migration 002),
+        // and `reorder_point` lives on inventory_balances, not inventory_items.
         let mut stmt = conn
             .prepare(
                 r"
                 SELECT
                     ii.sku,
                     ii.name,
-                    CAST(COALESCE(ib.on_hand, 0) AS TEXT) as on_hand,
-                    CAST(COALESCE(ib.allocated, 0) AS TEXT) as allocated,
-                    CAST(COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0) AS TEXT) as available,
-                    ii.reorder_point
+                    CAST(COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0) AS TEXT) as on_hand,
+                    CAST(COALESCE(SUM(CAST(ib.quantity_allocated AS REAL)), 0) AS TEXT) as allocated,
+                    CAST(COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0)
+                         - COALESCE(SUM(CAST(ib.quantity_allocated AS REAL)), 0) AS TEXT) as available,
+                    MAX(ib.reorder_point) as reorder_point
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
-                WHERE COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0) <= ?1
+                GROUP BY ii.id, ii.sku, ii.name
+                HAVING COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0)
+                       - COALESCE(SUM(CAST(ib.quantity_allocated AS REAL)), 0) <= ?1
                 ORDER BY available ASC
                 ",
             )
@@ -1051,5 +1056,121 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             results.push(self.get_sales_summary(query)?);
         }
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{AnalyticsQuery, AnalyticsRepository, TimePeriod};
+
+    fn fresh_repo() -> SqliteAnalyticsRepository {
+        SqliteDatabase::in_memory().expect("in-memory").analytics()
+    }
+
+    fn last_30_days() -> AnalyticsQuery {
+        AnalyticsQuery::new().period(TimePeriod::Last30Days)
+    }
+
+    #[test]
+    fn empty_db_sales_summary_is_zero() {
+        let repo = fresh_repo();
+        let summary = repo.get_sales_summary(last_30_days()).expect("ok");
+        assert_eq!(summary.total_revenue, dec!(0));
+        assert_eq!(summary.order_count, 0);
+    }
+
+    #[test]
+    fn empty_db_revenue_by_period_is_empty_or_zero() {
+        let repo = fresh_repo();
+        let rows = repo.get_revenue_by_period(last_30_days()).expect("ok");
+        // Empty or all-zero rows are both acceptable when no orders exist.
+        assert!(rows.iter().all(|r| r.revenue == dec!(0) && r.order_count == 0));
+    }
+
+    #[test]
+    fn empty_db_top_products_is_empty() {
+        let repo = fresh_repo();
+        let rows = repo.get_top_products(last_30_days()).expect("ok");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn empty_db_product_performance_is_empty() {
+        let repo = fresh_repo();
+        let rows = repo.get_product_performance(last_30_days()).expect("ok");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn empty_db_customer_metrics_zero() {
+        let repo = fresh_repo();
+        let m = repo.get_customer_metrics(last_30_days()).expect("ok");
+        assert_eq!(m.total_customers, 0);
+        assert_eq!(m.new_customers, 0);
+    }
+
+    #[test]
+    fn empty_db_top_customers_is_empty() {
+        let repo = fresh_repo();
+        let rows = repo.get_top_customers(last_30_days()).expect("ok");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn empty_db_inventory_health_zero() {
+        let repo = fresh_repo();
+        let h = repo.get_inventory_health().expect("ok");
+        assert_eq!(h.total_skus, 0);
+        assert_eq!(h.total_value, dec!(0));
+    }
+
+    #[test]
+    fn empty_db_low_stock_items_is_empty() {
+        let repo = fresh_repo();
+        let rows = repo.get_low_stock_items(Some(dec!(10))).expect("ok");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn empty_db_inventory_movement_is_empty() {
+        let repo = fresh_repo();
+        let rows = repo.get_inventory_movement(last_30_days()).expect("ok");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn empty_db_order_status_breakdown_returns_zero_counts() {
+        let repo = fresh_repo();
+        let b = repo.get_order_status_breakdown(last_30_days()).expect("ok");
+        assert_eq!(b.pending, 0);
+        assert_eq!(b.shipped, 0);
+        assert_eq!(b.delivered, 0);
+    }
+
+    #[test]
+    fn empty_db_fulfillment_metrics_zero_workload() {
+        let repo = fresh_repo();
+        let m = repo.get_fulfillment_metrics(last_30_days()).expect("ok");
+        assert_eq!(m.shipped_today, 0);
+        assert_eq!(m.awaiting_shipment, 0);
+    }
+
+    #[test]
+    fn empty_db_return_metrics_zero() {
+        let repo = fresh_repo();
+        let m = repo.get_return_metrics(last_30_days()).expect("ok");
+        assert_eq!(m.total_returns, 0);
+    }
+
+    #[test]
+    fn batch_query_returns_one_summary_per_input() {
+        let repo = fresh_repo();
+        let queries = vec![last_30_days(), last_30_days(), last_30_days()];
+        let summaries = repo.get_sales_summary_batch(queries).expect("ok");
+        assert_eq!(summaries.len(), 3);
+        assert!(summaries.iter().all(|s| s.total_revenue == dec!(0)));
     }
 }

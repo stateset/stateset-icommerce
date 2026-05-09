@@ -1054,3 +1054,147 @@ impl CreditRepository for SqliteCreditRepository {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateCreditAccount, CreditAccountFilter, CreditAccountStatus, CreditRepository,
+        CustomerId, RiskRating, UpdateCreditAccount,
+    };
+
+    fn fresh_repo() -> SqliteCreditRepository {
+        SqliteDatabase::in_memory().expect("in-memory").credit()
+    }
+
+    fn make_account(
+        repo: &SqliteCreditRepository,
+        customer: CustomerId,
+        limit: Decimal,
+    ) -> CreditAccount {
+        repo.create_credit_account(CreateCreditAccount {
+            customer_id: customer,
+            credit_limit: limit,
+            currency: None,
+            payment_terms: Some("NET30".into()),
+            risk_rating: Some(RiskRating::Low),
+            notes: Some("standard terms".into()),
+        })
+        .expect("create credit account")
+    }
+
+    #[test]
+    fn create_credit_account_round_trips() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let acct = make_account(&repo, cust, dec!(5000));
+        assert_eq!(acct.customer_id, cust);
+        assert_eq!(acct.credit_limit, dec!(5000));
+        assert_eq!(acct.status, CreditAccountStatus::Active);
+
+        let by_id = repo.get_credit_account(acct.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, acct.id);
+
+        let by_cust = repo.get_credit_account_by_customer(cust).expect("ok").expect("found");
+        assert_eq!(by_cust.id, acct.id);
+    }
+
+    #[test]
+    fn update_credit_account_changes_limit_and_status() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let acct = make_account(&repo, cust, dec!(1000));
+        let updated = repo
+            .update_credit_account(
+                acct.id,
+                UpdateCreditAccount {
+                    credit_limit: Some(dec!(2500)),
+                    status: Some(CreditAccountStatus::Suspended),
+                    risk_rating: Some(RiskRating::High),
+                    ..Default::default()
+                },
+            )
+            .expect("update");
+        assert_eq!(updated.credit_limit, dec!(2500));
+        assert_eq!(updated.status, CreditAccountStatus::Suspended);
+        assert_eq!(updated.risk_rating, Some(RiskRating::High));
+    }
+
+    #[test]
+    fn list_credit_accounts_filters_by_status() {
+        let repo = fresh_repo();
+        let active = make_account(&repo, CustomerId::new(), dec!(100));
+        let to_suspend = make_account(&repo, CustomerId::new(), dec!(200));
+        repo.update_credit_account(
+            to_suspend.id,
+            UpdateCreditAccount {
+                status: Some(CreditAccountStatus::Suspended),
+                ..Default::default()
+            },
+        )
+        .expect("suspend");
+
+        let actives = repo
+            .list_credit_accounts(CreditAccountFilter {
+                status: Some(CreditAccountStatus::Active),
+                ..Default::default()
+            })
+            .expect("active");
+        let suspended = repo
+            .list_credit_accounts(CreditAccountFilter {
+                status: Some(CreditAccountStatus::Suspended),
+                ..Default::default()
+            })
+            .expect("suspended");
+        assert!(actives.iter().any(|a| a.id == active.id));
+        assert!(suspended.iter().any(|a| a.id == to_suspend.id));
+    }
+
+    #[test]
+    fn get_active_holds_for_unknown_customer_is_empty() {
+        let repo = fresh_repo();
+        let holds = repo.get_active_holds(CustomerId::new()).expect("ok");
+        assert!(holds.is_empty());
+    }
+
+    #[test]
+    fn get_holds_for_unknown_order_is_empty() {
+        let repo = fresh_repo();
+        let holds = repo.get_holds_for_order(stateset_core::OrderId::new()).expect("ok");
+        assert!(holds.is_empty());
+    }
+
+    #[test]
+    fn get_over_limit_customers_empty_on_fresh_db() {
+        let repo = fresh_repo();
+        let over = repo.get_over_limit_customers().expect("ok");
+        assert!(over.is_empty());
+    }
+
+    #[test]
+    fn aging_report_empty_on_fresh_db() {
+        let repo = fresh_repo();
+        let aging = repo.get_aging_report().expect("ok");
+        assert!(aging.is_empty());
+    }
+
+    #[test]
+    fn get_credit_account_unknown_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_credit_account(stateset_core::CreditId::new()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_credit_account_by_unknown_customer_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_credit_account_by_customer(CustomerId::new()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_application_unknown_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_application(Uuid::new_v4()).expect("ok").is_none());
+    }
+}

@@ -1776,3 +1776,313 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         Ok(accounts)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use chrono::NaiveDate;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        AccountType, CommerceError, CreateGlAccount, CreateGlPeriod, CreateJournalEntry,
+        CreateJournalEntryLine, GeneralLedgerRepository, GlAccountFilter, GlPeriodFilter,
+        JournalEntryFilter, JournalEntryStatus,
+    };
+
+    fn fresh_repo() -> SqliteGeneralLedgerRepository {
+        SqliteDatabase::in_memory().expect("in-memory").general_ledger()
+    }
+
+    fn make_account(repo: &SqliteGeneralLedgerRepository, num: &str, ty: AccountType) -> GlAccount {
+        repo.create_account(CreateGlAccount {
+            account_number: num.into(),
+            name: format!("Account {num}"),
+            description: None,
+            account_type: ty,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: Some(false),
+            is_posting: Some(true),
+            currency: None,
+        })
+        .expect("create account")
+    }
+
+    fn fy_period(repo: &SqliteGeneralLedgerRepository) -> GlPeriod {
+        let p = repo
+            .create_period(CreateGlPeriod {
+                period_name: "FY2026-01".into(),
+                fiscal_year: 2026,
+                period_number: 1,
+                start_date: NaiveDate::from_ymd_opt(2026, 1, 1).expect("date"),
+                end_date: NaiveDate::from_ymd_opt(2026, 1, 31).expect("date"),
+            })
+            .expect("create period");
+        repo.open_period(p.id).expect("open period")
+    }
+
+    #[test]
+    fn create_account_persists_and_round_trips() {
+        let repo = fresh_repo();
+        let acct = make_account(&repo, "1000", AccountType::Asset);
+        assert_eq!(acct.account_number, "1000");
+        let by_id = repo.get_account(acct.id).expect("ok").expect("found");
+        assert_eq!(by_id.account_number, "1000");
+        let by_num = repo.get_account_by_number("1000").expect("ok").expect("found");
+        assert_eq!(by_num.id, acct.id);
+        assert!(repo.get_account_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_accounts_filters_by_type() {
+        let repo = fresh_repo();
+        make_account(&repo, "1000", AccountType::Asset);
+        make_account(&repo, "1100", AccountType::Asset);
+        make_account(&repo, "2000", AccountType::Liability);
+
+        let assets = repo
+            .list_accounts(GlAccountFilter {
+                account_type: Some(AccountType::Asset),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(assets.len(), 2);
+        assert!(assets.iter().all(|a| a.account_type == AccountType::Asset));
+    }
+
+    #[test]
+    fn create_period_round_trips() {
+        let repo = fresh_repo();
+        let period = fy_period(&repo);
+        let by_id = repo.get_period(period.id).expect("ok").expect("found");
+        assert_eq!(by_id.period_name, "FY2026-01");
+
+        let for_date = repo
+            .get_period_for_date(NaiveDate::from_ymd_opt(2026, 1, 15).expect("date"))
+            .expect("ok")
+            .expect("found");
+        assert_eq!(for_date.id, period.id);
+
+        let listed = repo
+            .list_periods(GlPeriodFilter { fiscal_year: Some(2026), ..Default::default() })
+            .expect("list");
+        assert_eq!(listed.len(), 1);
+    }
+
+    #[test]
+    fn create_journal_entry_starts_in_draft() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+
+        let entry = repo
+            .create_journal_entry(CreateJournalEntry {
+                entry_date: NaiveDate::from_ymd_opt(2026, 1, 10).expect("date"),
+                entry_type: None,
+                description: "Sale".into(),
+                lines: vec![
+                    CreateJournalEntryLine::debit(cash.id, dec!(100), None),
+                    CreateJournalEntryLine::credit(revenue.id, dec!(100), None),
+                ],
+                source_document_type: None,
+                source_document_id: None,
+                auto_post: Some(false),
+            })
+            .expect("create");
+
+        assert_eq!(entry.status, JournalEntryStatus::Draft);
+        assert!(entry.is_balanced);
+        assert_eq!(entry.total_debits, dec!(100));
+        assert_eq!(entry.total_credits, dec!(100));
+    }
+
+    #[test]
+    fn create_journal_entry_rejects_mixed_debit_credit_line() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+
+        let err = repo
+            .create_journal_entry(CreateJournalEntry {
+                entry_date: NaiveDate::from_ymd_opt(2026, 1, 10).expect("date"),
+                entry_type: None,
+                description: "Bad line".into(),
+                lines: vec![CreateJournalEntryLine {
+                    account_id: cash.id,
+                    description: None,
+                    debit_amount: dec!(50),
+                    credit_amount: dec!(50),
+                    reference_type: None,
+                    reference_id: None,
+                }],
+                source_document_type: None,
+                source_document_id: Some(revenue.id),
+                auto_post: None,
+            })
+            .expect_err("err");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
+    }
+
+    #[test]
+    fn create_journal_entry_without_period_returns_validation_error() {
+        let repo = fresh_repo();
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+
+        let err = repo
+            .create_journal_entry(CreateJournalEntry {
+                entry_date: NaiveDate::from_ymd_opt(2099, 1, 1).expect("date"),
+                entry_type: None,
+                description: "no period".into(),
+                lines: vec![
+                    CreateJournalEntryLine::debit(cash.id, dec!(1), None),
+                    CreateJournalEntryLine::credit(revenue.id, dec!(1), None),
+                ],
+                source_document_type: None,
+                source_document_id: None,
+                auto_post: None,
+            })
+            .expect_err("err");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
+    }
+
+    #[test]
+    fn post_journal_entry_marks_posted() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+
+        let entry = repo
+            .create_journal_entry(CreateJournalEntry {
+                entry_date: NaiveDate::from_ymd_opt(2026, 1, 10).expect("date"),
+                entry_type: None,
+                description: "Sale".into(),
+                lines: vec![
+                    CreateJournalEntryLine::debit(cash.id, dec!(50), None),
+                    CreateJournalEntryLine::credit(revenue.id, dec!(50), None),
+                ],
+                source_document_type: None,
+                source_document_id: None,
+                auto_post: Some(false),
+            })
+            .expect("create");
+
+        let posted = repo.post_journal_entry(entry.id, "tester").expect("post");
+        assert_eq!(posted.status, JournalEntryStatus::Posted);
+    }
+
+    #[test]
+    fn list_journal_entries_filters_by_status() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+
+        let draft = repo
+            .create_journal_entry(CreateJournalEntry {
+                entry_date: NaiveDate::from_ymd_opt(2026, 1, 5).expect("date"),
+                entry_type: None,
+                description: "Draft entry".into(),
+                lines: vec![
+                    CreateJournalEntryLine::debit(cash.id, dec!(10), None),
+                    CreateJournalEntryLine::credit(revenue.id, dec!(10), None),
+                ],
+                source_document_type: None,
+                source_document_id: None,
+                auto_post: Some(false),
+            })
+            .expect("draft");
+
+        let to_post = repo
+            .create_journal_entry(CreateJournalEntry {
+                entry_date: NaiveDate::from_ymd_opt(2026, 1, 6).expect("date"),
+                entry_type: None,
+                description: "Posted entry".into(),
+                lines: vec![
+                    CreateJournalEntryLine::debit(cash.id, dec!(20), None),
+                    CreateJournalEntryLine::credit(revenue.id, dec!(20), None),
+                ],
+                source_document_type: None,
+                source_document_id: None,
+                auto_post: Some(false),
+            })
+            .expect("post");
+        repo.post_journal_entry(to_post.id, "tester").expect("post");
+
+        let drafts = repo
+            .list_journal_entries(JournalEntryFilter {
+                status: Some(JournalEntryStatus::Draft),
+                ..Default::default()
+            })
+            .expect("list");
+        let posted = repo
+            .list_journal_entries(JournalEntryFilter {
+                status: Some(JournalEntryStatus::Posted),
+                ..Default::default()
+            })
+            .expect("list");
+
+        assert!(drafts.iter().any(|e| e.id == draft.id));
+        assert!(posted.iter().any(|e| e.id == to_post.id));
+    }
+
+    #[test]
+    fn close_period_changes_status() {
+        let repo = fresh_repo();
+        let period = fy_period(&repo); // already open
+        assert_eq!(period.status, stateset_core::PeriodStatus::Open);
+        let closed = repo.close_period(period.id, "tester").expect("close");
+        assert_eq!(closed.status, stateset_core::PeriodStatus::Closed);
+    }
+
+    #[test]
+    fn open_period_transitions_future_to_open() {
+        let repo = fresh_repo();
+        let raw = repo
+            .create_period(CreateGlPeriod {
+                period_name: "FY2026-02".into(),
+                fiscal_year: 2026,
+                period_number: 2,
+                start_date: NaiveDate::from_ymd_opt(2026, 2, 1).expect("date"),
+                end_date: NaiveDate::from_ymd_opt(2026, 2, 28).expect("date"),
+            })
+            .expect("create period");
+        assert_eq!(raw.status, stateset_core::PeriodStatus::Future);
+        let opened = repo.open_period(raw.id).expect("open");
+        assert_eq!(opened.status, stateset_core::PeriodStatus::Open);
+    }
+
+    #[test]
+    fn create_journal_entry_in_future_period_returns_error() {
+        let repo = fresh_repo();
+        repo.create_period(CreateGlPeriod {
+            period_name: "FY2026-01".into(),
+            fiscal_year: 2026,
+            period_number: 1,
+            start_date: NaiveDate::from_ymd_opt(2026, 1, 1).expect("date"),
+            end_date: NaiveDate::from_ymd_opt(2026, 1, 31).expect("date"),
+        })
+        .expect("create period");
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+
+        let err = repo
+            .create_journal_entry(CreateJournalEntry {
+                entry_date: NaiveDate::from_ymd_opt(2026, 1, 5).expect("date"),
+                entry_type: None,
+                description: "won't post".into(),
+                lines: vec![
+                    CreateJournalEntryLine::debit(cash.id, dec!(1), None),
+                    CreateJournalEntryLine::credit(revenue.id, dec!(1), None),
+                ],
+                source_document_type: None,
+                source_document_id: None,
+                auto_post: None,
+            })
+            .expect_err("err");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
+    }
+}

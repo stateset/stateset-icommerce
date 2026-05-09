@@ -274,7 +274,7 @@ jobs:
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -283,6 +283,8 @@ jobs:
             build-mode: none
           - language: javascript
             build-mode: none
+          - language: rust
+            build-mode: manual
     permissions:
       security-events: write
       actions: read
@@ -292,11 +294,30 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Install Rust toolchain
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache cargo
+        if: matrix.language == 'rust'
+        uses: Swatinem/rust-cache@v2
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+
+      - name: Build (Rust manual)
+        if: matrix.language == 'rust'
+        run: |
+          # Default-members keeps this scoped to the core crates and skips bindings
+          # that need extra toolchains (Node, Python, JDK, etc.).
+          cargo build --workspace
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
@@ -484,6 +505,13 @@ jobs:
       - name: Smoke JS embedded engine examples
         run: node ./scripts/ci/check_engine_examples.mjs --js-only
 
+      - name: Cross-binding parity (Node)
+        # Verifies the Node napi binding produces byte-identical canonical-JSON,
+        # payload-plain-hash and merkle-root output to Rust ground truth for
+        # every vector in `bindings/test-vectors/v1.json`.
+        working-directory: bindings/node
+        run: node --test test/cross-binding-vectors.js
+
   python-bindings:
     name: Python Bindings
     runs-on: ubuntu-latest
@@ -521,6 +549,14 @@ jobs:
 
       - name: Smoke Python bindings and agent examples
         run: bash scripts/ci/check_python_bindings.sh
+
+      - name: Cross-binding parity (Python)
+        # Verifies the PyO3 binding produces byte-identical canonical-JSON,
+        # payload-plain-hash and merkle-root output to Rust ground truth for
+        # every vector in `bindings/test-vectors/v1.json`. The wheel is
+        # already installed by the previous step.
+        working-directory: bindings/python
+        run: python -m pytest tests/test_cross_binding_vectors.py -v
 
   postgres:
     name: Postgres Parity (${{ matrix.suite }})
@@ -775,6 +811,14 @@ jobs:
         working-directory: bindings/go/example
         run: go run ./
 
+      - name: Cross-binding parity (Go)
+        # Verifies the Go cgo binding produces byte-identical canonical-JSON,
+        # payload-plain-hash and merkle-root output to Rust ground truth for
+        # every vector in `bindings/test-vectors/v1.json`. The cdylib was
+        # built by the previous step.
+        working-directory: bindings/go/stateset
+        run: go test -v ./...
+
   dotnet-bindings:
     name: .NET Bindings
     runs-on: ubuntu-latest
@@ -897,6 +941,27 @@ jobs:
       - name: Build WASM crate
         run: cargo build -p stateset-embedded-wasm --target wasm32-unknown-unknown
 
+      - name: Setup Node.js (for cross-binding test runner)
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked --version "^0.13"
+
+      - name: Build WASM package for nodejs target
+        # The bindings/wasm crate disables wasm-opt in profile metadata
+        # because wasm-opt 1.x rejects newer WASM features used by deps.
+        working-directory: bindings/wasm
+        run: wasm-pack build --release --target nodejs --out-dir pkg-node
+
+      - name: Cross-binding parity (WASM)
+        # Verifies the wasm-bindgen binding produces byte-identical
+        # canonical-JSON, payload-plain-hash and merkle-root output to Rust
+        # ground truth for every vector in `bindings/test-vectors/v1.json`.
+        working-directory: bindings/wasm
+        run: node --test test/cross-binding-vectors.js
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
@@ -987,7 +1052,27 @@ jobs:
       - name: Verify Composer autoload surface
         working-directory: bindings/php
         run: |
-          php -r "require 'vendor/autoload.php'; exit(class_exists('StateSet\\\\Commerce') ? 0 : 1);"
+          php -r "require 'vendor/autoload.php'; exit(class_exists('StateSet\\\\Commerce') && class_exists('StateSet\\\\Crypto') ? 0 : 1);"
+
+      - name: Build native PHP extension (runtime feature)
+        # Compiles libstateset_embedded.so against the host PHP; ext-php-rs
+        # uses php-config to discover headers. Required for the cross-binding
+        # parity test which calls into the actual extension.
+        working-directory: bindings/php
+        run: cargo build --features runtime --release
+
+      - name: Cross-binding parity (PHP)
+        # Loads the freshly built extension and runs only the parity test.
+        # The Crypto stub class would throw if the extension weren't loaded,
+        # so this exercises the real ext-php-rs path end-to-end.
+        working-directory: bindings/php
+        run: |
+          EXT_PATH="$(pwd)/target/release/libstateset_embedded.so"
+          test -f "$EXT_PATH" || { echo "extension not built: $EXT_PATH"; exit 1; }
+          php -d extension="$EXT_PATH" \
+            vendor/bin/phpunit \
+            --filter CryptoVectorTest \
+            tests/CryptoVectorTest.php
 
   release-governance:
     name: Release Governance

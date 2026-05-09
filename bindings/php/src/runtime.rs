@@ -4981,6 +4981,76 @@ impl GeneralLedger {
 }
 
 // ============================================================================
+// Cross-binding crypto primitives
+// ============================================================================
+//
+// Thin ext-php-rs wrappers over the `stateset-crypto` Rust crate so the PHP
+// binding can verify the language-neutral test corpus at
+// `bindings/test-vectors/v1.json`. Counterparts in every wired binding.
+//
+// Each method is `pub fn` returning `PhpResult<Vec<u8>>`, which ext-php-rs
+// marshals to a PHP `string` (binary-safe). Errors raise PHP exceptions.
+
+#[php_class(name = "StateSet\\Crypto")]
+#[derive(Default)]
+pub struct Crypto;
+
+#[php_impl]
+impl Crypto {
+    /// Return the RFC 8785 JCS canonical-form bytes for a JSON string.
+    pub fn jcs_canonicalize(json: String) -> PhpResult<Vec<u8>> {
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| PhpException::default(format!("invalid JSON: {e}")))?;
+        ::stateset_crypto::canonicalize::canonicalize_json_bytes(&value)
+            .map_err(|e| PhpException::default(format!("canonicalize: {e}")).into())
+    }
+
+    /// Compute the VES v1.0 payload-plain hash. Returns 32 bytes.
+    /// `salt`, when provided, must be exactly 16 bytes.
+    pub fn payload_plain_hash(json: String, salt: Option<Vec<u8>>) -> PhpResult<Vec<u8>> {
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| PhpException::default(format!("invalid JSON: {e}")))?;
+        let salt_arr = match salt {
+            None => None,
+            Some(s) => {
+                if s.len() != 16 {
+                    return Err(PhpException::default(format!(
+                        "salt must be exactly 16 bytes, got {}",
+                        s.len()
+                    ))
+                    .into());
+                }
+                let mut buf = [0_u8; 16];
+                buf.copy_from_slice(&s);
+                Some(buf)
+            }
+        };
+        let digest =
+            ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref())
+                .map_err(|e| PhpException::default(format!("payload_plain_hash: {e}")))?;
+        Ok(digest.to_vec())
+    }
+
+    /// Compute the merkle root of a list of 32-byte leaves. Returns 32 bytes.
+    pub fn merkle_root(leaves: Vec<Vec<u8>>) -> PhpResult<Vec<u8>> {
+        let mut typed: Vec<[u8; 32]> = Vec::with_capacity(leaves.len());
+        for (i, leaf) in leaves.iter().enumerate() {
+            if leaf.len() != 32 {
+                return Err(PhpException::default(format!(
+                    "leaf {i} must be 32 bytes, got {}",
+                    leaf.len()
+                ))
+                .into());
+            }
+            let mut buf = [0_u8; 32];
+            buf.copy_from_slice(leaf);
+            typed.push(buf);
+        }
+        Ok(::stateset_crypto::merkle::compute_merkle_root(&typed).to_vec())
+    }
+}
+
+// ============================================================================
 // Module Registration
 // ============================================================================
 

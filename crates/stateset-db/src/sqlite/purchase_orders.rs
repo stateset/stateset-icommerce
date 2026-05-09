@@ -464,7 +464,16 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let conn = self.conn()?;
 
         let mut sql = "SELECT * FROM suppliers WHERE 1=1".to_string();
+        let mut bindings: Vec<String> = Vec::new();
 
+        if let Some(name) = filter.name.as_ref() {
+            sql.push_str(" AND LOWER(name) LIKE LOWER(?)");
+            bindings.push(format!("%{name}%"));
+        }
+        if let Some(country) = filter.country.as_ref() {
+            sql.push_str(" AND country = ?");
+            bindings.push(country.clone());
+        }
         if filter.active_only.unwrap_or(false) {
             sql.push_str(" AND is_active = 1");
         }
@@ -473,10 +482,16 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         if let Some(limit) = filter.limit {
             sql.push_str(&format!(" LIMIT {limit}"));
+            if let Some(offset) = filter.offset {
+                sql.push_str(&format!(" OFFSET {offset}"));
+            }
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map([], Self::row_to_supplier).map_err(map_db_error)?;
+        let bind_refs: Vec<&dyn rusqlite::ToSql> =
+            bindings.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let rows =
+            stmt.query_map(bind_refs.as_slice(), Self::row_to_supplier).map_err(map_db_error)?;
 
         let mut suppliers = Vec::new();
         for row in rows {
@@ -1398,5 +1413,248 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         }
 
         Ok(orders)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PurchaseOrderFilter,
+        PurchaseOrderRepository, PurchaseOrderStatus, SupplierFilter,
+    };
+
+    fn fresh_repo() -> SqlitePurchaseOrderRepository {
+        SqliteDatabase::in_memory().expect("in-memory").purchase_orders()
+    }
+
+    fn make_supplier(repo: &SqlitePurchaseOrderRepository, name: &str) -> Supplier {
+        repo.create_supplier(CreateSupplier {
+            name: name.into(),
+            supplier_code: None,
+            contact_name: Some("Buyer Co".into()),
+            email: Some("buyer@example.com".into()),
+            phone: None,
+            website: None,
+            address: None,
+            city: None,
+            state: None,
+            postal_code: None,
+            country: Some("US".into()),
+            tax_id: None,
+            payment_terms: None,
+            currency: None,
+            lead_time_days: Some(7),
+            minimum_order: None,
+            notes: None,
+        })
+        .expect("create supplier")
+    }
+
+    fn make_po_item(sku: &str, qty: Decimal, cost: Decimal) -> CreatePurchaseOrderItem {
+        CreatePurchaseOrderItem {
+            sku: sku.into(),
+            name: format!("Item {sku}"),
+            quantity: qty,
+            unit_cost: cost,
+            unit_of_measure: Some("EA".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn create_supplier_persists_with_generated_code_when_omitted() {
+        let repo = fresh_repo();
+        let s = make_supplier(&repo, "ACME Corp");
+        assert_eq!(s.name, "ACME Corp");
+        assert!(!s.supplier_code.is_empty());
+        let by_id = repo.get_supplier(s.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, s.id);
+        let by_code = repo.get_supplier_by_code(&s.supplier_code).expect("ok").expect("found");
+        assert_eq!(by_code.id, s.id);
+    }
+
+    #[test]
+    fn list_suppliers_filters_by_name() {
+        let repo = fresh_repo();
+        make_supplier(&repo, "Acme Corp");
+        make_supplier(&repo, "Acme Subsidiary");
+        make_supplier(&repo, "Globex");
+
+        let acmes = repo
+            .list_suppliers(SupplierFilter { name: Some("Acme".into()), ..Default::default() })
+            .expect("list");
+        assert_eq!(acmes.len(), 2);
+    }
+
+    #[test]
+    fn create_po_starts_in_draft_with_lines() {
+        let repo = fresh_repo();
+        let supplier = make_supplier(&repo, "ACME");
+        let po = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: supplier.id,
+                items: vec![
+                    make_po_item("SKU-A", dec!(10), dec!(5)),
+                    make_po_item("SKU-B", dec!(2), dec!(15)),
+                ],
+                ..Default::default()
+            })
+            .expect("create");
+        assert_eq!(po.status, PurchaseOrderStatus::Draft);
+        assert!(!po.po_number.is_empty());
+
+        let items = repo.get_items(po.id).expect("items");
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn get_and_get_by_number_round_trips() {
+        let repo = fresh_repo();
+        let supplier = make_supplier(&repo, "ACME");
+        let po = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: supplier.id,
+                items: vec![make_po_item("SKU-X", dec!(1), dec!(1))],
+                ..Default::default()
+            })
+            .expect("create");
+        let by_id = repo.get(po.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, po.id);
+        let by_num = repo.get_by_number(&po.po_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, po.id);
+        assert!(repo.get_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn approve_transitions_status() {
+        let repo = fresh_repo();
+        let supplier = make_supplier(&repo, "ACME");
+        let po = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: supplier.id,
+                items: vec![make_po_item("SKU-AP", dec!(1), dec!(10))],
+                ..Default::default()
+            })
+            .expect("create");
+        let approved = repo.approve(po.id, "manager").expect("approve");
+        assert_eq!(approved.status, PurchaseOrderStatus::Approved);
+    }
+
+    #[test]
+    fn cancel_transitions_status() {
+        let repo = fresh_repo();
+        let supplier = make_supplier(&repo, "ACME");
+        let po = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: supplier.id,
+                items: vec![make_po_item("SKU-CA", dec!(1), dec!(10))],
+                ..Default::default()
+            })
+            .expect("create");
+        let cancelled = repo.cancel(po.id).expect("cancel");
+        assert_eq!(cancelled.status, PurchaseOrderStatus::Cancelled);
+    }
+
+    #[test]
+    fn list_filters_by_supplier() {
+        let repo = fresh_repo();
+        let s1 = make_supplier(&repo, "S1");
+        let s2 = make_supplier(&repo, "S2");
+        repo.create(CreatePurchaseOrder {
+            supplier_id: s1.id,
+            items: vec![make_po_item("SKU-A", dec!(1), dec!(1))],
+            ..Default::default()
+        })
+        .expect("c1");
+        repo.create(CreatePurchaseOrder {
+            supplier_id: s1.id,
+            items: vec![make_po_item("SKU-B", dec!(1), dec!(1))],
+            ..Default::default()
+        })
+        .expect("c2");
+        repo.create(CreatePurchaseOrder {
+            supplier_id: s2.id,
+            items: vec![make_po_item("SKU-C", dec!(1), dec!(1))],
+            ..Default::default()
+        })
+        .expect("c3");
+
+        let for_s1 = repo
+            .list(PurchaseOrderFilter { supplier_id: Some(s1.id), ..Default::default() })
+            .expect("list");
+        assert_eq!(for_s1.len(), 2);
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        let s = make_supplier(&repo, "ACME");
+        let po_draft = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item("SKU-D", dec!(1), dec!(1))],
+                ..Default::default()
+            })
+            .expect("c1");
+        let po_to_approve = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item("SKU-E", dec!(1), dec!(1))],
+                ..Default::default()
+            })
+            .expect("c2");
+        repo.approve(po_to_approve.id, "manager").expect("approve");
+
+        let drafts = repo
+            .list(PurchaseOrderFilter {
+                status: Some(PurchaseOrderStatus::Draft),
+                ..Default::default()
+            })
+            .expect("drafts");
+        let approved = repo
+            .list(PurchaseOrderFilter {
+                status: Some(PurchaseOrderStatus::Approved),
+                ..Default::default()
+            })
+            .expect("approved");
+        assert!(drafts.iter().any(|p| p.id == po_draft.id));
+        assert!(approved.iter().any(|p| p.id == po_to_approve.id));
+    }
+
+    #[test]
+    fn create_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let supplier = make_supplier(&repo, "ACME");
+        let result = repo
+            .create_batch(vec![
+                CreatePurchaseOrder {
+                    supplier_id: supplier.id,
+                    items: vec![make_po_item("SKU-1", dec!(1), dec!(1))],
+                    ..Default::default()
+                },
+                CreatePurchaseOrder {
+                    supplier_id: supplier.id,
+                    items: vec![make_po_item("SKU-2", dec!(2), dec!(2))],
+                    ..Default::default()
+                },
+            ])
+            .expect("batch");
+        assert_eq!(result.success_count, 2);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn get_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(PurchaseOrderId::new()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_supplier_unknown_id_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_supplier(Uuid::new_v4()).expect("ok").is_none());
     }
 }

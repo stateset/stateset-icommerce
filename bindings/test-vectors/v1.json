@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "description": "Cross-binding compatibility test vectors. See README.md for format and verification recipe.",
+  "categories": {
+    "canonical_json": [
+      {
+        "id": "empty_object",
+        "input": {},
+        "expected_hex": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+        "id": "single_pair",
+        "input": { "a": 1 },
+        "expected_hex": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+      },
+      {
+        "id": "key_ordering",
+        "input": { "z": 1, "a": 2, "m": 3 },
+        "expected_hex": "ebba85cfdc0a724b6cc327ecc545faeb38b9fe02eca603b430eb872f5cf75370"
+      },
+      {
+        "id": "nested_object",
+        "input": { "outer": { "inner": "value" }, "n": 42 },
+        "expected_hex": "fa5c173f98013cf534de2a07b63ca581f40f62e7319033aa8d42e5a4c028d0d6"
+      },
+      {
+        "id": "string_with_escapes",
+        "input": { "s": "line1\nline2\t\"quoted\"" },
+        "expected_hex": "accf34fbc6841982225968458bc98238b54146866c299f9ab3db6530fbaca42d"
+      },
+      {
+        "id": "array_of_objects",
+        "input": [{ "id": 1 }, { "id": 2 }],
+        "expected_hex": "7dcee6a0c50483d0fb68d53b37822d55409a37928ffa228c6b9a482e3373e770"
+      },
+      {
+        "id": "null_value",
+        "input": { "field": null },
+        "expected_hex": "113989a3ad32aa945a2dfc9dc7d0a99174033f31435635a8c67c45d731a0a215"
+      }
+    ],
+    "payload_plain_hash": [
+      {
+        "id": "empty_payload",
+        "input": {},
+        "salt_hex": null,
+        "expected_hex": "dc37bf501c8f6d90152d6243970dade75ea43259d04f3a64542a57332def643e"
+      },
+      {
+        "id": "simple_payload",
+        "input": { "orderId": "ORD-1", "total": 99.99 },
+        "salt_hex": null,
+        "expected_hex": "2c1d12f2e7879044df0dbd115beace3e7204b7afaa00f9946073d2ee5956feb0"
+      },
+      {
+        "id": "salted_payload",
+        "input": { "orderId": "ORD-1" },
+        "salt_hex": "deadbeefcafebabe1234567890abcdef",
+        "expected_hex": "84665adbec9b8e89b3d12355615736c12a720622e1f858d5db63b9cccae35150"
+      }
+    ],
+    "merkle_root": [
+      {
+        "id": "empty_tree",
+        "leaves_hex": [],
+        "expected_hex": "d9dd0e003ba5370a698013c48ed69c6c41d9ebc1236d44b280c52ceacfdad524"
+      },
+      {
+        "id": "single_leaf",
+        "leaves_hex": ["0101010101010101010101010101010101010101010101010101010101010101"],
+        "expected_hex": "0101010101010101010101010101010101010101010101010101010101010101"
+      },
+      {
+        "id": "two_leaves",
+        "leaves_hex": [
+          "0101010101010101010101010101010101010101010101010101010101010101",
+          "0202020202020202020202020202020202020202020202020202020202020202"
+        ],
+        "expected_hex": "5186fbc7094f70b9fc71bcf269fda0530c1c2bd675de918ef39562a6f18752fd"
+      },
+      {
+        "id": "three_leaves_pad",
+        "leaves_hex": [
+          "0101010101010101010101010101010101010101010101010101010101010101",
+          "0202020202020202020202020202020202020202020202020202020202020202",
+          "0303030303030303030303030303030303030303030303030303030303030303"
+        ],
+        "expected_hex": "b273075c5260995967a3e717440e9e12c103e1e500da892e0e100c629314bcbe"
+      }
+    ]
+  }
+}

@@ -12,7 +12,7 @@ iCommerce follows [Semantic Versioning](https://semver.org/):
 
 ## Current Line
 
-The current workspace release line is `v1.0.3`. The `v1` compatibility
+The current workspace release line is `v1.0.4`. The `v1` compatibility
 contract is active now, so breaking changes to the documented stable surfaces
 require a future `v2.0.0` release.
 
@@ -36,9 +36,9 @@ The `v1.0.0` contract is active for the published `v1.x` line:
 
 ## Current Release
 
-**v1.0.3** — patch release for CLI outbound network security, remote
+**v1.0.4** — patch release for CLI outbound network security, remote
 marketplace package validation, and BlueBubbles auth handling. See
-`CHANGELOG.md` and `RELEASE_NOTES_v1.0.3.md` for the release narrative.
+`CHANGELOG.md` and `RELEASE_NOTES_v1.0.4.md` for the release narrative.
 
 ## Compatibility Guarantees
 

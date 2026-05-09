@@ -1163,3 +1163,172 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateInvoice, CreateInvoiceItem, CustomerId, InvoiceFilter, InvoiceRepository,
+        InvoiceStatus,
+    };
+
+    fn fresh_repo() -> SqliteInvoiceRepository {
+        SqliteDatabase::in_memory().expect("in-memory").invoices()
+    }
+
+    fn make_invoice(repo: &SqliteInvoiceRepository, customer: CustomerId) -> Invoice {
+        repo.create(CreateInvoice {
+            customer_id: customer,
+            order_id: None,
+            invoice_type: None,
+            invoice_date: None,
+            due_date: None,
+            days_until_due: Some(30),
+            payment_terms: Some("NET30".into()),
+            currency: None,
+            billing_name: Some("Ada Lovelace".into()),
+            billing_email: Some("ada@example.com".into()),
+            billing_address: None,
+            billing_city: None,
+            billing_state: None,
+            billing_postal_code: None,
+            billing_country: None,
+            discount_amount: None,
+            discount_percent: None,
+            tax_amount: None,
+            tax_rate: None,
+            shipping_amount: None,
+            po_number: None,
+            notes: None,
+            terms: None,
+            footer: None,
+            items: vec![CreateInvoiceItem {
+                description: "Widget".into(),
+                quantity: dec!(2),
+                unit_price: dec!(50),
+                ..Default::default()
+            }],
+        })
+        .expect("create invoice")
+    }
+
+    #[test]
+    fn create_invoice_starts_in_draft_with_items() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let inv = make_invoice(&repo, cust);
+        assert_eq!(inv.customer_id, cust);
+        assert_eq!(inv.status, InvoiceStatus::Draft);
+        assert!(!inv.invoice_number.is_empty());
+
+        let items = repo.get_items(inv.id).expect("items");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].quantity, dec!(2));
+    }
+
+    #[test]
+    fn get_and_get_by_number_round_trip() {
+        let repo = fresh_repo();
+        let inv = make_invoice(&repo, CustomerId::new());
+        let by_id = repo.get(inv.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, inv.id);
+        let by_num = repo.get_by_number(&inv.invoice_number).expect("ok").expect("found");
+        assert_eq!(by_num.id, inv.id);
+        assert!(repo.get_by_number("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn send_transitions_to_sent() {
+        let repo = fresh_repo();
+        let inv = make_invoice(&repo, CustomerId::new());
+        let sent = repo.send(inv.id).expect("send");
+        assert_eq!(sent.status, InvoiceStatus::Sent);
+    }
+
+    #[test]
+    fn void_transitions_to_voided() {
+        let repo = fresh_repo();
+        let inv = make_invoice(&repo, CustomerId::new());
+        let voided = repo.void(inv.id).expect("void");
+        assert_eq!(voided.status, InvoiceStatus::Voided);
+    }
+
+    #[test]
+    fn list_filters_by_customer() {
+        let repo = fresh_repo();
+        let cust_a = CustomerId::new();
+        let cust_b = CustomerId::new();
+        make_invoice(&repo, cust_a);
+        make_invoice(&repo, cust_a);
+        make_invoice(&repo, cust_b);
+
+        let for_a = repo
+            .list(InvoiceFilter { customer_id: Some(cust_a), ..Default::default() })
+            .expect("list");
+        assert_eq!(for_a.len(), 2);
+        assert!(for_a.iter().all(|i| i.customer_id == cust_a));
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let draft = make_invoice(&repo, cust);
+        let to_send = make_invoice(&repo, cust);
+        repo.send(to_send.id).expect("send");
+
+        let drafts = repo
+            .list(InvoiceFilter { status: Some(InvoiceStatus::Draft), ..Default::default() })
+            .expect("drafts");
+        let sents = repo
+            .list(InvoiceFilter { status: Some(InvoiceStatus::Sent), ..Default::default() })
+            .expect("sents");
+        assert!(drafts.iter().any(|i| i.id == draft.id));
+        assert!(sents.iter().any(|i| i.id == to_send.id));
+    }
+
+    #[test]
+    fn get_overdue_empty_on_fresh_db() {
+        let repo = fresh_repo();
+        assert!(repo.get_overdue().expect("ok").is_empty());
+    }
+
+    #[test]
+    fn create_batch_returns_per_input_results() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let mk = |desc: &str| CreateInvoice {
+            customer_id: cust,
+            days_until_due: Some(30),
+            items: vec![CreateInvoiceItem {
+                description: desc.into(),
+                quantity: dec!(1),
+                unit_price: dec!(10),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let result = repo.create_batch(vec![mk("A"), mk("B"), mk("C")]).expect("batch");
+        assert_eq!(result.success_count, 3);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn get_unknown_invoice_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(stateset_core::InvoiceId::new()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_batch_returns_only_existing() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let i1 = make_invoice(&repo, cust);
+        let i2 = make_invoice(&repo, cust);
+        let stranger = stateset_core::InvoiceId::new();
+        let fetched = repo.get_batch(vec![i1.id, i2.id, stranger]).expect("ok");
+        assert_eq!(fetched.len(), 2);
+    }
+}

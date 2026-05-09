@@ -1,6 +1,17 @@
 . "$(dirname "$0")/node-env.sh"
 set -e
 
+# JS/TS formatting + linting (always required)
 npm run format:check
 npm --prefix admin run lint
 npm --prefix cli run lint
+
+# Rust gates — run only when Rust files changed and cargo is available, and skippable
+# via `SKIP_RUST=1 git commit ...` for non-Rust contributors who don't have a toolchain.
+if [ "${SKIP_RUST:-0}" != "1" ] && command -v cargo >/dev/null 2>&1; then
+  if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.(rs|toml)$'; then
+    echo "→ Rust files staged: running cargo fmt --check + cargo clippy -D warnings"
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets -- -D warnings
+  fi
+fi

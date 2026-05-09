@@ -1,0 +1,59 @@
+name: supply-chain
+
+# cargo-vet supply-chain audit. Verifies every dependency in the workspace
+# has either an audit (first-party in `supply-chain/audits.toml`, or imported
+# from trusted feeds in `supply-chain/config.toml`) or an explicit exemption
+# in `supply-chain/config.toml`.
+#
+# Status: required. Bootstrap exemptions cover the existing dep tree, so the
+# gate passes today. From this point forward, any *new* dependency added to
+# the workspace must come with an audit, an import from a trusted feed, or
+# an explicit exemption — otherwise this check fails the PR.
+#
+# To pay down exemptions, replace entries in `supply-chain/config.toml` with
+# audits in `supply-chain/audits.toml` (`cargo vet certify <crate> <version>`).
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vet:
+    name: cargo vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-vet
+        run: cargo install cargo-vet --version "^0.10" --locked
+
+      - name: Refresh imports
+        # Pull the latest audits from the configured trusted feeds. Failures
+        # here are non-fatal — a feed being temporarily unreachable shouldn't
+        # break PRs. The audit step below uses whatever is on disk.
+        continue-on-error: true
+        run: cargo vet --locked --no-suggest
+
+      - name: Audit (required)
+        # Required gate. Fails if any dependency in the workspace is not
+        # covered by an audit, an imported audit, or an exemption.
+        run: cargo vet --locked

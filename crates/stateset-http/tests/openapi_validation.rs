@@ -26,7 +26,7 @@ fn info_has_title() {
 #[test]
 fn info_has_version() {
     let spec = spec_json();
-    assert_eq!(spec["info"]["version"], "1.0.3");
+    assert_eq!(spec["info"]["version"], "1.0.4");
 }
 
 #[test]

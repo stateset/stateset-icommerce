@@ -1226,3 +1226,211 @@ impl PromotionRepository for SqlitePromotionRepository {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CouponFilter, CreateCouponCode, CreatePromotion, PromotionFilter, PromotionStatus,
+        PromotionTarget, PromotionTrigger, PromotionType, StackingBehavior,
+    };
+
+    fn fresh_repo() -> SqlitePromotionRepository {
+        SqliteDatabase::in_memory().expect("in-memory").promotions()
+    }
+
+    fn make_pct_promo(repo: &SqlitePromotionRepository, code: &str, pct: Decimal) -> Promotion {
+        repo.create(CreatePromotion {
+            code: Some(code.into()),
+            name: format!("{code} promo"),
+            description: None,
+            internal_notes: None,
+            promotion_type: PromotionType::PercentageOff,
+            trigger: PromotionTrigger::CouponCode,
+            target: PromotionTarget::Order,
+            stacking: StackingBehavior::Stackable,
+            percentage_off: Some(pct),
+            fixed_amount_off: None,
+            max_discount_amount: None,
+            buy_quantity: None,
+            get_quantity: None,
+            get_discount_percent: None,
+            tiers: None,
+            bundle_product_ids: None,
+            bundle_discount: None,
+            starts_at: None,
+            ends_at: None,
+            total_usage_limit: None,
+            per_customer_limit: None,
+            conditions: None,
+            applicable_product_ids: None,
+            applicable_category_ids: None,
+            applicable_skus: None,
+            excluded_product_ids: None,
+            excluded_category_ids: None,
+            eligible_customer_ids: None,
+            eligible_customer_groups: None,
+            currency: None,
+            priority: None,
+            metadata: None,
+        })
+        .expect("create promo")
+    }
+
+    #[test]
+    fn create_promotion_round_trips() {
+        let repo = fresh_repo();
+        let p = make_pct_promo(&repo, "SAVE10", dec!(0.10));
+        assert_eq!(p.code, "SAVE10");
+        assert_eq!(p.promotion_type, PromotionType::PercentageOff);
+        assert_eq!(p.percentage_off, Some(dec!(0.10)));
+
+        let by_id = repo.get(p.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, p.id);
+        let by_code = repo.get_by_code("SAVE10").expect("ok").expect("found");
+        assert_eq!(by_code.id, p.id);
+        assert!(repo.get_by_code("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_promotions_filters_by_type() {
+        let repo = fresh_repo();
+        make_pct_promo(&repo, "PCT-1", dec!(0.10));
+        make_pct_promo(&repo, "PCT-2", dec!(0.20));
+        repo.create(CreatePromotion {
+            code: Some("FIX-1".into()),
+            name: "Fixed".into(),
+            description: None,
+            internal_notes: None,
+            promotion_type: PromotionType::FixedAmountOff,
+            trigger: PromotionTrigger::Automatic,
+            target: PromotionTarget::Order,
+            stacking: StackingBehavior::Stackable,
+            percentage_off: None,
+            fixed_amount_off: Some(dec!(5)),
+            max_discount_amount: None,
+            buy_quantity: None,
+            get_quantity: None,
+            get_discount_percent: None,
+            tiers: None,
+            bundle_product_ids: None,
+            bundle_discount: None,
+            starts_at: None,
+            ends_at: None,
+            total_usage_limit: None,
+            per_customer_limit: None,
+            conditions: None,
+            applicable_product_ids: None,
+            applicable_category_ids: None,
+            applicable_skus: None,
+            excluded_product_ids: None,
+            excluded_category_ids: None,
+            eligible_customer_ids: None,
+            eligible_customer_groups: None,
+            currency: None,
+            priority: None,
+            metadata: None,
+        })
+        .expect("fixed");
+
+        let pcts = repo
+            .list(PromotionFilter {
+                promotion_type: Some(PromotionType::PercentageOff),
+                ..Default::default()
+            })
+            .expect("pcts");
+        assert!(pcts.iter().all(|p| p.promotion_type == PromotionType::PercentageOff));
+        assert!(pcts.len() >= 2);
+    }
+
+    #[test]
+    fn activate_and_deactivate_change_status() {
+        let repo = fresh_repo();
+        let p = make_pct_promo(&repo, "ACT-1", dec!(0.10));
+        let activated = repo.activate(p.id).expect("activate");
+        assert_eq!(activated.status, PromotionStatus::Active);
+        let paused = repo.deactivate(p.id).expect("deactivate");
+        assert_eq!(paused.status, PromotionStatus::Paused);
+    }
+
+    #[test]
+    fn delete_promotion_removes_it() {
+        let repo = fresh_repo();
+        let p = make_pct_promo(&repo, "DEL-1", dec!(0.10));
+        repo.delete(p.id).expect("delete");
+        assert!(repo.get(p.id).expect("ok").is_none());
+    }
+
+    #[test]
+    fn create_coupon_round_trips() {
+        let repo = fresh_repo();
+        let p = make_pct_promo(&repo, "PROMO-CP", dec!(0.10));
+        let coupon = repo
+            .create_coupon(CreateCouponCode {
+                promotion_id: p.id,
+                code: "WELCOME10".into(),
+                usage_limit: Some(100),
+                per_customer_limit: Some(1),
+                starts_at: None,
+                ends_at: None,
+                metadata: None,
+            })
+            .expect("create coupon");
+        assert_eq!(coupon.code, "WELCOME10");
+        assert_eq!(coupon.promotion_id, p.id);
+
+        let by_id = repo.get_coupon(coupon.id).expect("ok").expect("found");
+        assert_eq!(by_id.id, coupon.id);
+        let by_code = repo.get_coupon_by_code("WELCOME10").expect("ok").expect("found");
+        assert_eq!(by_code.id, coupon.id);
+        assert!(repo.get_coupon_by_code("missing").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_coupons_filters_by_promotion() {
+        let repo = fresh_repo();
+        let p1 = make_pct_promo(&repo, "P1", dec!(0.10));
+        let p2 = make_pct_promo(&repo, "P2", dec!(0.20));
+        for code in ["A1", "A2", "A3"] {
+            repo.create_coupon(CreateCouponCode {
+                promotion_id: p1.id,
+                code: code.into(),
+                usage_limit: None,
+                per_customer_limit: None,
+                starts_at: None,
+                ends_at: None,
+                metadata: None,
+            })
+            .expect("c");
+        }
+        repo.create_coupon(CreateCouponCode {
+            promotion_id: p2.id,
+            code: "B1".into(),
+            usage_limit: None,
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .expect("c");
+
+        let p1_coupons = repo
+            .list_coupons(CouponFilter { promotion_id: Some(p1.id), ..Default::default() })
+            .expect("list");
+        assert_eq!(p1_coupons.len(), 3);
+    }
+
+    #[test]
+    fn get_unknown_promotion_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get(stateset_core::PromotionId::new()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_unknown_coupon_returns_none() {
+        let repo = fresh_repo();
+        assert!(repo.get_coupon(Uuid::new_v4()).expect("ok").is_none());
+    }
+}

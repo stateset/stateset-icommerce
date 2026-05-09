@@ -22,12 +22,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 // =============================================================================
 
 type SharedCommerce = Arc<Mutex<RustCommerce>>;
+type ReservationKey = (usize, i64);
+type ReservationMap = HashMap<ReservationKey, Vec<InventoryReservationEntry>>;
 
 static HANDLE_REGISTRY: OnceLock<Mutex<HashMap<usize, SharedCommerce>>> = OnceLock::new();
 static NEXT_HANDLE_ID: AtomicUsize = AtomicUsize::new(1);
-static RESERVATION_REGISTRY: OnceLock<
-    Mutex<HashMap<(usize, i64), Vec<InventoryReservationEntry>>>,
-> = OnceLock::new();
+static RESERVATION_REGISTRY: OnceLock<Mutex<ReservationMap>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 struct InventoryReservationEntry {
@@ -81,7 +81,7 @@ fn destroy_handle(ptr: jlong) {
         return;
     }
     let _ = with_handle_registry(|handles| handles.remove(&(ptr as usize)));
-    let _ = with_reservation_registry(|reservations| {
+    with_reservation_registry(|reservations| {
         reservations.retain(|(handle_id, _), _| *handle_id != ptr as usize);
     });
 }
@@ -95,7 +95,7 @@ where
     f(&guard)
 }
 
-fn reservation_registry() -> &'static Mutex<HashMap<(usize, i64), Vec<InventoryReservationEntry>>> {
+fn reservation_registry() -> &'static Mutex<ReservationMap> {
     RESERVATION_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -3311,6 +3311,160 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeGetTrialBa
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
+        }
+    }
+}
+
+// =============================================================================
+// Cross-binding crypto primitives
+// =============================================================================
+//
+// Thin JNI wrappers over the `stateset-crypto` Rust crate so the Java binding
+// can verify the language-neutral test corpus at
+// `bindings/test-vectors/v1.json`. Counterparts:
+//   - Rust:   crates/stateset-crypto/tests/cross_binding_vectors.rs
+//   - Node:   bindings/node/test/cross-binding-vectors.js
+//   - Python: bindings/python/tests/test_cross_binding_vectors.py
+//   - Go:     bindings/go/stateset/crypto_test.go
+//   - WASM:   bindings/wasm/test/cross-binding-vectors.js
+//
+// All three throw `StateSetException` on input/runtime errors and return
+// `byte[]` on success.
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Crypto_nativeJcsCanonicalize<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    json: JString<'local>,
+) -> jni::objects::JByteArray<'local> {
+    let s = get_string(&mut env, &json);
+    let value: serde_json::Value = match serde_json::from_str(&s) {
+        Ok(v) => v,
+        Err(e) => {
+            throw_exception(&mut env, &format!("invalid JSON: {e}"));
+            return jni::objects::JByteArray::default();
+        }
+    };
+    let canonical = match ::stateset_crypto::canonicalize::canonicalize_json_bytes(&value) {
+        Ok(b) => b,
+        Err(e) => {
+            throw_exception(&mut env, &format!("canonicalize: {e}"));
+            return jni::objects::JByteArray::default();
+        }
+    };
+    match env.byte_array_from_slice(&canonical) {
+        Ok(arr) => arr,
+        Err(e) => {
+            throw_exception(&mut env, &format!("byte_array_from_slice: {e}"));
+            jni::objects::JByteArray::default()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Crypto_nativePayloadPlainHash<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    json: JString<'local>,
+    salt: jni::objects::JByteArray<'local>,
+) -> jni::objects::JByteArray<'local> {
+    let s = get_string(&mut env, &json);
+    let value: serde_json::Value = match serde_json::from_str(&s) {
+        Ok(v) => v,
+        Err(e) => {
+            throw_exception(&mut env, &format!("invalid JSON: {e}"));
+            return jni::objects::JByteArray::default();
+        }
+    };
+    let salt_arr = if salt.is_null() {
+        None
+    } else {
+        let bytes_i8 = match env.convert_byte_array(&salt) {
+            Ok(b) => b,
+            Err(e) => {
+                throw_exception(&mut env, &format!("convert_byte_array: {e}"));
+                return jni::objects::JByteArray::default();
+            }
+        };
+        if bytes_i8.len() != 16 {
+            throw_exception(
+                &mut env,
+                &format!("salt must be exactly 16 bytes, got {}", bytes_i8.len()),
+            );
+            return jni::objects::JByteArray::default();
+        }
+        let mut buf = [0_u8; 16];
+        for (i, b) in bytes_i8.iter().enumerate() {
+            buf[i] = *b;
+        }
+        Some(buf)
+    };
+    let digest =
+        match ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref()) {
+            Ok(d) => d,
+            Err(e) => {
+                throw_exception(&mut env, &format!("payload_plain_hash: {e}"));
+                return jni::objects::JByteArray::default();
+            }
+        };
+    match env.byte_array_from_slice(&digest) {
+        Ok(arr) => arr,
+        Err(e) => {
+            throw_exception(&mut env, &format!("byte_array_from_slice: {e}"));
+            jni::objects::JByteArray::default()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_Crypto_nativeMerkleRoot<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    leaves: jni::objects::JObjectArray<'local>,
+) -> jni::objects::JByteArray<'local> {
+    let len = match env.get_array_length(&leaves) {
+        Ok(n) => n,
+        Err(e) => {
+            throw_exception(&mut env, &format!("get_array_length: {e}"));
+            return jni::objects::JByteArray::default();
+        }
+    };
+    let mut typed: Vec<[u8; 32]> = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        let leaf_obj = match env.get_object_array_element(&leaves, i) {
+            Ok(o) => o,
+            Err(e) => {
+                throw_exception(&mut env, &format!("get leaf {i}: {e}"));
+                return jni::objects::JByteArray::default();
+            }
+        };
+        let leaf_arr: jni::objects::JByteArray<'_> = leaf_obj.into();
+        let leaf_bytes = match env.convert_byte_array(&leaf_arr) {
+            Ok(b) => b,
+            Err(e) => {
+                throw_exception(&mut env, &format!("convert leaf {i}: {e}"));
+                return jni::objects::JByteArray::default();
+            }
+        };
+        if leaf_bytes.len() != 32 {
+            throw_exception(
+                &mut env,
+                &format!("leaf {i} must be 32 bytes, got {}", leaf_bytes.len()),
+            );
+            return jni::objects::JByteArray::default();
+        }
+        let mut buf = [0_u8; 32];
+        for (j, b) in leaf_bytes.iter().enumerate() {
+            buf[j] = *b;
+        }
+        typed.push(buf);
+    }
+    let root = ::stateset_crypto::merkle::compute_merkle_root(&typed);
+    match env.byte_array_from_slice(&root) {
+        Ok(arr) => arr,
+        Err(e) => {
+            throw_exception(&mut env, &format!("byte_array_from_slice: {e}"));
+            jni::objects::JByteArray::default()
         }
     }
 }

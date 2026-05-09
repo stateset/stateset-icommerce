@@ -1,0 +1,73 @@
+name: fuzz-nightly
+
+# Runs cargo-fuzz harnesses every night and on manual dispatch. We don't gate PRs
+# on fuzz runs (too slow), but a nightly soak gives us bug-discovery coverage on
+# the crypto, hashing, and Merkle paths that user input touches.
+
+on:
+  schedule:
+    # 03:17 UTC daily — nudged off the :00/:30 marks to avoid fleet-wide bursts.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: ${{ matrix.crate }} ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: stateset-crypto
+            target: canonicalize_json
+          - crate: stateset-crypto
+            target: compute_payload_plain_hash
+          - crate: stateset-crypto
+            target: compute_merkle_root
+          - crate: stateset-protocol
+            target: envelope_deserialize
+          - crate: stateset-protocol
+            target: batch_deserialize
+          - crate: stateset-protocol
+            target: canonical_json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/${{ matrix.crate }}/fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Run fuzz target (90 seconds soak)
+        working-directory: crates/${{ matrix.crate }}
+        # Short per-target soak to keep wall time bounded; the value of running
+        # this nightly comes from cumulative coverage across days, not depth on
+        # any single run. Bump `-max_total_time` in dispatch runs for deep soaks.
+        run: |
+          cargo +nightly fuzz run "${{ matrix.target }}" \
+            -- -max_total_time=90 -timeout=10 -rss_limit_mb=2048
+
+      - name: Upload corpus on crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.crate }}-${{ matrix.target }}
+          path: crates/${{ matrix.crate }}/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
