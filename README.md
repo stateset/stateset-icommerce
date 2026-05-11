@@ -14,6 +14,16 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 > as the reference implementation of the Agentic Commerce Protocol.
 > One container, 60 seconds: `npx create-acp-commerce@latest my-store`.
 
+> 🆕 **Intelligent Commerce Protocol (ICP).** This repo also hosts the
+> open spec and reference implementations of ICP-1.0 — the operational
+> lifecycle layer (quote, escrow, fulfillment, dispute, settlement)
+> that sits between checkout protocols (ACP/AP2) and payment rails
+> (x402/USDC). **40+ end-to-end tests pass on every CI run** across
+> HTTP handler, MCP server (Claude Desktop / Cursor / Windsurf), on-chain
+> custody contract, off-chain Settler daemon, and a cross-language
+> conformance suite. Start at **[ICP.md](./ICP.md)** or jump to the
+> **[partnership packet](./icp-spec/PACKET.md)**.
+
 ---
 
 **Install:**

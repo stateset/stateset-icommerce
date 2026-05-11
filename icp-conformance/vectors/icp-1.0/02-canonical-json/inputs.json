@@ -1,0 +1,28 @@
+{
+  "test": "02-canonical-json",
+  "cases": [
+    { "name": "empty-object", "value": {} },
+    { "name": "single-key", "value": { "a": "hi" } },
+    { "name": "key-reorder", "value": { "b": 2, "a": 1 } },
+    { "name": "nested-reorder", "value": { "x": { "b": 2, "a": 1 } } },
+    { "name": "array-preserved", "value": { "x": [3, 1, 2] } },
+    { "name": "string-escapes", "value": { "x": "a\nb\tc\"d" } },
+    { "name": "bool-and-null", "value": { "a": true, "b": false, "c": null } },
+    { "name": "numbers", "value": { "i": 42, "d": 3.14 } },
+    { "name": "monetary-amount-string", "value": { "price": { "amount": "29.99", "currency": "USDC" } } },
+    { "name": "empty-array", "value": { "x": [] } },
+    {
+      "name": "intent-regression",
+      "value": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "buyer": "aid:v1:zABC",
+        "merchant": "aid:v1:zDEF",
+        "items": [
+          { "sku": "X", "quantity": 1, "unit_price": { "amount": "10.00", "currency": "USDC" } }
+        ],
+        "max_total": { "amount": "11.00", "currency": "USDC" }
+      }
+    }
+  ]
+}

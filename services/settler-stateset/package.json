@@ -1,0 +1,12 @@
+{
+  "name": "@stateset/settler-stateset",
+  "version": "0.1.0",
+  "description": "Reference Settler daemon for ICP-1.0 (StateSet-operated bootstrap testnet on Base Sepolia).",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20.20.0" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "PORT=0 node --test test/settler.test.mjs"
+  }
+}

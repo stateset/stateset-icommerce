@@ -1,0 +1,268 @@
+name: ICP Conformance
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'icp-spec/**'
+      - 'icp-conformance/**'
+      - 'icp-handler/**'
+      - 'icp-mcp/**'
+      - 'services/settler-stateset/**'
+      - 'crates/stateset-icp-iut/**'
+      - 'crates/stateset-icp-iut-go/**'
+      - 'crates/stateset-icp-iut-py/**'
+      - 'icp-docker/**'
+      - '.github/workflows/icp-conformance.yml'
+  pull_request:
+    paths:
+      - 'icp-spec/**'
+      - 'icp-conformance/**'
+      - 'icp-handler/**'
+      - 'icp-mcp/**'
+      - 'services/settler-stateset/**'
+      - 'crates/stateset-icp-iut/**'
+      - 'crates/stateset-icp-iut-go/**'
+      - 'crates/stateset-icp-iut-py/**'
+      - 'icp-docker/**'
+      - '.github/workflows/icp-conformance.yml'
+
+jobs:
+  reference-demo:
+    name: Reference IUT — JavaScript (icp-1.0-core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run conformance suite
+        working-directory: icp-conformance
+        run: node runner/run.mjs --profile icp-1.0-core --iut reference-demo --verbose
+
+  stateset-rust:
+    name: stateset-rust IUT — Rust (icp-1.0-core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Rust IUT
+        run: cargo build -p stateset-icp-iut --release
+      - name: Run Rust IUT unit tests
+        run: cargo test -p stateset-icp-iut --release
+      - name: Run conformance suite (Rust)
+        working-directory: icp-conformance
+        run: node runner/run.mjs --profile icp-1.0-core --iut stateset-rust --verbose
+
+  stateset-go:
+    name: stateset-go IUT — Go (icp-1.0-core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+      - name: Build Go IUT
+        working-directory: crates/stateset-icp-iut-go
+        run: go build -o stateset-icp-iut-go .
+      - name: Run conformance suite (Go)
+        working-directory: icp-conformance
+        run: node runner/run.mjs --profile icp-1.0-core --iut stateset-go --verbose
+
+  stateset-python:
+    name: stateset-python IUT — Python (icp-1.0-core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install cryptography
+        run: pip install cryptography
+      - name: Run conformance suite (Python)
+        working-directory: icp-conformance
+        run: node runner/run.mjs --profile icp-1.0-core --iut stateset-python --verbose
+      - name: Cross-IUT determinism check
+        working-directory: icp-conformance
+        run: |
+          echo "Both IUTs MUST produce byte-identical output for every vector."
+          js_out=$(cat vectors/icp-1.0/01-aid-derivation/inputs.json | node iut-adapters/reference-demo.mjs 01-aid-derivation)
+          rs_out=$(cat vectors/icp-1.0/01-aid-derivation/inputs.json | ../target/release/stateset-icp-iut 01-aid-derivation)
+          # Compare the cryptographically-meaningful fields exactly.
+          for field in aid ed25519_pubkey_hex x25519_pubkey_hex intent_canonical_string intent_signature_hex tamper_rejected; do
+            jv=$(echo "$js_out" | python3 -c "import sys,json;print(json.load(sys.stdin)['$field'])")
+            rv=$(echo "$rs_out" | python3 -c "import sys,json;print(json.load(sys.stdin)['$field'])")
+            if [ "$jv" != "$rv" ]; then
+              echo "FAIL: $field divergence"
+              echo "  js: $jv"
+              echo "  rs: $rv"
+              exit 1
+            fi
+            echo "OK: $field matches across IUTs"
+          done
+          echo "All cryptographic fields byte-identical across JS + Rust IUTs."
+
+  contracts:
+    name: ICPEscrow Solidity tests (Foundry)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Install deps
+        working-directory: icp-spec/contracts/usdc-base
+        run: forge install OpenZeppelin/openzeppelin-contracts foundry-rs/forge-std --no-git
+      - name: Build
+        working-directory: icp-spec/contracts/usdc-base
+        run: forge build --skip script
+      - name: Test
+        working-directory: icp-spec/contracts/usdc-base
+        run: forge test -vvv
+
+  spec-demo:
+    name: Reference signing demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run zero-dep demo
+        working-directory: icp-spec/examples/01-aid-and-sign
+        run: node demo.mjs
+
+  handler:
+    name: icp-handler HTTP roundtrip
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run handler test suite
+        working-directory: icp-handler
+        env:
+          PORT: '0'
+        run: node --test test/roundtrip.test.mjs
+
+  mcp:
+    name: icp-mcp MCP server roundtrip
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run MCP test suite
+        working-directory: icp-mcp
+        run: node --test test/mcp.test.mjs
+
+  flagship-demo:
+    name: End-to-end flagship demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run flagship demo
+        working-directory: icp-spec/examples/02-end-to-end-flow
+        run: node demo.mjs
+      - name: Sanity-check transcript output
+        working-directory: icp-spec/examples/02-end-to-end-flow
+        run: |
+          [ -f transcript.md ] || { echo "transcript.md missing"; exit 1; }
+          size=$(wc -c < transcript.md)
+          [ "$size" -gt 5000 ] || { echo "transcript too small: $size bytes"; exit 1; }
+          grep -q "SettlementReceipt" transcript.md || { echo "no SettlementReceipt section"; exit 1; }
+          grep -q "Audit replay" transcript.md || { echo "no audit section"; exit 1; }
+          echo "Transcript OK: $size bytes"
+
+  settler:
+    name: settler-stateset daemon roundtrip
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run settler daemon test suite
+        working-directory: services/settler-stateset
+        env:
+          PORT: '0'
+        run: node --test test/settler.test.mjs
+
+  two-sided-demo:
+    name: Two-sided integration demo (handler + Settler)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run two-sided demo
+        working-directory: icp-spec/examples/03-two-sided-flow
+        run: node demo.mjs
+      - name: Sanity-check transcript
+        working-directory: icp-spec/examples/03-two-sided-flow
+        run: |
+          [ -f transcript.md ] || { echo "transcript.md missing"; exit 1; }
+          size=$(wc -c < transcript.md)
+          [ "$size" -gt 5000 ] || { echo "transcript too small: $size bytes"; exit 1; }
+          grep -q "PASS ✓" transcript.md || { echo "no PASS markers"; exit 1; }
+          grep -q "Two separate processes" transcript.md || { echo "missing summary"; exit 1; }
+          echo "Transcript OK: $size bytes"
+
+  docker-stack:
+    name: Docker Compose stack integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build & start stack
+        run: docker compose -f icp-docker/docker-compose.yml up -d --build
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            healthy=$(docker compose -f icp-docker/docker-compose.yml ps --format json | \
+              jq -r 'select(.Health != null) | .Health' | grep -c healthy || true)
+            if [ "$healthy" -ge 2 ]; then echo "Both services healthy after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "Services did not become healthy in time"
+          docker compose -f icp-docker/docker-compose.yml ps
+          docker compose -f icp-docker/docker-compose.yml logs
+          exit 1
+      - name: Integration test
+        run: node icp-docker/integration-test.mjs
+      - name: Tear down
+        if: always()
+        run: docker compose -f icp-docker/docker-compose.yml down -v

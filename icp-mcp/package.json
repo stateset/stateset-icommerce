@@ -1,0 +1,12 @@
+{
+  "name": "@stateset/icp-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for the Intelligent Commerce Protocol (ICP-1.0). Zero-dep.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20.20.0" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/mcp.test.mjs"
+  }
+}

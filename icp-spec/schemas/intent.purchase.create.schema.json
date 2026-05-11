@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://icp.stateset.com/schemas/icp-1.0/intent.purchase.create.json",
+  "title": "ICP-1.0 Intent: purchase.create",
+  "description": "A Buyer Agent's signed request to purchase goods or services from a Merchant Agent. See ICP-1.0 §6.1.",
+  "type": "object",
+  "required": [
+    "verb",
+    "v",
+    "intent_id",
+    "buyer",
+    "merchant",
+    "settler",
+    "items",
+    "max_total",
+    "expiry",
+    "principal_binding",
+    "nonce",
+    "iat",
+    "exp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "verb": { "const": "purchase.create" },
+    "v": { "const": "icp-1.0" },
+    "intent_id": {
+      "type": "string",
+      "pattern": "^icp_int_[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "ULID prefixed with `icp_int_`. Globally unique per Buyer."
+    },
+    "buyer": { "$ref": "#/$defs/AID" },
+    "merchant": { "$ref": "#/$defs/AID" },
+    "settler": { "$ref": "#/$defs/SettlerID" },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/LineItem" }
+    },
+    "ship_to": { "$ref": "#/$defs/Address" },
+    "max_total": {
+      "$ref": "#/$defs/Money",
+      "description": "Authoritative price ceiling. Merchant Quote with total > max_total MUST be rejected. See ICP-1.0 §11.4."
+    },
+    "expiry": { "$ref": "#/$defs/Timestamp" },
+    "principal_binding": { "$ref": "#/$defs/PrincipalBinding" },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{32}$",
+      "description": "16 random bytes hex-encoded. Unique per signing key per protocol-lifetime."
+    },
+    "iat": { "$ref": "#/$defs/Timestamp" },
+    "exp": {
+      "$ref": "#/$defs/Timestamp",
+      "description": "MUST be <= iat + 600 seconds for Intents (ICP-1.0 §5.3)."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Implementation-defined. Verifiers MUST ignore unknown keys.",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "AID": {
+      "type": "string",
+      "pattern": "^aid:v1:z[1-9A-HJ-NP-Za-km-z]{40,60}$",
+      "description": "ICP-1.0 Agent Identifier. Multibase Base58btc of SHA-256(ed25519_pk || 0x00 || x25519_pk)."
+    },
+    "SettlerID": {
+      "type": "string",
+      "pattern": "^settler:[a-z0-9]+(\\.[a-z0-9]+)*$",
+      "description": "Hierarchical settler identifier, e.g. `settler:circle.usdc.base`, `settler:stripe.treasury.ach`."
+    },
+    "Money": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^-?[0-9]+(\\.[0-9]{1,18})?$",
+          "description": "Decimal string, up to 18 fractional digits. NEVER float — banker's rounding errors are unacceptable in settlement."
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3,8}$",
+          "description": "ISO 4217 for fiat (USD, EUR), or canonical ticker for crypto/stablecoin (USDC, USDT, ETH)."
+        }
+      }
+    },
+    "LineItem": {
+      "type": "object",
+      "required": ["sku", "quantity", "unit_price"],
+      "additionalProperties": false,
+      "properties": {
+        "sku": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "quantity": { "type": "integer", "minimum": 1 },
+        "unit_price": { "$ref": "#/$defs/Money" },
+        "metadata": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "Address": {
+      "type": "object",
+      "required": ["country"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "maxLength": 256 },
+        "line1": { "type": "string", "maxLength": 256 },
+        "line2": { "type": "string", "maxLength": 256 },
+        "city": { "type": "string", "maxLength": 128 },
+        "region": { "type": "string", "maxLength": 128 },
+        "postal_code": { "type": "string", "maxLength": 32 },
+        "country": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$",
+          "description": "ISO 3166-1 alpha-2."
+        }
+      }
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp, second precision, UTC (suffix Z)."
+    },
+    "PrincipalBinding": {
+      "type": "object",
+      "required": ["principal", "agent", "authority", "expiry", "revocation", "signature"],
+      "additionalProperties": false,
+      "properties": {
+        "principal": {
+          "type": "string",
+          "description": "LEI for businesses, did:* for humans, principal:* for DAOs/Settlers."
+        },
+        "agent": { "$ref": "#/$defs/AID" },
+        "authority": {
+          "type": "object",
+          "required": ["max_per_intent", "verbs"],
+          "additionalProperties": false,
+          "properties": {
+            "max_per_intent": { "$ref": "#/$defs/Money" },
+            "max_per_period": {
+              "type": "object",
+              "required": ["amount", "currency", "period"],
+              "properties": {
+                "amount": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]{1,18})?$" },
+                "currency": { "type": "string" },
+                "period": { "type": "string", "enum": ["1h", "24h", "7d", "30d"] }
+              }
+            },
+            "verbs": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "purchase.create",
+                  "purchase.return",
+                  "inventory.query",
+                  "quote.request",
+                  "subscription.create",
+                  "payout.request"
+                ]
+              },
+              "uniqueItems": true,
+              "minItems": 1
+            },
+            "allowed_counterparties": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/AID" },
+              "description": "If present, Agent may only transact with these counterparties."
+            }
+          }
+        },
+        "expiry": { "$ref": "#/$defs/Timestamp" },
+        "revocation": {
+          "type": "string",
+          "format": "uri",
+          "description": "HTTPS or IPFS URI returning current revocation status."
+        },
+        "signature": {
+          "type": "object",
+          "required": ["alg", "kid", "sig"],
+          "properties": {
+            "alg": { "enum": ["ed25519", "ml-dsa-65", "ed25519+ml-dsa-65"] },
+            "kid": { "type": "string", "description": "Principal's key identifier." },
+            "sig": { "type": "string", "description": "Hex or base64url-encoded signature bytes." }
+          }
+        }
+      }
+    }
+  }
+}

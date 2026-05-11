@@ -1,0 +1,9 @@
+{
+  "name": "icp-1.0-core",
+  "spec_version": "icp-1.0",
+  "description": "Core protocol vectors that every ICP implementation MUST pass: identity, signing, canonicalization, intent verbs.",
+  "vectors": [
+    "01-aid-derivation",
+    "02-canonical-json"
+  ]
+}

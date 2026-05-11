@@ -1,0 +1,87 @@
+# ICP-1.0 protocol layer — full stack.
+#
+# Brings up the two long-running protocol services as separate processes
+# on separate ports with separate signing keys, matching the two-sided
+# architecture demonstrated in icp-spec/examples/03-two-sided-flow/.
+#
+# Run:
+#   docker compose up -d
+#   curl http://127.0.0.1:8787/icp/v1/.well-known/icp | jq
+#   curl http://127.0.0.1:8788/.well-known/icp-settler | jq
+#
+# Tear down:
+#   docker compose down
+#
+# The icp-mcp service is also built but only runs on demand (stdio transport
+# doesn't fit the long-running-server pattern). To use it:
+#   docker compose run --rm mcp
+
+services:
+  handler:
+    build:
+      context: ..
+      dockerfile: icp-docker/Dockerfile
+    image: stateset/icp-handler:dev
+    container_name: icp-handler
+    command: ["node", "icp-handler/src/server.mjs"]
+    environment:
+      PORT: "8787"
+      NODE_ENV: "production"
+    ports:
+      - "8787:8787"
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks: [icp]
+    labels:
+      com.stateset.icp.role: "merchant-backend"
+
+  settler:
+    build:
+      context: ..
+      dockerfile: icp-docker/Dockerfile
+    image: stateset/settler-stateset:dev
+    container_name: icp-settler
+    command: ["node", "services/settler-stateset/src/server.mjs"]
+    environment:
+      PORT: "8788"
+      SETTLER_ID: "settler:stateset.usdc.base-sepolia"
+      NODE_ENV: "production"
+      # SETTLER_CHAIN_RPC unset → mock mode (default).
+      # Set to a Base Sepolia RPC URL for chain mode (forthcoming).
+    ports:
+      - "8788:8788"
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks: [icp]
+    labels:
+      com.stateset.icp.role: "settler"
+
+  # MCP server. Only runs on demand because MCP uses stdio, not network.
+  # Use: `docker compose run --rm mcp` to spawn an interactive MCP session.
+  mcp:
+    build:
+      context: ..
+      dockerfile: icp-docker/Dockerfile
+    image: stateset/icp-mcp:dev
+    container_name: icp-mcp
+    command: ["node", "icp-mcp/src/server.mjs"]
+    stdin_open: true
+    tty: false
+    networks: [icp]
+    profiles: [on-demand]
+    labels:
+      com.stateset.icp.role: "mcp-transport"
+
+networks:
+  icp:
+    driver: bridge

@@ -1,0 +1,45 @@
+# Aggressive .dockerignore — only the protocol-layer ICP code is needed
+# for icp-docker builds. The 250k-LOC Rust engine is excluded.
+
+# Build artifacts
+target/
+node_modules/
+admin/.next/
+admin/node_modules/
+cli/node_modules/
+bindings/node/node_modules/
+
+# Git / VCS
+.git/
+.github/
+
+# Engine code (excluded; the icp-docker image doesn't need it)
+crates/
+cli/
+admin/
+bindings/
+packages/
+docs/
+book/
+deploy/
+examples/
+scripts/
+
+# Tests + caches
+.cargo/
+.husky/
+.stateset/
+.tmp/
+.autoresearch/
+artifacts/
+
+# Generated DBs + temp files
+*.db
+*.db-shm
+*.db-wal
+tmp-*
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo

@@ -1,0 +1,44 @@
+{
+  "test": "01-aid-derivation",
+  "agent": {
+    "ed25519_seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    "x25519_seed_hex": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"
+  },
+  "intent": {
+    "v": "icp-1.0",
+    "verb": "purchase.create",
+    "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+    "merchant": "aid:v1:zMerchantPlaceholderForTestVector",
+    "settler": "settler:stateset.usdc.base-sepolia",
+    "items": [
+      {
+        "sku": "WIDGET-001",
+        "quantity": 2,
+        "unit_price": { "amount": "29.99", "currency": "USDC" }
+      }
+    ],
+    "max_total": { "amount": "65.00", "currency": "USDC" },
+    "expiry": "2026-05-10T18:00:00Z",
+    "principal_binding": {
+      "principal": "did:web:icp-test-vectors.example",
+      "agent": "<filled-by-adapter>",
+      "authority": {
+        "max_per_intent": { "amount": "500.00", "currency": "USDC" },
+        "verbs": ["purchase.create"]
+      },
+      "expiry": "2026-05-11T18:00:00Z",
+      "revocation": "https://icp-test-vectors.example/.well-known/icp-revocation",
+      "signature": {
+        "alg": "ed25519",
+        "kid": "test-vector-self-binding",
+        "sig": "deadbeef"
+      }
+    },
+    "nonce": "0123456789abcdef0123456789abcdef",
+    "iat": "2026-05-10T17:50:00Z",
+    "exp": "2026-05-10T18:00:00Z"
+  },
+  "params": {
+    "verify_tamper_rejected": true
+  }
+}

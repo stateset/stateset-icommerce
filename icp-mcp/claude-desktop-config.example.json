@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "icp": {
+      "command": "node",
+      "args": ["/absolute/path/to/stateset-icommerce/icp-mcp/src/server.mjs"]
+    }
+  }
+}

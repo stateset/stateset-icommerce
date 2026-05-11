@@ -1,0 +1,27 @@
+[package]
+name = "stateset-icp-iut"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "ICP-1.0 conformance Implementation-Under-Test adapter (Rust). Reads JSON test inputs on stdin, runs the canonical Rust ICP path through stateset-crypto, writes outputs JSON on stdout."
+
+[lints]
+workspace = true
+
+[dependencies]
+ed25519-dalek = { workspace = true }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+sha2 = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+hex = { workspace = true }
+anyhow = "1"
+
+[[bin]]
+name = "stateset-icp-iut"
+path = "src/main.rs"

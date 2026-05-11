@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://icp.stateset.com/schemas/icp-1.0/intent.subscription.create.json",
+  "title": "ICP-1.0 Intent: subscription.create",
+  "description": "A buyer Agent's signed request to establish a recurring purchase authorization. See ICP-1.0 §6.5.",
+  "type": "object",
+  "required": [
+    "verb",
+    "v",
+    "intent_id",
+    "buyer",
+    "merchant",
+    "settler",
+    "service_id",
+    "cadence",
+    "max_total_per_period",
+    "first_charge_at",
+    "principal_binding",
+    "nonce",
+    "iat",
+    "exp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "verb": { "const": "subscription.create" },
+    "v": { "const": "icp-1.0" },
+    "intent_id": {
+      "type": "string",
+      "pattern": "^icp_int_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "buyer": { "$ref": "intent.purchase.create.schema.json#/$defs/AID" },
+    "merchant": { "$ref": "intent.purchase.create.schema.json#/$defs/AID" },
+    "settler": { "$ref": "intent.purchase.create.schema.json#/$defs/SettlerID" },
+    "service_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Merchant-defined service identifier (SKU, plan, tier). The merchant resolves this to a concrete service grant."
+    },
+    "cadence": {
+      "type": "string",
+      "pattern": "^([1-9][0-9]*)(s|m|h|d|w|y)$",
+      "description": "Billing period: a positive integer followed by a unit (s=seconds, m=minutes, h=hours, d=days, w=weeks, y=years). Common values: '1d','7d','30d','1y'."
+    },
+    "max_total_per_period": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/Money",
+      "description": "Authoritative ceiling per occurrence. Merchant Quotes exceeding this MUST be rejected (ICP-1.0 §6.5, §11.4)."
+    },
+    "max_occurrences": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "If set, the subscription auto-terminates after this many occurrences. null = until cancelled."
+    },
+    "first_charge_at": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp",
+      "description": "When the first occurrence triggers. SHOULD be >= iat; merchants MAY reject backdated start times."
+    },
+    "principal_binding": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/PrincipalBinding",
+      "description": "The PrincipalBinding MUST grant `subscription.create` in its `authority.verbs` and SHOULD include a `max_per_period` matching or exceeding max_total_per_period."
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{32}$"
+    },
+    "iat": { "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp" },
+    "exp": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp",
+      "description": "MUST be <= iat + 600 seconds (ICP-1.0 §5.3)."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Implementation-defined free-form fields. Verifiers MUST ignore unknown keys."
+    }
+  }
+}

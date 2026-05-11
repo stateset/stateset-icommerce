@@ -22,6 +22,7 @@ members = [
     "crates/stateset-ffi",
     "crates/stateset-migrations",
     "crates/stateset-authz",
+    "crates/stateset-icp-iut",
     "bindings/node",
     "bindings/python",
     "bindings/wasm",
@@ -63,6 +64,7 @@ default-members = [
     "crates/stateset-pricing",
     "crates/stateset-migrations",
     "crates/stateset-authz",
+    "crates/stateset-icp-iut",
 ]
 
 [workspace.package]

@@ -1,0 +1,13 @@
+{
+  "ed25519_pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "x25519_pubkey_hex": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+  "aid": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+  "intent_canonical_string": "{\"buyer\":\"aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b\",\"exp\":\"2026-05-10T18:00:00Z\",\"expiry\":\"2026-05-10T18:00:00Z\",\"iat\":\"2026-05-10T17:50:00Z\",\"intent_id\":\"icp_int_01HXYZTESTVECTOR0000000001\",\"items\":[{\"quantity\":2,\"sku\":\"WIDGET-001\",\"unit_price\":{\"amount\":\"29.99\",\"currency\":\"USDC\"}}],\"max_total\":{\"amount\":\"65.00\",\"currency\":\"USDC\"},\"merchant\":\"aid:v1:zMerchantPlaceholderForTestVector\",\"nonce\":\"0123456789abcdef0123456789abcdef\",\"principal_binding\":{\"agent\":\"aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b\",\"authority\":{\"max_per_intent\":{\"amount\":\"500.00\",\"currency\":\"USDC\"},\"verbs\":[\"purchase.create\"]},\"expiry\":\"2026-05-11T18:00:00Z\",\"principal\":\"did:web:icp-test-vectors.example\",\"revocation\":\"https://icp-test-vectors.example/.well-known/icp-revocation\",\"signature\":{\"alg\":\"ed25519\",\"kid\":\"test-vector-self-binding\",\"sig\":\"deadbeef\"}},\"settler\":\"settler:stateset.usdc.base-sepolia\",\"v\":\"icp-1.0\",\"verb\":\"purchase.create\"}",
+  "intent_signature_hex": "a854ec630e901934f6b7f7481d609b6a5e4fb60424a27fdf429df8370416635a65e664c632dfeff8fa8b89f3fbc21fde18ff2313861eede7d1ac525c63a81a00",
+  "tamper_rejected": true,
+  "_provenance": {
+    "ed25519_seed_source": "RFC 8032 §7.1 test vector",
+    "x25519_seed_source": "RFC 7748 §6.1 Alice private key",
+    "note": "Implementations can independently verify ed25519_pubkey_hex against RFC 8032 and x25519_pubkey_hex against RFC 7748. The AID, signature, and canonical string are derived per ICP-1.0 §4.2 and §6.1."
+  }
+}

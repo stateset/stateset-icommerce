@@ -1,0 +1,14 @@
+{
+  "name": "@stateset/icp-handler",
+  "version": "0.1.0",
+  "description": "Reference HTTP handler for ICP-1.0 — zero dependencies, runnable end-to-end.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20.20.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "PORT=0 node --test test/"
+  }
+}

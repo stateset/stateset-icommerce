@@ -4105,6 +4105,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "stateset-icp-iut"
+version = "1.0.4"
+dependencies = [
+ "anyhow",
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "stateset-integration-tests"
 version = "1.0.4"
 dependencies = [

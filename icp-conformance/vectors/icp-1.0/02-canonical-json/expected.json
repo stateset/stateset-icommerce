@@ -1,0 +1,31 @@
+{
+  "canonical_strings": [
+    "{}",
+    "{\"a\":\"hi\"}",
+    "{\"a\":1,\"b\":2}",
+    "{\"x\":{\"a\":1,\"b\":2}}",
+    "{\"x\":[3,1,2]}",
+    "{\"x\":\"a\\nb\\tc\\\"d\"}",
+    "{\"a\":true,\"b\":false,\"c\":null}",
+    "{\"d\":3.14,\"i\":42}",
+    "{\"price\":{\"amount\":\"29.99\",\"currency\":\"USDC\"}}",
+    "{\"x\":[]}",
+    "{\"buyer\":\"aid:v1:zABC\",\"items\":[{\"quantity\":1,\"sku\":\"X\",\"unit_price\":{\"amount\":\"10.00\",\"currency\":\"USDC\"}}],\"max_total\":{\"amount\":\"11.00\",\"currency\":\"USDC\"},\"merchant\":\"aid:v1:zDEF\",\"v\":\"icp-1.0\",\"verb\":\"purchase.create\"}"
+  ],
+  "names": [
+    "empty-object",
+    "single-key",
+    "key-reorder",
+    "nested-reorder",
+    "array-preserved",
+    "string-escapes",
+    "bool-and-null",
+    "numbers",
+    "monetary-amount-string",
+    "empty-array",
+    "intent-regression"
+  ],
+  "_provenance": {
+    "note": "Outputs captured from the JS reference IUT (icp-conformance/iut-adapters/reference-demo.mjs). Rust IUT (crates/stateset-icp-iut) MUST produce identical bytes when run on the same inputs.json. CI enforces this via the cross-IUT determinism job."
+  }
+}
