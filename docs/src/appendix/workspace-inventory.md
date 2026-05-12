@@ -13,10 +13,10 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.0.4` |
-| Workspace members | 29 |
-| Default members | 19 |
-| Rust crates in workspace | 21 |
+| Workspace version | `1.1.0` |
+| Workspace members | 30 |
+| Default members | 20 |
+| Rust crates in workspace | 22 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
 | CLI binaries | 50 |
@@ -31,7 +31,7 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 
 | Layer | Packages |
 | --- | --- |
-| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
+| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-iut`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
 | L2 | `stateset-core`, `stateset-protocol`, `stateset-sync` |
 | L3 | `stateset-db`, `stateset-embedded-wasm` |
 | L4 | `stateset-embedded` |
@@ -43,9 +43,9 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 | Package | Direct dependents |
 | --- | --- |
 | `stateset-core` | 13 |
+| `stateset-crypto` | 12 |
 | `stateset-embedded` | 10 |
 | `stateset-primitives` | 7 |
-| `stateset-crypto` | 5 |
 | `stateset-db` | 4 |
 | `stateset-observability` | 2 |
 | `stateset-pricing` | 2 |
@@ -57,14 +57,14 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 
 | Binding | Cargo package | Published package | Direct internal deps |
 | --- | --- | --- | --- |
-| `bindings/dotnet` | `stateset-dotnet` | — | `stateset-core`, `stateset-embedded` |
-| `bindings/go` | `stateset-go` | — | `stateset-core`, `stateset-embedded` |
-| `bindings/java` | `stateset-java` | — | `stateset-core`, `stateset-embedded`, `stateset-primitives` |
-| `bindings/kotlin` | `stateset-kotlin` | — | `stateset-core`, `stateset-embedded` |
+| `bindings/dotnet` | `stateset-dotnet` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded` |
+| `bindings/go` | `stateset-go` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded` |
+| `bindings/java` | `stateset-java` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded`, `stateset-primitives` |
+| `bindings/kotlin` | `stateset-kotlin` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded` |
 | `bindings/node` | `stateset-embedded-node` | `@stateset/embedded` | `stateset-core`, `stateset-crypto`, `stateset-db`, `stateset-embedded` |
-| `bindings/python` | `stateset-embedded-python` | — | `stateset-core`, `stateset-db`, `stateset-embedded`, `stateset-primitives`, `stateset-sdk` |
-| `bindings/swift` | `stateset-swift` | — | `stateset-core`, `stateset-embedded` |
-| `bindings/wasm` | `stateset-embedded-wasm` | `@stateset/embedded-wasm` | `stateset-core`, `stateset-pricing` |
+| `bindings/python` | `stateset-embedded-python` | — | `stateset-core`, `stateset-crypto`, `stateset-db`, `stateset-embedded`, `stateset-primitives`, `stateset-sdk` |
+| `bindings/swift` | `stateset-swift` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded` |
+| `bindings/wasm` | `stateset-embedded-wasm` | `@stateset/embedded-wasm` | `stateset-core`, `stateset-crypto`, `stateset-pricing` |
 
 ## Excluded Local Binding Manifests
 
@@ -80,8 +80,8 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 100 |
-| Tool modules | 66 |
+| Top-level source groups | 101 |
+| Tool modules | 67 |
 | A2A modules | 44 |
 | JS dependencies | 10 |
 | Optional integrations | 15 |
@@ -90,13 +90,14 @@ workspace membership because they require host runtimes or headers.
 
 | Group | Files |
 | --- | --- |
-| `tools` | 66 |
+| `tools` | 67 |
 | `commands` | 61 |
 | `a2a` | 44 |
 | `channels` | 29 |
 | `adapters` | 20 |
 | `sync` | 18 |
 | `utils` | 14 |
+| `mcp` | 13 |
 | `chains` | 9 |
 | `x402` | 9 |
 | `knowledge` | 6 |

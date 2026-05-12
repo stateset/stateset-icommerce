@@ -50,7 +50,7 @@ cargo build --release --bin your-server-binary
 ./target/release/your-server-binary &
 
 curl http://localhost:3000/version
-# {"version":"1.0.4","signed":false}
+# {"version":"1.1.0","signed":false}
 ```
 
 The admin UI will show **Unsigned build** in amber. Operators reading
@@ -88,16 +88,16 @@ the artifacts. Do not set it for unsigned debug builds.
 # 1. Read the running binary's metadata.
 curl -s https://your.engine.example/version | jq .
 # {
-#   "version": "1.0.4",
+#   "version": "1.1.0",
 #   "git_commit": "abc123def456...",
-#   "git_ref": "v1.0.4",
-#   "release_tag": "v1.0.4",
+#   "git_ref": "v1.1.0",
+#   "release_tag": "v1.1.0",
 #   "built_at": "2026-05-08T01:23:45Z",
 #   "signed": true
 # }
 
 # 2. Cross-check the commit SHA against the GitHub release.
-gh release view v1.0.4 --json targetCommitish,assets
+gh release view v1.1.0 --json targetCommitish,assets
 ```
 
 In the admin dashboard, navigate to **Build info** in the sidebar. The

@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 726,
+  "totalTools": 737,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 708
+      "count": 719
     },
     {
       "name": "stateset-scaffold",
@@ -19,7 +19,7 @@
       "count": 5
     }
   ],
-  "domainCount": 62,
+  "domainCount": 63,
   "domains": [
     {
       "name": "a2a",
@@ -52,6 +52,10 @@
     {
       "name": "agent_cards",
       "count": 5
+    },
+    {
+      "name": "agent_receipt",
+      "count": 11
     },
     {
       "name": "agent_runtime",
@@ -273,7 +277,7 @@
   "permissions": [
     {
       "name": "admin",
-      "count": 45
+      "count": 47
     },
     {
       "name": "delete",
@@ -281,18 +285,18 @@
     },
     {
       "name": "read",
-      "count": 378
+      "count": 382
     },
     {
       "name": "write",
-      "count": 282
+      "count": 287
     }
   ],
   "permissionCounts": {
-    "admin": 45,
+    "admin": 47,
     "delete": 21,
-    "read": 378,
-    "write": 282
+    "read": 382,
+    "write": 287
   },
   "tools": [
     {
@@ -1905,6 +1909,105 @@
       "qualifiedName": "mcp__stateset-commerce__agent_rate_counterparty",
       "policyDomain": "agent_runtime",
       "permission": "write"
+    },
+    {
+      "name": "agent_receipt_audit",
+      "description": "Independently audit a StateSet commerce receipt against the live chain. Re-verifies on-chain claims (escrow status, registry batch commitment, STARK proof metadata) and — for compliance bundles — runs the Winterfell verifier on every policy proof. Returns a structured pass/fail summary the calling agent can act on. The strongest audit primitive in the stack: any agent can verify any receipt without trusting the producer.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_audit",
+      "policyDomain": "agent_receipt",
+      "permission": "read"
+    },
+    {
+      "name": "agent_receipt_dispute",
+      "description": "Buyer raises an on-chain dispute on a Delivered order. Funds freeze in escrow until the operator resolves. The plain-text reason is hashed (keccak256) and stored on-chain as proof of the filing.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_dispute",
+      "policyDomain": "agent_receipt",
+      "permission": "write"
+    },
+    {
+      "name": "agent_receipt_fx_quote",
+      "description": "Read a fresh FX quote from the on-chain FxOracle and convert an amount between currencies. Pair format: \"BASE/QUOTE\", e.g. \"EUR/ssUSD\" or \"JPY/ssUSD\". Returns the rate, freshness, and the converted amount. Use this BEFORE locking funds so the agent can verify the rate is fresh and within expected bounds. Pre-seeded pairs at deploy time: EUR/ssUSD, GBP/ssUSD, JPY/ssUSD, MXN/ssUSD.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_fx_quote",
+      "policyDomain": "agent_receipt",
+      "permission": "read"
+    },
+    {
+      "name": "agent_receipt_merchant_statement",
+      "description": "Aggregate every emitted receipt in a directory into a single platform settlement statement: GMV, marketplace fees earned, FX exposure by currency, dispute outcomes, compliance bundle counts, and a sampled on-chain audit pass rate. Optional filters scope the statement to a date range, a specific seller wallet, or a specific buyer wallet — enabling multi-tenant accounting on a single OrderEscrow contract.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_merchant_statement",
+      "policyDomain": "agent_receipt",
+      "permission": "read"
+    },
+    {
+      "name": "agent_receipt_purchase",
+      "description": "Execute a verifiable agent-to-agent purchase end-to-end: buyer agent locks ssUSD in OrderEscrow, sequencer commits VES events, STARK proof attests order_total ≤ policy cap, SetRegistry anchors the commitment + proof on Set Chain L2, buyer marks delivered, seller releases. Returns the signed Agent Receipt JSON with on-chain tx hashes. Requires the local stack (anvil + sequencer + postgres + deployed contracts) to be running — see /home/dom/icommerce-app/setup.sh.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_purchase",
+      "policyDomain": "agent_receipt",
+      "permission": "write"
+    },
+    {
+      "name": "agent_receipt_refund",
+      "description": "Buyer recovers locked funds after the order's deliveryDeadline has expired. No dispute, no operator, no platform — purely the safety property of the OrderEscrow primitive. Reverts with DeadlineNotReached if the deadline has not yet passed.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_refund",
+      "policyDomain": "agent_receipt",
+      "permission": "write"
+    },
+    {
+      "name": "agent_receipt_release",
+      "description": "Seller pulls escrowed funds after delivery + confirmation window. Use this when agent_receipt_purchase was called with skip_release=true and there has been no dispute. Routes funds to the seller wallet.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_release",
+      "policyDomain": "agent_receipt",
+      "permission": "write"
+    },
+    {
+      "name": "agent_receipt_request_payout",
+      "description": "Initiate a fiat payout from the seller's SSDC balance to their bank via the off-ramp bridge. Auto-handles SSDC.approve idempotently, signs a canonical payout-request message with the seller's wallet key, POSTs the signed request to the bridge, and returns a Stripe-Treasury-shaped OutboundPayment intent. Requires bridge running on http://localhost:4243 (or BRIDGE_PAYOUT_URL env).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_request_payout",
+      "policyDomain": "agent_receipt",
+      "permission": "write"
+    },
+    {
+      "name": "agent_receipt_resolve",
+      "description": "Operator (sequencer / arbiter) resolves a Disputed order. Routes the locked funds either to the seller (in_favor_of_seller=true) or refunds the buyer (false). Emits DisputeResolved + Released/Refunded.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_resolve",
+      "policyDomain": "agent_receipt",
+      "permission": "admin"
+    },
+    {
+      "name": "agent_receipt_status",
+      "description": "Read the on-chain escrow state for an order. Returns buyer, seller, amount, deadlines, delivery receipt hash, and current status (None / Locked / Delivered / Disputed / Released / Refunded).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_status",
+      "policyDomain": "agent_receipt",
+      "permission": "read"
+    },
+    {
+      "name": "agent_receipt_sweep_yield",
+      "description": "Operator/marketplace sweeps the rebasing yield surplus held by OrderEscrow to a recipient. With the production SSDC stablecoin, this is the T-Bill yield earned by escrowed funds while orders were in flight — a programmable platform revenue stream alongside any BPS fee. Read first via yield_available; positive amount returns the sweep tx, otherwise a no-op.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__agent_receipt_sweep_yield",
+      "policyDomain": "agent_receipt",
+      "permission": "admin"
     },
     {
       "name": "agent_register_service",

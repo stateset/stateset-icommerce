@@ -6,6 +6,59 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-11
+
+Introduces the **Intelligent Commerce Protocol (ICP)** — an open spec and
+reference implementation set for the operational lifecycle of
+agentic-AI commerce (quote, escrow, fulfillment, dispute, settlement).
+The 250k-LOC commerce engine is unchanged; ICP is additive infrastructure.
+
+### Added
+- **ICP-1.0 normative specification** (`icp-spec/ICP-1.0-DRAFT.md`):
+  wire format, canonical serialization rules (CBOR + JSON), 60+ error
+  codes, signatures (Ed25519 + optional ML-DSA-65 hybrid), AID
+  derivation, escrow state machine, SettlementReceipt format.
+- **Three intent verbs**: `purchase.create`, `subscription.create`,
+  `purchase.return` — covering ~95% of e-commerce dollar volume.
+- **Cross-language conformance suite** (`icp-conformance/`): 2 vectors
+  × 4 independent Implementation-Under-Test adapters (JavaScript with
+  `node:crypto`, Rust with `ed25519-dalek` + `serde_jcs`, Go with
+  pure stdlib `crypto/ed25519`+`crypto/ecdh`, Python with `cryptography`)
+  all producing byte-identical wire bytes. CI enforces cross-IUT
+  determinism on every PR.
+- **HTTP handler reference** (`icp-handler/`): zero-dependency
+  `node:http`-based merchant Backend implementing the surface from
+  `handler-design.md`. 10/10 end-to-end roundtrip tests.
+- **MCP server reference** (`icp-mcp/`): JSON-RPC 2.0 over stdio,
+  drops into Claude Desktop / Cursor / Windsurf via `mcpServers`
+  config. 8 ICP tools spanning the full lifecycle. 6/6 tests.
+- **Off-chain Settler daemon** (`services/settler-stateset/`): signs
+  EscrowEvents, issues SettlementReceipts, serves discovery
+  document at `/.well-known/icp-settler`. Mock chain mode shipping;
+  chain-mode subscriber hooks reserved. 9/9 tests.
+- **On-chain custody contract** (`icp-spec/contracts/usdc-base/ICPEscrow.sol`):
+  audit-ready Solidity 0.8.24 + OpenZeppelin patterns. Time-locked
+  release, dispute primitive, arbiter authorization with
+  beneficiary restriction, pause role. 15/15 Foundry tests.
+- **Production deployment package** (`icp-docker/`): docker-compose
+  with healthchecks + 17/17 outside-the-container integration tests
+  exercising independent signature verification against published
+  `.well-known/` keys.
+- **Foundation governance package**: Charter draft, LOI template, ICPIP
+  process, 15-item risk register, capital plan, partnership packet
+  (`icp-spec/PACKET.md`).
+- **Distribution**: 8 partner-specific outreach drafts for Coinbase,
+  Circle, Anthropic, Stripe, Google AP2, Shopify, OpenAI.
+- **Cumulative protocol-layer test count**: 72+ distinct PASS signals
+  on every CI run across the 10 jobs in
+  `.github/workflows/icp-conformance.yml`.
+
+### Changed
+- Synced workspace, bindings, examples, templates, docs, and release
+  metadata to 1.1.0.
+- README adds an ICP hero block + comprehensive `What's New in v1.1.0`
+  section pointing to the ICP entry point.
+
 ## [1.0.3] - 2026-05-04
 
 Patch release for CLI outbound security hardening.

@@ -3,8 +3,8 @@
     "binding": "bindings/node/index.d.ts",
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
-  "totalDomainModules": 60,
-  "totalDomainTools": 693,
+  "totalDomainModules": 61,
+  "totalDomainTools": 704,
   "totalCommerceGetters": 32,
   "mappedCommerceGetters": 32,
   "uncoveredCommerceGetters": [],

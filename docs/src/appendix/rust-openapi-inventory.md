@@ -16,9 +16,9 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 40 |
-| Operations | 57 |
-| Schemas | 54 |
+| Paths | 41 |
+| Operations | 58 |
+| Schemas | 55 |
 | Tags | 13 |
 
 ## Method Counts
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | Method | Operations |
 | --- | --- |
 | DELETE | 5 |
-| GET | 27 |
+| GET | 28 |
 | PATCH | 5 |
 | POST | 20 |
 
@@ -36,7 +36,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | --- | --- | --- |
 | `customers` | 5 | Customer management |
 | `gift_cards` | 4 | Gift card management |
-| `health` | 3 | Health check endpoints |
+| `health` | 4 | Health check endpoints |
 | `inventory` | 3 | Stock and inventory management |
 | `invoices` | 5 | Invoice management |
 | `loyalty` | 4 | Loyalty program management |
@@ -109,3 +109,4 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/health` | `health` | `health` | `GET /health` — simple liveness probe. |
 | `GET` | `/health/ready` | `health` | `readiness` | `GET /health/ready` — readiness probe that checks DB connectivity. |
 | `GET` | `/metrics` | `health` | `metrics` | `GET /metrics` — Prometheus-compatible operational metrics. |
+| `GET` | `/version` | `health` | `version` | `GET /version` — build & release metadata. |

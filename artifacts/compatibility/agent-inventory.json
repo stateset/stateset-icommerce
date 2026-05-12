@@ -4,7 +4,7 @@
     "registry": "cli/src/mcp-server-registry.js"
   },
   "totalAgents": 20,
-  "totalCommerceTools": 708,
+  "totalCommerceTools": 719,
   "totalScaffoldTools": 13,
   "totalX402Tools": 5,
   "fullAccessAgentCount": 1,
@@ -13,7 +13,7 @@
   "supportedServers": [
     {
       "name": "stateset-commerce",
-      "toolCount": 708,
+      "toolCount": 719,
       "source": "cli/src/mcp-server.js"
     },
     {
@@ -88,10 +88,10 @@
       "id": "customer-service",
       "name": "Customer Service",
       "description": "Full-service agent with access to all commerce tools",
-      "toolCount": 708,
+      "toolCount": 719,
       "usesAllCommerceTools": true,
       "serverCounts": {
-        "stateset-commerce": 708
+        "stateset-commerce": 719
       },
       "serverNamespaces": [
         "stateset-commerce"

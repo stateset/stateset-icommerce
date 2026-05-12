@@ -5,10 +5,10 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.0.4",
-    "memberCount": 29,
-    "defaultMemberCount": 19,
-    "rustCrateCount": 21,
+    "version": "1.1.0",
+    "memberCount": 30,
+    "defaultMemberCount": 20,
+    "rustCrateCount": 22,
     "bindingCrateCount": 8,
     "members": [
       {
@@ -97,6 +97,11 @@
         "packageKind": "crate"
       },
       {
+        "name": "stateset-icp-iut",
+        "manifestPath": "crates/stateset-icp-iut/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
         "name": "stateset-integration-tests",
         "manifestPath": "crates/stateset-integration-tests/Cargo.toml",
         "packageKind": "crate"
@@ -172,6 +177,7 @@
       ],
       "stateset-dotnet": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded"
       ],
       "stateset-embedded": [
@@ -188,6 +194,7 @@
       ],
       "stateset-embedded-python": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-db",
         "stateset-embedded",
         "stateset-primitives",
@@ -195,6 +202,7 @@
       ],
       "stateset-embedded-wasm": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-pricing"
       ],
       "stateset-ffi": [
@@ -205,6 +213,7 @@
       ],
       "stateset-go": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded"
       ],
       "stateset-http": [
@@ -214,14 +223,17 @@
         "stateset-embedded",
         "stateset-primitives"
       ],
+      "stateset-icp-iut": [],
       "stateset-java": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded",
         "stateset-primitives"
       ],
       "stateset-jobs": [],
       "stateset-kotlin": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded"
       ],
       "stateset-macros": [],
@@ -247,6 +259,7 @@
       ],
       "stateset-swift": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded"
       ],
       "stateset-sync": [
@@ -258,6 +271,7 @@
         "stateset-a2a",
         "stateset-authz",
         "stateset-crypto",
+        "stateset-icp-iut",
         "stateset-jobs",
         "stateset-macros",
         "stateset-migrations",
@@ -314,6 +328,24 @@
         ]
       },
       {
+        "name": "stateset-crypto",
+        "dependentCount": 12,
+        "dependents": [
+          "stateset-core",
+          "stateset-dotnet",
+          "stateset-embedded-node",
+          "stateset-embedded-python",
+          "stateset-embedded-wasm",
+          "stateset-go",
+          "stateset-java",
+          "stateset-kotlin",
+          "stateset-protocol",
+          "stateset-sdk",
+          "stateset-swift",
+          "stateset-sync"
+        ]
+      },
+      {
         "name": "stateset-embedded",
         "dependentCount": 10,
         "dependents": [
@@ -340,17 +372,6 @@
           "stateset-java",
           "stateset-protocol",
           "stateset-sdk"
-        ]
-      },
-      {
-        "name": "stateset-crypto",
-        "dependentCount": 5,
-        "dependents": [
-          "stateset-core",
-          "stateset-embedded-node",
-          "stateset-protocol",
-          "stateset-sdk",
-          "stateset-sync"
         ]
       },
       {
@@ -431,6 +452,7 @@
       "publishedPackage": "",
       "internalDeps": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded"
       ]
     },
@@ -440,6 +462,7 @@
       "publishedPackage": "",
       "internalDeps": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded"
       ]
     },
@@ -449,6 +472,7 @@
       "publishedPackage": "",
       "internalDeps": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded",
         "stateset-primitives"
       ]
@@ -459,6 +483,7 @@
       "publishedPackage": "",
       "internalDeps": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded"
       ]
     },
@@ -479,6 +504,7 @@
       "publishedPackage": "",
       "internalDeps": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-db",
         "stateset-embedded",
         "stateset-primitives",
@@ -491,6 +517,7 @@
       "publishedPackage": "",
       "internalDeps": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded"
       ]
     },
@@ -500,6 +527,7 @@
       "publishedPackage": "@stateset/embedded-wasm",
       "internalDeps": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-pricing"
       ]
     }
@@ -523,7 +551,7 @@
     "topLevelSourceCounts": [
       {
         "name": "tools",
-        "count": 66
+        "count": 67
       },
       {
         "name": "commands",
@@ -548,6 +576,10 @@
       {
         "name": "utils",
         "count": 14
+      },
+      {
+        "name": "mcp",
+        "count": 13
       },
       {
         "name": "chains",
@@ -922,7 +954,7 @@
         "count": 1
       }
     ],
-    "toolModuleCount": 66,
+    "toolModuleCount": 67,
     "a2aModuleCount": 44
   },
   "admin": {

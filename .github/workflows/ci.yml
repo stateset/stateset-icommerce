@@ -299,6 +299,7 @@ jobs:
         if: matrix.language == 'rust'
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable
           components: rustfmt
 
       - name: Cache cargo

@@ -13,20 +13,20 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 726 |
+| Total tools | 737 |
 | MCP servers | 3 |
-| Policy domains | 62 |
-| Read tools | 378 |
-| Write tools | 282 |
+| Policy domains | 63 |
+| Read tools | 382 |
+| Write tools | 287 |
 | Delete tools | 21 |
-| Admin tools | 45 |
+| Admin tools | 47 |
 | Unknown permission | 0 |
 
 ## MCP Server Counts
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 708 | `cli/src/mcp-server.js` |
+| stateset-commerce | 719 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -42,6 +42,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | accounts_payable | 10 |
 | accounts_receivable | 8 |
 | agent_cards | 5 |
+| agent_receipt | 11 |
 | agent_runtime | 29 |
 | agentic | 15 |
 | analytics | 14 |
@@ -101,10 +102,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Permission | Tools |
 | --- | --- |
-| admin | 45 |
+| admin | 47 |
 | delete | 21 |
-| read | 378 |
-| write | 282 |
+| read | 382 |
+| write | 287 |
 
 ## Tool Registry
 
@@ -289,6 +290,17 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `agent_key_rotate` | `stateset-commerce` | `sync` | `write` |
 | `agent_list_runtimes` | `stateset-commerce` | `agent_runtime` | `read` |
 | `agent_rate_counterparty` | `stateset-commerce` | `agent_runtime` | `write` |
+| `agent_receipt_audit` | `stateset-commerce` | `agent_receipt` | `read` |
+| `agent_receipt_dispute` | `stateset-commerce` | `agent_receipt` | `write` |
+| `agent_receipt_fx_quote` | `stateset-commerce` | `agent_receipt` | `read` |
+| `agent_receipt_merchant_statement` | `stateset-commerce` | `agent_receipt` | `read` |
+| `agent_receipt_purchase` | `stateset-commerce` | `agent_receipt` | `write` |
+| `agent_receipt_refund` | `stateset-commerce` | `agent_receipt` | `write` |
+| `agent_receipt_release` | `stateset-commerce` | `agent_receipt` | `write` |
+| `agent_receipt_request_payout` | `stateset-commerce` | `agent_receipt` | `write` |
+| `agent_receipt_resolve` | `stateset-commerce` | `agent_receipt` | `admin` |
+| `agent_receipt_status` | `stateset-commerce` | `agent_receipt` | `read` |
+| `agent_receipt_sweep_yield` | `stateset-commerce` | `agent_receipt` | `admin` |
 | `agent_register_service` | `stateset-commerce` | `agent_runtime` | `write` |
 | `agent_reset_all_breakers` | `stateset-commerce` | `circuit_breaker` | `admin` |
 | `agent_reset_breaker` | `stateset-commerce` | `circuit_breaker` | `admin` |

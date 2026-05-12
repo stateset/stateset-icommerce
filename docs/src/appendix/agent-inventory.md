@@ -15,7 +15,7 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 | Metric | Value |
 | --- | --- |
 | Total agents | 20 |
-| Commerce MCP tools | 708 |
+| Commerce MCP tools | 719 |
 | Scaffold MCP tools | 13 |
 | x402 MCP tools | 5 |
 | Agents with full commerce access | 1 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 708 | `cli/src/mcp-server.js` |
+| stateset-commerce | 719 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -38,7 +38,7 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 | `analytics` | Analytics Agent | 14 named tools | `stateset-commerce` | Business intelligence and forecasting specialist |
 | `checkout` | Checkout Agent | 32 named tools | `stateset-commerce` | Shopping cart and checkout flow specialist (Agentic Commerce Protocol) |
 | `currency` | Currency Agent | 12 named tools | `stateset-commerce` | Multi-currency support and exchange rate management specialist |
-| `customer-service` | Customer Service | All 708 commerce MCP tools | `stateset-commerce` | Full-service agent with access to all commerce tools |
+| `customer-service` | Customer Service | All 719 commerce MCP tools | `stateset-commerce` | Full-service agent with access to all commerce tools |
 | `inventory` | Inventory Agent | 6 named tools | `stateset-commerce` | Stock and inventory management specialist |
 | `invoices` | Invoices Agent | 9 named tools | `stateset-commerce` | B2B invoice management and accounts receivable specialist |
 | `manufacturing` | Manufacturing Agent | 13 named tools | `stateset-commerce` | Bill of Materials (BOM) and work order management specialist |

@@ -7,9 +7,9 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 40,
-  "totalOperations": 57,
-  "totalSchemas": 54,
+  "totalPaths": 41,
+  "totalOperations": 58,
+  "totalSchemas": 55,
   "totalTags": 13,
   "methods": [
     {
@@ -18,7 +18,7 @@
     },
     {
       "name": "GET",
-      "count": 27
+      "count": 28
     },
     {
       "name": "PATCH",
@@ -43,7 +43,7 @@
     {
       "name": "health",
       "description": "Health check endpoints",
-      "count": 3
+      "count": 4
     },
     {
       "name": "inventory",
@@ -148,6 +148,7 @@
     "TenantCacheResponse",
     "UpdateCustomerRequest",
     "UpdateProductRequest",
+    "VersionResponse",
     "WishlistItemResponse",
     "WishlistListResponse",
     "WishlistResponse"
@@ -665,6 +666,15 @@
         "health"
       ],
       "summary": "`GET /metrics` — Prometheus-compatible operational metrics."
+    },
+    {
+      "path": "/version",
+      "method": "GET",
+      "operationId": "version",
+      "tags": [
+        "health"
+      ],
+      "summary": "`GET /version` — build & release metadata."
     }
   ]
 }
