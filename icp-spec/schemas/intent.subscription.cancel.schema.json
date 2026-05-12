@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://icp.stateset.com/schemas/icp-1.0/intent.subscription.cancel.json",
+  "title": "ICP-1.0 Intent: subscription.cancel",
+  "description": "A buyer Agent's signed request to cancel an existing subscription. See ICP-1.0 §6.5.1.",
+  "type": "object",
+  "required": [
+    "verb",
+    "v",
+    "intent_id",
+    "buyer",
+    "merchant",
+    "settler",
+    "subscription_id",
+    "effective",
+    "principal_binding",
+    "nonce",
+    "iat",
+    "exp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "verb": { "const": "subscription.cancel" },
+    "v": { "const": "icp-1.0" },
+    "intent_id": {
+      "type": "string",
+      "pattern": "^icp_int_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "buyer": { "$ref": "intent.purchase.create.schema.json#/$defs/AID" },
+    "merchant": { "$ref": "intent.purchase.create.schema.json#/$defs/AID" },
+    "settler": { "$ref": "intent.purchase.create.schema.json#/$defs/SettlerID" },
+    "subscription_id": {
+      "type": "string",
+      "pattern": "^icp_sub_[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "subscription_id from the original SubscriptionAuthorization."
+    },
+    "effective": {
+      "type": "string",
+      "enum": ["immediate", "end-of-period"],
+      "description": "Buyer's preferred cancellation effective date. Merchant MAY downgrade per policy; merchant's effective_at in the CancellationAuthorization is authoritative."
+    },
+    "reason": {
+      "type": "string",
+      "enum": ["no-longer-needed", "too-expensive", "competitor", "feature-missing", "service-quality", "other"],
+      "description": "OPTIONAL. Surfaces to merchant analytics and arbitration. NOT required for cancellation."
+    },
+    "principal_binding": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/PrincipalBinding",
+      "description": "MUST grant `subscription.cancel` in authority.verbs."
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{32}$"
+    },
+    "iat": { "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp" },
+    "exp": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp",
+      "description": "MUST be <= iat + 600 seconds (ICP-1.0 §5.3)."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

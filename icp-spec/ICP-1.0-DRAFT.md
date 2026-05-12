@@ -268,10 +268,88 @@ occurrence-Quote's `total` MUST be ≤ `max_total_per_period`. Merchants
 that return Quotes exceeding this cap are non-conformant; conformant
 buyer Agents MUST refuse to accept such Quotes.
 
-**Cancellation.** Until `subscription.cancel` ships in ICP-1.1, buyers
-MAY cancel out-of-band (e.g. by ceasing to fund occurrence escrows) and
-merchants MUST honor a written cancellation. Buyers SHOULD NOT rely on
-out-of-band cancellation for high-value subscriptions; wait for 1.1.
+**Cancellation.** Buyers cancel a subscription by signing a
+`subscription.cancel` Intent (§6.5.1). Out-of-band cancellation (ceasing
+to fund occurrence escrows) is permitted as a fallback, but produces no
+audit-grade record — buyers handling high-value subscriptions SHOULD
+always cancel via the protocol so the cancellation is signed,
+non-repudiable, and dated.
+
+### 6.5.1 subscription.cancel
+
+A buyer Agent's signed request to cancel an existing subscription
+authorization. Cancellation takes effect at the next billing boundary
+or immediately, per the merchant's terms. The merchant signs a
+**CancellationAuthorization** confirming the effective date and any
+pro-rated refund.
+
+```json
+{
+  "verb": "subscription.cancel",
+  "v": "icp-1.0",
+  "intent_id": "icp_int_01HXYZ...",
+  "buyer": "aid:v1:zA...",
+  "merchant": "aid:v1:zB...",
+  "settler": "settler:circle.usdc.base",
+  "subscription_id": "icp_sub_01HXYZ...",        // ID from the SubscriptionAuthorization
+  "effective": "immediate",                       // "immediate" | "end-of-period"
+  "reason": "no-longer-needed",                   // OPTIONAL — same enum as purchase.return reasons
+  "principal_binding": <signed-binding>,          // MUST grant subscription.cancel
+  "nonce": "...",
+  "iat": "...",
+  "exp": "..."
+}
+```
+
+The merchant signs a **CancellationAuthorization** in response:
+
+```json
+{
+  "type": "subscription.cancellation",
+  "v": "icp-1.0",
+  "cancellation_id": "icp_can_01HXYZ...",
+  "intent_id": "icp_int_01HXYZ...",
+  "subscription_id": "icp_sub_01HXYZ...",
+  "merchant": "aid:v1:zB...",
+  "effective_at": "2026-05-12T18:00:00Z",         // when the cancellation takes effect
+  "final_occurrences": 0,                          // remaining billing cycles before effective_at
+  "pro_rated_refund": {                            // OPTIONAL — present iff merchant_terms.refund_policy = "pro-rated"
+    "amount": { "amount": "15.00", "currency": "USDC" },
+    "rail": "base-sepolia",
+    "release_to": "<buyer-wallet-address>",
+    "expected_settlement_within": "5d"
+  },
+  "iat": "...",
+  "signature": { "alg": "ed25519", "kid": "<merchant-aid>", "sig": "..." }
+}
+```
+
+**Effective semantics.**
+- `effective: "immediate"` — no further occurrences are generated;
+  pro-rated refund (if applicable) is issued for the current period.
+- `effective: "end-of-period"` — the current period's occurrence remains
+  in force; the next scheduled occurrence is NOT generated.
+
+The merchant SHOULD honor whichever the buyer requested, but MAY downgrade
+`immediate` to `end-of-period` per its policy (e.g. for annual
+subscriptions with non-refundable prepayment). The merchant's chosen
+`effective_at` is authoritative; conformant buyers reading the
+CancellationAuthorization MUST treat `effective_at` as the binding date.
+
+**Idempotency.** Cancellation of an already-cancelled subscription
+returns the existing CancellationAuthorization, NOT an error. This makes
+client retry logic safe.
+
+**Eligibility.** Common rejection reasons:
+- `policy.subscription.not_found` — subscription_id not recognized
+- `policy.subscription.already_cancelled` — would return existing
+  CancellationAuthorization, not a rejection
+- `policy.subscription.not_cancellable` — merchant policy prohibits
+  mid-cycle cancellation (e.g. annual non-refundable plans)
+- `policy.subscription.outside_window` — cancellation request after
+  the cancellation_notice_period ended
+
+These error codes are added to `schemas/error-codes.md`.
 
 ### 6.2 purchase.return
 

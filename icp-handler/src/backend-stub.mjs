@@ -119,7 +119,10 @@ export function stubSubscriptionAuthorize(intent, merchantSigningKey, merchantAi
 
   const canonical = canonicalJson(auth);
   const signatureHex = signEd25519(canonical, merchantSigningKey);
-  auth.signature = { alg: 'ed25519', kid: merchantAid, sig: signatureHex };
+  // Signature lives in the outer envelope per ICP-1.0 §5.1 — do NOT embed
+  // inside the payload. Embedding makes round-trip verification fail because
+  // the client recomputes canonical bytes from the deserialized object,
+  // which would then include the signature field.
   return { ok: true, authorization: auth, canonical, signatureHex };
 }
 
@@ -185,7 +188,10 @@ export function stubReturnAuthorize(intent, merchantSigningKey, merchantAid) {
 
   const canonical = canonicalJson(auth);
   const signatureHex = signEd25519(canonical, merchantSigningKey);
-  auth.signature = { alg: 'ed25519', kid: merchantAid, sig: signatureHex };
+  // Signature lives in the outer envelope per ICP-1.0 §5.1 — do NOT embed
+  // inside the payload. Embedding makes round-trip verification fail because
+  // the client recomputes canonical bytes from the deserialized object,
+  // which would then include the signature field.
   return { ok: true, authorization: auth, canonical, signatureHex };
 }
 
@@ -243,8 +249,58 @@ export function stubInventoryQuery(intent, merchantSigningKey, merchantAid) {
 
   const canonical = canonicalJson(snapshot);
   const signatureHex = signEd25519(canonical, merchantSigningKey);
-  snapshot.signature = { alg: 'ed25519', kid: merchantAid, sig: signatureHex };
+  // Signature lives in the outer envelope per ICP-1.0 §5.1 (see comment above).
   return { ok: true, snapshot, canonical, signatureHex };
+}
+
+/**
+ * Sign a CancellationAuthorization for a subscription.cancel Intent (§6.5.1).
+ *
+ * The stub:
+ *   - Treats every subscription_id as cancellable (no persistence layer
+ *     for the demo, so we can't enforce subscription.not_found).
+ *   - Honors the buyer's `effective` preference if "end-of-period"; downgrades
+ *     "immediate" → "end-of-period" if the demo policy treats the subscription
+ *     as non-refundable (subscription_id ending in "ANNUAL").
+ *   - Issues pro-rated refund of $7.50 (half a $15/month subscription) when
+ *     the cancellation is immediate.
+ */
+export function stubSubscriptionCancel(intent, merchantSigningKey, merchantAid) {
+  const now = new Date();
+  const isAnnual = intent.subscription_id.endsWith('ANNUAL');
+
+  let effectiveAt;
+  let proRatedRefund = null;
+
+  if (intent.effective === 'immediate' && !isAnnual) {
+    effectiveAt = now.toISOString();
+    proRatedRefund = {
+      amount: { amount: '7.50', currency: 'USDC' },
+      rail: 'base-sepolia',
+      release_to: '<buyer-wallet-address>',
+      expected_settlement_within: '5d',
+    };
+  } else {
+    // End-of-period — assume 15 days remain in the current cycle.
+    effectiveAt = new Date(now.getTime() + 15 * 86400 * 1000).toISOString();
+  }
+
+  const auth = {
+    type: 'subscription.cancellation',
+    v: 'icp-1.0',
+    cancellation_id: newId('icp_can'),
+    intent_id: intent.intent_id,
+    subscription_id: intent.subscription_id,
+    merchant: intent.merchant,
+    effective_at: effectiveAt,
+    final_occurrences: intent.effective === 'immediate' && !isAnnual ? 0 : 1,
+    pro_rated_refund: proRatedRefund,
+    iat: now.toISOString(),
+  };
+
+  const canonical = canonicalJson(auth);
+  const signatureHex = signEd25519(canonical, merchantSigningKey);
+  return { ok: true, authorization: auth, canonical, signatureHex };
 }
 
 /** Build EscrowFunding instructions. The stub points at the testnet

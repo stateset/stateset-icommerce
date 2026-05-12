@@ -5,7 +5,7 @@ by every tick of the multibillion-dollar build loop.
 
 ## Last updated
 
-2026-05-12 — tick 20
+2026-05-12 — tick 24
 
 ## Done
 
@@ -93,6 +93,67 @@ by every tick of the multibillion-dollar build loop.
   decimals, monetary strings, full Intent regression. Both JS and Rust
   IUTs PASS with byte-identical outputs. Conformance suite now: 2 PASS,
   0 FAIL, 0 SKIP across both languages. Tick 10.
+- [x] **`services/icp-chain-watcher/` — chain-mode integration** — Tick 24.
+  Closes the last big technical gap. Zero-dep Node.js service that
+  polls an EVM JSON-RPC endpoint for ICPEscrow.sol events, decodes them
+  with a hand-rolled Solidity ABI decoder (Buffer-based uint/bytes32/
+  address/string handling), maps each decoded event to a Settler
+  /admin/escrow/event payload, and POSTs to settler-stateset. Event
+  topic hashes computed via `cast keccak` and hardcoded for the 5
+  ICPEscrow events. Polling with FINALITY_BLOCKS lag (default 18,
+  matches Base L2). Last-block persistence to STATE_FILE for restart
+  safety. Health endpoint at /healthz. **8/8 tests PASS** covering all
+  decode paths + end-to-end (mock RPC + real Settler) + state
+  persistence. Settler daemon updated to accept chain-origin fund
+  events with optional intent_id (chain doesn't carry it; merchant
+  Backend resolves via quote_hash post-hoc); settler 9/9 still PASS
+  with no regression. CI integration added. Production gaps documented:
+  WebSocket subscriptions, multi-chain, Solana/Borsh decoder, Settler
+  chain-mode authentication.
+- [x] **ICPIP-0001 + icpips/ directory** — Tick 23.
+  First formal Improvement Proposal. ICPIP-0001 is a Meta-Process ICPIP
+  ratifying the proposal lifecycle itself (Draft → Review → Last Call →
+  Final), modeled on EIP-1 / BIP-2 with two ICP-specific additions:
+  (1) Standards Track Final REQUIRES at least 2 independent
+  implementations passing the new conformance vectors, and
+  (2) a temporary 30-day suspensive steward veto sunsetting at the
+  24-month mark per Charter §3.4. Created the `icp-spec/icpips/`
+  directory with the index (lists 4 ICPIPs: 0001 Draft + 3 solicited),
+  the proposal template (`icpip-template.md`), and ICPIP-0001
+  itself (~250 lines). Demonstrates governance is operational, not
+  theoretical. The next ICPIPs in the queue address ICP-1.1 / 1.2
+  concerns: hybrid PQC mandate for high-value Intents, plus the
+  deferred `quote.request` and `payout.request` verbs.
+- [x] **`subscription.cancel` verb (5th ICP-1.0 verb)** — Tick 22.
+  Closes the subscription lifecycle. Spec section §6.5.1 (the pair to
+  §6.5 subscription.create), JSON Schema with effective enum
+  (immediate / end-of-period) + reason enum, 4 new error codes under
+  `policy.subscription.*` namespace, handler `stubSubscriptionCancel()`
+  with pro-rated refund logic (immediate cancel → $7.50 demo refund;
+  ANNUAL subscriptions auto-downgrade to end-of-period with no refund).
+  Both icp-handler and icp-mcp now advertise + accept 5 ICP verbs.
+  SDK gets a `.cancel()` method. Handler 14/14 PASS (2 new tests),
+  MCP 6/6 PASS, SDK 11/11 PASS — no regressions. Idempotent semantics
+  + downgrade pattern documented in spec. Without subscription.cancel,
+  the only way out of a subscription was out-of-band (no audit trail) —
+  now the cancellation is signed, dated, and non-repudiable.
+- [x] **`packages/icp-client/` — npm-publishable SDK + spec bugfix** — Tick 21.
+  Zero-dep TypeScript-ergonomic client. ICPClient.create() returns a
+  client with .capabilities(), .inventory(), .purchase(), .accept(),
+  .subscribe(), .return_(), .observe() (async iterator over SSE escrow
+  events), and .settlement(). Every merchant response is independently
+  signature-verified against the pubkey from `.well-known/icp` — a
+  verification failure throws typed `ICPError('signature.invalid', ...)`.
+  Identity helpers exported (generateIdentity, identityFromSeeds) for
+  KMS/HSM-backed production keys. 11/11 SDK tests PASS including the
+  full purchase → accept → fulfill → settlement lifecycle. Discovered
+  and fixed a SPEC INTEROP BUG along the way: the handler's
+  stubInventoryQuery, stubSubscriptionAuthorize, and stubReturnAuthorize
+  were embedding the signature inside the signed payload after signing.
+  Per ICP-1.0 §5.1 the signature MUST live in the outer envelope only —
+  otherwise a client recomputing canonical bytes after deserialization
+  includes the signature field and verification fails. Fixed in all
+  three stubs; handler tests still 12/12, MCP 6/6, no regressions.
 - [x] **`inventory.query` verb (fourth ICP verb)** — Tick 20.
   Read-only verb that returns a signed InventorySnapshot with `valid_until`
   validity window. Spec section §6.3, JSON Schema with optional skus +

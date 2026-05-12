@@ -25,6 +25,7 @@ import {
   stubQuote,
   stubFundingInstructions,
   stubSubscriptionAuthorize,
+  stubSubscriptionCancel,
   stubReturnAuthorize,
   stubInventoryQuery,
 } from './backend-stub.mjs';
@@ -107,7 +108,13 @@ function handleWellKnown(req, res) {
       raw_hex: merchantPubRaw.toString('hex'),
     },
     capabilities: {
-      verbs: ['purchase.create', 'subscription.create', 'purchase.return', 'inventory.query'],
+      verbs: [
+        'purchase.create',
+        'subscription.create',
+        'subscription.cancel',
+        'purchase.return',
+        'inventory.query',
+      ],
       transports: ['http'],
       pqc_hybrid: false,
     },
@@ -135,6 +142,7 @@ async function handleSubmitIntent(req, res) {
   const supportedVerbs = new Set([
     'purchase.create',
     'subscription.create',
+    'subscription.cancel',
     'purchase.return',
     'inventory.query',
   ]);
@@ -196,6 +204,16 @@ async function handleSubmitIntent(req, res) {
     state.recordIntent(intent, signature.sig);
     return reply(res, 200, {
       snapshot: result.snapshot,
+      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+    });
+  }
+
+  if (intent.verb === 'subscription.cancel') {
+    const result = stubSubscriptionCancel(intent, merchantKp.privateKey, merchantAid);
+    if (!result.ok) return reply(res, 422, result.error);
+    state.recordIntent(intent, signature.sig);
+    return reply(res, 200, {
+      authorization: result.authorization,
       signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
     });
   }

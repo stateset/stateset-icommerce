@@ -100,6 +100,10 @@ humans).
 | `policy.return.already_returned` | Line item already covered by a prior ReturnAuthorization |
 | `policy.return.exceeds_max_refund` | Refund amount exceeds Intent's `max_refund` ceiling |
 | `policy.return.original_disputed` | Original settlement is in a disputed state — resolve dispute first |
+| `policy.subscription.not_found` | Subscription_id not recognized by merchant |
+| `policy.subscription.not_cancellable` | Merchant policy prohibits mid-cycle cancellation |
+| `policy.subscription.outside_window` | Cancellation request after merchant_terms.cancellation_notice_period |
+| `policy.subscription.already_cancelled` | (Informational; conformant merchants return the existing CancellationAuthorization instead of erroring) |
 
 ### format
 

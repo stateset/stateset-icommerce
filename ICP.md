@@ -28,7 +28,7 @@ settlement. No other public protocol covers this layer.
 | Layer | Artifact | Tests |
 |---|---|---|
 | **Spec** | [`icp-spec/ICP-1.0-DRAFT.md`](./icp-spec/ICP-1.0-DRAFT.md) — normative protocol; canonicalization rules; 60+ error codes | — |
-| **Wire** | **4 intent verbs shipping** (`purchase.create`, `subscription.create`, `purchase.return`, `inventory.query`); 3 more deferred to ICP-1.1 | — |
+| **Wire** | **5 intent verbs shipping** (`purchase.create`, `subscription.create`, `subscription.cancel`, `purchase.return`, `inventory.query`); 2 more deferred to ICP-1.1 | — |
 | **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic | 2 vectors × **4 IUTs (JS · Rust · Go · Python)** = **8 byte-identical PASS** |
 | **Reference contract** | [`icp-spec/contracts/usdc-base/ICPEscrow.sol`](./icp-spec/contracts/usdc-base/) — production-quality Solidity | **15/15 Foundry PASS** |
 | **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference | **8/8 Node-test PASS** |
@@ -38,6 +38,7 @@ settlement. No other public protocol covers this layer.
 | **Governance** | [`icp-spec/governance/`](./icp-spec/governance/) — Foundation charter, LOI, ICPIPs, risk register | — |
 | **Distribution** | [`icp-spec/outreach/`](./icp-spec/outreach/) — 8 partner-specific drafts | — |
 | **Deployment** | [`icp-docker/`](./icp-docker/) — one-command Docker Compose stack | **17/17 integration PASS** against the live stack |
+| **SDK** | [`packages/icp-client/`](./packages/icp-client/) — zero-dep npm-publishable client library | **11/11 SDK PASS** with independent merchant-signature verification |
 
 Cumulative protocol-layer tests on every CI run: **60+ PASS, 0 FAIL** across
 HTTP, MCP, Settler, contract, conformance (**4 languages**), demos, and
@@ -106,8 +107,14 @@ when the parties are autonomous AI agents:
   in B2B agentic commerce. Doesn't trigger an escrow; serves as the
   discovery primitive that precedes every value-transferring Intent.
 
-Three more verbs ship in ICP-1.1: `quote.request`, `payout.request`,
-`subscription.cancel`.
+- **subscription.cancel** — buyer Agent's signed cancellation of an
+  existing subscription. Merchant returns a CancellationAuthorization
+  with `effective_at` (immediate or end-of-period per merchant policy)
+  and an optional `pro_rated_refund`. Idempotent. Without this verb,
+  the only way out of a subscription is out-of-band — which produces
+  no audit-grade record.
+
+Two more verbs ship in ICP-1.1: `quote.request`, `payout.request`.
 
 ## What ICP is NOT
 

@@ -1,0 +1,40 @@
+{
+  "name": "@stateset/icp-client",
+  "version": "1.2.0",
+  "description": "TypeScript-ergonomic client SDK for the Intelligent Commerce Protocol (ICP-1.0). Zero runtime dependencies.",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": {
+      "import": "./src/index.mjs",
+      "default": "./src/index.mjs"
+    }
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "engines": {
+    "node": ">=20.20.0"
+  },
+  "license": "(MIT OR Apache-2.0)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stateset/stateset-icommerce.git",
+    "directory": "packages/icp-client"
+  },
+  "homepage": "https://github.com/stateset/stateset-icommerce/tree/master/packages/icp-client",
+  "keywords": [
+    "icp",
+    "agentic-commerce",
+    "ai-agents",
+    "ed25519",
+    "mcp",
+    "stateset"
+  ],
+  "scripts": {
+    "test": "node --test test/client.test.mjs"
+  }
+}

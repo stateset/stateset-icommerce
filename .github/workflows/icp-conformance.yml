@@ -13,7 +13,9 @@ on:
       - 'crates/stateset-icp-iut-go/**'
       - 'crates/stateset-icp-iut-py/**'
       - 'icp-docker/**'
+      - 'packages/icp-client/**'
       - '.github/workflows/icp-conformance.yml'
+      - 'services/icp-chain-watcher/**'
   pull_request:
     paths:
       - 'icp-spec/**'
@@ -25,7 +27,9 @@ on:
       - 'crates/stateset-icp-iut-go/**'
       - 'crates/stateset-icp-iut-py/**'
       - 'icp-docker/**'
+      - 'packages/icp-client/**'
       - '.github/workflows/icp-conformance.yml'
+      - 'services/icp-chain-watcher/**'
 
 jobs:
   reference-demo:
@@ -179,6 +183,19 @@ jobs:
         working-directory: icp-mcp
         run: node --test test/mcp.test.mjs
 
+  sdk:
+    name: '@stateset/icp-client SDK roundtrip'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run SDK test suite
+        working-directory: packages/icp-client
+        run: node --test test/client.test.mjs
+
   flagship-demo:
     name: End-to-end flagship demo
     runs-on: ubuntu-latest
@@ -215,6 +232,19 @@ jobs:
         env:
           PORT: '0'
         run: node --test test/settler.test.mjs
+
+  chain-watcher:
+    name: icp-chain-watcher roundtrip (mock RPC + real Settler)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run chain-watcher test suite
+        working-directory: services/icp-chain-watcher
+        run: node --test test/watcher.test.mjs
 
   two-sided-demo:
     name: Two-sided integration demo (handler + Settler)

@@ -1,0 +1,12 @@
+{
+  "name": "@stateset/icp-chain-watcher",
+  "version": "0.1.0",
+  "description": "Watches an EVM chain for ICPEscrow events and forwards them to settler-stateset. Closes the chain-mode gap for the ICP Settler.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20.20.0" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/watcher.test.mjs"
+  }
+}

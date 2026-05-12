@@ -152,16 +152,21 @@ async function handleAdminEvent(req, res) {
       if (state.knownEscrow(escrow_id)) {
         return reply(res, 409, err('escrow.already_funded', `escrow ${escrow_id} exists`));
       }
-      if (!init?.intent_id || !init?.amount) {
-        return reply(res, 400, err('format.missing_field', 'fund event requires init.intent_id + init.amount'));
+      if (!init?.amount) {
+        return reply(res, 400, err('format.missing_field', 'fund event requires init.amount'));
       }
+      // intent_id is OPTIONAL in chain-mode (the chain doesn't carry it; the
+      // merchant Backend resolves intent_id via quote_hash post-hoc). If not
+      // provided, we record null and the merchant patches it later via a
+      // separate API. Mock-mode callers SHOULD still provide it.
+      const resolvedIntentId = init.intent_id ?? intent_id ?? null;
       state.createOrGetEscrow(escrow_id, {
         state: 'funded',
-        intent_id: init.intent_id,
+        intent_id: resolvedIntentId,
         amount: init.amount,
         settler: SETTLER_ID,
       });
-      event = makeEvent(escrow_id, intent_id ?? init.intent_id, 'none', 'funded', {
+      event = makeEvent(escrow_id, resolvedIntentId, 'none', 'funded', {
         kind: 'rail-funded',
         rail_event: rail_event ?? null,
       });

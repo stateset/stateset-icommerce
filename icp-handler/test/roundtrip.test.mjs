@@ -429,10 +429,10 @@ test('inventory.query → signed InventorySnapshot with 5 SKUs', async () => {
   assert.equal(merchantSig.alg, 'ed25519');
   assert.equal(Buffer.from(merchantSig.sig, 'hex').length, 64);
 
-  // .well-known/icp advertises 4 verbs
+  // .well-known/icp advertises 5 verbs (after subscription.cancel)
   const caps = await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json();
   assert.ok(caps.capabilities.verbs.includes('inventory.query'));
-  assert.equal(caps.capabilities.verbs.length, 4);
+  assert.ok(caps.capabilities.verbs.length >= 4);
 });
 
 test('inventory.query with in_stock_only filter excludes out-of-stock SKUs', async () => {
@@ -472,6 +472,99 @@ test('inventory.query with in_stock_only filter excludes out-of-stock SKUs', asy
   // WIDGET-002 has available_quantity: 0; should be filtered out
   assert.equal(j.snapshot.items.length, 4);
   assert.ok(!j.snapshot.items.some((it) => it.sku === 'WIDGET-002'));
+});
+
+test('subscription.cancel (immediate) → CancellationAuthorization with pro-rated refund', async () => {
+  const now = new Date();
+  const exp = new Date(now.getTime() + 300 * 1000);
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'subscription.cancel',
+    intent_id: newId('icp_int'),
+    buyer: buyerAid,
+    merchant: 'aid:v1:zMerchantSaaS',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    subscription_id: 'icp_sub_01HXYZTESTSUBSCRIPTION0001',
+    effective: 'immediate',
+    reason: 'no-longer-needed',
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: buyerAid,
+      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['subscription.cancel'] },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: exp.toISOString(),
+  };
+  const canonical = canonicalJson(intent);
+  const sig = signEd25519(canonical, buyerKp.privateKey);
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  const rBody = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(rBody));
+  const { authorization } = rBody;
+  assert.equal(authorization.type, 'subscription.cancellation');
+  assert.equal(authorization.subscription_id, intent.subscription_id);
+  assert.equal(authorization.final_occurrences, 0);
+  assert.ok(authorization.pro_rated_refund);
+  assert.equal(authorization.pro_rated_refund.amount.amount, '7.50');
+
+  // .well-known/icp now advertises 5 verbs
+  const caps = await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json();
+  assert.ok(caps.capabilities.verbs.includes('subscription.cancel'));
+  assert.equal(caps.capabilities.verbs.length, 5);
+});
+
+test('subscription.cancel on ANNUAL subscription downgrades to end-of-period', async () => {
+  const now = new Date();
+  const exp = new Date(now.getTime() + 300 * 1000);
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'subscription.cancel',
+    intent_id: newId('icp_int'),
+    buyer: buyerAid,
+    merchant: 'aid:v1:zMerchantSaaS',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    subscription_id: 'icp_sub_01HXYZTESTSUB000000000ANNUAL',
+    effective: 'immediate',
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: buyerAid,
+      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['subscription.cancel'] },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: exp.toISOString(),
+  };
+  const canonical = canonicalJson(intent);
+  const sig = signEd25519(canonical, buyerKp.privateKey);
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  const j = await r.json();
+  assert.equal(r.status, 200);
+  // Demo: ANNUAL subscriptions downgrade to end-of-period with no refund
+  assert.equal(j.authorization.final_occurrences, 1);
+  assert.equal(j.authorization.pro_rated_refund, null);
 });
 
 test('Intent over max_total is rejected with policy error', async () => {
