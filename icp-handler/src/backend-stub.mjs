@@ -189,6 +189,64 @@ export function stubReturnAuthorize(intent, merchantSigningKey, merchantAid) {
   return { ok: true, authorization: auth, canonical, signatureHex };
 }
 
+/**
+ * Sign an InventorySnapshot for an inventory.query Intent (§6.3).
+ *
+ * The stub maintains a small fixed catalog and returns the subset the
+ * buyer requested (or the full catalog if `skus` is empty/missing). All
+ * prices are in the same currency the buyer named in `settler`.
+ */
+export function stubInventoryQuery(intent, merchantSigningKey, merchantAid) {
+  const CATALOG = {
+    'WIDGET-001': { available_quantity: 47, unit_price: { amount: '29.99', currency: 'USDC' }, metadata: { lead_time_days: 2, weight_g: 250 } },
+    'WIDGET-002': { available_quantity: 0,  unit_price: { amount: '49.99', currency: 'USDC' }, metadata: { restock_eta: '2026-05-19T00:00:00Z' } },
+    'WIDGET-003': { available_quantity: 12, unit_price: { amount: '99.99', currency: 'USDC' }, metadata: { lead_time_days: 5 } },
+    'GADGET-A':   { available_quantity: 200, unit_price: { amount: '4.99',  currency: 'USDC' }, metadata: { category: 'consumable' } },
+    'GADGET-B':   { available_quantity: 100, unit_price: { amount: '9.99',  currency: 'USDC' }, metadata: { category: 'consumable' } },
+  };
+
+  // Filter SKUs.
+  let skuList;
+  if (Array.isArray(intent.skus) && intent.skus.length > 0) {
+    skuList = intent.skus.map((s) => s.sku).filter((sku) => CATALOG[sku]);
+  } else {
+    skuList = Object.keys(CATALOG);
+  }
+
+  // Filter by in_stock_only if requested.
+  if (intent.filters?.in_stock_only) {
+    skuList = skuList.filter((sku) => CATALOG[sku].available_quantity > 0);
+  }
+
+  // Apply max_results cap.
+  const cap = Math.min(intent.max_results ?? 100, 100);
+  const totalMatching = skuList.length;
+  skuList = skuList.slice(0, cap);
+
+  const items = skuList.map((sku) => ({ sku, ...CATALOG[sku] }));
+
+  const now = new Date();
+  const validUntil = new Date(now.getTime() + 5 * 60 * 1000); // 5-minute validity
+
+  const snapshot = {
+    type: 'inventory.snapshot',
+    v: 'icp-1.0',
+    snapshot_id: newId('icp_inv'),
+    intent_id: intent.intent_id,
+    merchant: intent.merchant,
+    snapshot_taken_at: now.toISOString(),
+    valid_until: validUntil.toISOString(),
+    items,
+    total_matching_skus: totalMatching,
+    iat: now.toISOString(),
+  };
+
+  const canonical = canonicalJson(snapshot);
+  const signatureHex = signEd25519(canonical, merchantSigningKey);
+  snapshot.signature = { alg: 'ed25519', kid: merchantAid, sig: signatureHex };
+  return { ok: true, snapshot, canonical, signatureHex };
+}
+
 /** Build EscrowFunding instructions. The stub points at the testnet
  *  ICPEscrow contract; production would compute escrowId and surface
  *  the funding tx encoder. */

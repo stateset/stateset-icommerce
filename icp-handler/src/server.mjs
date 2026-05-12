@@ -26,6 +26,7 @@ import {
   stubFundingInstructions,
   stubSubscriptionAuthorize,
   stubReturnAuthorize,
+  stubInventoryQuery,
 } from './backend-stub.mjs';
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -106,7 +107,7 @@ function handleWellKnown(req, res) {
       raw_hex: merchantPubRaw.toString('hex'),
     },
     capabilities: {
-      verbs: ['purchase.create', 'subscription.create', 'purchase.return'],
+      verbs: ['purchase.create', 'subscription.create', 'purchase.return', 'inventory.query'],
       transports: ['http'],
       pqc_hybrid: false,
     },
@@ -131,7 +132,12 @@ async function handleSubmitIntent(req, res) {
 
   // 1. Spec-shape sanity
   if (intent.v !== 'icp-1.0') return reply(res, 400, err('version.unsupported', `unknown spec version ${intent.v}`));
-  const supportedVerbs = new Set(['purchase.create', 'subscription.create', 'purchase.return']);
+  const supportedVerbs = new Set([
+    'purchase.create',
+    'subscription.create',
+    'purchase.return',
+    'inventory.query',
+  ]);
   if (!supportedVerbs.has(intent.verb)) {
     return reply(res, 400, err('format.unknown_verb', `verb ${intent.verb} not implemented in stub`));
   }
@@ -180,6 +186,16 @@ async function handleSubmitIntent(req, res) {
     state.recordIntent(intent, signature.sig);
     return reply(res, 200, {
       authorization: result.authorization,
+      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+    });
+  }
+
+  if (intent.verb === 'inventory.query') {
+    const result = stubInventoryQuery(intent, merchantKp.privateKey, merchantAid);
+    if (!result.ok) return reply(res, 422, result.error);
+    state.recordIntent(intent, signature.sig);
+    return reply(res, 200, {
+      snapshot: result.snapshot,
       signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
     });
   }

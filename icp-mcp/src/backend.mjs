@@ -17,6 +17,7 @@ import {
   stubFundingInstructions,
   stubSubscriptionAuthorize,
   stubReturnAuthorize,
+  stubInventoryQuery,
 } from '../../icp-handler/src/backend-stub.mjs';
 
 const intents = new Map();
@@ -30,7 +31,12 @@ export const ALLOWED_SETTLERS = new Set([
   'settler:circle.usdc.base',
 ]);
 
-const SUPPORTED_VERBS = new Set(['purchase.create', 'subscription.create', 'purchase.return']);
+const SUPPORTED_VERBS = new Set([
+  'purchase.create',
+  'subscription.create',
+  'purchase.return',
+  'inventory.query',
+]);
 
 export function submitIntent({ intent, signature, _pubkey_hex }, merchantSigningKey, merchantAid) {
   if (!intent || !signature) return { ok: false, error: { code: 'format.missing_field', message: 'expected { intent, signature }' } };
@@ -75,6 +81,17 @@ export function submitIntent({ intent, signature, _pubkey_hex }, merchantSigning
     return {
       ok: true,
       authorization: result.authorization,
+      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+    };
+  }
+
+  if (intent.verb === 'inventory.query') {
+    const result = stubInventoryQuery(intent, merchantSigningKey, merchantAid);
+    if (!result.ok) return { ok: false, error: result.error };
+    intents.set(intent.intent_id, { intent, signedAt: new Date().toISOString(), signatureHex: signature.sig });
+    return {
+      ok: true,
+      snapshot: result.snapshot,
       signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
     };
   }

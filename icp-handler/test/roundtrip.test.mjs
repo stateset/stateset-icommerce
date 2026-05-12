@@ -386,6 +386,94 @@ test('purchase.return: large no-fault return rejected per demo policy', async ()
   assert.equal(j.code, 'policy.return.not_eligible');
 });
 
+test('inventory.query → signed InventorySnapshot with 5 SKUs', async () => {
+  const now = new Date();
+  const exp = new Date(now.getTime() + 300 * 1000);
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'inventory.query',
+    intent_id: newId('icp_int'),
+    buyer: buyerAid,
+    merchant: 'aid:v1:zMerchantInv',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: buyerAid,
+      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['inventory.query'] },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: exp.toISOString(),
+  };
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  const rBody = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(rBody));
+  const { snapshot, signature: merchantSig } = rBody;
+
+  assert.equal(snapshot.type, 'inventory.snapshot');
+  assert.equal(snapshot.intent_id, intent.intent_id);
+  assert.equal(snapshot.items.length, 5);
+  assert.ok(snapshot.snapshot_id.startsWith('icp_inv_'));
+  assert.ok(snapshot.valid_until);
+  assert.equal(merchantSig.alg, 'ed25519');
+  assert.equal(Buffer.from(merchantSig.sig, 'hex').length, 64);
+
+  // .well-known/icp advertises 4 verbs
+  const caps = await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json();
+  assert.ok(caps.capabilities.verbs.includes('inventory.query'));
+  assert.equal(caps.capabilities.verbs.length, 4);
+});
+
+test('inventory.query with in_stock_only filter excludes out-of-stock SKUs', async () => {
+  const now = new Date();
+  const exp = new Date(now.getTime() + 300 * 1000);
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'inventory.query',
+    intent_id: newId('icp_int'),
+    buyer: buyerAid,
+    merchant: 'aid:v1:zMerchantInv',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    filters: { in_stock_only: true },
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: buyerAid,
+      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['inventory.query'] },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: exp.toISOString(),
+  };
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  const j = await r.json();
+  assert.equal(r.status, 200);
+  // WIDGET-002 has available_quantity: 0; should be filtered out
+  assert.equal(j.snapshot.items.length, 4);
+  assert.ok(!j.snapshot.items.some((it) => it.sku === 'WIDGET-002'));
+});
+
 test('Intent over max_total is rejected with policy error', async () => {
   const body = buildSignedIntent();
   body.intent.max_total = { amount: '50.00', currency: 'USDC' }; // < 62.98

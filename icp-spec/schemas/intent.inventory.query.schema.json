@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://icp.stateset.com/schemas/icp-1.0/intent.inventory.query.json",
+  "title": "ICP-1.0 Intent: inventory.query",
+  "description": "A buyer Agent's signed read-only query for inventory availability. See ICP-1.0 §6.3.",
+  "type": "object",
+  "required": [
+    "verb",
+    "v",
+    "intent_id",
+    "buyer",
+    "merchant",
+    "settler",
+    "principal_binding",
+    "nonce",
+    "iat",
+    "exp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "verb": { "const": "inventory.query" },
+    "v": { "const": "icp-1.0" },
+    "intent_id": {
+      "type": "string",
+      "pattern": "^icp_int_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "buyer": { "$ref": "intent.purchase.create.schema.json#/$defs/AID" },
+    "merchant": { "$ref": "intent.purchase.create.schema.json#/$defs/AID" },
+    "settler": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/SettlerID",
+      "description": "Names the rail the buyer would expect to settle in if they later submit a purchase.create. Merchants MAY surface different prices for different settlers."
+    },
+    "skus": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 1000,
+      "description": "OPTIONAL. Empty means 'advertise everything matching filters'.",
+      "items": {
+        "type": "object",
+        "required": ["sku"],
+        "additionalProperties": false,
+        "properties": {
+          "sku": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "OPTIONAL. Hint: 'I'd want this many'. Merchant uses this for availability filtering."
+          }
+        }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "description": "OPTIONAL. Merchant-defined free-form filters (category, brand, etc). Unknown filters MUST be ignored by conformant merchants.",
+      "additionalProperties": true
+    },
+    "max_results": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000,
+      "description": "OPTIONAL. Cap on returned items. Merchant MAY return fewer; MUST NOT return more."
+    },
+    "principal_binding": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/PrincipalBinding",
+      "description": "MUST grant `inventory.query` in authority.verbs."
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{32}$"
+    },
+    "iat": { "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp" },
+    "exp": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp",
+      "description": "MUST be <= iat + 600 seconds (ICP-1.0 §5.3)."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

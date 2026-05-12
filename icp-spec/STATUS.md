@@ -5,7 +5,7 @@ by every tick of the multibillion-dollar build loop.
 
 ## Last updated
 
-2026-05-11 — tick 19
+2026-05-12 — tick 20
 
 ## Done
 
@@ -93,6 +93,15 @@ by every tick of the multibillion-dollar build loop.
   decimals, monetary strings, full Intent regression. Both JS and Rust
   IUTs PASS with byte-identical outputs. Conformance suite now: 2 PASS,
   0 FAIL, 0 SKIP across both languages. Tick 10.
+- [x] **`inventory.query` verb (fourth ICP verb)** — Tick 20.
+  Read-only verb that returns a signed InventorySnapshot with `valid_until`
+  validity window. Spec section §6.3, JSON Schema with optional skus +
+  filters + max_results, 5-SKU demo catalog with in_stock_only filter
+  support. Handler 12/12 PASS, MCP 6/6 PASS. Highest-volume verb by call
+  count in B2B agentic commerce — every value-transferring Intent is
+  preceded by 10–100 inventory.query calls in real procurement flows.
+  Pulled from ICP-1.1 deferred list to ICP-1.0 because B2B adoption is
+  gated on it.
 - [x] **`purchase.return` verb (third ICP-1.0 verb)** — Tick 19.
   Full normative spec section (ICP-1.0-DRAFT.md §6.2). JSON Schema
   with original_settlement_id reference + `max_refund` ceiling rule.

@@ -365,9 +365,96 @@ These error codes are added to `schemas/error-codes.md` under the
 
 ### 6.3 inventory.query
 
-A buyer Agent's signed read-only query for inventory availability.
-Specified in ICP-1.1 (forthcoming). Will be the highest-volume verb
-by call count for B2B agentic commerce.
+A buyer Agent's signed read-only query for inventory availability. Unlike
+the value-transferring verbs (`purchase.create`, `subscription.create`,
+`purchase.return`), `inventory.query` does NOT trigger an escrow or
+settlement — it returns a signed **InventorySnapshot** that the buyer can
+use to plan subsequent value-transferring Intents.
+
+The query is **signed by the buyer** for non-repudiation and rate-limit
+accounting. The response is **signed by the merchant** so the buyer can
+later prove what prices and availability were advertised at a given
+moment — a critical primitive for dispute resolution when a subsequent
+`purchase.create` Quote diverges from the queried inventory.
+
+```json
+{
+  "verb": "inventory.query",
+  "v": "icp-1.0",
+  "intent_id": "icp_int_01HXYZ...",
+  "buyer": "aid:v1:zA...",
+  "merchant": "aid:v1:zB...",
+  "settler": "settler:circle.usdc.base",        // names the rail the buyer expects to settle in
+  "skus": [                                      // OPTIONAL — empty means "advertise everything"
+    { "sku": "WIDGET-001", "quantity": 2 },
+    { "sku": "WIDGET-002", "quantity": 5 }
+  ],
+  "filters": {                                   // OPTIONAL — merchant-defined free-form
+    "category": "electronics",
+    "in_stock_only": true
+  },
+  "max_results": 100,                            // OPTIONAL — cap the snapshot size
+  "principal_binding": <signed-binding>,         // MUST grant inventory.query
+  "nonce": "...",
+  "iat": "...",
+  "exp": "..."
+}
+```
+
+The merchant signs an **InventorySnapshot** in response:
+
+```json
+{
+  "type": "inventory.snapshot",
+  "v": "icp-1.0",
+  "snapshot_id": "icp_inv_01HXYZ...",
+  "intent_id": "icp_int_01HXYZ...",
+  "merchant": "aid:v1:zB...",
+  "snapshot_taken_at": "2026-05-12T17:50:00Z",
+  "valid_until": "2026-05-12T17:55:00Z",          // typically 5min; merchant policy
+  "items": [
+    {
+      "sku": "WIDGET-001",
+      "available_quantity": 47,
+      "unit_price": { "amount": "29.99", "currency": "USDC" },
+      "metadata": { "lead_time_days": 2, "weight_g": 250 }
+    },
+    {
+      "sku": "WIDGET-002",
+      "available_quantity": 0,
+      "unit_price": { "amount": "49.99", "currency": "USDC" },
+      "metadata": { "restock_eta": "2026-05-19T00:00:00Z" }
+    }
+  ],
+  "total_matching_skus": 2,                       // for pagination signaling
+  "iat": "...",
+  "signature": { "alg": "ed25519", "kid": "<merchant-aid>", "sig": "..." }
+}
+```
+
+**Snapshot validity.** The `valid_until` field tells the buyer how long
+the prices/availability are guaranteed. After expiry, prices are stale.
+Buyers MAY use a stale snapshot to inform a subsequent
+`purchase.create`, but the merchant is NOT bound to honor stale prices.
+
+**Snapshot-quote consistency.** If a `purchase.create` Quote returns a
+`unit_price` that differs from a still-valid InventorySnapshot's
+`unit_price` for the same `sku`, the merchant SHOULD include
+`snapshot_id` in the Quote's metadata explaining the divergence
+(e.g. dynamic surge pricing). Conformant buyer Agents MAY refuse such
+Quotes as non-binding price-walk attempts.
+
+**Rate limiting.** Read-only queries are cheaper to serve than
+value-transferring Intents but still consume merchant resources.
+Merchants MAY rate-limit `inventory.query` per buyer AID. Excess
+queries return `rate.aid_quota_exceeded` with a `retry_after` hint.
+
+**Why this verb matters for B2B.** B2B agentic commerce is dominated
+by discovery: an agent on a procurement system runs hundreds of
+`inventory.query` calls across vendors for every `purchase.create`. By
+volume, inventory.query is the highest-call-count verb in the
+protocol. ICP-1.0 ships it as a first-class verb (not deferred to 1.1)
+because B2B adoption is gated on it.
 
 ### 6.4 quote.request
 

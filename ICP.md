@@ -28,7 +28,7 @@ settlement. No other public protocol covers this layer.
 | Layer | Artifact | Tests |
 |---|---|---|
 | **Spec** | [`icp-spec/ICP-1.0-DRAFT.md`](./icp-spec/ICP-1.0-DRAFT.md) — normative protocol; canonicalization rules; 60+ error codes | — |
-| **Wire** | **3 intent verbs shipping** (`purchase.create`, `subscription.create`, `purchase.return`); 4 more deferred to ICP-1.1 | — |
+| **Wire** | **4 intent verbs shipping** (`purchase.create`, `subscription.create`, `purchase.return`, `inventory.query`); 3 more deferred to ICP-1.1 | — |
 | **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic | 2 vectors × **4 IUTs (JS · Rust · Go · Python)** = **8 byte-identical PASS** |
 | **Reference contract** | [`icp-spec/contracts/usdc-base/ICPEscrow.sol`](./icp-spec/contracts/usdc-base/) — production-quality Solidity | **15/15 Foundry PASS** |
 | **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference | **8/8 Node-test PASS** |
@@ -100,8 +100,14 @@ when the parties are autonomous AI agents:
   `max_refund` ceiling protects the buyer the same way `max_total`
   does on forward purchases.
 
-Four more verbs ship in ICP-1.1: `inventory.query`, `quote.request`,
-`payout.request`, `subscription.cancel`.
+- **inventory.query** — buyer Agent's signed read-only query for
+  availability + pricing. Merchant signs an InventorySnapshot with
+  `valid_until` validity window. Highest-volume verb by call count
+  in B2B agentic commerce. Doesn't trigger an escrow; serves as the
+  discovery primitive that precedes every value-transferring Intent.
+
+Three more verbs ship in ICP-1.1: `quote.request`, `payout.request`,
+`subscription.cancel`.
 
 ## What ICP is NOT
 
