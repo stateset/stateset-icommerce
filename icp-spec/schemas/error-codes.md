@@ -104,6 +104,22 @@ humans).
 | `policy.subscription.not_cancellable` | Merchant policy prohibits mid-cycle cancellation |
 | `policy.subscription.outside_window` | Cancellation request after merchant_terms.cancellation_notice_period |
 | `policy.subscription.already_cancelled` | (Informational; conformant merchants return the existing CancellationAuthorization instead of erroring) |
+| `policy.quote.not_available_for_quantity` | quote.request quantity falls outside merchant's quotable range |
+| `policy.quote.sku_not_quotable` | SKU is fixed-price catalog only; merchant doesn't quote it |
+| `policy.quote.window_too_long` | Buyer's `purchase_window` exceeds merchant's policy ceiling |
+| `quote.proposal_not_found` | `from_proposal_id` in purchase.create doesn't match any issued proposal |
+| `quote.proposal_expired` | Proposal exists but `valid_until` is in the past |
+| `quote.proposal_total_mismatch` | `max_total` in purchase.create doesn't match proposal.total when `from_proposal_id` is set |
+| `policy.payout.insufficient_balance` | payout.request amount exceeds seller's available balance |
+| `policy.payout.hold_period_active` | Funds still within compliance hold window |
+| `policy.payout.exceeds_max_per_payout` | Request exceeds PrincipalBinding's `max_per_payout` cap |
+| `policy.payout.exceeds_max_per_period` | Cumulative period payouts exceed `max_per_period` |
+| `policy.payout.kyc_required` | Seller hasn't completed KYC; required above threshold |
+| `policy.payout.destination_not_allowlisted` | Destination wallet/account not pre-registered |
+| `policy.payout.rail_unavailable` | Named Settler doesn't support the requested rail |
+| `policy.payout.expedited_unavailable` | Expedited payout not offered for this seller/amount |
+| `policy.payout.compliance_hold` | Account under SAR/fraud review; payouts paused |
+| `policy.payout.platform_not_allowed` | Platform AID not in `allowed_platforms` |
 
 ### format
 

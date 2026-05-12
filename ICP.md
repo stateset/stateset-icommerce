@@ -28,10 +28,10 @@ settlement. No other public protocol covers this layer.
 | Layer | Artifact | Tests |
 |---|---|---|
 | **Spec** | [`icp-spec/ICP-1.0-DRAFT.md`](./icp-spec/ICP-1.0-DRAFT.md) — normative protocol; canonicalization rules; 60+ error codes | — |
-| **Wire** | **5 intent verbs shipping** (`purchase.create`, `subscription.create`, `subscription.cancel`, `purchase.return`, `inventory.query`); 2 more deferred to ICP-1.1 | — |
+| **Wire** | **6 intent verbs shipping** (`purchase.create`, `subscription.create`, `subscription.cancel`, `purchase.return`, `inventory.query`, `quote.request`); 1 more (`payout.request`) deferred — see ICPIP-0004 | — |
 | **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic | 2 vectors × **4 IUTs (JS · Rust · Go · Python)** = **8 byte-identical PASS** |
 | **Reference contract** | [`icp-spec/contracts/usdc-base/ICPEscrow.sol`](./icp-spec/contracts/usdc-base/) — production-quality Solidity | **15/15 Foundry PASS** |
-| **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference | **8/8 Node-test PASS** |
+| **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference | **17/17 Node-test PASS** |
 | **MCP server** | [`icp-mcp/`](./icp-mcp/) — drops into Claude Desktop | **6/6 Node-test PASS** |
 | **Settler daemon** | [`services/settler-stateset/`](./services/settler-stateset/) — Settler-side reference | **9/9 Node-test PASS** |
 | **Demo** | [`icp-spec/examples/02-end-to-end-flow/`](./icp-spec/examples/02-end-to-end-flow/) — 9-step transcript | — |

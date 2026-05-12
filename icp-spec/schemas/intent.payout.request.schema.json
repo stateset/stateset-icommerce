@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://icp.stateset.com/schemas/icp-1.0/intent.payout.request.json",
+  "title": "ICP-1.0 Intent: payout.request",
+  "description": "A seller Agent's signed request to receive a payout from a platform-held balance. The only ICP verb with inverted signing direction. See ICP-1.0 §6.6 and ICPIP-0004.",
+  "type": "object",
+  "required": [
+    "verb",
+    "v",
+    "intent_id",
+    "seller",
+    "platform",
+    "settler",
+    "amount",
+    "destination",
+    "principal_binding",
+    "nonce",
+    "iat",
+    "exp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "verb": { "const": "payout.request" },
+    "v": { "const": "icp-1.0" },
+    "intent_id": { "type": "string", "pattern": "^icp_int_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "seller": { "$ref": "intent.purchase.create.schema.json#/$defs/AID" },
+    "platform": { "$ref": "intent.purchase.create.schema.json#/$defs/AID" },
+    "settler": { "$ref": "intent.purchase.create.schema.json#/$defs/SettlerID" },
+    "amount": { "$ref": "intent.purchase.create.schema.json#/$defs/Money" },
+    "balance_window": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp" },
+        "to": { "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp" }
+      }
+    },
+    "destination": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["wallet", "bank-account"] },
+        "wallet_address": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+        "bank_routing": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "expedited": { "type": "boolean" },
+    "context": { "type": "string", "maxLength": 256 },
+    "principal_binding": {
+      "$ref": "intent.purchase.create.schema.json#/$defs/PrincipalBinding",
+      "description": "MUST grant payout.request in authority.verbs. SHOULD include max_per_payout + allowed_platforms (both OPTIONAL backward-compatible extensions)."
+    },
+    "nonce": { "type": "string", "pattern": "^[0-9a-fA-F]{32}$" },
+    "iat": { "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp" },
+    "exp": { "$ref": "intent.purchase.create.schema.json#/$defs/Timestamp" },
+    "metadata": { "type": "object", "additionalProperties": true }
+  }
+}

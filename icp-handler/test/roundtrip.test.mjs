@@ -519,10 +519,10 @@ test('subscription.cancel (immediate) → CancellationAuthorization with pro-rat
   assert.ok(authorization.pro_rated_refund);
   assert.equal(authorization.pro_rated_refund.amount.amount, '7.50');
 
-  // .well-known/icp now advertises 5 verbs
+  // .well-known/icp advertises subscription.cancel + other verbs
   const caps = await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json();
   assert.ok(caps.capabilities.verbs.includes('subscription.cancel'));
-  assert.equal(caps.capabilities.verbs.length, 5);
+  assert.ok(caps.capabilities.verbs.length >= 5);
 });
 
 test('subscription.cancel on ANNUAL subscription downgrades to end-of-period', async () => {
@@ -565,6 +565,311 @@ test('subscription.cancel on ANNUAL subscription downgrades to end-of-period', a
   // Demo: ANNUAL subscriptions downgrade to end-of-period with no refund
   assert.equal(j.authorization.final_occurrences, 1);
   assert.equal(j.authorization.pro_rated_refund, null);
+});
+
+test('quote.request → signed PriceProposal with volume tier discount', async () => {
+  const now = new Date();
+  const exp = new Date(now.getTime() + 300 * 1000);
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'quote.request',
+    intent_id: newId('icp_int'),
+    buyer: buyerAid,
+    merchant: 'aid:v1:zMerchantRfq',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    items: [{ sku: 'WIDGET-001', quantity: 500 }],
+    purchase_window: '30d',
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: buyerAid,
+      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['quote.request'] },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: exp.toISOString(),
+  };
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  const rBody = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(rBody));
+  const { proposal } = rBody;
+  assert.equal(proposal.type, 'price.proposal');
+  // 500 × $29.99 with 20% volume discount = 500 × $23.992 = $11996.00
+  assert.equal(proposal.items[0].volume_tier, '500+');
+  assert.equal(proposal.items[0].unit_price.amount, '23.99');
+  assert.equal(proposal.total.amount, '11996.00');
+  assert.ok(proposal.valid_until);
+  assert.ok(proposal.proposal_id.startsWith('icp_pp_'));
+});
+
+test('purchase.create with from_proposal_id honors proposal prices', async () => {
+  const now = new Date();
+  const quoteIntent = {
+    v: 'icp-1.0',
+    verb: 'quote.request',
+    intent_id: newId('icp_int'),
+    buyer: buyerAid,
+    merchant: 'aid:v1:zMerchantRfq',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    items: [{ sku: 'WIDGET-001', quantity: 100 }],
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: buyerAid,
+      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['quote.request', 'purchase.create'] },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: new Date(now.getTime() + 300 * 1000).toISOString(),
+  };
+  const qr = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent: quoteIntent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(quoteIntent), buyerKp.privateKey) },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  const { proposal } = await qr.json();
+  // 100 × $29.99 with 10% volume tier = $2699.10
+  assert.equal(proposal.total.amount, '2699.10');
+
+  const now2 = new Date();
+  const purchaseIntent = {
+    v: 'icp-1.0',
+    verb: 'purchase.create',
+    intent_id: newId('icp_int'),
+    buyer: buyerAid,
+    merchant: 'aid:v1:zMerchantRfq',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    items: [{ sku: 'WIDGET-001', quantity: 100, unit_price: { amount: '26.99', currency: 'USDC' } }],
+    max_total: { amount: '2699.10', currency: 'USDC' },
+    from_proposal_id: proposal.proposal_id,
+    expiry: new Date(now2.getTime() + 300 * 1000).toISOString(),
+    principal_binding: quoteIntent.principal_binding,
+    nonce: newNonceHex(),
+    iat: now2.toISOString(),
+    exp: new Date(now2.getTime() + 300 * 1000).toISOString(),
+  };
+  const pr = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent: purchaseIntent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(purchaseIntent), buyerKp.privateKey) },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  const prBody = await pr.json();
+  assert.equal(pr.status, 200, JSON.stringify(prBody));
+  // Quote should match proposal exactly — NO 5% handling fee applied
+  assert.equal(prBody.quote.total.amount, '2699.10');
+  assert.equal(prBody.quote.from_proposal_id, proposal.proposal_id);
+});
+
+test('purchase.create with unknown from_proposal_id is rejected', async () => {
+  const now = new Date();
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'purchase.create',
+    intent_id: newId('icp_int'),
+    buyer: buyerAid,
+    merchant: 'aid:v1:zMerchantRfq',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    items: [{ sku: 'X', quantity: 1, unit_price: { amount: '1', currency: 'USDC' } }],
+    max_total: { amount: '2', currency: 'USDC' },
+    from_proposal_id: 'icp_pp_DOESNOTEXIST00000000000001',
+    expiry: new Date(now.getTime() + 300 * 1000).toISOString(),
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: buyerAid,
+      authority: { max_per_intent: { amount: '100', currency: 'USDC' }, verbs: ['purchase.create'] },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: new Date(now.getTime() + 300 * 1000).toISOString(),
+  };
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  assert.equal(r.status, 422);
+  const j = await r.json();
+  assert.equal(j.code, 'quote.proposal_not_found');
+});
+
+test('payout.request → signed PayoutAuthorization with itemized fees', async () => {
+  const now = new Date();
+  const exp = new Date(now.getTime() + 300 * 1000);
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'payout.request',
+    intent_id: newId('icp_int'),
+    seller: buyerAid,
+    platform: 'aid:v1:zMarketplacePlatform',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    amount: { amount: '1000.00', currency: 'USDC' },
+    destination: { type: 'wallet', wallet_address: '0x1111111111111111111111111111111111111111' },
+    expedited: false,
+    principal_binding: {
+      principal: 'did:web:seller-corp.example',
+      agent: buyerAid,
+      authority: {
+        max_per_intent: { amount: '0', currency: 'USDC' },
+        max_per_payout: { amount: '2000', currency: 'USDC' },
+        verbs: ['payout.request'],
+      },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: exp.toISOString(),
+  };
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
+      _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    }),
+  });
+  const rBody = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(rBody));
+  const { authorization } = rBody;
+  assert.equal(authorization.type, 'payout.authorization');
+  assert.equal(authorization.seller, buyerAid);
+  // 3% commission on $1000 = $30; 1% reserve = $10; approved = $960
+  assert.equal(authorization.fees.length, 2);
+  assert.equal(authorization.fees[0].type, 'platform_commission');
+  assert.equal(authorization.fees[0].amount.amount, '30.00');
+  assert.equal(authorization.fees[1].type, 'chargeback_reserve');
+  assert.equal(authorization.fees[1].amount.amount, '10.00');
+  assert.ok(authorization.fees[1].release_at);
+  assert.equal(authorization.approved_amount.amount, '960.00');
+  assert.ok(authorization.payout_id.startsWith('icp_pay_'));
+
+  // .well-known/icp now advertises 7 verbs (100% commerce coverage)
+  const caps = await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json();
+  assert.ok(caps.capabilities.verbs.includes('payout.request'));
+  assert.equal(caps.capabilities.verbs.length, 7);
+});
+
+test('payout.request: insufficient balance is rejected', async () => {
+  const freshKp = generateKeyPairSync('ed25519');
+  const freshXkp = generateKeyPairSync('x25519');
+  const freshEdPubRaw = publicKeyToRaw(freshKp.publicKey);
+  const freshXPubRaw = publicKeyToRaw(freshXkp.publicKey);
+  const freshAid = `aid:v1:z${base58btcEncode(
+    createHash('sha256').update(Buffer.concat([freshEdPubRaw, Buffer.from([0x00]), freshXPubRaw])).digest()
+  )}`;
+
+  const now = new Date();
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'payout.request',
+    intent_id: newId('icp_int'),
+    seller: freshAid,
+    platform: 'aid:v1:zMarketplacePlatform',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    amount: { amount: '10000.00', currency: 'USDC' },
+    destination: { type: 'wallet', wallet_address: '0x2222222222222222222222222222222222222222' },
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: freshAid,
+      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['payout.request'] },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: new Date(now.getTime() + 300 * 1000).toISOString(),
+  };
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: freshAid, sig: signEd25519(canonicalJson(intent), freshKp.privateKey) },
+      _pubkey_hex: freshEdPubRaw.toString('hex'),
+    }),
+  });
+  assert.equal(r.status, 422);
+  const j = await r.json();
+  assert.equal(j.code, 'policy.payout.insufficient_balance');
+});
+
+test('payout.request: exceeds max_per_payout is rejected', async () => {
+  const freshKp = generateKeyPairSync('ed25519');
+  const freshXkp = generateKeyPairSync('x25519');
+  const freshEdPubRaw = publicKeyToRaw(freshKp.publicKey);
+  const freshXPubRaw = publicKeyToRaw(freshXkp.publicKey);
+  const freshAid = `aid:v1:z${base58btcEncode(
+    createHash('sha256').update(Buffer.concat([freshEdPubRaw, Buffer.from([0x00]), freshXPubRaw])).digest()
+  )}`;
+
+  const now = new Date();
+  const intent = {
+    v: 'icp-1.0',
+    verb: 'payout.request',
+    intent_id: newId('icp_int'),
+    seller: freshAid,
+    platform: 'aid:v1:zMarketplacePlatform',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    amount: { amount: '4000.00', currency: 'USDC' },
+    destination: { type: 'wallet', wallet_address: '0x3333333333333333333333333333333333333333' },
+    principal_binding: {
+      principal: 'did:web:test.example',
+      agent: freshAid,
+      authority: {
+        max_per_intent: { amount: '0', currency: 'USDC' },
+        max_per_payout: { amount: '500', currency: 'USDC' },
+        verbs: ['payout.request'],
+      },
+      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+      revocation: 'https://test.example/revoke',
+      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
+    },
+    nonce: newNonceHex(),
+    iat: now.toISOString(),
+    exp: new Date(now.getTime() + 300 * 1000).toISOString(),
+  };
+  const r = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: { alg: 'ed25519', kid: freshAid, sig: signEd25519(canonicalJson(intent), freshKp.privateKey) },
+      _pubkey_hex: freshEdPubRaw.toString('hex'),
+    }),
+  });
+  assert.equal(r.status, 422);
+  const j = await r.json();
+  assert.equal(j.code, 'policy.payout.exceeds_max_per_payout');
 });
 
 test('Intent over max_total is rejected with policy error', async () => {

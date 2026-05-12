@@ -19,6 +19,8 @@ import {
   stubSubscriptionCancel,
   stubReturnAuthorize,
   stubInventoryQuery,
+  stubQuoteRequest,
+  stubPayoutRequest,
 } from '../../icp-handler/src/backend-stub.mjs';
 
 const intents = new Map();
@@ -38,6 +40,8 @@ const SUPPORTED_VERBS = new Set([
   'subscription.cancel',
   'purchase.return',
   'inventory.query',
+  'quote.request',
+  'payout.request',
 ]);
 
 export function submitIntent({ intent, signature, _pubkey_hex }, merchantSigningKey, merchantAid) {
@@ -100,6 +104,28 @@ export function submitIntent({ intent, signature, _pubkey_hex }, merchantSigning
 
   if (intent.verb === 'subscription.cancel') {
     const result = stubSubscriptionCancel(intent, merchantSigningKey, merchantAid);
+    if (!result.ok) return { ok: false, error: result.error };
+    intents.set(intent.intent_id, { intent, signedAt: new Date().toISOString(), signatureHex: signature.sig });
+    return {
+      ok: true,
+      authorization: result.authorization,
+      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+    };
+  }
+
+  if (intent.verb === 'quote.request') {
+    const result = stubQuoteRequest(intent, merchantSigningKey, merchantAid);
+    if (!result.ok) return { ok: false, error: result.error };
+    intents.set(intent.intent_id, { intent, signedAt: new Date().toISOString(), signatureHex: signature.sig });
+    return {
+      ok: true,
+      proposal: result.proposal,
+      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+    };
+  }
+
+  if (intent.verb === 'payout.request') {
+    const result = stubPayoutRequest(intent, merchantSigningKey, merchantAid);
     if (!result.ok) return { ok: false, error: result.error };
     intents.set(intent.intent_id, { intent, signedAt: new Date().toISOString(), signatureHex: signature.sig });
     return {

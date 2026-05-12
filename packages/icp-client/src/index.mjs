@@ -254,13 +254,14 @@ export class ICPClient {
   /**
    * purchase.create — one-shot purchase. Returns the merchant Quote;
    * caller must then call `accept(quote_id)` to commit.
-   * @param {{ merchant: string, settler: string, items: LineItem[], max_total: Money, ship_to?: object }} opts
+   * @param {{ merchant: string, settler: string, items: LineItem[], max_total: Money, ship_to?: object, from_proposal_id?: string }} opts
    */
   async purchase(opts) {
     const intent = this._baseIntent('purchase.create', opts);
     intent.items = opts.items;
     intent.max_total = opts.max_total;
     if (opts.ship_to) intent.ship_to = opts.ship_to;
+    if (opts.from_proposal_id) intent.from_proposal_id = opts.from_proposal_id;
     const result = await this._submit(intent);
     await this._verifyMerchantSignature(result.quote, result.signature);
     return result;
@@ -294,6 +295,22 @@ export class ICPClient {
     intent.first_charge_at = opts.first_charge_at;
     const result = await this._submit(intent);
     await this._verifyMerchantSignature(result.authorization, result.signature);
+    return result;
+  }
+
+  /**
+   * quote.request — request a non-binding PriceProposal (B2B RFQ).
+   * @param {{ merchant: string, settler: string, items: {sku:string,quantity:number,target_unit_price?:Money,specifications?:object}[], ship_to?: object, expected_delivery_by?: string, purchase_window?: string, context?: string }} opts
+   */
+  async requestQuote(opts) {
+    const intent = this._baseIntent('quote.request', opts);
+    intent.items = opts.items;
+    if (opts.ship_to) intent.ship_to = opts.ship_to;
+    if (opts.expected_delivery_by) intent.expected_delivery_by = opts.expected_delivery_by;
+    if (opts.purchase_window) intent.purchase_window = opts.purchase_window;
+    if (opts.context) intent.context = opts.context;
+    const result = await this._submit(intent);
+    await this._verifyMerchantSignature(result.proposal, result.signature);
     return result;
   }
 

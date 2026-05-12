@@ -536,14 +536,101 @@ because B2B adoption is gated on it.
 
 ### 6.4 quote.request
 
-A buyer Agent's signed request for pricing without commitment. Useful
-for comparison shopping and B2B procurement. Specified in ICP-1.1.
+A buyer Agent's signed request for pricing **without commitment** —
+the B2B wholesale RFQ primitive. Unlike `purchase.create` (which binds
+to a `max_total` ceiling and triggers escrow on acceptance),
+`quote.request` returns a non-binding **PriceProposal** that the buyer
+may evaluate, compare against competitors, and accept or reject
+without protocol-level commitment.
+
+Full normative specification: see [ICPIP-0003](./icpips/icpip-0003-quote-request.md).
+
+```json
+{
+  "verb": "quote.request",
+  "v": "icp-1.0",
+  "intent_id": "icp_int_01HXYZ...",
+  "buyer": "aid:v1:zA...",
+  "merchant": "aid:v1:zB...",
+  "settler": "settler:circle.usdc.base",
+  "items": [
+    {
+      "sku": "FASTENER-M6X20",
+      "quantity": 500,
+      "target_unit_price": { "amount": "0.12", "currency": "USDC" },
+      "specifications": { "material": "316-SS" }
+    }
+  ],
+  "ship_to": { ... },
+  "expected_delivery_by": "2026-06-15T00:00:00Z",
+  "purchase_window": "30d",
+  "principal_binding": <signed-binding>,
+  "nonce": "...",
+  "iat": "...",
+  "exp": "..."
+}
+```
+
+The merchant signs a **PriceProposal** in response with `valid_until`,
+line-item pricing, payment terms, fulfillment terms, and an explicit
+`non_binding_notice`. To commit, the buyer submits a subsequent
+`purchase.create` Intent referencing the proposal via the OPTIONAL
+`from_proposal_id` field — the merchant MUST honor proposal prices while
+the proposal is valid, MUST surface `quote.proposal_expired` otherwise.
+
+Six new error codes added to §10: `policy.quote.not_available_for_quantity`,
+`policy.quote.sku_not_quotable`, `policy.quote.window_too_long`,
+`quote.proposal_not_found`, `quote.proposal_expired`,
+`quote.proposal_total_mismatch`.
 
 ### 6.6 payout.request
 
-A merchant or marketplace participant Agent's signed request for release
-of held funds (escrowed by the platform) to the participant's wallet.
-Specified in ICP-1.1.
+A seller Agent's signed request to receive a payout from a platform-held
+balance. The **only ICP verb with inverted signing direction**: the
+recipient (seller) signs the Intent; the originator (platform) signs the
+response.
+
+Full normative specification: see [ICPIP-0004](./icpips/icpip-0004-payout-request.md).
+
+```json
+{
+  "verb": "payout.request",
+  "v": "icp-1.0",
+  "intent_id": "icp_int_01HXYZ...",
+  "seller": "aid:v1:zS...",
+  "platform": "aid:v1:zP...",
+  "settler": "settler:circle.usdc.base",
+  "amount": { "amount": "1247.83", "currency": "USDC" },
+  "destination": {
+    "type": "wallet",
+    "wallet_address": "0x..."
+  },
+  "expedited": false,
+  "principal_binding": <signed-binding>,
+  "nonce": "...",
+  "iat": "...",
+  "exp": "..."
+}
+```
+
+The platform signs a **PayoutAuthorization** in response with itemized
+binding fees (`platform_commission`, `compliance_reserve`, etc.),
+`available_balance`, `approved_amount = available_balance - sum(fees)`,
+and the rail finalization timing.
+
+PrincipalBinding `authority` is extended with OPTIONAL `max_per_payout`
+and `allowed_platforms` fields (backward-compatible — ICP-1.0
+implementations ignore unknown authority fields).
+
+10 new error codes added to §10 under `policy.payout.*` namespace:
+`insufficient_balance`, `hold_period_active`, `exceeds_max_per_payout`,
+`exceeds_max_per_period`, `kyc_required`, `destination_not_allowlisted`,
+`rail_unavailable`, `expedited_unavailable`, `compliance_hold`,
+`platform_not_allowed`.
+
+After this verb ships, ICP-1.0 covers **100% of the commerce verb
+surface** — ~$31T in addressable annual commerce flow across retail,
+SaaS, returns, B2B procurement, and marketplaces.
 
 ## 7. Quote objects
 

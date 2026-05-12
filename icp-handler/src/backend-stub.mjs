@@ -13,10 +13,56 @@ import { canonicalJson, signEd25519, newId } from './codec.mjs';
 /**
  * Build, sign, and return a Quote for an Intent. The stub:
  *   - sums (quantity * unit_price) per item
- *   - applies a flat 5% "demo handling fee"
+ *   - applies a flat 5% "demo handling fee" (fresh pricing)
+ *   - OR honors prices from a referenced PriceProposal if from_proposal_id is set (§6.4)
  *   - rejects if total would exceed Intent.max_total
  */
 export function stubQuote(intent, merchantSigningKey) {
+  // ICPIP-0003: honor an existing PriceProposal if referenced.
+  if (intent.from_proposal_id) {
+    const proposal = getProposal(intent.from_proposal_id);
+    if (!proposal) {
+      return {
+        ok: false,
+        error: { type: 'icp.error', code: 'quote.proposal_not_found', message: `proposal ${intent.from_proposal_id} unknown` },
+      };
+    }
+    if (new Date(proposal.valid_until) < new Date()) {
+      return {
+        ok: false,
+        error: { type: 'icp.error', code: 'quote.proposal_expired', message: `proposal ${intent.from_proposal_id} expired at ${proposal.valid_until}` },
+      };
+    }
+    if (proposal.total.amount !== intent.max_total.amount) {
+      return {
+        ok: false,
+        error: { type: 'icp.error', code: 'quote.proposal_total_mismatch', message: `purchase.create max_total ${intent.max_total.amount} does not match proposal.total ${proposal.total.amount}` },
+      };
+    }
+    // Use proposal prices verbatim.
+    const now = new Date();
+    const exp = new Date(now.getTime() + 5 * 60 * 1000);
+    const quote = {
+      type: 'quote',
+      v: 'icp-1.0',
+      quote_id: newId('icp_qt'),
+      intent_id: intent.intent_id,
+      merchant: intent.merchant,
+      total: proposal.total,
+      lines: proposal.items.map((li) => ({ sku: li.sku, quantity: li.quantity, unit_price: li.unit_price, line_total: li.line_total })),
+      settler: intent.settler,
+      escrow_terms: { release_on: 'fulfilled+24h', dispute_window: '168h' },
+      expiry: exp.toISOString(),
+      from_proposal_id: intent.from_proposal_id,
+      nonce: '00000000000000000000000000000000',
+      iat: now.toISOString(),
+      exp: exp.toISOString(),
+    };
+    const canonical = canonicalJson(quote);
+    const signatureHex = signEd25519(canonical, merchantSigningKey);
+    return { ok: true, quote, canonical, signatureHex };
+  }
+
   let total = 0;
   for (const item of intent.items) {
     total += item.quantity * Number(item.unit_price.amount);
@@ -301,6 +347,203 @@ export function stubSubscriptionCancel(intent, merchantSigningKey, merchantAid) 
   const canonical = canonicalJson(auth);
   const signatureHex = signEd25519(canonical, merchantSigningKey);
   return { ok: true, authorization: auth, canonical, signatureHex };
+}
+
+// In-memory store of issued PriceProposals (keyed by proposal_id) so the
+// from_proposal_id flow can validate non-expired proposals. Production
+// handlers persist this via the engine.
+const _proposalStore = new Map();
+
+/**
+ * Sign a PriceProposal for a quote.request Intent (§6.4 / ICPIP-0003).
+ *
+ * The stub:
+ *   - Catalog same as inventory.query, plus volume-tier discounts:
+ *     1–99 units: catalog price
+ *     100–499:  10% off
+ *     500+:     20% off
+ *   - 30-day valid_until window
+ *   - Rejects quantities > 10000 with policy.quote.not_available_for_quantity
+ */
+export function stubQuoteRequest(intent, merchantSigningKey, merchantAid) {
+  const CATALOG = {
+    'WIDGET-001':    { unit_price: { amount: '29.99', currency: 'USDC' } },
+    'WIDGET-002':    { unit_price: { amount: '49.99', currency: 'USDC' } },
+    'WIDGET-003':    { unit_price: { amount: '99.99', currency: 'USDC' } },
+    'FASTENER-M6X20': { unit_price: { amount: '0.15',  currency: 'USDC' } },
+    'GADGET-A':      { unit_price: { amount: '4.99',  currency: 'USDC' } },
+    'GADGET-B':      { unit_price: { amount: '9.99',  currency: 'USDC' } },
+  };
+
+  let total = 0;
+  const lineItems = [];
+  for (const item of intent.items) {
+    if (item.quantity > 10000) {
+      return {
+        ok: false,
+        error: {
+          type: 'icp.error',
+          code: 'policy.quote.not_available_for_quantity',
+          message: `quantity ${item.quantity} for ${item.sku} exceeds quotable range (max 10000)`,
+        },
+      };
+    }
+    const catalog = CATALOG[item.sku];
+    if (!catalog) {
+      return {
+        ok: false,
+        error: {
+          type: 'icp.error',
+          code: 'policy.quote.sku_not_quotable',
+          message: `SKU ${item.sku} is not in the merchant catalog`,
+        },
+      };
+    }
+    // Volume-tier discount.
+    const basePrice = Number(catalog.unit_price.amount);
+    const discount = item.quantity >= 500 ? 0.20 : item.quantity >= 100 ? 0.10 : 0;
+    const tieredUnitPrice = basePrice * (1 - discount);
+    const lineTotal = tieredUnitPrice * item.quantity;
+    total += lineTotal;
+    lineItems.push({
+      sku: item.sku,
+      quantity: item.quantity,
+      unit_price: { amount: tieredUnitPrice.toFixed(2), currency: catalog.unit_price.currency },
+      line_total: { amount: lineTotal.toFixed(2), currency: catalog.unit_price.currency },
+      volume_tier: item.quantity >= 500 ? '500+' : item.quantity >= 100 ? '100-499' : '1-99',
+    });
+  }
+
+  const now = new Date();
+  const validUntil = new Date(now.getTime() + 30 * 86400 * 1000); // 30 days
+
+  const proposal = {
+    type: 'price.proposal',
+    v: 'icp-1.0',
+    proposal_id: newId('icp_pp'),
+    intent_id: intent.intent_id,
+    merchant: intent.merchant,
+    issued_at: now.toISOString(),
+    valid_until: validUntil.toISOString(),
+    items: lineItems,
+    total: { amount: total.toFixed(2), currency: 'USDC' },
+    payment_terms: { net_days: 30, early_pay_discount: { percent: '2', if_paid_within_days: 10 } },
+    fulfillment_terms: { lead_time_days: 7, shipping_method: 'ground' },
+    return_policy_summary: '30 days, full refund, buyer pays return shipping',
+    non_binding_notice:
+      'This proposal is informational and does not commit either party. To purchase, submit a purchase.create Intent referencing this proposal_id.',
+  };
+
+  // Persist for from_proposal_id lookup.
+  _proposalStore.set(proposal.proposal_id, proposal);
+
+  const canonical = canonicalJson(proposal);
+  const signatureHex = signEd25519(canonical, merchantSigningKey);
+  return { ok: true, proposal, canonical, signatureHex };
+}
+
+/** Internal: lookup a proposal by id. Used by the from_proposal_id path in stubQuote. */
+export function getProposal(proposal_id) {
+  return _proposalStore.get(proposal_id);
+}
+
+// In-memory seller balance ledger for payout.request (§6.6 / ICPIP-0004).
+// In production this maps to the platform's actual held-funds ledger.
+// Demo: every seller starts with $5000 USDC available unless overridden.
+const _sellerBalances = new Map();
+
+function getSellerBalance(sellerAid) {
+  if (!_sellerBalances.has(sellerAid)) {
+    _sellerBalances.set(sellerAid, 5000.0); // demo: every seller starts with $5000
+  }
+  return _sellerBalances.get(sellerAid);
+}
+
+/**
+ * Sign a PayoutAuthorization for a payout.request Intent (§6.6 / ICPIP-0004).
+ *
+ * The stub:
+ *   - Tracks seller balance in-memory; each new seller starts at $5000 USDC
+ *   - Rejects if requested amount > available_balance with insufficient_balance
+ *   - Honors `max_per_payout` from PrincipalBinding when present
+ *   - Applies 3% platform commission + 1% chargeback reserve (released after 90d)
+ *   - Computes approved_amount = available_balance - sum(fees)
+ */
+export function stubPayoutRequest(intent, merchantSigningKey, platformAid) {
+  const requested = Number(intent.amount.amount);
+  const available = getSellerBalance(intent.seller);
+
+  if (requested > available) {
+    return {
+      ok: false,
+      error: {
+        type: 'icp.error',
+        code: 'policy.payout.insufficient_balance',
+        message: `requested ${requested} ${intent.amount.currency} exceeds available balance ${available.toFixed(2)}`,
+      },
+    };
+  }
+
+  // Honor max_per_payout from PrincipalBinding (OPTIONAL field per ICPIP-0004).
+  const maxPerPayout = intent.principal_binding?.authority?.max_per_payout;
+  if (maxPerPayout && requested > Number(maxPerPayout.amount)) {
+    return {
+      ok: false,
+      error: {
+        type: 'icp.error',
+        code: 'policy.payout.exceeds_max_per_payout',
+        message: `requested ${requested} exceeds principal binding max_per_payout ${maxPerPayout.amount}`,
+      },
+    };
+  }
+
+  // Fees: 3% platform commission + 1% chargeback reserve (release after 90 days).
+  const commission = +(requested * 0.03).toFixed(2);
+  const reserve = +(requested * 0.01).toFixed(2);
+  const approved = +(requested - commission - reserve).toFixed(2);
+
+  const now = new Date();
+  const releaseAt = new Date(now.getTime() + 90 * 86400 * 1000);
+
+  const auth = {
+    type: 'payout.authorization',
+    v: 'icp-1.0',
+    payout_id: newId('icp_pay'),
+    intent_id: intent.intent_id,
+    seller: intent.seller,
+    platform: intent.platform,
+    available_balance: { amount: available.toFixed(2), currency: intent.amount.currency },
+    approved_amount: { amount: approved.toFixed(2), currency: intent.amount.currency },
+    fees: [
+      {
+        type: 'platform_commission',
+        amount: { amount: commission.toFixed(2), currency: intent.amount.currency },
+        description: 'Standard 3% platform commission',
+      },
+      {
+        type: 'chargeback_reserve',
+        amount: { amount: reserve.toFixed(2), currency: intent.amount.currency },
+        description: '1% chargeback reserve (released after 90 days)',
+        release_at: releaseAt.toISOString(),
+      },
+    ],
+    rail: 'base-sepolia',
+    rail_initiated_at: now.toISOString(),
+    expected_settlement_at: new Date(now.getTime() + 30 * 1000).toISOString(),
+    issued_at: now.toISOString(),
+  };
+
+  // Deduct from seller's balance.
+  _sellerBalances.set(intent.seller, available - requested);
+
+  const canonical = canonicalJson(auth);
+  const signatureHex = signEd25519(canonical, merchantSigningKey);
+  return { ok: true, authorization: auth, canonical, signatureHex };
+}
+
+/** For testing: set a seller's available balance directly. */
+export function _seedSellerBalance(sellerAid, amount) {
+  _sellerBalances.set(sellerAid, amount);
 }
 
 /** Build EscrowFunding instructions. The stub points at the testnet

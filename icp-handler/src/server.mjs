@@ -28,6 +28,8 @@ import {
   stubSubscriptionCancel,
   stubReturnAuthorize,
   stubInventoryQuery,
+  stubQuoteRequest,
+  stubPayoutRequest,
 } from './backend-stub.mjs';
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -114,6 +116,8 @@ function handleWellKnown(req, res) {
         'subscription.cancel',
         'purchase.return',
         'inventory.query',
+        'quote.request',
+        'payout.request',
       ],
       transports: ['http'],
       pqc_hybrid: false,
@@ -145,6 +149,8 @@ async function handleSubmitIntent(req, res) {
     'subscription.cancel',
     'purchase.return',
     'inventory.query',
+    'quote.request',
+    'payout.request',
   ]);
   if (!supportedVerbs.has(intent.verb)) {
     return reply(res, 400, err('format.unknown_verb', `verb ${intent.verb} not implemented in stub`));
@@ -210,6 +216,26 @@ async function handleSubmitIntent(req, res) {
 
   if (intent.verb === 'subscription.cancel') {
     const result = stubSubscriptionCancel(intent, merchantKp.privateKey, merchantAid);
+    if (!result.ok) return reply(res, 422, result.error);
+    state.recordIntent(intent, signature.sig);
+    return reply(res, 200, {
+      authorization: result.authorization,
+      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+    });
+  }
+
+  if (intent.verb === 'quote.request') {
+    const result = stubQuoteRequest(intent, merchantKp.privateKey, merchantAid);
+    if (!result.ok) return reply(res, 422, result.error);
+    state.recordIntent(intent, signature.sig);
+    return reply(res, 200, {
+      proposal: result.proposal,
+      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+    });
+  }
+
+  if (intent.verb === 'payout.request') {
+    const result = stubPayoutRequest(intent, merchantKp.privateKey, merchantAid);
     if (!result.ok) return reply(res, 422, result.error);
     state.recordIntent(intent, signature.sig);
     return reply(res, 200, {
