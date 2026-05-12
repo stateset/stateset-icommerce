@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "icp-client"
+version = "1.4.0"
+description = "Python SDK for the Intelligent Commerce Protocol (ICP-1.0)"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+requires-python = ">=3.8"
+authors = [{ name = "StateSet", email = "support@stateset.com" }]
+keywords = ["icp", "agentic-commerce", "ai-agents", "ed25519", "stateset"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = ["cryptography>=41.0"]
+
+[project.urls]
+Homepage = "https://github.com/stateset/stateset-icommerce/tree/master/packages/icp-python-client"
+Repository = "https://github.com/stateset/stateset-icommerce.git"
+Documentation = "https://github.com/stateset/stateset-icommerce/blob/master/ICP.md"
+Changelog = "https://github.com/stateset/stateset-icommerce/blob/master/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["icp_client"]
