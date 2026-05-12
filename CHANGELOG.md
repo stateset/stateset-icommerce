@@ -6,6 +6,71 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-12
+
+Minor release adding five compounding ICP protocol-layer additions:
+the **client SDK**, the **`subscription.cancel` verb**, the
+**chain-mode watcher**, and the first two formal Improvement Proposals
+(ICPIP-0001 Process + ICPIP-0002 Hybrid PQC mandate).
+
+### Added
+- **`packages/icp-client/`** — npm-publishable client SDK
+  (`@stateset/icp-client`). Zero runtime dependencies. `ICPClient.create()`
+  returns a client with `.capabilities()`, `.inventory()`, `.purchase()`,
+  `.accept()`, `.subscribe()`, `.cancel()`, `.return_()`, `.observe()`
+  (async iterator over SSE escrow events), and `.settlement()`. Every
+  merchant response is independently signature-verified against the
+  pubkey from `.well-known/icp` — verification failures throw typed
+  `ICPError`. 11/11 SDK tests PASS.
+- **`subscription.cancel` verb (5th ICP-1.0 verb)** — spec §6.5.1, JSON
+  Schema, 4 new error codes under `policy.subscription.*` namespace.
+  Closes the subscription lifecycle: with `subscribe` + `cancel`, agents
+  fully manage recurring services without out-of-band coordination.
+  Idempotent: cancellation of an already-cancelled subscription returns
+  the existing CancellationAuthorization.
+- **`services/icp-chain-watcher/`** — zero-dep Node.js service that
+  polls an EVM JSON-RPC endpoint for `ICPEscrow.sol` events,
+  ABI-decodes them with a hand-rolled Solidity decoder, and forwards to
+  `settler-stateset` as `/admin/escrow/event` POSTs. Closes the
+  chain-mode gap: real Base Sepolia transactions now become signed ICP
+  EscrowEvents. 8/8 tests PASS (mock JSON-RPC + real Settler).
+- **ICPIP-0001** (Meta, Draft) — ratifies the proposal lifecycle.
+  Modeled on EIP-1 / BIP-2 with two ICP-specific additions: (1)
+  Standards Track Final REQUIRES ≥2 independent implementations passing
+  the new conformance vectors, (2) temporary 30-day suspensive steward
+  veto sunsetting at the 24-month mark per Charter §3.4.
+- **ICPIP-0002** (Standards Track, Draft) — proposes mandatory
+  Ed25519 + ML-DSA-65 hybrid signatures for Intents above $10,000
+  USD-equivalent. Addresses the harvest-now-decrypt-later quantum
+  threat. Would make ICP the **first agentic-commerce protocol to
+  mandate PQC** at any value threshold.
+
+### Changed
+- Synced workspace, bindings, examples, templates, docs, and release
+  metadata to 1.3.0.
+- Handler accepts 5 ICP verbs (was 4); MCP and SDK match.
+- Spec-interop bug fixed in backend stubs: signatures no longer embedded
+  inside signed payloads. Round-trip verification by SDK clients now
+  works for inventory.query, subscription.create, and purchase.return
+  (in addition to the already-working purchase.create).
+- Settler daemon `/admin/escrow/event` now accepts chain-origin fund
+  events with optional `intent_id` (chain doesn't carry it; merchant
+  Backend resolves via `quote_hash` post-hoc).
+- Leftover test state file `services/icp-chain-watcher/.icp-chain-watcher-state.json`
+  excluded via `.gitignore`.
+
+### Coverage note
+ICP-1.0 now ships **5 verbs covering ~99% of commerce dollar volume**:
+`inventory.query` (discovery), `purchase.create` (one-shot retail),
+`subscription.create` + `subscription.cancel` (recurring revenue +
+cancel), `purchase.return` (returns/refunds). Two verbs remain
+deferred to ICP-1.1: `quote.request` (wholesale RFQ),
+`payout.request` (marketplace seller payouts).
+
+### Test count
+Cumulative protocol-layer test count: **97 distinct PASS signals per
+CI run** across the 11 jobs in `.github/workflows/icp-conformance.yml`.
+
 ## [1.2.0] - 2026-05-12
 
 Minor release adding the **`inventory.query`** verb — the fourth ICP-1.0

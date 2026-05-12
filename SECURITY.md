@@ -182,7 +182,7 @@ which:
 To verify a release:
 
 ```bash
-TAG="v1.2.0"
+TAG="v1.3.0"
 REPO="stateset/stateset-icommerce"
 
 # Download artifacts

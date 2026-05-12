@@ -10,8 +10,8 @@ spec.
 |---|---|---|---|
 | [0001](./icpip-0001-process.md) | ICPIP-0001 Process | Meta | Draft |
 | [0002](./icpip-0002-hybrid-pqc-mandate.md) | Hybrid Ed25519 + ML-DSA-65 signature mandate for high-value Intents | Standards (Core) | Draft |
-| 0003 | `quote.request` verb specification | Standards (Core) | Solicited (deferred from ICP-1.0) |
-| 0004 | `payout.request` verb specification | Standards (Core) | Solicited (deferred from ICP-1.0) |
+| [0003](./icpip-0003-quote-request.md) | `quote.request` verb specification (B2B wholesale RFQ) | Standards (Core) | Draft |
+| [0004](./icpip-0004-payout-request.md) | `payout.request` verb specification (marketplace payouts) | Standards (Core) | Draft |
 | 0005 | Hybrid X25519 + ML-KEM-768 mandate for confidential PrincipalBinding transport | Standards (Core) | Solicited (companion to 0002) |
 
 ## Template

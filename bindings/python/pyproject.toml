@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "stateset-embedded"
-version = "1.2.0"
+version = "1.3.0"
 description = "Local-first embedded commerce library for Python"
 readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
