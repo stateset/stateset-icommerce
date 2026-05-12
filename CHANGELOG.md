@@ -6,6 +6,60 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-12
+
+Minor release closing **100% commerce verb coverage**. ICP-1.0 now runs
+all seven commerce primitives in the reference handler, MCP server, and
+client SDK: discovery, retail purchase, recurring subscription + cancel,
+returns, B2B wholesale RFQ, and marketplace seller payouts. Total
+addressable commerce flow ≈ $31T/year.
+
+### Added
+- **`quote.request` verb runtime impl** (reference implementation of
+  ICPIP-0003). Backend stub with volume-tier pricing (1–99 catalog,
+  100–499 −10%, 500+ −20%), 30-day proposal validity. `from_proposal_id`
+  extension on `purchase.create` honors the proposal's prices verbatim
+  (no 5% handling fee applied) for the duration of `valid_until`.
+  Rejects with `quote.proposal_not_found`, `quote.proposal_expired`, or
+  `quote.proposal_total_mismatch` as appropriate.
+- **`payout.request` verb runtime impl** (reference implementation of
+  ICPIP-0004). The first ICP verb with **inverted signing direction** —
+  the recipient (seller) signs the Intent; the platform signs the
+  PayoutAuthorization. Backend stub with $5000-default seller balance,
+  3% platform commission + 1% chargeback reserve (released after 90
+  days), `approved_amount = available − sum(fees)`. Honors `max_per_payout`
+  from PrincipalBinding (OPTIONAL authority field; backward-compatible).
+- **6 new error codes** in `policy.quote.*` and `quote.*` namespaces.
+- **10 new error codes** in `policy.payout.*` namespace.
+- **JSON Schemas**: `intent.quote.request.schema.json` and
+  `intent.payout.request.schema.json`.
+- **SDK methods**: `client.requestQuote()` and `client.payout()`. The
+  payout method handles the buyer→seller field-name mapping internally
+  so SDK callers don't have to.
+
+### Changed
+- Handler accepts **7 ICP verbs** (was 5); MCP and SDK match. Capability
+  advertisement at `.well-known/icp` reflects the full set.
+- `stubQuote()` honors `from_proposal_id` when present, with three
+  typed-error guards.
+- Synced workspace, bindings, examples, templates, docs, and release
+  metadata to 1.4.0.
+
+### Test count
+Cumulative protocol-layer test count: **102 distinct PASS signals per
+CI run**. Handler 20/20 (was 14), MCP 6/6, SDK 11/11, Settler 9/9,
+chain-watcher 8/8, Foundry contract 15/15, conformance 8/8 (4 IUTs × 2
+vectors), Docker integration 17/17, demos 8.
+
+### Coverage note
+With this release, ICP-1.0 hits **100% commerce verb coverage**:
+discovery (`inventory.query`), one-shot retail (`purchase.create`),
+recurring revenue (`subscription.create` + `subscription.cancel`),
+returns/refunds (`purchase.return`), B2B wholesale RFQ
+(`quote.request`), and marketplace payouts (`payout.request`).
+That's ≈ $31T in addressable annual commerce flow across all major
+commerce patterns.
+
 ## [1.3.0] - 2026-05-12
 
 Minor release adding five compounding ICP protocol-layer additions:
@@ -44,6 +98,19 @@ the **client SDK**, the **`subscription.cancel` verb**, the
   USD-equivalent. Addresses the harvest-now-decrypt-later quantum
   threat. Would make ICP the **first agentic-commerce protocol to
   mandate PQC** at any value threshold.
+- **ICPIP-0003** (Standards Track, Draft) — specifies the `quote.request`
+  verb (B2B wholesale RFQ — request pricing without commitment). Adds
+  the missing primitive for procurement flows. PriceProposal response
+  with `valid_until` validity window; `from_proposal_id` extension to
+  `purchase.create` for binding-on-acceptance. Addresses ~$23T global
+  B2B e-commerce.
+- **ICPIP-0004** (Standards Track, Draft) — specifies the
+  `payout.request` verb (marketplace seller payouts). The only verb
+  with inverted signing direction (recipient signs, not originator).
+  Itemized binding fees + audit-traceable source transactions. Addresses
+  ~$2T global marketplace GMV (Stripe Connect / Etsy / Uber / Shopify
+  Marketplace / App Store class). After this ICPIP reaches Final, ICP
+  covers 100% of commerce verb surface.
 
 ### Changed
 - Synced workspace, bindings, examples, templates, docs, and release
@@ -63,9 +130,11 @@ the **client SDK**, the **`subscription.cancel` verb**, the
 ICP-1.0 now ships **5 verbs covering ~99% of commerce dollar volume**:
 `inventory.query` (discovery), `purchase.create` (one-shot retail),
 `subscription.create` + `subscription.cancel` (recurring revenue +
-cancel), `purchase.return` (returns/refunds). Two verbs remain
-deferred to ICP-1.1: `quote.request` (wholesale RFQ),
-`payout.request` (marketplace seller payouts).
+cancel), `purchase.return` (returns/refunds). The 2 remaining verbs
+(`quote.request` and `payout.request`) ship as Standards Track Draft
+ICPIPs (0003 + 0004) in this release; once they reach Final via the
+ICPIP-0001 lifecycle, ICP covers 100% of commerce verb surface
+(~$31T in addressable annual commerce flow).
 
 ### Test count
 Cumulative protocol-layer test count: **97 distinct PASS signals per
