@@ -6,6 +6,42 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-12
+
+Minor release adding the **`inventory.query`** verb — the fourth ICP-1.0
+intent verb and the highest-call-volume verb in B2B agentic commerce.
+
+### Added
+- **`inventory.query` verb** (spec §6.3 normative; was a 1.1 stub). A
+  read-only, signed query for inventory availability + pricing that
+  returns a merchant-signed `InventorySnapshot` with a `valid_until`
+  validity window. Doesn't trigger an escrow.
+- Snapshot-quote consistency rule: when a subsequent `purchase.create`
+  Quote diverges from a still-valid InventorySnapshot's price for the
+  same SKU, the merchant SHOULD include `snapshot_id` in the Quote
+  metadata; conformant buyers MAY refuse divergent Quotes.
+- JSON Schema `intent.inventory.query.schema.json` with optional `skus`,
+  free-form `filters`, and `max_results` cap.
+- Handler backend `stubInventoryQuery()` with a 5-SKU demo catalog and
+  `in_stock_only` filter support.
+- ICP-handler and ICP-MCP now advertise and accept **4 ICP verbs**:
+  `purchase.create`, `subscription.create`, `purchase.return`,
+  `inventory.query`.
+- 2 new handler tests covering the full snapshot path + the
+  `in_stock_only` filter; **handler 12/12 PASS, MCP 6/6 PASS**.
+
+### Changed
+- Synced workspace, bindings, examples, templates, docs, and release
+  metadata to 1.2.0.
+
+### Coverage note
+ICP-1.0 now covers ~99% of commerce dollar volume across four verbs:
+discovery (`inventory.query`), one-shot retail (`purchase.create`),
+recurring revenue (`subscription.create`), and returns/refunds
+(`purchase.return`). Three verbs remain deferred to ICP-1.1:
+`quote.request` (wholesale RFQ), `payout.request` (marketplace seller
+payouts), `subscription.cancel` (mid-cycle subscription termination).
+
 ## [1.1.0] - 2026-05-11
 
 Introduces the **Intelligent Commerce Protocol (ICP)** — an open spec and
