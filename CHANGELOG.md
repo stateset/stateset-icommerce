@@ -6,6 +6,57 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-05-12
+
+Minor release: **`icp-client` Python SDK**. Closes the adopter-ergonomics
+gap for the Python-first agent-developer ecosystem (Anthropic SDK,
+OpenAI Agents, LangChain, LangGraph). Mirror of the JavaScript
+`@stateset/icp-client` API with byte-identical wire bytes verified
+by tests.
+
+### Added
+- **`packages/icp-python-client/`** — pip-installable Python SDK.
+  Single `cryptography` dependency, otherwise stdlib-only.
+- `ICPClient.create(handler_url, principal, ...)` mirroring the JS
+  factory. Identity persistence via `generate_identity()` /
+  `identity_from_seeds()`.
+- All 7 ICP verbs as methods: `.inventory()`, `.purchase()` (with
+  optional `from_proposal_id`), `.subscribe()`, `.cancel()`,
+  `.return_()`, `.request_quote()`, `.payout()` (handles the
+  inverted-direction field rename internally). Plus `.accept()`,
+  `.observe()` (generator over SSE EscrowEvents), `.settlement()`,
+  `.capabilities()`.
+- Independent merchant-signature verification on every response
+  against the published `.well-known/icp` pubkey. Verification
+  failures raise typed `ICPError("signature.invalid", ...)`.
+- Module-level exports: `canonical_json()`, `sign_ed25519()`,
+  `verify_ed25519()`, `Identity`. Useful for advanced agent flows
+  that need to sign payloads outside the client surface.
+- `pyproject.toml` with hatchling backend, Python 3.8+, MIT OR
+  Apache-2.0 licensing.
+- 12 end-to-end tests against a spawned `icp-handler`. CI workflow
+  job: `python-sdk`.
+- README with Anthropic SDK integration example showing how to wire
+  ICP as Anthropic-API tools.
+
+### Changed
+- Synced workspace, bindings, examples, templates, docs, and release
+  metadata to 1.5.0.
+
+### Adopter surface
+| Target | Path |
+|---|---|
+| JS / TS / Node / browser | `npm install @stateset/icp-client` |
+| Python / Anthropic / OpenAI Agents / LangChain | `pip install icp-client` |
+| MCP-compatible client (Claude Desktop / Cursor / Windsurf) | `mcpServers` config → icp-mcp |
+| Raw HTTP (any language) | `POST /icp/v1/intents` with manual codec |
+
+### Test count
+Cumulative protocol-layer test count: **114 distinct PASS signals per
+CI run** (handler 20, MCP 6, Settler 9, chain-watcher 8, JS SDK 11,
+**Python SDK 12** *(new)*, Foundry contract 15, conformance 8, Docker
+integration 17, demos 8).
+
 ## [1.4.0] - 2026-05-12
 
 Minor release closing **100% commerce verb coverage**. ICP-1.0 now runs

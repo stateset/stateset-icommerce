@@ -28,7 +28,7 @@ Usage:
 from .client import ICPClient, ICPError, Identity, generate_identity, identity_from_seeds
 from .codec import canonical_json, sign_ed25519, verify_ed25519
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __all__ = [
     "ICPClient",
     "ICPError",
