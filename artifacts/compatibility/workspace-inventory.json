@@ -5,10 +5,10 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.5.0",
-    "memberCount": 30,
+    "version": "1.6.0",
+    "memberCount": 31,
     "defaultMemberCount": 20,
-    "rustCrateCount": 22,
+    "rustCrateCount": 23,
     "bindingCrateCount": 8,
     "members": [
       {
@@ -94,6 +94,11 @@
       {
         "name": "stateset-http",
         "manifestPath": "crates/stateset-http/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-icp-client",
+        "manifestPath": "crates/stateset-icp-client/Cargo.toml",
         "packageKind": "crate"
       },
       {
@@ -223,6 +228,7 @@
         "stateset-embedded",
         "stateset-primitives"
       ],
+      "stateset-icp-client": [],
       "stateset-icp-iut": [],
       "stateset-java": [
         "stateset-core",
@@ -271,6 +277,7 @@
         "stateset-a2a",
         "stateset-authz",
         "stateset-crypto",
+        "stateset-icp-client",
         "stateset-icp-iut",
         "stateset-jobs",
         "stateset-macros",
@@ -570,16 +577,16 @@
         "count": 20
       },
       {
+        "name": "mcp",
+        "count": 19
+      },
+      {
         "name": "sync",
         "count": 18
       },
       {
         "name": "utils",
         "count": 14
-      },
-      {
-        "name": "mcp",
-        "count": 13
       },
       {
         "name": "chains",

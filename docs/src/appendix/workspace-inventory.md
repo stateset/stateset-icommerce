@@ -13,10 +13,10 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.5.0` |
-| Workspace members | 30 |
+| Workspace version | `1.6.0` |
+| Workspace members | 31 |
 | Default members | 20 |
-| Rust crates in workspace | 22 |
+| Rust crates in workspace | 23 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
 | CLI binaries | 50 |
@@ -31,7 +31,7 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 
 | Layer | Packages |
 | --- | --- |
-| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-iut`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
+| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-client`, `stateset-icp-iut`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
 | L2 | `stateset-core`, `stateset-protocol`, `stateset-sync` |
 | L3 | `stateset-db`, `stateset-embedded-wasm` |
 | L4 | `stateset-embedded` |
@@ -95,9 +95,9 @@ workspace membership because they require host runtimes or headers.
 | `a2a` | 44 |
 | `channels` | 29 |
 | `adapters` | 20 |
+| `mcp` | 19 |
 | `sync` | 18 |
 | `utils` | 14 |
-| `mcp` | 13 |
 | `chains` | 9 |
 | `x402` | 9 |
 | `knowledge` | 6 |
