@@ -29,6 +29,7 @@ version per the versioning policy below.
 | `settlers/` | Reference Settler bindings (first: USDC on Base) |
 | `contracts/` | On-chain custody contracts (Solidity, audit-ready) |
 | `examples/` | Runnable demos including the 9-step transcript |
+| `guides/` | Operator-facing integration walkthroughs (merchant, settler, push channels) |
 | `outreach/` | Partner-specific outreach drafts (Coinbase, Anthropic, Stripe, ...) |
 | `governance/` | Foundation Charter, LOI template, ICPIP process, Risk register |
 
