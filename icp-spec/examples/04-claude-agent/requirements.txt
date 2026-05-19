@@ -1,0 +1,5 @@
+# Required for the real-Claude path
+anthropic>=0.30
+
+# Used by the local icp-client Python SDK
+cryptography>=41

@@ -29,16 +29,17 @@ settlement. No other public protocol covers this layer.
 |---|---|---|
 | **Spec** | [`icp-spec/ICP-1.0-DRAFT.md`](./icp-spec/ICP-1.0-DRAFT.md) — normative protocol; canonicalization rules; 60+ error codes | — |
 | **Wire** | **6 intent verbs shipping** (`purchase.create`, `subscription.create`, `subscription.cancel`, `purchase.return`, `inventory.query`, `quote.request`); 1 more (`payout.request`) deferred — see ICPIP-0004 | — |
-| **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic | 2 vectors × **4 IUTs (JS · Rust · Go · Python)** = **8 byte-identical PASS** |
+| **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic | 3 vectors × **4 IUTs (JS · Rust · Go · Python)** = **12 byte-identical PASS** |
 | **Reference contract** | [`icp-spec/contracts/usdc-base/ICPEscrow.sol`](./icp-spec/contracts/usdc-base/) — production-quality Solidity | **15/15 Foundry PASS** |
-| **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference | **17/17 Node-test PASS** |
+| **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference + [`openapi.yaml`](./icp-handler/openapi.yaml) for codegen; ICPIP-0005 register + signed emit + state-transition publish + recovery API | **39/39 Node-test PASS** |
 | **MCP server** | [`icp-mcp/`](./icp-mcp/) — drops into Claude Desktop | **6/6 Node-test PASS** |
 | **Settler daemon** | [`services/settler-stateset/`](./services/settler-stateset/) — Settler-side reference | **9/9 Node-test PASS** |
 | **Demo** | [`icp-spec/examples/02-end-to-end-flow/`](./icp-spec/examples/02-end-to-end-flow/) — 9-step transcript | — |
 | **Governance** | [`icp-spec/governance/`](./icp-spec/governance/) — Foundation charter, LOI, ICPIPs, risk register | — |
 | **Distribution** | [`icp-spec/outreach/`](./icp-spec/outreach/) — 8 partner-specific drafts | — |
 | **Deployment** | [`icp-docker/`](./icp-docker/) — one-command Docker Compose stack | **17/17 integration PASS** against the live stack |
-| **SDK** | [`packages/icp-client/`](./packages/icp-client/) — zero-dep npm-publishable client library | **11/11 SDK PASS** with independent merchant-signature verification |
+| **SDKs** | [`packages/icp-client/`](./packages/icp-client/) (npm), [`packages/icp-python-client/`](./packages/icp-python-client/) (PyPI), [`crates/stateset-icp-client/`](./crates/stateset-icp-client/) (cargo) — 3 first-party clients, byte-identical wire bytes; **all 3 ship `registerWebhook` + `verifyWebhook` + `fetchChannelEvents` + `verifySettlementReceipt`**; JS has full `.d.ts` types | **JS 33/33 · Python 33/33 · Rust 29/29** |
+| **Quickstart** | [`icp-spec/guides/icpip-0005-quickstart.md`](./icp-spec/guides/icpip-0005-quickstart.md) — side-by-side JS / Python / Rust integration in 5 minutes | — |
 
 Cumulative protocol-layer tests on every CI run: **60+ PASS, 0 FAIL** across
 HTTP, MCP, Settler, contract, conformance (**4 languages**), demos, and

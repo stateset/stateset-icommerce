@@ -546,6 +546,112 @@ export function _seedSellerBalance(sellerAid, amount) {
   _sellerBalances.set(sellerAid, amount);
 }
 
+/**
+ * Sign a ChannelRegistration for a channel.register Intent (ICPIP-0005).
+ *
+ * Stub semantics:
+ *   - Accepts webhook OR sse channels.
+ *   - For webhooks, validates that `channel.url` is `https://…` (no
+ *     plaintext destinations in production).
+ *   - For SSE, mints an opaque subscription token with 1h TTL.
+ *   - Echoes the requested `event_filters` (no per-channel allowlist
+ *     enforcement in the stub; production would gate by entitlement).
+ *   - Stores the registration in the supplied in-memory `channelStore`
+ *     and assigns a fresh `channel_id`.
+ *
+ * Returns `{ ok: true, channel, canonical, signatureHex }` on success
+ * or `{ ok: false, error }` on policy rejection.
+ */
+export function stubChannelRegister(intent, merchantSigningKey, merchantAid, channelStore) {
+  const ch = intent.channel;
+  if (!ch || typeof ch !== 'object') {
+    return {
+      ok: false,
+      error: {
+        type: 'icp.error',
+        code: 'format.missing_field',
+        message: 'channel.register requires intent.channel',
+      },
+    };
+  }
+  if (ch.type !== 'webhook' && ch.type !== 'sse') {
+    return {
+      ok: false,
+      error: {
+        type: 'icp.error',
+        code: 'format.unknown_channel_type',
+        message: `unknown channel.type "${ch.type}" (expected webhook|sse)`,
+      },
+    };
+  }
+  if (ch.type === 'webhook') {
+    if (!ch.url) {
+      return {
+        ok: false,
+        error: {
+          type: 'icp.error',
+          code: 'channel.url_unverified',
+          message: 'webhook channel.url is required',
+        },
+      };
+    }
+    // Production requires https://. Loopback addresses (127.0.0.1, localhost)
+    // are permitted for dev / CI / integration tests so a local mock receiver
+    // can exercise the end-to-end emit path without TLS.
+    const isHttps = ch.url.startsWith('https://');
+    const isLoopback =
+      ch.url.startsWith('http://127.0.0.1') ||
+      ch.url.startsWith('http://localhost');
+    if (!isHttps && !isLoopback) {
+      return {
+        ok: false,
+        error: {
+          type: 'icp.error',
+          code: 'channel.url_unverified',
+          message: 'webhook channel.url must be https:// (loopback http:// allowed for dev only)',
+        },
+      };
+    }
+  }
+
+  const channelId = newId('icp_ch');
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 30 * 86_400 * 1000); // 30 days
+
+  const channel = {
+    type: 'channel.registration',
+    v: 'icp-1.0',
+    channel_id: channelId,
+    intent_id: intent.intent_id,
+    agent: intent.buyer,
+    merchant: intent.merchant,
+    channel_type: ch.type,
+    events_registered: Array.isArray(ch.event_filters) ? ch.event_filters : [],
+    registered_at: now.toISOString(),
+    expires_at: expiresAt.toISOString(),
+  };
+  if (ch.type === 'webhook') {
+    channel.webhook_url = ch.url;
+    channel.delivery = ch.delivery ?? {
+      max_attempts: 8,
+      backoff: 'exponential',
+      initial_delay_seconds: 5,
+    };
+  } else {
+    // SSE: mint short-lived subscription token (opaque, server-keyed).
+    channel.sse_endpoint = `https://${intent.merchant.replace(/^aid:v1:z/, '')}.example/icp/v1/events/sse`;
+    channel.subscription_token = newId('tok');
+    channel.token_ttl_seconds = 3600;
+  }
+
+  // Persist registration so /icp/v1/channels/:id can return it.
+  channelStore.set(channelId, channel);
+
+  const canonical = canonicalJson(channel);
+  const signatureHex = signEd25519(canonical, merchantSigningKey);
+  return { ok: true, channel, canonical, signatureHex };
+}
+
 /** Build EscrowFunding instructions. The stub points at the testnet
  *  ICPEscrow contract; production would compute escrowId and surface
  *  the funding tx encoder. */

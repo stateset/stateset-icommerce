@@ -49,6 +49,7 @@ humans).
 | `settler`   | Settler-side operational errors                       |
 | `arbiter`   | Arbiter authorization / decision errors               |
 | `conformance` | Conformance test errors                             |
+| `channel`   | Push-channel registration / delivery errors (ICPIP-0005) |
 
 ## Codes (ICP-1.0 normative)
 
@@ -166,6 +167,7 @@ humans).
 | Code                       | When emitted                                              |
 |----------------------------|-----------------------------------------------------------|
 | `settlement.receipt_signature_missing` | Receipt has fewer than 2 signatures             |
+| `settlement.settler_signature_invalid` | Receipt's `settler_signature` fails verification (the `merchant_signature` failure case is `signature.invalid` from the generic namespace) |
 | `settlement.rail_failed`   | Settlement rail returned failure or never finalized      |
 | `settlement.rail_unsupported` | Rail named in Intent not supported by this Settler    |
 | `settlement.not_found`     | `settlement_id` exists nowhere in this Settler's records |
@@ -212,6 +214,19 @@ humans).
 | `conformance.unsupported`  | IUT cannot perform this test (returns SKIP)              |
 | `conformance.divergence`   | Output differs from expected                             |
 
+### channel (ICPIP-0005)
+
+| Code                              | When emitted                                              |
+|-----------------------------------|-----------------------------------------------------------|
+| `channel.not_found`               | `channel_id` unknown                                      |
+| `channel.expired`                 | Channel TTL elapsed; re-registration required             |
+| `channel.signature_invalid`       | HTTP-layer or envelope-layer signature failed             |
+| `channel.replay`                  | Webhook timestamp outside ±5 min window                   |
+| `channel.sequence_gap`            | Recovery `?since=` is ahead of server's last `sequence`   |
+| `channel.token_expired`           | SSE subscription token TTL elapsed                        |
+| `channel.event_type_unsupported`  | Filter requested an unknown event type                    |
+| `channel.url_unverified`          | Webhook URL failed verification challenge                 |
+
 ## HTTP status mapping
 
 For HTTP transports, error codes map to status codes as follows:
@@ -230,6 +245,7 @@ For HTTP transports, error codes map to status codes as follows:
 | `arbiter.*`    | 403         |
 | `rate.*`       | 429         |
 | `settler.*`    | 503         |
+| `channel.*`    | 401 / 404 / 409 / 410 / 422 (see per-code table) |
 
 ## Stability
 

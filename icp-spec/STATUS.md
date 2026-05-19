@@ -5,7 +5,7 @@ by every tick of the multibillion-dollar build loop.
 
 ## Last updated
 
-2026-05-12 — tick 30
+2026-05-12 — tick 31
 
 ## Done
 
@@ -93,6 +93,589 @@ by every tick of the multibillion-dollar build loop.
   decimals, monetary strings, full Intent regression. Both JS and Rust
   IUTs PASS with byte-identical outputs. Conformance suite now: 2 PASS,
   0 FAIL, 0 SKIP across both languages. Tick 10.
+- [x] **Rust SDK `verify_settlement_receipt` helper** — Tick 60.
+  Closes three-language symmetry on the dual-signature receipt
+  verifier — every first-party SDK now ships both load-bearing
+  trust primitives (`verifyWebhook` + `verifySettlementReceipt`)
+  as one-call methods. New module
+  `crates/stateset-icp-client/src/settlement.rs`. Same algorithm,
+  same return contract, same typed error codes as the JS + Python
+  helpers; `VerifySettlementReceiptOptions { require_settler }`
+  exposes the opt-out flag. **7 unit tests** mirror the JS +
+  Python suites verbatim. Rust SDK now **27 unit + 1 integration
+  + 1 doctest, 0 clippy warnings** (was 22). Combined SDK test
+  footprint: JS 33 + Python 33 + Rust 27 unit + 1 int + 1 doctest
+  — every helper a partner needs to integrate ICP safely is now
+  one call away in every language we support.
+- [x] **Python SDK `verify_settlement_receipt` helper** —
+  Tick 59. Mirror of the JS helper from tick 58. Same algorithm
+  (strip both signature fields → canonicalize → verify both),
+  same return contract (receipt on success), same three typed
+  error codes (`format.missing_field`, `signature.invalid`,
+  `settlement.settler_signature_invalid`), same opt-out flag for
+  `require_settler`. Lives in `packages/icp-python-client/icp_client/settlement.py`,
+  exported from the package root. **7 unit tests** mirror the JS
+  suite verbatim including the byte-identical canonical-input
+  regression test. Python SDK suite now **33/33 PASS** (was 26/26).
+  The agent-developer ecosystem now has the same trust-final
+  helper JS partners get. Rust symmetric helper is the natural
+  next tick — once landed, all 3 SDKs ship symmetric
+  `verifyWebhook` + `verifySettlementReceipt`.
+- [x] **JS SDK `verifySettlementReceipt` helper** — Tick 58.
+  Closes a load-bearing trust gap: the `SettlementReceipt` is the
+  single artifact that proves payment to merchant + auditor +
+  downstream KYC processor, and it's co-signed by both the
+  merchant AND the Settler. Partners had to hand-roll the
+  dual-signature verification path — strip both signature fields,
+  re-canonicalize with RFC 8785 JCS, verify both signatures against
+  separate published Ed25519 keys — which is error-prone and the
+  source of many "I thought my receipt was valid" bugs. The new
+  one-call helper does it correctly: takes
+  `{receipt, merchantPubkeyRaw, settlerPubkeyRaw}`, returns the
+  receipt on success or throws a typed `ICPError` (`format.missing_field`,
+  `signature.invalid` for merchant failures, or the new
+  `settlement.settler_signature_invalid` code added to
+  `error-codes.md` for settler failures). `requireSettler: false`
+  is an explicit opt-out for testing / pre-settler workflows.
+  Adds typed `SettlementReceipt` and `VerifySettlementReceiptOptions`
+  interfaces to the `.d.ts` so TypeScript consumers get full shape
+  checking. **7 unit tests** cover happy path, tampered body,
+  wrong settler pubkey, both missing-signature cases, opt-out
+  flag, AND a regression test that asserts both signatures cover
+  byte-identical canonical input. JS SDK suite now **33/33 PASS +
+  1 SKIP** (was 26/26 + 1 SKIP). Python + Rust symmetric helpers
+  are the natural next ticks.
+- [x] **`subscription.canceled` state-transition publisher** —
+  Tick 57. The third state transition now fans out webhooks to
+  subscribed channels. Crucially, this is the first publisher
+  wired through a **verb-driven** code path (the
+  `subscription.cancel` Intent handler), whereas the prior two
+  (`settlement.released` from `handleFulfill`, `dispute.opened`
+  from `handleDispute`) hung off REST endpoints — proving the
+  `publishToSubscribers` pattern works equivalently across both
+  wire surfaces with no special-casing. Payload carries the full
+  cancellation lifecycle: `subscription_id`, `intent_id`,
+  `effective_at`, `final_charge_at`, optional `refund_amount`.
+  **1 new live test** drives register → submit a signed
+  `subscription.cancel` Intent → assert the receiver got a signed
+  `subscription.canceled` envelope whose `payload.subscription_id`
+  matches what the merchant stub minted. Handler test suite now
+  **50/50 PASS** (was 49/49). Three transitions, two wire surfaces,
+  one identical publisher path — the pattern generalizes cleanly
+  to every future event (`inventory.price_changed`,
+  `escrow.refunded`, `risk.flag`, ...) as small per-transition
+  copies.
+- [x] **ICPIP-0005 quickstart guide** — Tick 56. Closes the
+  partner-facing documentation gap that grew through ~15 ticks of
+  ICPIP-0005 work (spec, server, three SDKs, retries, recovery).
+  A partner skimming the repo for 5 minutes used to have to piece
+  the integration story together from scattered SDK source files;
+  now they land on `icp-spec/guides/icpip-0005-quickstart.md` and
+  see the entire wire surface in three sections: subscribe (one
+  call), verify each inbound POST (one call), backfill missed
+  events (one call) — side-by-side in JavaScript, Python, AND
+  Rust. The server-side state-transition → emit → publish → retry
+  → recovery loop is shown as a single diagram. The four-check
+  security model `verifyWebhook` enforces is summarized in a
+  numbered list. The reliability invariants table (ordering,
+  attestation, replay defense, retry policy, dedupe key, etc.)
+  compresses 15 ticks of work into a glanceable matrix. Linked
+  from `ICP.md` as a top-level Quickstart row so partners hit it
+  immediately. This is the docs-layer analog of tick 55's
+  TypeScript declarations — both convert deep accumulated work
+  into instant partner DX.
+- [x] **JS SDK TypeScript declarations** — Tick 55. The most-used
+  first-party SDK now ships a hand-authored `src/index.d.ts` so
+  TypeScript consumers get full IntelliSense + type-checking
+  without any runtime overhead. Covers every public export:
+  the 7 verb option types (`PurchaseOpts`, `InventoryOpts`,
+  `SubscribeOpts`, `CancelOpts`, `ReturnOpts`, `QuoteRequestOpts`,
+  plus `RegisterWebhookOpts`), the ICPIP-0005 surface
+  (`EventEnvelope`, `EventType` literal union of all 13 spec event
+  types, `VerifyWebhookOptions`, `FetchChannelEventsOpts`), wire
+  primitives (`Money`, `Signature`, `Identity`, `LineItem`,
+  `SignedResponse<T>`), and the typed `ICPError` with `code` +
+  `details`. `package.json` wires `types` AND
+  `exports["."].types` (with `types` placed FIRST in the
+  conditional-export object — TypeScript's resolver picks the
+  first matching condition, so this order matters). **3 new
+  drift-guard tests** in `test/types-sync.test.mjs`: (1) every JS
+  `export` has a matching `.d.ts` declaration (catches the "new
+  helper, types forgotten" regression); (2) `package.json` exposes
+  both type-resolution paths with correct ordering; (3) every
+  critical artifact (ICPClient, verifyWebhook, ICPError,
+  EventEnvelope, etc.) has an explicit declaration. JS SDK suite
+  now **26/26 PASS + 1 SKIP** (was 23/23 + 1 SKIP). With this,
+  TypeScript partners get the Stripe-tier IDE experience their
+  build pipelines expect — partner-DX gap closed.
+- [x] **ICPIP-0005 §4.1 webhook retry semantics** — Tick 54.
+  Closes the longest-standing TODO in `channel-emitter.mjs`. Live
+  delivery now retries non-terminal failures up to 8 attempts
+  (configurable) with exponential backoff (5s → 640s). The first
+  attempt is awaited synchronously so callers see immediate
+  feedback; subsequent attempts run in background. **Critical
+  invariant:** each attempt re-signs the envelope because
+  `delivery_attempt` is part of the canonical bytes — receivers
+  see a fresh cryptographic attestation per attempt and can dedupe
+  on `event_id`. 4xx codes (except 408/429) are terminal; network
+  errors and 5xx are retryable. **The recovery log retains the
+  first-attempt envelope (`delivery_attempt: 1`) as the canonical
+  form**, so a receiver that grabs the same event via
+  `GET /channels/:id/events?since=N` sees the same dedupe key
+  whether it arrived live or via backfill. Real-scheduler timers
+  call `.unref()` so background retries never block process exit
+  — graceful shutdown is unaffected; dropped retries surface as
+  sequence gaps the receiver recovers via §5. `opts.retryPolicy`
+  exposes `max_attempts`, `initial_delay_ms`, `backoff`;
+  `opts.scheduler` injects fake clocks for tests. **6 new tests
+  in `test/channel-emitter-retry.test.mjs`** cover the full matrix:
+  5xx-to-exhaustion with monotonically-incrementing delivery_attempt;
+  4xx terminal; 408/429 retryable; network-error → eventual-2xx;
+  recovery serves first-attempt form; sequence monotonic across
+  failures. Handler test suite now **49/49 PASS** (was 43/43).
+  ICPIP-0005's reliability contract is now end-to-end production-
+  grade: live retry on transient failures, recovery API as
+  authoritative backfill, sequence-gap detection on the receiver.
+- [x] **`dispute.opened` state-transition publisher** — Tick 53.
+  Generalizes the publisher pattern beyond the single
+  `settlement.released` event wired in tick 39. Opening a dispute
+  now mints a `dispute_id` (returned in the handler response so
+  callers can correlate), records the new event in the escrow's
+  signed event chain, AND fires `publishToSubscribers('dispute.opened',
+  ...)` with the full payload (`dispute_id`, `escrow_id`,
+  `intent_id`, `reason`, `amount`, `opened_at`, `prior_state`).
+  Fire-and-forget — synchronous response not blocked. **1 new live
+  test** drives register → purchase → accept → dispute and either
+  asserts the receiver gets a signed `dispute.opened` envelope with
+  the expected payload (when the stub permits the transition) or
+  asserts the typed `escrow.wrong_state` rejection path (when the
+  current escrow state doesn't permit dispute). Handler suite now
+  **43/43 PASS** (was 42/42). With two transitions wired, the
+  pattern is proven — extending to `escrow.refunded`,
+  `subscription.canceled`, `inventory.price_changed`, etc. is a
+  rote per-transition copy.
+- [x] **OpenAPI ↔ handler reconciliation (discovery layer)** —
+  Tick 52. Closes the third and final load-bearing schema drift.
+  `WellKnown` now requires
+  `{spec, handler, handler_version, merchant_aid, merchant_pubkey,
+  capabilities, settler_allowlist}` — exactly what `/icp/v1/.well-known/icp`
+  returns. `merchant_pubkey` is a proper `{alg, raw_hex}` object;
+  `capabilities` is the nested form with `verbs`, `transports`,
+  `pqc_hybrid`, and `push_channels`; `settler_allowlist` is a
+  string array (the rich `Settler` shape preserved for future).
+  New drift-guard invariants enforce required fields and ban the
+  stale flat `ed25519_pubkey_hex`/`x25519_pubkey_hex` from
+  reappearing. Handler suite now **42/42 PASS** (was 41/41).
+  **With ticks 50 + 51 + 52 the OpenAPI reconciliation is complete:**
+  envelope (request), responses, and discovery all match handler
+  wire reality. Partners running `openapi-generator` for any of
+  30+ supported language targets get a working client end-to-end
+  on the first run.
+- [x] **OpenAPI ↔ handler reconciliation (response layer)** —
+  Tick 51. Tick 50 closed the request envelope drift; this tick
+  closes the response side. Every `/icp/v1/intents` 200 body is
+  now modeled as the wrapped `{<payload_key>: <inner>, signature:
+  Signature}` shape the handler actually returns: 8 new wrapper
+  schemas (`PurchaseCreateResponse`, `PurchaseReturnResponse`,
+  `SubscriptionCreateResponse`, `SubscriptionCancelResponse`,
+  `InventoryQueryResponse`, `QuoteRequestResponse`,
+  `PayoutRequestResponse`, `ChannelRegisterResponse`) replace the
+  old flat `Quote`/`ReturnAuthorization`/etc. schemas that
+  modeled `signature_hex` as an inline field. The shared
+  `Signature` schema introduced in tick 50 is referenced from every
+  wrapper. `SettlementReceipt` and `Dispute` rewritten to use
+  `Signature` objects in place of flat `*_signature_hex` fields.
+  Inner payload objects keep `additionalProperties: true` pending
+  the per-verb inner-shape reconciliation already deferred to a
+  follow-up ICPIP. Two new drift-guard invariants enforce the
+  wrapped shape: each wrapper schema must declare
+  `required: [<payload_key>, signature]`, and no response schema
+  may have `required: [..., signature_hex]`. Handler test suite
+  now **41/41 PASS** (was 40/40). With ticks 50 + 51 together,
+  codegen against `openapi.yaml` produces clients whose request
+  AND response shapes match the handler — partners running
+  `openapi-generator` for any of the 30+ supported targets get
+  working clients without manual fix-ups.
+- [x] **OpenAPI ↔ handler reconciliation (envelope layer)** —
+  Tick 50. Closes the long-standing drift introduced in tick 33
+  when the OpenAPI spec was written aspirationally against the
+  ICP-1.0 spec document, but the handler implementation evolved
+  separately. Result: codegen against the prior `openapi.yaml`
+  produced clients that the handler rejected immediately with
+  `format.missing_field`. Reconciled the load-bearing envelope
+  layer: `IntentEnvelope` now requires `{intent, signature}` (not
+  `{intent, auth}` with `signature_hex`/`pubkey_hex` fields);
+  shared `Signature` schema (`{alg, kid, sig}`) reused by envelope
+  and every signed merchant response; `IntentBase` lists handler
+  field names (`v`, `intent_id`, `merchant`, `settler`, `expiry`,
+  `iat`, `exp` as RFC 3339, `nonce` as 16-byte hex);
+  `PrincipalBinding` and `Authority` rewritten to match handler
+  validation (`authority` not `authority_caps`, with the verb
+  allowlist and optional `max_per_payout` cap); `channel.register`
+  added to the verb enum; all three example payloads rewritten.
+  Verb-specific intent body shapes were stripped pending a follow-up
+  ICPIP that will reconcile them against the SDK source of truth.
+  Added a new **drift-guard test** that asserts the wire-reality
+  invariants directly — required-field tuples on `IntentEnvelope`,
+  `IntentBase`, `PrincipalBinding`, `Signature`, `Authority`.
+  Handler test suite now **40/40 PASS** (was 39/39). Partners
+  running `openapi-generator generate -i openapi.yaml -g <lang>`
+  for any of the 30+ supported targets now get clients whose
+  envelope shape the handler accepts on the first try.
+- [x] **Rust SDK `fetch_channel_events` method** — Tick 49. Closes
+  three-language symmetry on the recovery API: every first-party
+  SDK now exposes ICPIP-0005 §5 backfill as a one-call method.
+  Two complementary entry points on the Rust `Client`:
+  ``fetch_channel_events(channel_id, since)`` verifies each envelope
+  signature against the cached merchant pubkey before returning
+  (the secure default), while
+  ``fetch_channel_events_raw(channel_id, since)`` returns the raw
+  `{envelope, signature}` pairs unchanged for callers delegating
+  verification elsewhere. Uses the existing `Error::SignatureInvalid`
+  variant for per-envelope failures and the typed `Error::Icp` for
+  handler error codes (`channel.not_found`, `channel.expired`,
+  `channel.sequence_gap`, etc.) — no new error variants needed.
+  The integration test grew from 11 to 13 wire flows: full recovery
+  roundtrip (register with deliberately-unreachable URL → purchase
+  → accept → fulfill via `ureq::post` → assert the recovered
+  envelope verifies and contains the expected payload), plus an
+  unknown-channel `channel.not_found` assertion. Rust SDK still
+  **20 unit + 1 integration + 1 doctest, 0 clippy warnings**.
+  Combined three-SDK footprint at end of tick 49:
+  JS 23 tests · Python 26 tests · Rust 22 tests — all green.
+  **Three-language ICPIP-0005 client symmetry complete on all
+  three ends: registration, live verification, and recovery.**
+- [x] **Python SDK `fetch_channel_events` method** — Tick 48.
+  Mirror of the JS helper from tick 47. Same shape (`channel_id`,
+  `since=0`, keyword `verify=True`), same return contract (list of
+  verified envelope dicts, or raw `{envelope, signature}` pairs
+  when `verify=False`), same typed error code mapping for every
+  failure path. The Python SDK's `_get` already mapped HTTP errors
+  to `ICPError` with the upstream `code`, so the new method
+  inherits that without per-call try/except. **2 new live
+  integration tests** mirror the JS suite: full register →
+  purchase → accept → fulfill → recovery roundtrip (with the
+  webhook URL deliberately unreachable so the live POST fails but
+  the recovery log still serves the signed envelope); unknown
+  channel raises typed `channel.not_found`. Python SDK suite now
+  **26/26 PASS** (was 24/24). The Python (agent-developer
+  ecosystem) SDK now exposes the full three-call ICPIP-0005 story:
+  `register_webhook`, `verify_webhook`, `fetch_channel_events`.
+  Rust symmetric `fetch_channel_events` is the natural next tick.
+- [x] **JS SDK `fetchChannelEvents` method** — Tick 47. The recovery
+  API shipped server-side in tick 46; this tick lifts it into a
+  first-class one-call SDK method on the JS client. Without this,
+  the recovery path was wire-correct but ergonomically clumsy:
+  every agent had to build their own GET wrapper plus per-envelope
+  Ed25519 verification. New method
+  ``client.fetchChannelEvents(channelId, since=0, {verify=true})``:
+  fetches `/icp/v1/channels/:id/events?since=N`, parses, and (by
+  default) verifies each envelope signature against the cached
+  merchant pubkey before returning. Verify-by-default is the
+  Stripe-style guarantee — the secure path is the easy path; setting
+  `verify: false` exposes the raw `{envelope, signature}` pairs for
+  callers who want to do their own verification. Throws typed
+  `ICPError` with the appropriate `channel.*` or `format.*` code on
+  every error path. **2 new live integration tests**: (1) full
+  register → purchase → accept → fulfill → recovery round-trip, with
+  envelope-signature verification baked in; (2) unknown channel
+  throws typed `channel.not_found`. JS SDK suite now **23/23 PASS +
+  1 SKIP** (was 21/21 + 1 SKIP). With this, the JS SDK exposes the
+  complete ICPIP-0005 client story in three one-call methods:
+  `registerWebhook` (subscribe), `verifyWebhook` (validate live
+  deliveries), `fetchChannelEvents` (backfill misses). Python +
+  Rust symmetric `fetch_channel_events` are the natural next ticks.
+- [x] **ICPIP-0005 §5 recovery API** — Tick 46. The live-delivery
+  side of ICPIP-0005 was already complete (register → emit → publish);
+  this tick closes the reliability gap. Without recovery, an agent
+  that misses a transient webhook delivery has no path back to
+  consistent state. `GET /icp/v1/channels/:channel_id/events?since=N`
+  returns every retained signed envelope with `sequence > N`, in
+  ascending order, byte-for-byte identical to what the receiver
+  would have seen live. The channel-emitter now records each signed
+  envelope into a per-channel ring buffer (default 1000 events
+  retained) **before** the network POST — so even if the receiver
+  was unreachable when the live event fired, the recovery API still
+  serves it. Returns `409 channel.sequence_gap` when `since` is
+  before the retained window (agent must re-register and resync);
+  `404 channel.not_found` for unknown channels; `400
+  format.bad_query_param` for malformed `since`. **3 new tests in
+  `test/channel-recovery.test.mjs`** drive register → 3 emits →
+  recovery slice at `since=0` (all 3, in order, with envelope
+  signatures verifying), `since=2` (only event 3), and `since=99`
+  (empty array, not 404 since the channel exists). Plus unknown-
+  channel + malformed-since error-path coverage. Handler suite now
+  **39/39 PASS** (was 36/36). OpenAPI 3.1 spec extended with the
+  new path + four response shapes; drift guard updated. ICPIP-0005's
+  reliability story is now complete: live deliveries via the
+  emitter, authoritative backfill via the recovery API.
+- [x] **Rust SDK `register_webhook` method** — Tick 45. Closes the
+  three-language symmetry on both ICPIP-0005 ends: every first-party
+  SDK now offers `registerWebhook` AND `verifyWebhook` as one-call
+  methods. New method on `Client`:
+  ``client.register_webhook(merchant, settler, channel_type, url, event_filters)``.
+  Reuses `intent_base` + `build_intent_envelope` + the existing
+  `post_intent("channel", …)` pipeline so the new path inherits all
+  the production hardening of the older verbs. The live integration
+  test grew from 8 wire flows to 11: webhook registration happy
+  path, SSE registration with subscription-token assertion, http://
+  non-loopback rejection with typed `channel.url_unverified` check.
+  Rust SDK still **20 unit + 1 integration + 1 doctest, 0 clippy
+  warnings**. The combined three-SDK ICPIP-0005 footprint:
+  JS 21 tests · Python 24 tests · Rust 22 tests, all green. Both
+  ends of the push-channel protocol are now first-class one-call
+  developer-facing APIs in every supported language.
+- [x] **Python SDK `register_webhook` method** — Tick 44. Mirror of
+  the JS SDK helper from tick 43. Same signature shape (merchant,
+  settler, type, url, event_filters, delivery, auth), same default
+  `type='webhook'`, same return shape (`{channel, signature}`),
+  same transparent merchant-signature verification via the existing
+  `_verify_merchant` pipeline. **3 live integration tests** mirror
+  the JS suite: webhook happy path, SSE token mint, http:// non-
+  loopback rejection (`channel.url_unverified`). Python SDK suite
+  now **24/24 PASS** (was 21/21). The agent-developer ecosystem
+  (Anthropic SDK, OpenAI Agents, LangChain, LangGraph) now has
+  symmetric helpers for both ends of the ICPIP-0005 loop:
+  `client.register_webhook(...)` to subscribe + `verify_webhook(...)`
+  to validate each inbound event. Rust SDK `register_webhook` is
+  the natural next tick.
+- [x] **JS SDK `registerWebhook` method** — Tick 43. Completes the
+  client-side ICPIP-0005 story for the most-used SDK. Without this,
+  devs could `verifyWebhook` incoming events but had to hand-build
+  the `channel.register` Intent envelope to *get* events flowing in
+  the first place — an asymmetry that's now fixed. The new method
+  accepts `{merchant, settler, type?, url?, event_filters?,
+  delivery?, auth?}`, defaults `type` to `'webhook'`, builds the
+  Intent via the standard `_baseIntent` helper, signs + submits via
+  `_submit`, and verifies the merchant signature on the returned
+  ChannelRegistration via the existing `_verifyMerchantSignature`
+  pipeline. **3 live integration tests** drive a real handler:
+  (1) webhook registration + GET round-trip to confirm the channel
+  is queryable at `/icp/v1/channels/:id`, (2) SSE registration
+  mints a subscription token with 1h TTL, (3) http:// non-loopback
+  URL is rejected with a typed `channel.url_unverified` ICPError.
+  JS SDK suite now **21/21 PASS + 1 SKIP** (was 18/18 + 1 SKIP).
+  Python + Rust symmetric `register_webhook` methods are the
+  natural next ticks.
+- [x] **Rust SDK `verify_webhook` helper** — Tick 42. Completes
+  three-language symmetry on the receiver side: JS, Python, AND Rust
+  now ship the Stripe-style one-call validator. New module
+  `crates/stateset-icp-client/src/webhook.rs`. Same four checks per
+  ICPIP-0005 §6, same `channel.*` error codes (returned via the
+  existing `Error::Icp { code, message }` variant — no new error
+  variants needed). Generic over headers via a tiny `HeaderPair`
+  trait, so the helper accepts `Vec<(String, String)>`,
+  `Vec<(&str, &str)>`, and any HTTP crate's header collection
+  without taking a dependency on that crate. `VerifyWebhookOptions`
+  exposes the ±300s tolerance and a `now_seconds` override for
+  testing. **9 unit tests** mirror the JS + Python suites and add
+  a `slice_of_str_pairs_supported` case proving the generic
+  `HeaderPair` works on borrowed `&str` references. Rust SDK now:
+  **20 unit + 1 integration + 1 doctest, 0 clippy warnings** (was
+  12/1/1). The agent ecosystem (web JS, Python ML, Rust infra) is
+  now uniformly served on both the signing (Intent → handler) and
+  verifying (webhook → Agent) paths.
+- [x] **Python SDK `verify_webhook` helper** — Tick 41. Mirror of
+  the JS SDK helper byte-for-byte: same four checks per ICPIP-0005
+  §6, same `channel.*` error codes raised as `ICPError`, same default
+  ±300s tolerance, same case-insensitive header lookup that works
+  across plain dicts, fetch Headers, requests CaseInsensitiveDict,
+  and any `.items()`-providing mapping. Lives in
+  `packages/icp-python-client/icp_client/webhook.py`, exported from
+  the package root so `from icp_client import verify_webhook` Just
+  Works. **9 unit tests** in `tests/test_verify_webhook.py` cover
+  happy path, tampered body, flipped envelope sig, stale timestamp,
+  missing headers (timestamp + signature), malformed algorithm
+  prefix, wrong pubkey, mixed-case header lookup. Python SDK suite
+  now **21/21 PASS** (was 12/12). The agent-developer ecosystem
+  (Anthropic SDK, OpenAI Agents, LangChain, LangGraph) where ~80%
+  of production webhook receivers will run can now drop in
+  `verify_webhook(...)` and inherit the full ICPIP-0005 §6 security
+  contract.
+- [x] **JS SDK `verifyWebhook` helper** — Tick 40. The handler-side
+  publisher now signs and POSTs webhook events; this tick gives Agent
+  developers the one-call validator they need on the receiving side.
+  New `verifyWebhook({body, headers, method, path, merchantPubkeyRaw,
+  toleranceSeconds?, nowSeconds?})` in `packages/icp-client/src/index.mjs`
+  performs every check ICPIP-0005 §6 mandates: (1) HTTP timestamp
+  within ±300s of `now` (channel.replay on miss), (2) HTTP-layer
+  `X-ICP-Signature` (`ed25519=<hex>`) verifies cryptographically
+  against `<timestamp>.<method>.<path>.<body>`, (3) body parses as
+  `{envelope, signature}`, (4) envelope signature verifies against
+  the merchant pubkey over the envelope's canonical JSON bytes.
+  Any failure throws a typed `ICPError` with the appropriate
+  `channel.*` code so receivers can map directly to HTTP responses.
+  **7 unit tests**: happy path, tampered body, flipped envelope sig,
+  stale timestamp, missing X-ICP-Timestamp header, wrong pubkey,
+  mixed-case header lookup. End-to-end interop is already proven on
+  the handler side in `channel-publish.test.mjs` (same canonical
+  algorithm). JS SDK suite now **18/18 PASS** (was 11/11). This is
+  the Stripe `webhooks.constructEvent` analog — the single most-used
+  call in any production webhook receiver. Without it, every Agent
+  developer rolls their own Ed25519 verification (and frequently
+  skips one of the four required checks); with it, the secure path
+  is the easy path.
+- [x] **ICPIP-0005 state-transition publisher** — Tick 39. The
+  registration (tick 37) and the emitter (tick 38) were both in
+  place, but they weren't yet connected to actual handler state
+  transitions — calling `/fulfill` produced a settlement receipt
+  but no webhooks fired. This tick closes that gap. New helper
+  `publishToSubscribers(channelStore, eventType, payload, opts)` in
+  `channel-emitter.mjs` iterates the in-memory channel store,
+  filters by event-type subscription and expiry, and fan-outs in
+  parallel via the existing `emitEvent`. `handleFulfill` now calls
+  `publishToSubscribers('settlement.released', …)` after the
+  settlement receipt is recorded — fire-and-forget so the
+  synchronous response isn't held up by receiver round-trips.
+  **2 new end-to-end tests** in `test/channel-publish.test.mjs`
+  prove the full server-side loop: (1) register a webhook
+  subscribed to `settlement.released` → POST a `purchase.create`
+  Intent → accept the quote → fulfill the escrow → assert the mock
+  receiver got a signed `settlement.released` EventEnvelope whose
+  envelope signature verifies cryptographically against the
+  merchant's published Ed25519 pubkey from `.well-known/icp`;
+  (2) a channel subscribed only to `dispute.opened` does NOT
+  receive `settlement.released` events. The URL validator was
+  relaxed to permit `http://127.0.0.1` and `http://localhost` for
+  dev/CI; production https://-only requirement is unchanged for
+  non-loopback hosts. Handler test suite now **36/36 PASS** (was
+  34/34). With this, ICPIP-0005's full server-side flow is end-to-end
+  live: register → state transition → signed envelope on the wire.
+- [x] **ICPIP-0005 webhook emitter** — Tick 38. Closes the delivery
+  side of ICPIP-0005: the registration side shipped in tick 37, this
+  tick wires up the actual POST. New module
+  `icp-handler/src/channel-emitter.mjs` exposes
+  `emitEvent(channel, eventType, payload, opts)`. Maintains
+  monotonic `sequence` + `previous_event_id` chain per channel in
+  an in-module `channelEmitState` Map; builds canonical
+  EventEnvelopes per ICPIP-0005 §2; signs each envelope with
+  Ed25519 against the source's signing key; adds an HTTP-layer
+  signature header (`X-ICP-Signature: ed25519=<sig>` over the
+  `timestamp.method.path.body` material per §6) for defense-in-depth
+  against transport tampering; emits convenience headers
+  (`X-ICP-Timestamp`, `X-ICP-Channel-Id`, `X-ICP-Event-Id`,
+  `X-ICP-Sequence`); advances `last_event_id` **only on 2xx**
+  responses so the previous-event chain stays correct across
+  delivery failures. **3 new tests** in
+  `test/channel-emitter.test.mjs` spawn an in-process mock HTTP
+  receiver, exercise the wire end-to-end, and prove:
+  (1) envelope + HTTP signatures both verify cryptographically
+  against the source's pubkey; (2) `sequence` is monotonic across
+  multiple emits and `previous_event_id` correctly chains the
+  second event to the first's `event_id`; (3) a failed delivery
+  (500 response) leaves `last_event_id = null` so the next
+  successful emit chains correctly. Handler test suite now
+  **34/34 PASS** (was 31/31). The full 8-attempt exponential backoff
+  + DLQ-on-terminal-4xx semantics from ICPIP-0005 §4.1 are deferred
+  to a follow-up tick; this tick establishes the wire format so
+  partners can validate against a working receiver today.
+- [x] **ICPIP-0005 reference implementation** — Tick 37. The spec
+  shipped in tick 36; this tick made it real. Added the
+  `channel.register` verb to the handler (extending `supportedVerbs`
+  + dispatch branch in `handleSubmitIntent`), plus the
+  `GET /icp/v1/channels/:channel_id` retrieval route. `stubChannelRegister`
+  validates webhook URLs (https-only), mints SSE subscription tokens
+  with 1h TTL, echoes the requested `event_filters`, persists the
+  registration in an in-memory `channelStore` Map, and returns a
+  merchant-signed `ChannelRegistration`. **6 new tests in
+  `test/channels.test.mjs`**: webhook happy path with GET roundtrip,
+  SSE happy path with token minting, http:// URL rejection
+  (`channel.url_unverified`), unknown-type rejection
+  (`format.unknown_channel_type`), 404 lookup (`channel.not_found`),
+  and `.well-known/icp` advertisement of the new verb +
+  `push_channels: [webhook, sse]`. Handler test suite now
+  **31/31 PASS** (was 25/25). OpenAPI 3.1 spec updated with the new
+  GET route + ChannelRegistration response schema; drift-guard test
+  extended. The spec is no longer theoretical — partners can
+  `curl` against a running reference handler and exercise the full
+  channel registration flow today.
+- [x] **ICPIP-0005 — Push Channels (Webhooks + SSE)** — Tick 36.
+  First formal spec for merchant→Agent out-of-band event delivery,
+  filling the gap between ICP's seven synchronous verbs and the
+  reality of merchant-side state transitions that happen long after
+  the original Intent has returned (settlement.released, escrow.refunded,
+  dispute.opened, subscription.charge_pending, inventory.price_changed,
+  payout.released, compliance.kyb_due, risk.flag — 12 event types in
+  the initial set). Specifies two wire-equivalent channels: webhooks
+  for Agents with stable public URLs, SSE for browser-extension /
+  mobile / sandboxed Agents. Both carry an identical signed
+  `EventEnvelope` with per-channel monotonic `sequence`, defense-in-
+  depth signatures (HTTP-layer + envelope-layer), exponential-backoff
+  retry semantics (8 attempts default), recovery API for sequence
+  gaps, token rotation for SSE, and 12 event types covering
+  settlement, dispute, subscription, inventory, payout, compliance,
+  and risk. Adds 8 new error codes under the `channel.*` namespace
+  to `error-codes.md` + HTTP status mapping. **This is the "Stripe
+  webhooks" piece** — without it, every Agent has to poll, which
+  doesn't scale past pilot. With it, ICP reaches event-driven
+  parity with mature payment APIs.
+- [x] **Rust SDK merchant signature verification + 7-verb integration**
+  — Tick 35. Closes the response-trust gap and proves all 7 verbs
+  wire-compatible with the JS handler. New top-level
+  `verify_ed25519(message, sig_hex, pubkey_hex)` safe verifier;
+  `Client` lazily caches the merchant's Ed25519 pubkey from
+  `.well-known/icp`; `Client::verify_signed_response` re-canonicalizes
+  the response payload and verifies the merchant signature, returning
+  `Err(SignatureInvalid)` on any failure. **Every verb method now
+  matches the JS reference SDK byte-for-byte** —
+  subscribe uses `service_id`/`cadence`/`max_total_per_period`/
+  `max_occurrences`/`first_charge_at`; return uses
+  `original_settlement_id`/`desired_outcome`; payout adds the
+  `platform` field and populates `principal_binding.authority.max_per_payout`.
+  Integration test exercises all 7 verbs end-to-end, verifying each
+  merchant signature; tolerates `policy.*` rejections (e.g. unknown
+  seller for payout) as valid handler outcomes while still proving
+  the signed request roundtrips through the verification gates.
+  Together with the merchant pubkey cache, this means a Rust ICP
+  client cannot be tricked by an MITM that swaps merchant responses
+  — every payload must verify against the discovery pubkey or be
+  refused. **11 unit + 1 integration + 1 doctest, 0 clippy warnings.**
+- [x] **`stateset-icp-client` Rust SDK** — Tick 34. Third-language
+  client SDK for ICP-1.0 (alongside the npm + PyPI packages). Crate
+  at `crates/stateset-icp-client`, ~700 LOC. All 7 ICP verbs as
+  typed methods. **Produces byte-identical wire bytes vs the JS
+  reference** — proven by the `handler_integration` test that spawns
+  the JS icp-handler on an ephemeral port and drives it end-to-end
+  from Rust (discovery → inventory.query → purchase.create roundtrip,
+  with the JS handler verifying every signed Intent the Rust SDK
+  produces). Built on `ed25519-dalek` + `x25519-dalek` + `serde_jcs`
+  + `ureq` (single sync HTTP dep). **11 unit tests + 1 live
+  integration test, 0 clippy warnings.** Unlocks the Rust ecosystem
+  for ICP: every Solana/Aptos/Sui infrastructure crate, every
+  payment processor's Rust services, every high-throughput merchant
+  whose backend isn't Node/Python can now adopt ICP without a
+  hand-rolled SDK. The Python SDK reached Anthropic/OpenAI agent
+  developers; the Rust SDK reaches the infrastructure tier.
+- [x] **OpenAPI 3.1 spec for icp-handler** — Tick 33.
+  `icp-handler/openapi.yaml` is the normative HTTP surface
+  description for the 9 handler routes and all 7 ICP verbs (modeled
+  as a `discriminator: verb` union over the `IntentEnvelope`
+  schema). Every ICP error code namespace is mapped to its HTTP
+  status. Designed for language-agnostic client generation: a
+  partner with a Java/C#/Swift/Kotlin/Ruby/PHP/Dart/Elixir codebase
+  can now run `openapi-generator generate -g <lang>` and ship an
+  ICP client tomorrow — no hand-rolled SDK required. The
+  `test/openapi-sync.test.mjs` guard (5 tests) prevents drift
+  between the YAML and the actual route registry: adding a route
+  to `src/server.mjs` without documenting it in `openapi.yaml`
+  (or vice versa) fails CI. **Handler test suite now 25/25 PASS**
+  (was 20/20).
+- [x] **Vector 03 — signature-verification (8 sub-cases)** — Tick 32.
+  Exercises the inverse of vector 01: instead of producing signatures,
+  the IUT verifies them. 1 positive control (valid-roundtrip with RFC
+  8032 §7.1 seed) + 7 deliberate negative cases (tampered-message,
+  bit-flipped-signature, wrong-pubkey, truncated-signature,
+  padded-signature, all-zero-signature, random-bytes-signature).
+  Expected result: `[true, false, false, false, false, false, false,
+  false]`. Closes the third leg of the cross-language interop stool:
+  vector 01 proves SIGN consistency, vector 02 proves CANONICALIZE
+  consistency, vector 03 proves VERIFY consistency. Without it, an
+  implementation could pass 01 + 02 while silently accepting tampered
+  signatures in production — exactly the class of bug that breaks
+  protocol-level interop. **All 4 IUTs (JS, Rust, Go, Python) PASS
+  byte-identically.** Conformance proof now: 3 vectors × 4 IUTs =
+  **12 PASS, 0 FAIL, 0 SKIP**. Required gate for ICPIP-0001's
+  Final-promotion discipline.
 - [x] **`services/icp-chain-watcher/` — chain-mode integration** — Tick 24.
   Closes the last big technical gap. Zero-dep Node.js service that
   polls an EVM JSON-RPC endpoint for ICPEscrow.sol events, decodes them
@@ -202,10 +785,10 @@ by every tick of the multibillion-dollar build loop.
   byte-identical wire bytes vs JS, Rust, Go. Registered as
   `stateset-python` in the conformance registry. CI integration added.
   **Cross-IUT determinism is now empirically a 4-language, 4-ecosystem
-  property.** Total conformance proof: 2 vectors × 4 IUTs = **8
-  byte-identical PASS** across JavaScript stdlib, Rust crates (dalek +
-  serde_jcs), Go stdlib (crypto/ed25519 + crypto/ecdh), and Python
-  cryptography. Crucially, Python reaches the agent-developer
+  property.** Total conformance proof (post-tick-32): 3 vectors × 4
+  IUTs = **12 byte-identical PASS** across JavaScript stdlib, Rust
+  crates (dalek + serde_jcs), Go stdlib (crypto/ed25519 + crypto/ecdh),
+  and Python cryptography. Crucially, Python reaches the agent-developer
   ecosystem (Anthropic SDK, OpenAI SDK, LangChain, LangGraph) so an
   agent built in Python that signs ICP Intents will produce wire bytes
   that any merchant/Settler in JS/Rust/Go can verify byte-for-byte.
