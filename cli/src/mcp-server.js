@@ -7,7 +7,6 @@
 
 import { createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import fs from 'node:fs/promises';
 import path from 'path';
 // `z` (zod) is now only used inside `./mcp/agentic-runtime-tools.js` and
 // the per-domain tool modules; mcp-server.js no longer needs it directly.
@@ -39,18 +38,12 @@ import {
   inferPolicyDomain as inferPolicyDomainImpl,
   inferStaticPolicyDomain,
 } from './mcp/policy-domain.js';
-import { applyPolicyTransform, normalizeToolName } from './mcp/policy-helpers.js';
+import { normalizeToolName } from './mcp/policy-helpers.js';
 import { autoIndexEntity as autoIndexEntityImpl } from './mcp/auto-index.js';
 import { adaptCommerceForTools, extendCommerceWithApis } from './mcp/commerce-adapter.js';
 import { buildPlanStepRouting as buildPlanStepRoutingImpl } from './mcp/plan-step-routing.js';
 import { signAuditArtifact as signAuditArtifactImpl } from './mcp/audit-signing.js';
-import {
-  buildApprovalStagesFromActions,
-  buildRollbackContract,
-  normalizePolicyAction,
-  normalizePolicyExplanation,
-  replayEventHash,
-} from './mcp/audit-envelope.js';
+import { replayEventHash } from './mcp/audit-envelope.js';
 import { buildDeterministicMutationManifest } from './mcp/mutation-manifest.js';
 import {
   DEFAULT_REPLAY_BUFFER_SIZE,
@@ -61,12 +54,10 @@ import { buildToolRuntimeMeta, createPricingCache } from './mcp/pricing.js';
 import {
   AGENTIC_TOOL_RESULT_SCHEMA_VERSION as RESULT_SCHEMA_VERSION,
   attachStructuredToolMetadataToResponse as attachStructuredToolMetadataToResponseImpl,
-  buildToolResultPayload as buildToolResultPayloadImpl,
   buildToolResultResponse as buildToolResultResponseImpl,
 } from './mcp/result-builders.js';
 import {
   AGENTIC_POLICY_DECISION_BUNDLE_VERSION as POLICY_BUNDLE_VERSION,
-  buildPolicyDecisionBundle as buildPolicyDecisionBundleImpl,
   createEvaluatePolicy,
 } from './mcp/policy-evaluator.js';
 import {
@@ -561,9 +552,6 @@ export function createStatesetMcpServer({
     signAuditArtifact,
     mcpEventStream: activeMcpEventStream,
   });
-  const publishToEventStream = replayLog.publishToEventStream;
-  const getAgenticReplayLogPath = replayLog.getLogPath;
-  const persistAgenticReplayEvent = replayLog.persistEvent;
   const addAgenticReplayEvent = replayLog.addEvent;
   const listAgenticReplayEvents = replayLog.listEvents;
 
@@ -575,7 +563,6 @@ export function createStatesetMcpServer({
     treasuryEnabled: () => treasuryEnabled,
     treasuryContextOptions: () => treasuryContextOptions,
   });
-  const loadAgenticPricingState = pricingCache.loadState;
   const getAgenticToolPricing = pricingCache.getPricing;
   const getToolRuntimeMeta = (toolName) =>
     buildToolRuntimeMeta(toolName, {
@@ -928,17 +915,9 @@ export function createStatesetMcpServer({
     };
   };
 
-  // buildPolicyDecisionBundle's body lives in ./mcp/policy-evaluator.js. We
-  // curry the per-server deps so the dozens of call sites in this file
-  // don't have to thread them through.
-  const policyBundleDeps = {
-    getToolRuntimeMeta,
-    inferPolicyDomain,
-    signAuditArtifact,
-    allowApply,
-    bundleVersion: AGENTIC_POLICY_DECISION_BUNDLE_VERSION,
-  };
-  const buildPolicyDecisionBundle = (args) => buildPolicyDecisionBundleImpl(args, policyBundleDeps);
+  // buildPolicyDecisionBundle's body lives in ./mcp/policy-evaluator.js,
+  // and is invoked by `createEvaluatePolicy` below — no orchestrator-level
+  // call sites remain after the extraction.
 
   const getAgenticRuntimeContract = async ({ tool, includeLegacyDefaults = false } = {}) => {
     const targetTool = tool ? normalizeToolName(tool) : null;
@@ -2571,7 +2550,6 @@ export function createStatesetMcpServer({
     dbPath: treasuryIdentityDbPath,
     agentId: treasuryAgentId,
   });
-  const resolveTreasuryIdentity = treasuryIdentity.resolveIdentity;
   const resolveTreasuryAgentId = treasuryIdentity.getAgentId;
   const buildTreasuryIdentityMetadata = treasuryIdentity.getMetadata;
 
@@ -2600,8 +2578,6 @@ export function createStatesetMcpServer({
   // ./mcp/result-builders.js. We curry the `structured` flag here so the
   // ~17 call sites in this file don't have to thread it through.
   const resultOptions = { structured: shouldReturnStructuredResults };
-  const buildToolResultPayload = (basePayload, status, startedAt, toolMeta = {}) =>
-    buildToolResultPayloadImpl(basePayload, status, startedAt, toolMeta, resultOptions);
   const buildToolResultResponse = (result, status, startedAt, toolMeta = {}, isError = false) =>
     buildToolResultResponseImpl(result, status, startedAt, toolMeta, isError, resultOptions);
   const attachStructuredToolMetadataToResponse = (response, status, startedAt, toolMeta = {}) =>
