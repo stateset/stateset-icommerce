@@ -157,6 +157,179 @@ export function verifyEd25519(canonical, signatureHex, edPubRaw) {
 }
 
 // ===========================================================================
+// SettlementReceipt verification
+// ===========================================================================
+
+/**
+ * Verify a co-signed `SettlementReceipt` returned by the handler from
+ * `POST /icp/v1/escrows/:id/fulfill` or `GET /icp/v1/settlements/:id`.
+ *
+ * The receipt is signed by BOTH the merchant AND the Settler over the
+ * canonical bytes of the receipt body *minus* the two signature fields
+ * themselves. This is the single most load-bearing artifact in the
+ * protocol — it's what proves payment to the merchant and to any
+ * downstream auditor. **Partners MUST call this before treating any
+ * settlement as final.**
+ *
+ * Throws `ICPError`:
+ *   - `signature.invalid` — merchant signature failed.
+ *   - `settlement.settler_signature_invalid` — settler signature failed.
+ *   - `format.missing_field` — receipt missing `merchant_signature` or
+ *     `settler_signature`.
+ *
+ * Returns the receipt unchanged on success.
+ *
+ * @param {{
+ *   receipt: object,
+ *   merchantPubkeyRaw: Buffer,
+ *   settlerPubkeyRaw: Buffer,
+ *   requireSettler?: boolean,
+ * }} opts
+ */
+export function verifySettlementReceipt(opts) {
+  const { receipt, merchantPubkeyRaw, settlerPubkeyRaw } = opts;
+  const requireSettler = opts.requireSettler ?? true;
+
+  if (!receipt || typeof receipt !== 'object') {
+    throw new ICPError('format.missing_field', 'receipt must be an object');
+  }
+  const merchantSig = receipt.merchant_signature;
+  if (!merchantSig?.sig) {
+    throw new ICPError('format.missing_field', 'receipt.merchant_signature.sig required');
+  }
+  if (requireSettler && !receipt.settler_signature?.sig) {
+    throw new ICPError('format.missing_field', 'receipt.settler_signature.sig required');
+  }
+
+  // Strip BOTH signature fields and re-canonicalize. The signing path is:
+  //   canonical = canonicalJson(receipt without signatures)
+  //   merchant_signature = sign(canonical)
+  //   settler_signature  = sign(canonical)   // same canonical bytes
+  //   receipt.{merchant_signature, settler_signature} = those sigs
+  const { merchant_signature, settler_signature, ...unsigned } = receipt;  // eslint-disable-line no-unused-vars
+  const canonical = canonicalJson(unsigned);
+
+  if (!verifyEd25519(canonical, merchantSig.sig, merchantPubkeyRaw)) {
+    throw new ICPError(
+      'signature.invalid',
+      `merchant signature verification failed (kid=${merchantSig.kid ?? '<unknown>'})`,
+    );
+  }
+  if (requireSettler) {
+    const settlerSig = receipt.settler_signature;
+    if (!verifyEd25519(canonical, settlerSig.sig, settlerPubkeyRaw)) {
+      throw new ICPError(
+        'settlement.settler_signature_invalid',
+        `settler signature verification failed (kid=${settlerSig.kid ?? '<unknown>'})`,
+      );
+    }
+  }
+  return receipt;
+}
+
+// ===========================================================================
+// Webhook receiver helpers (ICPIP-0005)
+// ===========================================================================
+
+/**
+ * Verify an inbound webhook and return its parsed `EventEnvelope`.
+ *
+ * Mirrors the `stripe.webhooks.constructEvent(payload, sig, secret)`
+ * pattern: hand it the raw HTTP body, the request headers, and the
+ * merchant's published Ed25519 pubkey from `.well-known/icp`, and
+ * either get back the validated envelope OR a typed `ICPError`.
+ *
+ * Performs the four checks ICPIP-0005 §6 requires:
+ *   1. HTTP timestamp is within ±`toleranceSeconds` (default 300s).
+ *   2. HTTP-layer X-ICP-Signature header verifies against
+ *      `<timestamp>.<method>.<path>.<body>`.
+ *   3. The body parses as `{envelope, signature}` with the expected
+ *      shape.
+ *   4. The envelope's own signature verifies against the merchant
+ *      pubkey over the envelope's canonical JSON bytes.
+ *
+ * Any failure throws an `ICPError` with a `channel.*` code so
+ * receivers can map directly to HTTP responses (401 for signature
+ * failures, 409 for replay).
+ *
+ * @param {object} opts
+ * @param {string} opts.body  Raw HTTP body string (do NOT pre-parse —
+ *                            JSON.stringify re-encoding would break
+ *                            the HTTP signature).
+ * @param {object} opts.headers  HTTP request headers (lowercased keys
+ *                               OK; we normalize).
+ * @param {string} opts.method  HTTP method (typically 'POST').
+ * @param {string} opts.path    HTTP path (must include query string if
+ *                              the original request had one).
+ * @param {Buffer} opts.merchantPubkeyRaw  Raw 32-byte Ed25519 pubkey
+ *                                         from the merchant's
+ *                                         `.well-known/icp` discovery.
+ * @param {number} [opts.toleranceSeconds=300]  Replay window.
+ * @param {number} [opts.nowSeconds]  Override "now" (for testing).
+ * @returns {object} The parsed, verified envelope object.
+ * @throws {ICPError} On any verification failure.
+ */
+export function verifyWebhook(opts) {
+  const { body, headers, method, path, merchantPubkeyRaw } = opts;
+  const tolerance = opts.toleranceSeconds ?? 300;
+  const now = opts.nowSeconds ?? Math.floor(Date.now() / 1000);
+
+  // Normalize headers (Express, Node http, fetch Request all differ).
+  const hget = (name) => {
+    if (!headers) return undefined;
+    if (typeof headers.get === 'function') return headers.get(name);
+    return headers[name] ?? headers[name.toLowerCase()];
+  };
+
+  // 1. Timestamp window.
+  const tsHeader = hget('x-icp-timestamp');
+  if (!tsHeader) {
+    throw new ICPError('channel.signature_invalid', 'missing X-ICP-Timestamp header');
+  }
+  const ts = Number(tsHeader);
+  if (!Number.isFinite(ts)) {
+    throw new ICPError('channel.signature_invalid', `invalid X-ICP-Timestamp: ${tsHeader}`);
+  }
+  if (Math.abs(now - ts) > tolerance) {
+    throw new ICPError('channel.replay', `timestamp ${ts} outside ±${tolerance}s of ${now}`);
+  }
+
+  // 2. HTTP-layer signature.
+  const sigHeader = hget('x-icp-signature');
+  if (!sigHeader) {
+    throw new ICPError('channel.signature_invalid', 'missing X-ICP-Signature header');
+  }
+  const match = /^ed25519=([0-9a-f]+)$/i.exec(sigHeader);
+  if (!match) {
+    throw new ICPError('channel.signature_invalid', 'X-ICP-Signature must be ed25519=<hex>');
+  }
+  const httpSigHex = match[1];
+  const httpMaterial = `${tsHeader}.${method}.${path}.${body}`;
+  if (!verifyEd25519(httpMaterial, httpSigHex, merchantPubkeyRaw)) {
+    throw new ICPError('channel.signature_invalid', 'HTTP-layer signature verification failed');
+  }
+
+  // 3. Body shape.
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch (e) {
+    throw new ICPError('channel.signature_invalid', `body is not JSON: ${e.message}`);
+  }
+  if (!parsed?.envelope || !parsed?.signature?.sig) {
+    throw new ICPError('channel.signature_invalid', 'body missing {envelope, signature.sig}');
+  }
+
+  // 4. Envelope signature over canonical bytes.
+  const envelopeCanonical = canonicalJson(parsed.envelope);
+  if (!verifyEd25519(envelopeCanonical, parsed.signature.sig, merchantPubkeyRaw)) {
+    throw new ICPError('channel.signature_invalid', 'envelope signature verification failed');
+  }
+
+  return parsed.envelope;
+}
+
+// ===========================================================================
 // ICPClient — main public API
 // ===========================================================================
 
@@ -345,6 +518,42 @@ export class ICPClient {
     return result;
   }
 
+  /**
+   * channel.register — register a webhook OR SSE push channel (ICPIP-0005).
+   *
+   * For webhooks, supply `url` (https:// required in production; loopback
+   * http:// allowed against dev/CI handlers). For SSE, supply `type: 'sse'`
+   * and omit `url`. The merchant signs the returned ChannelRegistration;
+   * `verifyMerchantSignature` is invoked transparently.
+   *
+   * Use the returned `channel_id` to fetch the channel later via
+   * `GET /icp/v1/channels/:channel_id`. Use the receiver-side
+   * `verifyWebhook(...)` helper to validate each inbound event.
+   *
+   * @param {{
+   *   merchant: string,
+   *   settler: string,
+   *   type?: 'webhook'|'sse',
+   *   url?: string,
+   *   event_filters?: string[],
+   *   delivery?: { max_attempts?: number, backoff?: 'exponential'|'constant', initial_delay_seconds?: number },
+   *   auth?: { scheme?: 'ed25519'|'hmac-sha256', verifying_key_hex?: string }
+   * }} opts
+   */
+  async registerWebhook(opts) {
+    const intent = this._baseIntent('channel.register', opts);
+    intent.channel = {
+      type: opts.type ?? 'webhook',
+      ...(opts.url ? { url: opts.url } : {}),
+      event_filters: opts.event_filters ?? [],
+      ...(opts.delivery ? { delivery: opts.delivery } : {}),
+      ...(opts.auth ? { auth: opts.auth } : {}),
+    };
+    const result = await this._submit(intent);
+    await this._verifyMerchantSignature(result.channel, result.signature);
+    return result;
+  }
+
   // ---- Observe & retrieve ---------------------------------------------
 
   /**
@@ -385,6 +594,70 @@ export class ICPClient {
       throw new ICPError(j.code ?? 'format.unknown_settlement', `settlement returned ${r.status}`);
     }
     return r.json();
+  }
+
+  /**
+   * ICPIP-0005 §5 — fetch missed events from a registered channel.
+   *
+   * Returns every signed envelope the handler has retained with
+   * `sequence > since`, in ascending order. Each envelope's signature
+   * is verified against the cached merchant pubkey by default (set
+   * `verify: false` to skip — only useful when you're handing the raw
+   * `{envelope, signature}` pairs to another verifier).
+   *
+   * Throws `ICPError`:
+   *   - `channel.not_found` (404)
+   *   - `channel.expired` (410)
+   *   - `channel.sequence_gap` (409 — agent must re-register)
+   *   - `format.bad_query_param` (400)
+   *   - `channel.signature_invalid` if `verify` is true and any envelope
+   *     fails verification.
+   *
+   * @param {string} channelId
+   * @param {number} since  Last sequence number observed; events with
+   *                        sequence > since are returned.
+   * @param {{ verify?: boolean }} [opts]
+   * @returns {Promise<object[]>} Array of verified envelope objects
+   *                              (or raw `{envelope, signature}` pairs
+   *                              if `verify: false`).
+   */
+  async fetchChannelEvents(channelId, since = 0, opts = {}) {
+    const verify = opts.verify ?? true;
+    const url = new URL(
+      `${this.handlerUrl}/icp/v1/channels/${encodeURIComponent(channelId)}/events`,
+    );
+    url.searchParams.set('since', String(since));
+    const r = await fetch(url);
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new ICPError(j.code ?? 'format.unknown', j.message ?? `events returned ${r.status}`);
+    }
+    const body = await r.json();
+    if (!Array.isArray(body.events)) {
+      throw new ICPError('format.malformed_response', 'expected {events: [...]} from recovery API');
+    }
+    if (!verify) return body.events;
+
+    // Ensure merchant pubkey is cached.
+    if (!this._merchantPubCache) await this.capabilities();
+    if (!this._merchantPubCache) {
+      throw new ICPError(
+        'channel.signature_invalid',
+        'cannot verify envelopes: merchant pubkey unavailable from .well-known/icp',
+      );
+    }
+    const verified = [];
+    for (const entry of body.events) {
+      const canonical = canonicalJson(entry.envelope);
+      if (!verifyEd25519(canonical, entry.signature.sig, this._merchantPubCache)) {
+        throw new ICPError(
+          'channel.signature_invalid',
+          `envelope ${entry.envelope?.event_id ?? '<unknown>'} signature verification failed`,
+        );
+      }
+      verified.push(entry.envelope);
+    }
+    return verified;
   }
 
   // ---- Internals ------------------------------------------------------

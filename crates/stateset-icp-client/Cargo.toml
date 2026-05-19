@@ -1,0 +1,28 @@
+[package]
+name = "stateset-icp-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Rust SDK for the Intelligent Commerce Protocol (ICP-1.0). Mirrors the API surface of @stateset/icp-client (npm) and icp-client (PyPI). Produces byte-identical wire bytes verified by the ICP conformance suite."
+
+[lints]
+workspace = true
+
+[dependencies]
+ed25519-dalek = { workspace = true }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+sha2 = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+hex = { workspace = true }
+rand_core = { version = "0.6", features = ["getrandom"] }
+thiserror = "1"
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

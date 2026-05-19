@@ -27,6 +27,8 @@ Usage:
 
 from .client import ICPClient, ICPError, Identity, generate_identity, identity_from_seeds
 from .codec import canonical_json, sign_ed25519, verify_ed25519
+from .settlement import verify_settlement_receipt
+from .webhook import verify_webhook
 
 __version__ = "1.5.0"
 __all__ = [
@@ -38,4 +40,6 @@ __all__ = [
     "canonical_json",
     "sign_ed25519",
     "verify_ed25519",
+    "verify_settlement_receipt",
+    "verify_webhook",
 ]

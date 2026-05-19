@@ -5,6 +5,7 @@ waits for the listening port, then drives the SDK through every public
 method.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -87,11 +88,12 @@ class TestICPClient(unittest.TestCase):
         self.assertEqual(len(self.client.identity.ed25519_pubkey), 32)
         self.assertEqual(len(self.client.identity.x25519_pubkey), 32)
 
-    def test_capabilities_returns_7_verbs(self) -> None:
+    def test_capabilities_advertises_all_commerce_verbs(self) -> None:
         caps = self.client.capabilities()
         self.assertEqual(caps["spec"], "icp-1.0")
         verbs = caps["capabilities"]["verbs"]
-        self.assertEqual(len(verbs), 7)
+        # All 7 commerce verbs are required; operational verbs like
+        # `channel.register` (ICPIP-0005) may be advertised alongside.
         for expected in [
             "purchase.create",
             "subscription.create",
@@ -220,6 +222,100 @@ class TestICPClient(unittest.TestCase):
         ident = generate_identity()
         sig = sign_ed25519('{"hello":"world"}', ident)
         self.assertEqual(len(bytes.fromhex(sig)), 64)
+
+    def test_register_webhook_returns_signed_channel_registration(self) -> None:
+        caps = self.client.capabilities()
+        result = self.client.register_webhook(
+            merchant=caps["merchant_aid"],
+            settler="settler:stateset.usdc.base-sepolia",
+            url="https://agent.example.com/icp/events",
+            event_filters=["settlement.released", "escrow.refunded"],
+        )
+        self.assertEqual(result["channel"]["type"], "channel.registration")
+        self.assertEqual(result["channel"]["channel_type"], "webhook")
+        self.assertEqual(
+            result["channel"]["webhook_url"], "https://agent.example.com/icp/events"
+        )
+        self.assertEqual(
+            result["channel"]["events_registered"],
+            ["settlement.released", "escrow.refunded"],
+        )
+        self.assertTrue(result["channel"]["channel_id"].startswith("icp_ch_"))
+        self.assertEqual(result["signature"]["alg"], "ed25519")
+
+    def test_register_webhook_sse_mints_subscription_token(self) -> None:
+        caps = self.client.capabilities()
+        result = self.client.register_webhook(
+            merchant=caps["merchant_aid"],
+            settler="settler:stateset.usdc.base-sepolia",
+            type="sse",
+            event_filters=["dispute.opened"],
+        )
+        self.assertEqual(result["channel"]["channel_type"], "sse")
+        self.assertTrue(result["channel"]["subscription_token"])
+        self.assertEqual(result["channel"]["token_ttl_seconds"], 3600)
+
+    def test_register_webhook_http_nonloopback_url_rejected(self) -> None:
+        caps = self.client.capabilities()
+        with self.assertRaises(ICPError) as ctx:
+            self.client.register_webhook(
+                merchant=caps["merchant_aid"],
+                settler="settler:stateset.usdc.base-sepolia",
+                url="http://insecure.example.com/events",
+                event_filters=["settlement.released"],
+            )
+        self.assertEqual(ctx.exception.code, "channel.url_unverified")
+
+    def test_fetch_channel_events_returns_verified_envelopes(self) -> None:
+        caps = self.client.capabilities()
+        # Register a webhook subscribed to settlement.released, pointed at
+        # an unreachable loopback URL so the live POST fails — the recovery
+        # log still captures the signed envelope.
+        reg = self.client.register_webhook(
+            merchant=caps["merchant_aid"],
+            settler="settler:stateset.usdc.base-sepolia",
+            url="http://127.0.0.1:1/icp/events",  # deliberately unreachable
+            event_filters=["settlement.released"],
+        )
+        channel_id = reg["channel"]["channel_id"]
+
+        # Run a full purchase → accept → fulfill cycle to trigger the publish.
+        purchase = self.client.purchase(
+            merchant=caps["merchant_aid"],
+            settler="settler:stateset.usdc.base-sepolia",
+            items=[{"sku": "WIDGET-PY-RECOV", "quantity": 1, "unit_price": {"amount": "12.00", "currency": "USDC"}}],
+            max_total={"amount": "15.00", "currency": "USDC"},
+        )
+        accepted = self.client.accept(purchase["quote"]["quote_id"])
+        # Trigger fulfill via raw HTTP since the SDK doesn't expose it.
+        import urllib.request
+        req = urllib.request.Request(
+            f"{self.handler.base_url}/icp/v1/escrows/{accepted['funding']['escrow_id']}/fulfill",
+            data=json.dumps({"evidence_id": "icp_ful_PY_RECOV"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as _:
+            pass
+
+        # Fire-and-forget publish settle window.
+        time.sleep(0.15)
+
+        events = self.client.fetch_channel_events(channel_id, 0)
+        self.assertGreaterEqual(len(events), 1, f"expected ≥1 event, got: {events}")
+        evt = next((e for e in events if e["event_type"] == "settlement.released"), None)
+        self.assertIsNotNone(evt, "must include settlement.released")
+        self.assertEqual(evt["channel_id"], channel_id)
+        self.assertEqual(evt["payload"]["final_state"], "released")
+
+        # since=evt.sequence returns empty (no events with sequence > that).
+        tail = self.client.fetch_channel_events(channel_id, evt["sequence"])
+        self.assertEqual(tail, [])
+
+    def test_fetch_channel_events_unknown_channel_raises_typed_error(self) -> None:
+        with self.assertRaises(ICPError) as ctx:
+            self.client.fetch_channel_events("icp_ch_does_not_exist", 0)
+        self.assertEqual(ctx.exception.code, "channel.not_found")
 
 
 if __name__ == "__main__":

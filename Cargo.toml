@@ -23,6 +23,7 @@ members = [
     "crates/stateset-migrations",
     "crates/stateset-authz",
     "crates/stateset-icp-iut",
+    "crates/stateset-icp-client",
     "bindings/node",
     "bindings/python",
     "bindings/wasm",

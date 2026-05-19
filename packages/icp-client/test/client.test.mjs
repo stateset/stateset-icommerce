@@ -171,3 +171,100 @@ test('exported signEd25519 produces 64-byte hex signatures', () => {
   const sig = signEd25519('{"hello":"world"}', id);
   assert.equal(Buffer.from(sig, 'hex').length, 64);
 });
+
+test('registerWebhook returns signed ChannelRegistration (webhook)', async () => {
+  const caps = await client.capabilities();
+  const result = await client.registerWebhook({
+    merchant: caps.merchant_aid,
+    settler: 'settler:stateset.usdc.base-sepolia',
+    url: 'https://agent.example.com/icp/events',
+    event_filters: ['settlement.released', 'escrow.refunded'],
+  });
+  assert.equal(result.channel.type, 'channel.registration');
+  assert.equal(result.channel.channel_type, 'webhook');
+  assert.equal(result.channel.webhook_url, 'https://agent.example.com/icp/events');
+  assert.deepEqual(result.channel.events_registered, ['settlement.released', 'escrow.refunded']);
+  assert.match(result.channel.channel_id, /^icp_ch_/);
+  assert.equal(result.signature.alg, 'ed25519');
+  // Round-trip: handler exposes GET /icp/v1/channels/:id with the same shape.
+  const r = await fetch(`${baseUrl}/icp/v1/channels/${result.channel.channel_id}`);
+  assert.equal(r.status, 200);
+  const fetched = await r.json();
+  assert.equal(fetched.channel_id, result.channel.channel_id);
+});
+
+test('registerWebhook with type=sse mints a subscription token', async () => {
+  const caps = await client.capabilities();
+  const result = await client.registerWebhook({
+    merchant: caps.merchant_aid,
+    settler: 'settler:stateset.usdc.base-sepolia',
+    type: 'sse',
+    event_filters: ['dispute.opened'],
+  });
+  assert.equal(result.channel.channel_type, 'sse');
+  assert.ok(result.channel.subscription_token, 'sse must mint a token');
+  assert.equal(result.channel.token_ttl_seconds, 3600);
+});
+
+test('registerWebhook with http:// non-loopback URL rejected with typed ICPError', async () => {
+  const caps = await client.capabilities();
+  await assert.rejects(
+    client.registerWebhook({
+      merchant: caps.merchant_aid,
+      settler: 'settler:stateset.usdc.base-sepolia',
+      url: 'http://insecure.example.com/events',
+      event_filters: ['settlement.released'],
+    }),
+    (err) => err instanceof ICPError && err.code === 'channel.url_unverified',
+  );
+});
+
+test('fetchChannelEvents returns verified envelopes after fulfill triggers a publish', async () => {
+  const caps = await client.capabilities();
+  // Register a webhook subscribed to settlement.released, pointed at a
+  // dead loopback URL so the live POST fails — the recovery log still
+  // captures the signed envelope.
+  const reg = await client.registerWebhook({
+    merchant: caps.merchant_aid,
+    settler: 'settler:stateset.usdc.base-sepolia',
+    url: 'http://127.0.0.1:1/icp/events',  // unreachable on purpose
+    event_filters: ['settlement.released'],
+  });
+  const channelId = reg.channel.channel_id;
+
+  // Run a full purchase → accept → fulfill cycle to trigger the
+  // publisher.
+  const purchase = await client.purchase({
+    merchant: caps.merchant_aid,
+    settler: 'settler:stateset.usdc.base-sepolia',
+    items: [{ sku: 'WIDGET-RECOV', quantity: 1, unit_price: { amount: '15.00', currency: 'USDC' } }],
+    max_total: { amount: '20.00', currency: 'USDC' },
+  });
+  const accepted = await client.accept(purchase.quote.quote_id);
+  await fetch(`${baseUrl}/icp/v1/escrows/${encodeURIComponent(accepted.funding.escrow_id)}/fulfill`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ evidence_id: 'icp_ful_RECOV_TEST' }),
+  });
+
+  // Brief settle window for the fire-and-forget publish to land in the recovery log.
+  await new Promise((r) => setTimeout(r, 150));
+
+  const events = await client.fetchChannelEvents(channelId, 0);
+  assert.ok(events.length >= 1, `expected ≥1 event, got: ${JSON.stringify(events)}`);
+  const evt = events.find((e) => e.event_type === 'settlement.released');
+  assert.ok(evt, 'must include settlement.released');
+  assert.equal(evt.channel_id, channelId);
+  assert.equal(evt.payload.final_state, 'released');
+
+  // since=evt.sequence returns empty (no events with sequence > that).
+  const tail = await client.fetchChannelEvents(channelId, evt.sequence);
+  assert.deepEqual(tail, []);
+});
+
+test('fetchChannelEvents on unknown channel throws typed channel.not_found', async () => {
+  await assert.rejects(
+    client.fetchChannelEvents('icp_ch_does_not_exist', 0),
+    (err) => err instanceof ICPError && err.code === 'channel.not_found',
+  );
+});

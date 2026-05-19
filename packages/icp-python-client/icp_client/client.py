@@ -258,6 +258,46 @@ class ICPClient:
         self._verify_merchant(result["authorization"], result["signature"])
         return result
 
+    def register_webhook(
+        self,
+        merchant: str,
+        settler: str,
+        *,
+        url: str | None = None,
+        type: str = "webhook",
+        event_filters: list[str] | None = None,
+        delivery: dict | None = None,
+        auth: dict | None = None,
+    ) -> dict:
+        """channel.register — register a webhook OR SSE push channel (ICPIP-0005).
+
+        For webhooks, supply ``url`` (https:// required in production; loopback
+        http:// allowed against dev handlers). For SSE, pass ``type='sse'`` and
+        omit ``url``. The merchant signs the returned ``ChannelRegistration``;
+        the merchant signature is verified transparently.
+
+        Use the returned ``channel_id`` to fetch the channel later via
+        ``GET /icp/v1/channels/:channel_id``. Use the receiver-side
+        :func:`icp_client.verify_webhook` helper to validate each inbound event.
+
+        :returns: ``{"channel": {...}, "signature": {alg, kid, sig}}``
+        """
+        intent = self._base_intent("channel.register", merchant, settler)
+        channel: dict = {
+            "type": type,
+            "event_filters": event_filters or [],
+        }
+        if url is not None:
+            channel["url"] = url
+        if delivery is not None:
+            channel["delivery"] = delivery
+        if auth is not None:
+            channel["auth"] = auth
+        intent["channel"] = channel
+        result = self._submit(intent)
+        self._verify_merchant(result["channel"], result["signature"])
+        return result
+
     # ------------------------------------------------------------------
     # Observe & retrieve
     # ------------------------------------------------------------------
@@ -285,6 +325,77 @@ class ICPClient:
     def settlement(self, settlement_id: str) -> dict:
         """Fetch a SettlementReceipt by id."""
         return self._get(f"{self.handler_url}/icp/v1/settlements/{settlement_id}")
+
+    def fetch_channel_events(
+        self,
+        channel_id: str,
+        since: int = 0,
+        *,
+        verify: bool = True,
+    ) -> list[dict]:
+        """ICPIP-0005 §5 — fetch missed events from a registered channel.
+
+        Returns every signed envelope the handler has retained with
+        ``sequence > since``, in ascending order. Each envelope's signature
+        is verified against the cached merchant pubkey by default; set
+        ``verify=False`` to return the raw ``{envelope, signature}`` pairs
+        for callers that want to verify themselves.
+
+        Raises :class:`ICPError`:
+
+          * ``channel.not_found`` (404)
+          * ``channel.expired`` (410)
+          * ``channel.sequence_gap`` (409) — agent must re-register
+          * ``format.bad_query_param`` (400)
+          * ``channel.signature_invalid`` if ``verify=True`` and any
+            envelope fails verification
+
+        :returns: List of verified envelope dicts (or raw entries if
+                  ``verify=False``).
+        """
+        from urllib.parse import quote, urlencode
+
+        qs = urlencode({"since": str(since)})
+        url = f"{self.handler_url}/icp/v1/channels/{quote(channel_id, safe='')}/events?{qs}"
+        body = self._get(url)
+        events = body.get("events") if isinstance(body, dict) else None
+        if not isinstance(events, list):
+            raise ICPError(
+                "format.malformed_response",
+                "expected {events: [...]} from recovery API",
+            )
+        if not verify:
+            return events
+
+        # Ensure merchant pubkey is cached.
+        if self._merchant_pub_cache is None:
+            self.capabilities()
+        if self._merchant_pub_cache is None:
+            raise ICPError(
+                "channel.signature_invalid",
+                "cannot verify envelopes: merchant pubkey unavailable from .well-known/icp",
+            )
+
+        verified: list[dict] = []
+        for entry in events:
+            envelope = entry.get("envelope") if isinstance(entry, dict) else None
+            signature = entry.get("signature") if isinstance(entry, dict) else None
+            if not isinstance(envelope, dict) or not isinstance(signature, dict):
+                raise ICPError(
+                    "format.malformed_response",
+                    "expected each event = {envelope, signature}",
+                )
+            canonical = canonical_json(envelope)
+            sig_hex = signature.get("sig")
+            if not isinstance(sig_hex, str) or not verify_ed25519(
+                canonical, sig_hex, self._merchant_pub_cache
+            ):
+                raise ICPError(
+                    "channel.signature_invalid",
+                    f"envelope {envelope.get('event_id', '<unknown>')} signature verification failed",
+                )
+            verified.append(envelope)
+        return verified
 
     # ------------------------------------------------------------------
     # Internals

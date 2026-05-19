@@ -4,8 +4,10 @@
   "description": "TypeScript-ergonomic client SDK for the Intelligent Commerce Protocol (ICP-1.0). Zero runtime dependencies.",
   "type": "module",
   "main": "./src/index.mjs",
+  "types": "./src/index.d.ts",
   "exports": {
     ".": {
+      "types": "./src/index.d.ts",
       "import": "./src/index.mjs",
       "default": "./src/index.mjs"
     }
