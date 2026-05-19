@@ -30,7 +30,16 @@ import {
   stubInventoryQuery,
   stubQuoteRequest,
   stubPayoutRequest,
+  stubChannelRegister,
 } from './backend-stub.mjs';
+import { publishToSubscribers, fetchChannelEvents } from './channel-emitter.mjs';
+
+// ---------------------------------------------------------------------------
+// ICPIP-0005 channel store (in-memory). Keyed by channel_id. Production
+// handlers would persist this to durable storage with the same shape.
+// Exposed module-scope so handlers and tests can introspect.
+// ---------------------------------------------------------------------------
+const channelStore = new Map();
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -67,6 +76,8 @@ const routes = [
   ['POST', /^\/icp\/v1\/escrows\/([^/]+)\/dispute$/,           handleDispute],
   ['GET',  /^\/icp\/v1\/escrows\/([^/]+)\/events$/,            handleObserve],
   ['GET',  /^\/icp\/v1\/settlements\/([^/]+)$/,                handleGetSettlement],
+  ['GET',  /^\/icp\/v1\/channels\/([^/]+)$/,                   handleGetChannel],
+  ['GET',  /^\/icp\/v1\/channels\/([^/]+)\/events$/,           handleGetChannelEvents],
 ];
 
 const server = createServer(async (req, res) => {
@@ -118,9 +129,11 @@ function handleWellKnown(req, res) {
         'inventory.query',
         'quote.request',
         'payout.request',
+        'channel.register',
       ],
       transports: ['http'],
       pqc_hybrid: false,
+      push_channels: ['webhook', 'sse'],
     },
     settler_allowlist: [...ALLOWED_SETTLERS],
     docs: 'https://github.com/stateset/icp-spec',
@@ -151,6 +164,7 @@ async function handleSubmitIntent(req, res) {
     'inventory.query',
     'quote.request',
     'payout.request',
+    'channel.register',
   ]);
   if (!supportedVerbs.has(intent.verb)) {
     return reply(res, 400, err('format.unknown_verb', `verb ${intent.verb} not implemented in stub`));
@@ -218,6 +232,25 @@ async function handleSubmitIntent(req, res) {
     const result = stubSubscriptionCancel(intent, merchantKp.privateKey, merchantAid);
     if (!result.ok) return reply(res, 422, result.error);
     state.recordIntent(intent, signature.sig);
+
+    // ICPIP-0005: fan out subscription.canceled to every subscribed
+    // webhook (same fire-and-forget pattern as fulfill + dispute).
+    publishToSubscribers(
+      channelStore,
+      'subscription.canceled',
+      {
+        subscription_id: result.authorization.subscription_id,
+        intent_id: intent.intent_id,
+        effective_at:
+          result.authorization.effective_at ?? result.authorization.canceled_at ?? null,
+        final_charge_at: result.authorization.final_charge_at ?? null,
+        refund_amount: result.authorization.refund_amount ?? null,
+      },
+      { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
+    ).catch((err) => {
+      console.error(`publishToSubscribers(subscription.canceled) failed: ${err?.message ?? err}`);
+    });
+
     return reply(res, 200, {
       authorization: result.authorization,
       signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
@@ -240,6 +273,16 @@ async function handleSubmitIntent(req, res) {
     state.recordIntent(intent, signature.sig);
     return reply(res, 200, {
       authorization: result.authorization,
+      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+    });
+  }
+
+  if (intent.verb === 'channel.register') {
+    const result = stubChannelRegister(intent, merchantKp.privateKey, merchantAid, channelStore);
+    if (!result.ok) return reply(res, 422, result.error);
+    state.recordIntent(intent, signature.sig);
+    return reply(res, 200, {
+      channel: result.channel,
       signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
     });
   }
@@ -337,6 +380,26 @@ async function handleFulfill(req, res, _url, [escrowId]) {
   receipt.settler_signature = receipt.merchant_signature; // stub: same key for both
   state.recordSettlement(receipt);
 
+  // ICPIP-0005: fan out settlement.released to every subscribed webhook.
+  // Fire-and-forget — the synchronous response shouldn't wait for HTTP
+  // round-trips to external receivers. In production, retries land via a
+  // durable job queue; the reference impl is single-attempt for now.
+  publishToSubscribers(
+    channelStore,
+    'settlement.released',
+    {
+      settlement_id: receipt.settlement_id,
+      escrow_id: escrowId,
+      intent_id: e.intent_id,
+      amount: e.amount,
+      final_state: 'released',
+      settled_at: receipt.settled_at,
+    },
+    { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
+  ).catch((err) => {
+    console.error(`publishToSubscribers failed: ${err?.message ?? err}`);
+  });
+
   return reply(res, 200, { receipt });
 }
 
@@ -348,12 +411,38 @@ async function handleDispute(req, res, _url, [escrowId]) {
   if (e.state !== 'funded' && e.state !== 'fulfilled') {
     return reply(res, 409, err('escrow.wrong_state', `cannot dispute from state ${e.state}`));
   }
+  const priorState = e.state;
   state.updateEscrow(escrowId, { state: 'disputed' });
-  appendSignedEscrowEvent(escrowId, makeEvent(escrowId, e, e.state, 'disputed', {
+  const disputeId = newId('icp_disp');
+  const openedAt = new Date().toISOString();
+  const reason = body.reason ?? 'unspecified';
+  appendSignedEscrowEvent(escrowId, makeEvent(escrowId, e, priorState, 'disputed', {
     kind: 'dispute-opened',
-    reason: body.reason ?? 'unspecified',
+    dispute_id: disputeId,
+    reason,
   }));
-  return reply(res, 200, { state: 'disputed' });
+
+  // ICPIP-0005: fan out dispute.opened to every subscribed webhook.
+  // Same fire-and-forget pattern as fulfill — receivers dedupe by
+  // envelope event_id; sequence is monotonic per channel.
+  publishToSubscribers(
+    channelStore,
+    'dispute.opened',
+    {
+      dispute_id: disputeId,
+      escrow_id: escrowId,
+      intent_id: e.intent_id,
+      reason,
+      amount: e.amount,
+      opened_at: openedAt,
+      prior_state: priorState,
+    },
+    { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
+  ).catch((err) => {
+    console.error(`publishToSubscribers(dispute.opened) failed: ${err?.message ?? err}`);
+  });
+
+  return reply(res, 200, { state: 'disputed', dispute_id: disputeId });
 }
 
 function handleObserve(req, res, _url, [escrowId]) {
@@ -379,6 +468,40 @@ function handleGetSettlement(req, res, _url, [settlementId]) {
   const s = state.getSettlement(settlementId);
   if (!s) return reply(res, 404, err('format.unknown_settlement', `settlement ${settlementId} not found`));
   reply(res, 200, s);
+}
+
+function handleGetChannel(req, res, _url, [channelId]) {
+  const ch = channelStore.get(channelId);
+  if (!ch) return reply(res, 404, err('channel.not_found', `channel ${channelId} not registered`));
+  if (Date.parse(ch.expires_at) < Date.now()) {
+    return reply(res, 410, err('channel.expired', `channel ${channelId} expired at ${ch.expires_at}`));
+  }
+  reply(res, 200, ch);
+}
+
+// ICPIP-0005 §5 — Recovery API. Agents that observed a sequence gap in
+// the live stream call this to backfill missed events. `since` is the
+// last sequence number the agent successfully observed; the handler
+// returns every retained event with `sequence > since`.
+function handleGetChannelEvents(req, res, url, [channelId]) {
+  const ch = channelStore.get(channelId);
+  if (!ch) return reply(res, 404, err('channel.not_found', `channel ${channelId} not registered`));
+  if (Date.parse(ch.expires_at) < Date.now()) {
+    return reply(res, 410, err('channel.expired', `channel ${channelId} expired at ${ch.expires_at}`));
+  }
+  const sinceParam = url.searchParams.get('since');
+  const since = sinceParam == null ? 0 : Number(sinceParam);
+  if (!Number.isFinite(since) || since < 0) {
+    return reply(res, 400, err('format.bad_query_param', `since must be a non-negative integer, got ${sinceParam}`));
+  }
+  const events = fetchChannelEvents(channelId, since);
+  if (events === null) {
+    return reply(res, 409, err(
+      'channel.sequence_gap',
+      `since=${since} is before retained window; channel must be re-registered`,
+    ));
+  }
+  reply(res, 200, { channel_id: channelId, since, events });
 }
 
 // ---------------------------------------------------------------------------

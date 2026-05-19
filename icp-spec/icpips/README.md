@@ -12,7 +12,8 @@ spec.
 | [0002](./icpip-0002-hybrid-pqc-mandate.md) | Hybrid Ed25519 + ML-DSA-65 signature mandate for high-value Intents | Standards (Core) | Draft |
 | [0003](./icpip-0003-quote-request.md) | `quote.request` verb specification (B2B wholesale RFQ) | Standards (Core) | Draft |
 | [0004](./icpip-0004-payout-request.md) | `payout.request` verb specification (marketplace payouts) | Standards (Core) | Draft |
-| 0005 | Hybrid X25519 + ML-KEM-768 mandate for confidential PrincipalBinding transport | Standards (Core) | Solicited (companion to 0002) |
+| [0005](./icpip-0005-push-channels.md) | Push channels — webhooks + Server-Sent Events for merchant→Agent push delivery | Standards (Core) | Draft |
+| 0006 | Hybrid X25519 + ML-KEM-768 mandate for confidential PrincipalBinding transport | Standards (Core) | Solicited (companion to 0002) |
 
 ## Template
 
