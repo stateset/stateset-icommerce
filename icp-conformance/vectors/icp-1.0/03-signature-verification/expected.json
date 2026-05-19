@@ -1,0 +1,26 @@
+{
+  "verifications": [
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "names": [
+    "valid-roundtrip",
+    "tampered-message",
+    "bit-flipped-signature",
+    "wrong-pubkey",
+    "truncated-signature",
+    "padded-signature",
+    "all-zero-signature",
+    "random-bytes-signature"
+  ],
+  "_provenance": {
+    "ed25519_seed_source": "RFC 8032 \u00a77.1 test vector + a second seed for wrong-key cases",
+    "note": "Each case asks the IUT to call verify_ed25519(canonical, signature_hex, pubkey_hex) and return the boolean. The first case is a sanity positive; the next 7 are deliberate negative cases."
+  }
+}

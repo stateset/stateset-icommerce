@@ -1,0 +1,53 @@
+{
+  "test": "03-signature-verification",
+  "cases": [
+    {
+      "name": "valid-roundtrip",
+      "canonical": "{\"nonce\":\"0123456789abcdef\",\"v\":\"icp-1.0\",\"value\":\"hello\",\"verb\":\"test\"}",
+      "signature_hex": "eacf629698c06ff94050452513b332d9b34f3659bbb122e33ebd1f7b457cec583b4d399c892857a087a57f266417c8271884d22904fe1796bc4a6e08b225d00b",
+      "pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    },
+    {
+      "name": "tampered-message",
+      "canonical": "{\"nonce\":\"0123456789abcdef\",\"v\":\"icp-1.0\",\"value\":\"world\",\"verb\":\"test\"}",
+      "signature_hex": "eacf629698c06ff94050452513b332d9b34f3659bbb122e33ebd1f7b457cec583b4d399c892857a087a57f266417c8271884d22904fe1796bc4a6e08b225d00b",
+      "pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    },
+    {
+      "name": "bit-flipped-signature",
+      "canonical": "{\"nonce\":\"0123456789abcdef\",\"v\":\"icp-1.0\",\"value\":\"hello\",\"verb\":\"test\"}",
+      "signature_hex": "eacf629698c06ff94050452513b332d9b34f3659bbb122e33ebd1f7b457cec583b4d399c892857a087a57f266417c8271884d22904fe1796bc4a6e08b225d00a",
+      "pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    },
+    {
+      "name": "wrong-pubkey",
+      "canonical": "{\"nonce\":\"0123456789abcdef\",\"v\":\"icp-1.0\",\"value\":\"hello\",\"verb\":\"test\"}",
+      "signature_hex": "eacf629698c06ff94050452513b332d9b34f3659bbb122e33ebd1f7b457cec583b4d399c892857a087a57f266417c8271884d22904fe1796bc4a6e08b225d00b",
+      "pubkey_hex": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+    },
+    {
+      "name": "truncated-signature",
+      "canonical": "{\"nonce\":\"0123456789abcdef\",\"v\":\"icp-1.0\",\"value\":\"hello\",\"verb\":\"test\"}",
+      "signature_hex": "eacf629698c06ff94050452513b332d9b34f3659bbb122e33ebd1f7b457cec583b4d399c892857a087a57f266417c8271884d22904fe1796bc4a6e08b225d0",
+      "pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    },
+    {
+      "name": "padded-signature",
+      "canonical": "{\"nonce\":\"0123456789abcdef\",\"v\":\"icp-1.0\",\"value\":\"hello\",\"verb\":\"test\"}",
+      "signature_hex": "eacf629698c06ff94050452513b332d9b34f3659bbb122e33ebd1f7b457cec583b4d399c892857a087a57f266417c8271884d22904fe1796bc4a6e08b225d00b00",
+      "pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    },
+    {
+      "name": "all-zero-signature",
+      "canonical": "{\"nonce\":\"0123456789abcdef\",\"v\":\"icp-1.0\",\"value\":\"hello\",\"verb\":\"test\"}",
+      "signature_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    },
+    {
+      "name": "random-bytes-signature",
+      "canonical": "{\"nonce\":\"0123456789abcdef\",\"v\":\"icp-1.0\",\"value\":\"hello\",\"verb\":\"test\"}",
+      "signature_hex": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    }
+  ]
+}

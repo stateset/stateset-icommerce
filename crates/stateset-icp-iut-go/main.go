@@ -48,6 +48,8 @@ func main() {
 		output, err = run01AidDerivation(input)
 	case "02-canonical-json":
 		output, err = run02CanonicalJson(input)
+	case "03-signature-verification":
+		output, err = run03SignatureVerification(input)
 	default:
 		// Per iut.protocol.md: exit 2 + JSON on stderr signals SKIP.
 		fmt.Fprintf(os.Stderr, `{"error":"unsupported","reason":"no handler for %s"}`+"\n", testName)
@@ -189,6 +191,47 @@ func run02CanonicalJson(input map[string]interface{}) (map[string]interface{}, e
 		"canonical_strings": canonicalStrings,
 		"names":             names,
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Test 03: Signature Verification
+// ---------------------------------------------------------------------------
+
+func run03SignatureVerification(input map[string]interface{}) (map[string]interface{}, error) {
+	casesRaw, ok := input["cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.cases must be an array")
+	}
+	verifications := make([]bool, 0, len(casesRaw))
+	names := make([]string, 0, len(casesRaw))
+	for i, c := range casesRaw {
+		caseMap, ok := c.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("case %d not an object", i)
+		}
+		canonical, _ := caseMap["canonical"].(string)
+		signatureHex, _ := caseMap["signature_hex"].(string)
+		pubkeyHex, _ := caseMap["pubkey_hex"].(string)
+		name, _ := caseMap["name"].(string)
+		verifications = append(verifications, verifyOne(canonical, signatureHex, pubkeyHex))
+		names = append(names, name)
+	}
+	return map[string]interface{}{
+		"verifications": verifications,
+		"names":         names,
+	}, nil
+}
+
+func verifyOne(canonical, signatureHex, pubkeyHex string) bool {
+	sigBytes, err := hex.DecodeString(signatureHex)
+	if err != nil || len(sigBytes) != 64 {
+		return false
+	}
+	pubBytes, err := hex.DecodeString(pubkeyHex)
+	if err != nil || len(pubBytes) != 32 {
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(pubBytes), []byte(canonical), sigBytes)
 }
 
 // ---------------------------------------------------------------------------

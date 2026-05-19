@@ -168,7 +168,7 @@ jobs:
         working-directory: icp-handler
         env:
           PORT: '0'
-        run: node --test test/roundtrip.test.mjs
+        run: node --test test/*.test.mjs
 
   mcp:
     name: icp-mcp MCP server roundtrip

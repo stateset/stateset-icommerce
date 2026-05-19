@@ -34,6 +34,7 @@ fn run() -> Result<()> {
     let output = match test_name.as_str() {
         "01-aid-derivation" => run_01_aid_derivation(&input)?,
         "02-canonical-json" => run_02_canonical_json(&input)?,
+        "03-signature-verification" => run_03_signature_verification(&input)?,
         other => {
             // Per iut.protocol.md: exit 2 + JSON on stderr signals SKIP.
             eprintln!(
@@ -148,6 +149,49 @@ fn run_02_canonical_json(input: &Value) -> Result<Value> {
         "canonical_strings": canonical_strings,
         "names": names,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Test 03: Signature Verification
+// ---------------------------------------------------------------------------
+
+fn run_03_signature_verification(input: &Value) -> Result<Value> {
+    let cases =
+        input.get("cases").and_then(Value::as_array).context("input.cases must be an array")?;
+
+    let mut verifications = Vec::with_capacity(cases.len());
+    let mut names = Vec::with_capacity(cases.len());
+    for case in cases {
+        let name =
+            case.get("name").and_then(Value::as_str).context("case missing 'name'")?.to_string();
+        let canonical = case.get("canonical").and_then(Value::as_str).unwrap_or("");
+        let signature_hex = case.get("signature_hex").and_then(Value::as_str).unwrap_or("");
+        let pubkey_hex = case.get("pubkey_hex").and_then(Value::as_str).unwrap_or("");
+        verifications.push(Value::Bool(verify_one(canonical, signature_hex, pubkey_hex)));
+        names.push(Value::String(name));
+    }
+
+    Ok(json!({
+        "verifications": verifications,
+        "names": names,
+    }))
+}
+
+fn verify_one(canonical: &str, signature_hex: &str, pubkey_hex: &str) -> bool {
+    use ed25519_dalek::Signature;
+    let Ok(sig_bytes) = hex::decode(signature_hex) else { return false };
+    if sig_bytes.len() != 64 {
+        return false;
+    }
+    let Ok(pub_bytes) = hex::decode(pubkey_hex) else { return false };
+    let Ok(pub_arr): Result<[u8; 32], _> = pub_bytes.try_into() else { return false };
+    let Ok(verifying) = VerifyingKey::from_bytes(&pub_arr) else { return false };
+    let sig_arr: [u8; 64] = match sig_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    let sig = Signature::from_bytes(&sig_arr);
+    verifying.verify(canonical.as_bytes(), &sig).is_ok()
 }
 
 // ---------------------------------------------------------------------------

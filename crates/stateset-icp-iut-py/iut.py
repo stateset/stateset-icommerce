@@ -168,6 +168,46 @@ def run_02_canonical_json(inp):
 
 
 # ---------------------------------------------------------------------------
+# Test 03: Signature Verification
+# ---------------------------------------------------------------------------
+
+
+def verify_one(canonical: str, signature_hex: str, pubkey_hex: str) -> bool:
+    try:
+        sig_bytes = bytes.fromhex(signature_hex)
+        if len(sig_bytes) != 64:
+            return False
+        pub_bytes = bytes.fromhex(pubkey_hex)
+        if len(pub_bytes) != 32:
+            return False
+        pub = Ed25519PublicKey.from_public_bytes(pub_bytes)
+        pub.verify(sig_bytes, canonical.encode("utf-8"))
+        return True
+    except (InvalidSignature, ValueError, Exception):
+        return False
+
+
+def run_03_signature_verification(inp):
+    cases = inp.get("cases")
+    if not isinstance(cases, list):
+        raise ValueError("input.cases must be an array")
+    verifications = []
+    names = []
+    for i, case in enumerate(cases):
+        if not isinstance(case, dict):
+            raise ValueError(f"case {i} not an object")
+        names.append(case.get("name", ""))
+        verifications.append(
+            verify_one(
+                case.get("canonical", ""),
+                case.get("signature_hex", ""),
+                case.get("pubkey_hex", ""),
+            )
+        )
+    return {"verifications": verifications, "names": names}
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -189,6 +229,8 @@ def main():
             output = run_01_aid_derivation(inp)
         elif test_name == "02-canonical-json":
             output = run_02_canonical_json(inp)
+        elif test_name == "03-signature-verification":
+            output = run_03_signature_verification(inp)
         else:
             print(
                 json.dumps(

@@ -70,6 +70,26 @@ Result: **6/6 PASS** end-to-end.
 All bodies are JSON. Production handlers SHOULD additionally accept
 `application/icp+cbor` per spec §5.1.
 
+### OpenAPI
+
+The full normative API surface is also published as
+[`openapi.yaml`](./openapi.yaml) (OpenAPI 3.1.0). Use it to generate
+clients in any language that lacks a hand-rolled SDK:
+
+```sh
+# Java
+npx -y @openapitools/openapi-generator-cli generate -i openapi.yaml -g java -o /tmp/icp-java
+# C#
+npx -y @openapitools/openapi-generator-cli generate -i openapi.yaml -g csharp -o /tmp/icp-csharp
+# Swift
+npx -y @openapitools/openapi-generator-cli generate -i openapi.yaml -g swift5 -o /tmp/icp-swift
+# Ruby / PHP / Kotlin / Dart / Elixir / Rust-server-stubs / etc.
+```
+
+The `test/openapi-sync.test.mjs` guard ensures the YAML can't drift
+from the actual route registry — adding a route to `src/server.mjs`
+without documenting it in `openapi.yaml` (or vice versa) fails CI.
+
 ## What the stub Backend does
 
 - Quote pricing: sums `quantity × unit_price` per line, applies a flat 5%

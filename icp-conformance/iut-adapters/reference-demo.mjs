@@ -139,6 +139,29 @@ function run02CanonicalJson(input) {
   return { canonical_strings, names: input.cases.map((c) => c.name) };
 }
 
+function run03SignatureVerification(input) {
+  if (!Array.isArray(input.cases)) throw new Error('input.cases must be an array');
+  const verifications = input.cases.map((c) => {
+    try {
+      const sigBytes = Buffer.from(c.signature_hex, 'hex');
+      if (sigBytes.length !== 64) return false;
+      const pubRaw = Buffer.from(c.pubkey_hex, 'hex');
+      if (pubRaw.length !== 32) return false;
+      // Reconstruct the SPKI envelope to make node:crypto accept the raw pubkey.
+      const spkiPrefix = Buffer.from('302a300506032b6570032100', 'hex');
+      const pubKey = createPublicKey({
+        key: Buffer.concat([spkiPrefix, pubRaw]),
+        format: 'der',
+        type: 'spki',
+      });
+      return verify(null, Buffer.from(c.canonical), pubKey, sigBytes);
+    } catch (_) {
+      return false;
+    }
+  });
+  return { verifications, names: input.cases.map((c) => c.name) };
+}
+
 // ===========================================================================
 // Main
 // ===========================================================================
@@ -165,6 +188,9 @@ try {
       break;
     case '02-canonical-json':
       output = run02CanonicalJson(input);
+      break;
+    case '03-signature-verification':
+      output = run03SignatureVerification(input);
       break;
     default:
       process.stderr.write(JSON.stringify({ error: 'unsupported', reason: `no handler for ${testName}` }) + '\n');

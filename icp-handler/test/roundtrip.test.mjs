@@ -772,10 +772,20 @@ test('payout.request → signed PayoutAuthorization with itemized fees', async (
   assert.equal(authorization.approved_amount.amount, '960.00');
   assert.ok(authorization.payout_id.startsWith('icp_pay_'));
 
-  // .well-known/icp now advertises 7 verbs (100% commerce coverage)
+  // .well-known/icp advertises the 7 commerce verbs (100% commerce coverage),
+  // plus any additional operational verbs like channel.register from ICPIP-0005.
   const caps = await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json();
-  assert.ok(caps.capabilities.verbs.includes('payout.request'));
-  assert.equal(caps.capabilities.verbs.length, 7);
+  for (const verb of [
+    'purchase.create',
+    'subscription.create',
+    'subscription.cancel',
+    'purchase.return',
+    'inventory.query',
+    'quote.request',
+    'payout.request',
+  ]) {
+    assert.ok(caps.capabilities.verbs.includes(verb), `missing verb: ${verb}`);
+  }
 });
 
 test('payout.request: insufficient balance is rejected', async () => {

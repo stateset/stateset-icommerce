@@ -1,0 +1,1242 @@
+openapi: 3.1.0
+info:
+  title: ICP-1.0 Merchant Handler API
+  version: 1.0.0
+  description: |
+    Normative HTTP API exposed by an ICP-1.0 merchant handler. Conformant
+    handlers MUST implement every operation in this document with the
+    request/response shapes described here.
+
+    This spec is generated from `icp-spec/ICP-1.0-DRAFT.md` and the JSON
+    Schemas in `icp-spec/schemas/`. It is intended to drive client codegen
+    in any language without a hand-rolled SDK (Java / C# / Swift / Kotlin
+    / Ruby / PHP / Dart / Elixir / etc).
+
+    **Canonicalization:** every Intent submitted to the handler MUST be
+    serialized using RFC 8785 Canonical JSON before signing. The handler
+    re-canonicalizes the parsed body and verifies the signature against
+    the result. Any deviation in canonical bytes produces
+    `signature.invalid` (HTTP 401). See
+    `icp-spec/schemas/canonicalization.md` for full rules.
+
+    **Error model:** all error responses share the `Error` envelope and
+    use ICP error codes from `icp-spec/schemas/error-codes.md`. HTTP
+    status mappings are normative.
+
+  contact:
+    name: StateSet (reference implementer)
+    url: https://github.com/stateset/stateset-icommerce
+  license:
+    name: Apache-2.0 (code) / CC-BY-4.0 (spec)
+    url: https://github.com/stateset/stateset-icommerce/blob/master/LICENSE
+
+servers:
+  - url: https://shop.example.com
+    description: Production handler (over TLS)
+  - url: http://127.0.0.1:7402
+    description: Reference handler (local dev, zero-dep)
+
+tags:
+  - name: discovery
+    description: Capability + Settler allowlist discovery
+  - name: intents
+    description: Submit signed Intents (the 7 ICP-1.0 commerce verbs)
+  - name: escrow
+    description: Quote acceptance, fulfillment, dispute, event stream
+  - name: settlement
+    description: Co-signed SettlementReceipt retrieval
+  - name: ops
+    description: Operational endpoints (health, readiness)
+
+paths:
+  /healthz:
+    get:
+      tags: [ops]
+      summary: Liveness probe
+      description: Returns 200 if the handler process is up.
+      operationId: healthz
+      responses:
+        '200':
+          description: Handler is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Healthz'
+              example:
+                ok: true
+                version: 1.0.0
+                merchant_aid: aid:v1:zMerchantExample1234567890abcdef
+
+  /icp/v1/.well-known/icp:
+    get:
+      tags: [discovery]
+      summary: Merchant capability discovery
+      description: |
+        Returns the merchant's AID, public keys, supported verbs,
+        supported Settlers, and protocol version. Agents MUST call
+        this endpoint before submitting any Intent, in order to (a)
+        learn the merchant's pubkey for signature verification of
+        merchant-side responses and (b) confirm the verb they intend
+        to call is supported.
+      operationId: wellKnown
+      responses:
+        '200':
+          description: Capability descriptor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WellKnown'
+
+  /icp/v1/settlers:
+    get:
+      tags: [discovery]
+      summary: List supported Settlers
+      description: |
+        Returns the set of Settlers that this merchant will accept for
+        escrowed settlement. Agents use the Settler's AID and supported
+        rails (USDC, Stripe Treasury, ACH, etc.) to choose how to fund
+        the purchase.
+      operationId: listSettlers
+      responses:
+        '200':
+          description: Settler list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlerList'
+
+  /icp/v1/intents:
+    post:
+      tags: [intents]
+      summary: Submit a signed Intent
+      description: |
+        Submits any of the 7 ICP-1.0 commerce verbs as a signed Intent.
+        The handler:
+          1. Re-canonicalizes the parsed body (RFC 8785 JCS).
+          2. Verifies the Ed25519 signature in the outer envelope.
+          3. Checks the PrincipalBinding `authority_caps` against
+             the requested amount/period.
+          4. Routes to the verb-specific backend handler.
+          5. Returns a verb-specific success body OR an error envelope.
+
+        Every successful response includes a merchant signature so the
+        caller can verify the merchant attests to the response.
+      operationId: submitIntent
+      requestBody:
+        required: true
+        description: A signed Intent envelope. See `IntentEnvelope` schema.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntentEnvelope'
+            examples:
+              purchaseCreate:
+                $ref: '#/components/examples/PurchaseCreateExample'
+              subscriptionCreate:
+                $ref: '#/components/examples/SubscriptionCreateExample'
+              inventoryQuery:
+                $ref: '#/components/examples/InventoryQueryExample'
+      responses:
+        '200':
+          description: |
+            Intent accepted. The handler wraps every successful response in a
+            two-field envelope: a verb-specific payload key plus a `signature`
+            object (`{alg, kid, sig}`) signed by the merchant over the
+            canonical bytes of the payload.
+
+            Payload-key-by-verb:
+
+            | Verb | Payload key | Inner shape |
+            |---|---|---|
+            | `purchase.create` | `quote` | Quote |
+            | `purchase.return` | `authorization` | ReturnAuthorization |
+            | `subscription.create` | `authorization` | SubscriptionAuthorization |
+            | `subscription.cancel` | `authorization` | SubscriptionCancellation |
+            | `inventory.query` | `snapshot` | InventorySnapshot |
+            | `quote.request` | `proposal` | QuoteProposal |
+            | `payout.request` | `authorization` | PayoutAuthorization |
+            | `channel.register` | `channel` | ChannelRegistration |
+
+            Callers MUST verify `signature.sig` against the merchant's
+            published Ed25519 pubkey (`merchant_pubkey.raw_hex` from
+            `.well-known/icp`) over the canonical JSON of the payload
+            object. The SDKs' `verifyWebhook`/`_verifyMerchantSignature`
+            paths and the handler's `signEd25519(canonical, key)` agree
+            on this byte layout — see the `Signature` schema for the
+            wire format.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PurchaseCreateResponse'
+                  - $ref: '#/components/schemas/PurchaseReturnResponse'
+                  - $ref: '#/components/schemas/SubscriptionCreateResponse'
+                  - $ref: '#/components/schemas/SubscriptionCancelResponse'
+                  - $ref: '#/components/schemas/InventoryQueryResponse'
+                  - $ref: '#/components/schemas/QuoteRequestResponse'
+                  - $ref: '#/components/schemas/PayoutRequestResponse'
+                  - $ref: '#/components/schemas/ChannelRegisterResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SignatureInvalid' }
+        '403': { $ref: '#/components/responses/PolicyDenied' }
+        '409': { $ref: '#/components/responses/Replay' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/SettlerUnavailable' }
+
+  /icp/v1/quotes/{quote_id}/accept:
+    post:
+      tags: [escrow]
+      summary: Accept a Quote → open an Escrow
+      description: |
+        Caller agrees to the Quote terms. The handler instructs the
+        Settler to open an escrow holding the quoted amount. On
+        success, returns an `Escrow` descriptor whose `escrow_id` can
+        be used to fulfill, dispute, or observe.
+      operationId: acceptQuote
+      parameters:
+        - $ref: '#/components/parameters/QuoteId'
+      requestBody:
+        required: false
+        description: Optional acceptance metadata (e.g. delivery address).
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptQuoteRequest'
+      responses:
+        '200':
+          description: Escrow opened
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Escrow' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EscrowConflict' }
+        '503': { $ref: '#/components/responses/SettlerUnavailable' }
+
+  /icp/v1/escrows/{escrow_id}/fulfill:
+    post:
+      tags: [escrow]
+      summary: Mark escrow as fulfilled
+      description: |
+        Merchant signals that the goods/services were delivered.
+        Triggers Settler to co-sign a `SettlementReceipt` and release
+        funds to merchant. Idempotent: subsequent calls with the same
+        `escrow_id` return the existing `SettlementReceipt`.
+      operationId: fulfill
+      parameters:
+        - $ref: '#/components/parameters/EscrowId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FulfillRequest' }
+      responses:
+        '200':
+          description: SettlementReceipt (co-signed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettlementReceipt' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EscrowConflict' }
+
+  /icp/v1/escrows/{escrow_id}/dispute:
+    post:
+      tags: [escrow]
+      summary: Open a dispute against an escrow
+      description: |
+        Either party can dispute. Settler freezes the escrow pending
+        arbiter resolution. Returns a `Dispute` record.
+      operationId: dispute
+      parameters:
+        - $ref: '#/components/parameters/EscrowId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DisputeRequest' }
+      responses:
+        '200':
+          description: Dispute opened
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispute' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EscrowConflict' }
+
+  /icp/v1/escrows/{escrow_id}/events:
+    get:
+      tags: [escrow]
+      summary: Subscribe to escrow event stream (SSE)
+      description: |
+        Server-Sent Events. Emits one event per escrow state transition.
+        Event types: `escrow.opened`, `escrow.funded`, `escrow.fulfilled`,
+        `escrow.released`, `escrow.refunded`, `dispute.opened`,
+        `dispute.resolved`. The merchant signs every event payload; the
+        caller MUST verify against the merchant's well-known pubkey.
+
+        Heartbeats are sent every 30s as `:heartbeat` comment lines so
+        idle proxies don't close the stream.
+      operationId: observe
+      parameters:
+        - $ref: '#/components/parameters/EscrowId'
+      responses:
+        '200':
+          description: SSE stream of escrow events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Newline-delimited SSE frames
+              example: |
+                event: escrow.opened
+                data: {"escrow_id":"0xabc...","amount":{"amount":"29.99","currency":"USDC"},"signature_hex":"…"}
+
+                event: escrow.funded
+                data: {"escrow_id":"0xabc...","tx_hash":"0xfee…","signature_hex":"…"}
+
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /icp/v1/channels/{channel_id}:
+    get:
+      tags: [channels]
+      summary: Retrieve a registered push channel (ICPIP-0005)
+      description: |
+        Fetch a previously-registered push channel by `channel_id`.
+        Returns the same `ChannelRegistration` shape the merchant
+        returned at registration time. Channels expire 30 days after
+        registration by default; expired channels return 410
+        `channel.expired`.
+
+        Channels are registered via the `channel.register` verb,
+        submitted to `POST /icp/v1/intents` like any other Intent.
+      operationId: getChannel
+      parameters:
+        - name: channel_id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^icp_ch_[A-Za-z0-9_-]+$'
+            examples: [icp_ch_01HVZX9N4WJ8Q4]
+      responses:
+        '200':
+          description: ChannelRegistration
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [type, v, channel_id, agent, merchant, channel_type, registered_at, expires_at]
+                properties:
+                  type: { type: string, const: channel.registration }
+                  v: { type: string, examples: ["icp-1.0"] }
+                  channel_id: { type: string }
+                  agent: { $ref: '#/components/schemas/AID' }
+                  merchant: { $ref: '#/components/schemas/AID' }
+                  channel_type: { type: string, enum: [webhook, sse] }
+                  events_registered:
+                    type: array
+                    items: { type: string }
+                  registered_at: { type: string, format: date-time }
+                  expires_at: { type: string, format: date-time }
+                  webhook_url: { type: string, format: uri }
+                  sse_endpoint: { type: string, format: uri }
+                  subscription_token: { type: string }
+                  token_ttl_seconds: { type: integer }
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                type: icp.error
+                code: channel.not_found
+                message: "channel icp_ch_… not registered"
+        '410':
+          description: Channel expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                type: icp.error
+                code: channel.expired
+                message: "channel icp_ch_… expired at …"
+
+  /icp/v1/channels/{channel_id}/events:
+    get:
+      tags: [channels]
+      summary: Recover missed events from a registered channel (ICPIP-0005 §5)
+      description: |
+        Returns every retained signed `EventEnvelope` whose `sequence`
+        is greater than `since`. Agents call this to backfill missed
+        deliveries after observing a gap in the live webhook stream.
+
+        Events are returned in ascending `sequence` order. Each entry
+        is `{envelope, signature}` — verbatim canonical bytes so the
+        agent can re-verify with `verifyWebhook` (or any equivalent
+        Ed25519 verifier) using the merchant's `.well-known/icp`
+        pubkey.
+
+        The reference implementation retains the last 1000 events per
+        channel in memory. Production deployments persist to durable
+        storage. If `since` is before the retained window, returns
+        `409 channel.sequence_gap` — the agent must re-register.
+      operationId: getChannelEvents
+      parameters:
+        - name: channel_id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^icp_ch_[A-Za-z0-9_-]+$'
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Last sequence number observed; returned events have sequence > since.
+      responses:
+        '200':
+          description: Filtered slice of retained events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channel_id, since, events]
+                properties:
+                  channel_id: { type: string }
+                  since: { type: integer }
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      required: [envelope, signature]
+                      properties:
+                        envelope:
+                          type: object
+                          description: ICPIP-0005 §2 EventEnvelope
+                        signature:
+                          type: object
+                          required: [alg, kid, sig]
+                          properties:
+                            alg: { type: string, const: ed25519 }
+                            kid: { type: string }
+                            sig: { type: string }
+        '400':
+          description: Malformed `since` query parameter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                type: icp.error
+                code: format.bad_query_param
+                message: "since must be a non-negative integer"
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                type: icp.error
+                code: channel.not_found
+                message: "channel icp_ch_… not registered"
+        '409':
+          description: Sequence gap — `since` is before the retained window
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                type: icp.error
+                code: channel.sequence_gap
+                message: "since=… is before retained window"
+        '410':
+          description: Channel expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                type: icp.error
+                code: channel.expired
+                message: "channel icp_ch_… expired"
+
+  /icp/v1/settlements/{settlement_id}:
+    get:
+      tags: [settlement]
+      summary: Retrieve a co-signed SettlementReceipt
+      description: |
+        Fetch the final SettlementReceipt for a completed escrow. The
+        receipt is co-signed by the merchant AND the Settler — caller
+        MUST verify both signatures against the AIDs in the receipt.
+      operationId: getSettlement
+      parameters:
+        - $ref: '#/components/parameters/SettlementId'
+      responses:
+        '200':
+          description: SettlementReceipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettlementReceipt' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  parameters:
+    QuoteId:
+      name: quote_id
+      in: path
+      required: true
+      description: Quote identifier returned by `purchase.create`
+      schema: { $ref: '#/components/schemas/QuoteId' }
+    EscrowId:
+      name: escrow_id
+      in: path
+      required: true
+      description: Escrow identifier returned by `acceptQuote`
+      schema: { $ref: '#/components/schemas/EscrowId' }
+    SettlementId:
+      name: settlement_id
+      in: path
+      required: true
+      description: SettlementReceipt identifier
+      schema: { $ref: '#/components/schemas/SettlementId' }
+
+  responses:
+    BadRequest:
+      description: Request malformed (missing fields, wrong types, bad encoding)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: format.missing_field
+            message: "intent.principal_binding is required"
+    SignatureInvalid:
+      description: Signature verification failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: signature.invalid
+            message: "Ed25519 verification failed"
+    PolicyDenied:
+      description: Intent rejected by merchant or Settler policy
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: policy.settler.not_allowed
+            message: "Settler not in merchant allowlist"
+    Replay:
+      description: Intent nonce already seen
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: replay.duplicate_nonce
+            message: "nonce already used"
+    Unprocessable:
+      description: Intent semantically invalid (e.g., expired window)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: replay.expired_window
+            message: "intent.exp is in the past"
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: rate.too_many_requests
+            message: "Per-AID rate limit exceeded"
+    SettlerUnavailable:
+      description: Settler unreachable or returned an error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: settler.unavailable
+            message: "Settler timed out"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: format.not_found
+            message: "no such quote"
+    EscrowConflict:
+      description: Escrow state does not permit this transition
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            type: icp.error
+            code: escrow.invalid_state
+            message: "escrow is in terminal state"
+
+  schemas:
+    AID:
+      type: string
+      description: Agent Identifier per ICP-1.0 §4.2 — `aid:v1:z` + Base58btc(SHA-256(ed_pk || 0x00 || x_pk))
+      pattern: '^aid:v1:z[1-9A-HJ-NP-Za-km-z]{40,}$'
+      examples:
+        - aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b
+
+    Money:
+      type: object
+      required: [amount, currency]
+      description: |
+        Decimal-as-string amount. The `amount` is the canonical wire form:
+        no scientific notation, no leading zeros except `0` itself, mandatory
+        decimal point present only if fractional. See `canonicalization.md`.
+      properties:
+        amount:
+          type: string
+          pattern: '^[0-9]+(\.[0-9]+)?$'
+          examples: ["29.99", "100"]
+        currency:
+          type: string
+          description: ISO 4217 fiat code OR a registered stablecoin code (e.g. USDC, USDT)
+          pattern: '^[A-Z]{3,6}$'
+          examples: ["USDC", "USD", "EUR"]
+
+    PrincipalBinding:
+      type: object
+      required: [principal, agent, authority, expiry, revocation, signature]
+      description: |
+        Binds a signing Agent to a Principal with explicit spend caps
+        plus a Principal-issued signature attesting to the binding.
+        Matches the wire shape the reference handler validates.
+      properties:
+        principal:
+          type: string
+          description: |
+            Principal identifier. Typically a DID URI (e.g. `did:web:org.example`)
+            or AID. May be `aid:v1:z…` if the Agent is its own Principal.
+          examples: [did:web:agent-org.example, aid:v1:zBuyerSelf]
+        agent:
+          $ref: '#/components/schemas/AID'
+          description: AID of the signing Agent.
+        authority:
+          $ref: '#/components/schemas/Authority'
+        expiry:
+          type: string
+          format: date-time
+          description: RFC 3339 binding expiry — must be in the future.
+        revocation:
+          type: string
+          format: uri
+          description: URL where the Principal publishes the revocation list for this Agent.
+        signature:
+          $ref: '#/components/schemas/Signature'
+          description: |
+            Principal-issued attestation over the canonical bytes of the
+            binding's other fields. `kid` may be `"self"` if the Agent
+            is self-binding (typical for buyer Agents acting as their
+            own Principal in a demo or single-org deployment).
+
+    Authority:
+      type: object
+      required: [max_per_intent, verbs]
+      description: Spend caps and verb allowlist the Agent is authorized for. ICP-1.0 §5.3.
+      properties:
+        max_per_intent:
+          $ref: '#/components/schemas/Money'
+          description: Maximum amount this Agent may commit in a single Intent.
+        verbs:
+          type: array
+          description: Verb names this Agent is authorized to call.
+          items:
+            type: string
+            enum:
+              - purchase.create
+              - purchase.return
+              - subscription.create
+              - subscription.cancel
+              - inventory.query
+              - quote.request
+              - payout.request
+              - channel.register
+        max_per_payout:
+          $ref: '#/components/schemas/Money'
+          description: |
+            Optional cap on `payout.request` Intents (ICPIP-0004 §4).
+            Enforced by the handler when present; absent means uncapped
+            within `max_per_intent`.
+
+    IntentEnvelope:
+      type: object
+      required: [intent, signature]
+      description: |
+        Outer signed envelope as accepted by the reference handler.
+
+        The `intent` object is canonicalized (RFC 8785 JCS) and signed;
+        the resulting signature lives in the outer `signature` object
+        (`{alg, kid, sig}`). The signature is NEVER embedded inside the
+        `intent` object itself (ICP-1.0 §5.1).
+
+        `_pubkey_hex` is an optional convenience field — the raw hex
+        of the Agent's Ed25519 public key. The handler uses it to
+        bootstrap signature verification before the Agent's AID is
+        resolvable via a DID document. Production deployments resolving
+        AIDs via `.well-known/icp` of the Agent or a DID registry MAY
+        omit this field.
+      properties:
+        intent:
+          $ref: '#/components/schemas/IntentBase'
+        signature:
+          $ref: '#/components/schemas/Signature'
+        _pubkey_hex:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: |
+            Optional. 32-byte raw hex of the Agent's Ed25519 public key.
+            Lets the handler verify without an external AID-resolution round-trip.
+
+    Signature:
+      type: object
+      required: [alg, kid, sig]
+      description: |
+        Detached signature envelope. Used both on the outer
+        `IntentEnvelope` and on every signed merchant response body.
+      properties:
+        alg:
+          type: string
+          enum: [ed25519]
+          description: Currently only ed25519 is normative; future hybrid PQC TBD per ICPIP-0002.
+        kid:
+          type: string
+          description: |
+            Key identifier. Typically the signer's AID. The string `"self"`
+            is reserved for principal-binding self-signatures.
+        sig:
+          type: string
+          pattern: '^[0-9a-f]{128}$'
+          description: 64-byte Ed25519 signature, lowercase hex.
+
+    IntentBase:
+      type: object
+      required: [v, verb, intent_id, buyer, merchant, settler, expiry, principal_binding, nonce, iat, exp]
+      description: |
+        Fields common to every Intent verb. **Verb-specific subtypes
+        are still being reconciled with the handler implementation and
+        will be locked in a follow-up ICPIP — for now the additional
+        verb-specific fields are documented per-verb in the JS/Python/Rust
+        SDK source. The fields below are stable.**
+      properties:
+        v:
+          type: string
+          const: 'icp-1.0'
+          description: Protocol version — currently only "icp-1.0".
+        verb:
+          type: string
+          enum:
+            - purchase.create
+            - purchase.return
+            - subscription.create
+            - subscription.cancel
+            - inventory.query
+            - quote.request
+            - payout.request
+            - channel.register
+        intent_id:
+          type: string
+          pattern: '^icp_int_[A-Za-z0-9_-]+$'
+          examples: [icp_int_01HVZX9N4WJ8Q4]
+        buyer:
+          $ref: '#/components/schemas/AID'
+          description: Originator AID (or `seller` for `payout.request` — see ICPIP-0004).
+        merchant:
+          $ref: '#/components/schemas/AID'
+          description: Counterparty merchant AID. Replaced by `platform` for `payout.request`.
+        settler:
+          type: string
+          description: Settler identifier; must be in the merchant's allowlist (see `/icp/v1/settlers`).
+          examples: ['settler:stateset.usdc.base-sepolia']
+        expiry:
+          type: string
+          format: date-time
+          description: RFC 3339 expiry timestamp (typically equal to `exp`).
+        principal_binding:
+          $ref: '#/components/schemas/PrincipalBinding'
+        nonce:
+          type: string
+          description: 16-byte random hex (32 chars).
+          pattern: '^[0-9a-f]{32}$'
+        iat:
+          type: string
+          format: date-time
+          description: RFC 3339 issued-at timestamp.
+        exp:
+          type: string
+          format: date-time
+          description: |
+            RFC 3339 expiry timestamp. The handler enforces a 600s
+            maximum window (`exp - iat <= 600s`) per ICP-1.0 §6.
+      additionalProperties: true
+
+    # Verb-specific Intent field reference:
+    #
+    # All verbs extend `IntentBase` (which declares `additionalProperties:
+    # true`). The exact additional fields per verb are documented and
+    # exercised in the reference SDKs — see:
+    #
+    #   - JS:     packages/icp-client/src/index.mjs (functions `purchase`,
+    #             `subscribe`, `cancel`, `return_`, `requestQuote`, `payout`,
+    #             `registerWebhook`).
+    #   - Python: packages/icp-python-client/icp_client/client.py
+    #             (method-per-verb on `ICPClient`).
+    #   - Rust:   crates/stateset-icp-client/src/client.rs
+    #             (method-per-verb on `Client`).
+    #
+    # Locking verb-specific schemas into OpenAPI is deferred to a follow-up
+    # ICPIP that will lift the per-verb shapes out of the SDKs and into
+    # icp-spec/schemas/intent.<verb>.schema.json (the JSON Schema files
+    # already exist as the source of truth; the OpenAPI projection of
+    # those schemas needs a reconciliation pass).
+
+    LineItem:
+      type: object
+      required: [sku, quantity]
+      properties:
+        sku: { type: string }
+        quantity: { type: integer, minimum: 1 }
+        unit_price: { $ref: '#/components/schemas/Money' }
+
+    QuoteId:
+      type: string
+      pattern: '^icp_qt_[A-Za-z0-9_-]+$'
+      examples: [icp_qt_01HVZX9N4WJ8Q4]
+
+    EscrowId:
+      type: string
+      description: Opaque Settler-issued identifier (often a 0x… hash on EVM rails)
+      examples: ['0x3b8c…']
+
+    SettlementId:
+      type: string
+      pattern: '^icp_set_[A-Za-z0-9_-]+$'
+      examples: [icp_set_01HVZXA9T5P3R2]
+
+    # ------------------------------------------------------------------
+    # /icp/v1/intents response shapes (wrapped per handler wire reality).
+    #
+    # Every verb returns `{<payload_key>: <inner>, signature: Signature}`.
+    # The merchant signs the canonical bytes of the `<inner>` object.
+    # Inner-object fields are still being reconciled per-verb against
+    # the SDK source of truth (see the SDK source pointers above); for
+    # now each inner shape is declared as a free-form object with
+    # `additionalProperties: true`. Future ticks will lift inner shapes
+    # into per-verb schemas in `icp-spec/schemas/`.
+    # ------------------------------------------------------------------
+
+    PurchaseCreateResponse:
+      type: object
+      required: [quote, signature]
+      description: Response to a `purchase.create` Intent.
+      properties:
+        quote:
+          type: object
+          additionalProperties: true
+          description: Merchant Quote — see `icp-handler/src/backend-stub.mjs` `stubQuote`.
+        signature:
+          $ref: '#/components/schemas/Signature'
+
+    PurchaseReturnResponse:
+      type: object
+      required: [authorization, signature]
+      description: Response to a `purchase.return` Intent.
+      properties:
+        authorization:
+          type: object
+          additionalProperties: true
+        signature:
+          $ref: '#/components/schemas/Signature'
+
+    SubscriptionCreateResponse:
+      type: object
+      required: [authorization, signature]
+      description: Response to a `subscription.create` Intent.
+      properties:
+        authorization:
+          type: object
+          additionalProperties: true
+        signature:
+          $ref: '#/components/schemas/Signature'
+
+    SubscriptionCancelResponse:
+      type: object
+      required: [authorization, signature]
+      description: Response to a `subscription.cancel` Intent.
+      properties:
+        authorization:
+          type: object
+          additionalProperties: true
+        signature:
+          $ref: '#/components/schemas/Signature'
+
+    InventoryQueryResponse:
+      type: object
+      required: [snapshot, signature]
+      description: Response to an `inventory.query` Intent.
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: true
+          description: SKU availability + pricing snapshot at server clock.
+        signature:
+          $ref: '#/components/schemas/Signature'
+
+    QuoteRequestResponse:
+      type: object
+      required: [proposal, signature]
+      description: Response to a `quote.request` (B2B RFQ) Intent.
+      properties:
+        proposal:
+          type: object
+          additionalProperties: true
+        signature:
+          $ref: '#/components/schemas/Signature'
+
+    PayoutRequestResponse:
+      type: object
+      required: [authorization, signature]
+      description: Response to a `payout.request` Intent (ICPIP-0004).
+      properties:
+        authorization:
+          type: object
+          additionalProperties: true
+        signature:
+          $ref: '#/components/schemas/Signature'
+
+    ChannelRegisterResponse:
+      type: object
+      required: [channel, signature]
+      description: Response to a `channel.register` Intent (ICPIP-0005).
+      properties:
+        channel:
+          type: object
+          additionalProperties: true
+          description: ChannelRegistration. See the channels.GET route for the same shape.
+        signature:
+          $ref: '#/components/schemas/Signature'
+
+    # ------------------------------------------------------------------
+    # SettlementReceipt — co-signed body returned by fulfill + GET /settlements/:id.
+    # The handler signs once with the merchant key and once with the Settler
+    # key (currently the same key in the demo stub).
+    # ------------------------------------------------------------------
+
+    SettlementReceipt:
+      type: object
+      required: [settlement_id, escrow_id, amount, final_state]
+      description: |
+        Two-signature final receipt. Both `merchant_signature` and
+        `settler_signature` are Ed25519 `Signature` objects over the
+        canonical JSON of the receipt body (minus the signatures themselves).
+      properties:
+        settlement_id: { $ref: '#/components/schemas/SettlementId' }
+        escrow_id: { $ref: '#/components/schemas/EscrowId' }
+        intent_id: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        final_state: { type: string, enum: [released, refunded] }
+        rail: { type: string, examples: ['demo-mock', 'usdc-base', 'stripe-treasury'] }
+        rail_txid: { type: string }
+        settled_at: { type: string, format: date-time }
+        released_to: { type: string }
+        merchant_signature: { $ref: '#/components/schemas/Signature' }
+        settler_signature: { $ref: '#/components/schemas/Signature' }
+
+    Escrow:
+      type: object
+      required: [escrow_id, amount, settler_aid]
+      description: Escrow descriptor — current state of an in-flight escrow.
+      properties:
+        escrow_id: { $ref: '#/components/schemas/EscrowId' }
+        amount: { $ref: '#/components/schemas/Money' }
+        settler_aid: { $ref: '#/components/schemas/AID' }
+        state:
+          type: string
+          enum: [opened, pending, funded, fulfilled, released, disputed, refunded]
+
+    AcceptQuoteRequest:
+      type: object
+      properties:
+        delivery_address: { type: object, additionalProperties: true }
+        notes: { type: string }
+
+    FulfillRequest:
+      type: object
+      properties:
+        tracking: { type: string }
+        proof_of_delivery: { type: string }
+
+    DisputeRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+        evidence:
+          type: array
+          items: { type: string }
+
+    Dispute:
+      type: object
+      required: [dispute_id, escrow_id, opened_at]
+      properties:
+        dispute_id: { type: string }
+        escrow_id: { $ref: '#/components/schemas/EscrowId' }
+        opened_at: { type: integer }
+        reason: { type: string }
+        state: { type: string, enum: [open, resolved_for_buyer, resolved_for_seller] }
+
+    WellKnown:
+      type: object
+      required: [spec, handler, handler_version, merchant_aid, merchant_pubkey, capabilities, settler_allowlist]
+      description: |
+        Merchant discovery descriptor returned by `GET /icp/v1/.well-known/icp`.
+        Matches the wire shape returned by the reference handler.
+      properties:
+        spec:
+          type: string
+          const: 'icp-1.0'
+          description: Protocol version of the ICP spec this handler implements.
+        handler:
+          type: string
+          description: Handler implementation identifier (free-form string).
+          examples: ['stateset-icp-handler-stub']
+        handler_version:
+          type: string
+          description: Handler build/release version (free-form string).
+          examples: ['0.1.0']
+        merchant_aid:
+          $ref: '#/components/schemas/AID'
+          description: This merchant's Agent Identifier.
+        merchant_pubkey:
+          type: object
+          required: [alg, raw_hex]
+          description: |
+            Public key the merchant signs with. Agents MUST verify every
+            signed merchant response (Quote, ChannelRegistration, signed
+            EventEnvelope, etc.) against this key.
+          properties:
+            alg:
+              type: string
+              enum: [ed25519]
+              description: Signing algorithm. Currently only ed25519 is normative.
+            raw_hex:
+              type: string
+              pattern: '^[0-9a-f]{64}$'
+              description: Raw 32-byte Ed25519 public key, lowercase hex.
+        capabilities:
+          type: object
+          required: [verbs, transports]
+          description: Feature flags the merchant advertises support for.
+          properties:
+            verbs:
+              type: array
+              description: ICP verbs this merchant accepts.
+              items:
+                type: string
+                enum:
+                  - purchase.create
+                  - purchase.return
+                  - subscription.create
+                  - subscription.cancel
+                  - inventory.query
+                  - quote.request
+                  - payout.request
+                  - channel.register
+            transports:
+              type: array
+              description: Wire transports the merchant supports.
+              items:
+                type: string
+                enum: [http, http2, mcp]
+            pqc_hybrid:
+              type: boolean
+              description: Whether the merchant accepts hybrid Ed25519+ML-DSA-65 signatures (ICPIP-0002).
+              default: false
+            push_channels:
+              type: array
+              description: ICPIP-0005 push-channel transports this merchant offers.
+              items:
+                type: string
+                enum: [webhook, sse]
+        settler_allowlist:
+          type: array
+          description: |
+            Settlers this merchant accepts. An Intent whose `settler` is
+            not in this list is rejected with `policy.settler.not_allowed`.
+          items:
+            type: string
+            examples: ['settler:stateset.usdc.base-sepolia', 'settler:circle.usdc.base']
+        docs:
+          type: string
+          format: uri
+          description: Optional URL pointing at this merchant's developer docs.
+
+    SettlerList:
+      type: object
+      required: [settlers]
+      description: Response to `GET /icp/v1/settlers`.
+      properties:
+        settlers:
+          type: array
+          description: |
+            String identifiers of the Settlers this merchant accepts.
+            Currently the reference handler returns the same list as
+            `WellKnown.settler_allowlist`; future schemas may swap this
+            for the richer `Settler` object form.
+          items:
+            type: string
+            examples: ['settler:stateset.usdc.base-sepolia']
+
+    Settler:
+      type: object
+      description: |
+        Richer Settler descriptor — reserved for future spec versions
+        that move beyond the bare-identifier form currently returned at
+        `/icp/v1/settlers`. Production deployments may opt to return this
+        shape with rails + endpoint metadata; the reference handler does
+        not yet.
+      required: [aid, rails]
+      properties:
+        aid: { $ref: '#/components/schemas/AID' }
+        name: { type: string }
+        rails:
+          type: array
+          description: Rails this Settler supports for funding+release
+          items:
+            type: string
+            examples: [usdc-base, stripe-treasury, ach, wire]
+        endpoint: { type: string, format: uri }
+
+    Healthz:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        version: { type: string }
+        merchant_aid: { $ref: '#/components/schemas/AID' }
+
+    Error:
+      type: object
+      required: [type, code, message]
+      description: |
+        Uniform error envelope. `code` is from the ICP error code
+        registry in `icp-spec/schemas/error-codes.md`.
+      properties:
+        type:
+          type: string
+          const: icp.error
+        code:
+          type: string
+          description: Dotted-namespace code. See `error-codes.md`.
+          examples:
+            - signature.invalid
+            - policy.settler.not_allowed
+            - replay.duplicate_nonce
+            - escrow.invalid_state
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+  examples:
+    PurchaseCreateExample:
+      summary: purchase.create signed Intent (handler-compatible)
+      value:
+        intent:
+          v: icp-1.0
+          verb: purchase.create
+          intent_id: icp_int_01HVZX9N4WJ8Q4
+          buyer: aid:v1:zBuyerExample123abc
+          merchant: aid:v1:zMerchantPlaceholder
+          settler: settler:stateset.usdc.base-sepolia
+          expiry: "2026-05-12T18:00:00.000Z"
+          principal_binding:
+            principal: did:web:agent-org.example
+            agent: aid:v1:zBuyerExample123abc
+            authority:
+              max_per_intent: { amount: "100.00", currency: USDC }
+              verbs: [purchase.create]
+            expiry: "2026-05-13T12:00:00.000Z"
+            revocation: https://agent-org.example/.well-known/icp/revocation
+            signature: { alg: ed25519, kid: self, sig: deadbeef }
+          nonce: 1f8a3c5e9b2d4a6c8e7f0123456789ab
+          iat: "2026-05-12T17:55:00.000Z"
+          exp: "2026-05-12T18:00:00.000Z"
+          items:
+            - { sku: WIDGET-001, quantity: 2, unit_price: { amount: "29.99", currency: USDC } }
+          max_total: { amount: "62.98", currency: USDC }
+        signature: { alg: ed25519, kid: aid:v1:zBuyerExample123abc, sig: 4cd1ff…0 }
+        _pubkey_hex: 0a5b…ff
+
+    SubscriptionCreateExample:
+      summary: subscription.create signed Intent (handler-compatible)
+      value:
+        intent:
+          v: icp-1.0
+          verb: subscription.create
+          intent_id: icp_int_02SUB
+          buyer: aid:v1:zBuyerExample123abc
+          merchant: aid:v1:zMerchantPlaceholder
+          settler: settler:stateset.usdc.base-sepolia
+          expiry: "2026-05-12T18:00:00.000Z"
+          principal_binding:
+            principal: did:web:agent-org.example
+            agent: aid:v1:zBuyerExample123abc
+            authority:
+              max_per_intent: { amount: "20.00", currency: USDC }
+              verbs: [subscription.create]
+            expiry: "2026-05-13T12:00:00.000Z"
+            revocation: https://agent-org.example/.well-known/icp/revocation
+            signature: { alg: ed25519, kid: self, sig: deadbeef }
+          nonce: deadbeefdeadbeefdeadbeefdeadbeef
+          iat: "2026-05-12T17:55:00.000Z"
+          exp: "2026-05-12T18:00:00.000Z"
+          service_id: pro-tier
+          cadence: monthly
+          max_total_per_period: { amount: "20.00", currency: USDC }
+          max_occurrences: 12
+          first_charge_at: "2026-06-01T00:00:00.000Z"
+        signature: { alg: ed25519, kid: aid:v1:zBuyerExample123abc, sig: "…" }
+        _pubkey_hex: "…"
+
+    InventoryQueryExample:
+      summary: inventory.query signed Intent (handler-compatible)
+      value:
+        intent:
+          v: icp-1.0
+          verb: inventory.query
+          intent_id: icp_int_03INV
+          buyer: aid:v1:zBuyerExample123abc
+          merchant: aid:v1:zMerchantPlaceholder
+          settler: settler:stateset.usdc.base-sepolia
+          expiry: "2026-05-12T18:00:00.000Z"
+          principal_binding:
+            principal: did:web:agent-org.example
+            agent: aid:v1:zBuyerExample123abc
+            authority:
+              max_per_intent: { amount: "0", currency: USDC }
+              verbs: [inventory.query]
+            expiry: "2026-05-13T12:00:00.000Z"
+            revocation: https://agent-org.example/.well-known/icp/revocation
+            signature: { alg: ed25519, kid: self, sig: deadbeef }
+          nonce: cafebabecafebabecafebabecafebabe
+          iat: "2026-05-12T17:55:00.000Z"
+          exp: "2026-05-12T18:00:00.000Z"
+          skus: [{ sku: WIDGET-001 }, { sku: WIDGET-002 }]
+        signature: { alg: ed25519, kid: aid:v1:zBuyerExample123abc, sig: "…" }
+        _pubkey_hex: "…"
