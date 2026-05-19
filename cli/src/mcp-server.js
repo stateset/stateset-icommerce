@@ -52,6 +52,33 @@ import {
   replayEventHash,
 } from './mcp/audit-envelope.js';
 import { buildDeterministicMutationManifest } from './mcp/mutation-manifest.js';
+import {
+  DEFAULT_REPLAY_BUFFER_SIZE,
+  DEFAULT_REPLAY_LOG_FILE,
+  createReplayLog,
+} from './mcp/replay-log.js';
+import { buildToolRuntimeMeta, createPricingCache } from './mcp/pricing.js';
+import {
+  AGENTIC_TOOL_RESULT_SCHEMA_VERSION as RESULT_SCHEMA_VERSION,
+  attachStructuredToolMetadataToResponse as attachStructuredToolMetadataToResponseImpl,
+  buildToolResultPayload as buildToolResultPayloadImpl,
+  buildToolResultResponse as buildToolResultResponseImpl,
+} from './mcp/result-builders.js';
+import {
+  AGENTIC_POLICY_DECISION_BUNDLE_VERSION as POLICY_BUNDLE_VERSION,
+  buildPolicyDecisionBundle as buildPolicyDecisionBundleImpl,
+  createEvaluatePolicy,
+} from './mcp/policy-evaluator.js';
+import {
+  buildAuditContext as buildAuditContextImpl,
+  createToolCharger,
+  createTreasuryIdentityResolver,
+  createWrapWithTelemetry,
+} from './mcp/tool-wrappers.js';
+import {
+  createReplayMutationToolCall,
+  createSimulateMutationToolCall,
+} from './mcp/mutation-simulator.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
 import { adaptCommerceApis } from './commerce.js';
 import { getCommerce } from './database.js';
@@ -82,8 +109,12 @@ import {
   validateToolInput,
 } from './tool-schema.js';
 
-const AGENTIC_TOOL_RESULT_SCHEMA_VERSION = '1.0.0';
-const AGENTIC_POLICY_DECISION_BUNDLE_VERSION = '2026-03-01';
+// AGENTIC_TOOL_RESULT_SCHEMA_VERSION lives in ./mcp/result-builders.js. We
+// re-alias it locally so existing call sites in this file (and any reverse
+// imports) keep the original name.
+const AGENTIC_TOOL_RESULT_SCHEMA_VERSION = RESULT_SCHEMA_VERSION;
+// AGENTIC_POLICY_DECISION_BUNDLE_VERSION lives in ./mcp/policy-evaluator.js.
+const AGENTIC_POLICY_DECISION_BUNDLE_VERSION = POLICY_BUNDLE_VERSION;
 // AGENTIC_SLA_LEVELS now lives in `./mcp/plan-resolver.js` (imported above).
 const MPP_SERVICE_INFO = buildMppServiceInfo({
   serviceId: 'stateset-commerce-mcp',
@@ -97,8 +128,11 @@ const MPP_SERVICE_INFO = buildMppServiceInfo({
 // `extendCommerceWithApis` now live in `./mcp/commerce-adapter.js`. The
 // two used by the orchestrator are imported at the top of the file.
 
-const AGENTIC_REPLAY_LOG_FILE = 'agentic-tool-calls.jsonl';
-const AGENTIC_REPLAY_BUFFER_SIZE = 400;
+// Replay log defaults live in `./mcp/replay-log.js` (DEFAULT_REPLAY_LOG_FILE,
+// DEFAULT_REPLAY_BUFFER_SIZE). They're re-exported here for the few call sites
+// that still reference the legacy names.
+const AGENTIC_REPLAY_LOG_FILE = DEFAULT_REPLAY_LOG_FILE;
+const AGENTIC_REPLAY_BUFFER_SIZE = DEFAULT_REPLAY_BUFFER_SIZE;
 
 const ALL_TOOL_DEFS = [...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS];
 
@@ -513,260 +547,44 @@ export function createStatesetMcpServer({
       : Promise.resolve();
 
   const activeMcpEventStream = mcpEventStream || createMcpEventStreamer();
-  const publishToEventStream = (event) => {
-    if (!activeMcpEventStream?.publish || typeof activeMcpEventStream.publish !== 'function') {
-      return;
-    }
-    try {
-      activeMcpEventStream.publish({
-        status: event?.status || 'event',
-        tool: event?.tool || null,
-        requestId: event?.requestId || null,
-        sessionId: event?.sessionId || null,
-        timestamp: event?.occurredAt || event?.timestamp || new Date().toISOString(),
-        result: event?.result || null,
-        error: event?.error || null,
-        policy: event?.policy || null,
-        permission: event?.permission || null,
-        charge: event?.charge || null,
-        params: event?.params || null,
-        notes: event?.notes || null,
-        source: event?.source || 'mcp_server',
-      });
-    } catch (error) {
-      console.warn('[MCP Server] Failed to publish event stream event:', error.message);
-    }
-  };
-
+  // Replay-log primitives — event-stream publisher, ring buffer, persistent
+  // JSONL append log, and filtered listing — all live in
+  // `./mcp/replay-log.js`. We instantiate one per server with `signAuditArtifact`
+  // (module-level) and the active stream injected.
   const fallbackAgenticDir = resolvePolicyPath || path.join(process.cwd(), '.stateset');
   const agenticReplayLogPath = path.join(fallbackAgenticDir, AGENTIC_REPLAY_LOG_FILE);
-  const agenticReplayRingBuffer = [];
-  let pendingReplayAppend = Promise.resolve();
-  let agenticPricingCache = null;
 
-  const getAgenticReplayLogPath = () => agenticReplayLogPath;
+  const replayLog = createReplayLog({
+    logPath: agenticReplayLogPath,
+    bufferSize: AGENTIC_REPLAY_BUFFER_SIZE,
+    telemetry,
+    signAuditArtifact,
+    mcpEventStream: activeMcpEventStream,
+  });
+  const publishToEventStream = replayLog.publishToEventStream;
+  const getAgenticReplayLogPath = replayLog.getLogPath;
+  const persistAgenticReplayEvent = replayLog.persistEvent;
+  const addAgenticReplayEvent = replayLog.addEvent;
+  const listAgenticReplayEvents = replayLog.listEvents;
 
-  const persistAgenticReplayEvent = async (event) => {
-    pendingReplayAppend = pendingReplayAppend
-      .catch((err) => {
-        console.debug('replay log append failed:', err.message);
-      })
-      .then(async () => {
-        await fs.mkdir(path.dirname(agenticReplayLogPath), { recursive: true });
-        await fs.appendFile(agenticReplayLogPath, `${JSON.stringify(event)}\n`);
-      });
-    return pendingReplayAppend;
-  };
-
-  const addAgenticReplayEvent = async (event) => {
-    if (!event || typeof event !== 'object') return;
-    const paramsHash = event.paramsHash || replayEventHash(event.params || {});
-    const resultHash = event.resultHash || replayEventHash(event.result || {});
-    const signaturePayload = {
-      tool: event.tool || null,
-      status: event.status || null,
-      requestId: event.requestId || null,
-      sessionId: event.sessionId || null,
-      occurredAt: event.occurredAt || null,
-      policyDomain: event.policyDomain || null,
-      paramsHash,
-      resultHash,
-      source: event.source || null,
-    };
-    const sanitized = {
-      ...event,
-      paramsHash,
-      resultHash,
-      eventSignature: event.eventSignature || signAuditArtifact(signaturePayload).signature,
-    };
-    agenticReplayRingBuffer.push(sanitized);
-    if (agenticReplayRingBuffer.length > AGENTIC_REPLAY_BUFFER_SIZE) {
-      agenticReplayRingBuffer.shift();
-    }
-    publishToEventStream(sanitized);
-    await persistAgenticReplayEvent(sanitized);
-  };
-
-  const listAgenticReplayEvents = async (options = {}) => {
-    const limit = Math.max(1, Math.min(AGENTIC_REPLAY_BUFFER_SIZE, Number(options.limit) || 20));
-    const targetTool = options?.tool ? normalizeToolName(options.tool) : null;
-    const targetEventId = options?.eventId || null;
-    const requestId = options?.requestId || null;
-    const sessionId = options?.sessionId || null;
-    const status = options?.status || null;
-    const targetPlanSignature = options?.planSignature || null;
-    const targetExecutionSignature = options?.executionSignature || null;
-
-    const matches = (event) => {
-      if (targetTool && event?.tool !== targetTool) return false;
-      if (targetEventId && event?.eventId !== targetEventId) return false;
-      if (requestId && event?.requestId !== requestId) return false;
-      if (sessionId && event?.sessionId !== sessionId) return false;
-      if (status && event?.status !== status) return false;
-      if (targetPlanSignature) {
-        const eventPlanSignature = event?.planSignature || event?.notes?.planSignature;
-        if (!eventPlanSignature || eventPlanSignature !== targetPlanSignature) {
-          return false;
-        }
-      }
-      if (targetExecutionSignature) {
-        const eventExecutionSignature =
-          event?.executionSignature || event?.notes?.executionSignature;
-        if (!eventExecutionSignature || eventExecutionSignature !== targetExecutionSignature) {
-          return false;
-        }
-      }
-      return true;
-    };
-
-    let fileEvents = [];
-    try {
-      const raw = await fs.readFile(agenticReplayLogPath, 'utf8');
-      if (raw?.trim()) {
-        fileEvents = raw
-          .split('\n')
-          .filter((line) => line.trim())
-          .map((line) => {
-            try {
-              return JSON.parse(line);
-            } catch (error) {
-              return { _parseError: error.message, raw: line };
-            }
-          })
-          .filter(matches);
-      }
-    } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        if (telemetry) {
-          telemetry.logCustomEvent('agentic_replay_read_error', {
-            error: error.message,
-            path: agenticReplayLogPath,
-          });
-        }
-      }
-    }
-
-    const merged = [...fileEvents, ...agenticReplayRingBuffer].filter(matches);
-    const deduped = [];
-    const seen = new Set();
-    for (const evt of merged) {
-      if (!evt?.eventId) {
-        deduped.push(evt);
-        continue;
-      }
-      if (seen.has(evt.eventId)) continue;
-      seen.add(evt.eventId);
-      deduped.push(evt);
-    }
-
-    const order = deduped
-      .filter((event) => event.occurredAt)
-      .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1));
-    const remaining = limit ? order.slice(0, limit) : order;
-
-    return {
-      generatedAt: new Date().toISOString(),
-      count: remaining.length,
-      events: remaining,
-      filters: {
-        limit,
-        tool: targetTool || null,
-        eventId: targetEventId,
-        requestId,
-        sessionId,
-        planSignature: targetPlanSignature,
-        executionSignature: targetExecutionSignature,
-        status,
-      },
-      source: {
-        path: getAgenticReplayLogPath(),
-        inMemoryBuffer: agenticReplayRingBuffer.length,
-      },
-    };
-  };
-
-  const loadAgenticPricingState = async () => {
-    if (agenticPricingCache !== null) return agenticPricingCache;
-    if (!treasuryEnabled) {
-      agenticPricingCache = { loaded: false, disabled: true };
-      return agenticPricingCache;
-    }
-    try {
-      const { loadTreasuryContext } = await import('./treasury/index.js');
-      const ctx = await loadTreasuryContext(treasuryContextOptions);
-      agenticPricingCache = {
-        loaded: true,
-        pricing: ctx.pricing,
-        registry: ctx.registry,
-        loadedAt: new Date().toISOString(),
-      };
-    } catch (error) {
-      agenticPricingCache = { loaded: false, error: error.message };
-    }
-    return agenticPricingCache;
-  };
-
-  const getToolRuntimeMeta = (toolName) => {
-    const candidate = TOOL_DEFS_BY_NAME.get(toolName);
-    if (!candidate) {
-      return {
-        name: toolName,
-        permission: 'unknown',
-        policyDomain: inferPolicyDomain(toolName),
-        sideEffect: 'unknown',
-        compensations: [],
-        idempotent: false,
-      };
-    }
-    const permission = candidate?.permission || 'unknown';
-    return {
-      name: candidate.name,
-      permission,
-      policyDomain:
-        candidate?.policyDomain ||
-        TOOL_DOMAIN_BY_TOOL_NAME[toolName] ||
-        inferPolicyDomain(toolName),
-      sideEffect: permission === 'read' ? 'read' : 'write',
-      description: candidate.description || '',
-      compensations: AGENTIC_COMPENSATION_HINTS[toolName] || [],
-      idempotent: AGENTIC_IDEMPOTENCY_HINTS.has(toolName),
-      replay: {
-        paramsHash: true,
-        resultHash: true,
-      },
-    };
-  };
-
-  const getAgenticToolPricing = async (toolName) => {
-    const state = await loadAgenticPricingState();
-    if (!state?.loaded || !state.pricing || !toolName) {
-      return null;
-    }
-    try {
-      const { getToolPricing, resolveToken, toSmallestUnit } = await import('./treasury/index.js');
-      const rule = getToolPricing(state.pricing, toolName);
-      if (!rule) return null;
-      const token = resolveToken(rule.chainId, rule.tokenSymbol, state.registry);
-      if (!token) return null;
-      const amount = Number(rule.amount);
-      const amountSmallest = toSmallestUnit(amount, token.decimals);
-      return {
-        enabled: true,
-        chainId: rule.chainId,
-        tokenSymbol: rule.tokenSymbol,
-        amount,
-        amountSmallest: amountSmallest?.toString?.() || amountSmallest,
-        token: {
-          symbol: token.symbol,
-          chainId: token.chainId,
-          address: token.address || null,
-          decimals: token.decimals,
-        },
-      };
-    } catch {
-      return null;
-    }
-  };
+  // Tool runtime metadata + treasury pricing live in `./mcp/pricing.js`.
+  // The pricing cache is a per-server factory; `getToolRuntimeMeta` is a
+  // pure curry over the registry maps + hint sets. Treasury settings are
+  // wired as getters because they're declared later in this function body.
+  const pricingCache = createPricingCache({
+    treasuryEnabled: () => treasuryEnabled,
+    treasuryContextOptions: () => treasuryContextOptions,
+  });
+  const loadAgenticPricingState = pricingCache.loadState;
+  const getAgenticToolPricing = pricingCache.getPricing;
+  const getToolRuntimeMeta = (toolName) =>
+    buildToolRuntimeMeta(toolName, {
+      toolDefsByName: TOOL_DEFS_BY_NAME,
+      inferPolicyDomain,
+      toolDomainByName: TOOL_DOMAIN_BY_TOOL_NAME,
+      compensationHints: AGENTIC_COMPENSATION_HINTS,
+      idempotencyHints: AGENTIC_IDEMPOTENCY_HINTS,
+    });
 
   const attachPaymentMetadataToResponse = (response, paymentMetadata = {}) => {
     if (!response || !Array.isArray(response.content) || response.content.length === 0) {
@@ -1110,59 +928,17 @@ export function createStatesetMcpServer({
     };
   };
 
-  const buildPolicyDecisionBundle = ({
-    toolName,
-    domain,
-    inputParams = {},
-    outputParams = {},
-    actions = [],
-    explanations = [],
-    allowed = true,
-    reason = null,
-  }) => {
-    const runtimeMeta = getToolRuntimeMeta(toolName);
-    const normalizedActions = actions
-      .map((action) => normalizePolicyAction(action))
-      .filter(Boolean);
-    const normalizedExplanations = explanations
-      .map((explanation) => normalizePolicyExplanation(explanation))
-      .filter(Boolean);
-    const approvalStages = buildApprovalStagesFromActions(normalizedActions);
-    const rollbackContract = buildRollbackContract(toolName);
-
-    const core = {
-      version: AGENTIC_POLICY_DECISION_BUNDLE_VERSION,
-      engine: 'stateset-icommerce',
-      tool: toolName,
-      domain: domain || inferPolicyDomain(toolName),
-      decision: allowed ? 'allow' : 'deny',
-      reason: reason || null,
-      policyMode: allowApply ? 'apply' : 'preview',
-      runtime: {
-        sideEffect: runtimeMeta.sideEffect,
-        idempotent: runtimeMeta.idempotent,
-        compensations: runtimeMeta.compensations,
-      },
-      actionTypes: normalizedActions.map((action) => action.type).filter(Boolean),
-      approval: {
-        required: approvalStages.length > 0,
-        stages: approvalStages,
-      },
-      rollback: rollbackContract,
-      inputParamsHash: replayEventHash(inputParams || {}),
-      outputParamsHash: replayEventHash(outputParams || inputParams || {}),
-      explanationsHash: replayEventHash(normalizedExplanations),
-    };
-    const bundleId = replayEventHash(core);
-    const auditArtifact = signAuditArtifact({ bundleId, ...core });
-
-    return {
-      ...core,
-      bundleId,
-      createdAt: new Date().toISOString(),
-      auditArtifact,
-    };
+  // buildPolicyDecisionBundle's body lives in ./mcp/policy-evaluator.js. We
+  // curry the per-server deps so the dozens of call sites in this file
+  // don't have to thread them through.
+  const policyBundleDeps = {
+    getToolRuntimeMeta,
+    inferPolicyDomain,
+    signAuditArtifact,
+    allowApply,
+    bundleVersion: AGENTIC_POLICY_DECISION_BUNDLE_VERSION,
   };
+  const buildPolicyDecisionBundle = (args) => buildPolicyDecisionBundleImpl(args, policyBundleDeps);
 
   const getAgenticRuntimeContract = async ({ tool, includeLegacyDefaults = false } = {}) => {
     const targetTool = tool ? normalizeToolName(tool) : null;
@@ -2112,226 +1888,18 @@ export function createStatesetMcpServer({
     }
   };
 
-  const simulateMutationToolCall = async ({
-    tool,
-    params = {},
-    policyDomain = null,
-    requestId = null,
-    sessionId = null,
-    includeHooks = false,
-  }) => {
-    const targetTool = normalizeToolName(tool);
-    const runtime = getToolRuntimeMeta(targetTool);
-    if (!targetTool) {
-      return {
-        success: false,
-        error: 'tool is required',
-      };
-    }
-    if (runtime.permission === 'unknown') {
-      return {
-        success: false,
-        error: `Unknown tool '${targetTool}'`,
-      };
-    }
-    if (runtime.sideEffect !== 'write') {
-      return {
-        success: false,
-        error: `Tool '${targetTool}' is read-only. Use agentic_plan for read tool simulation.`,
-      };
-    }
-
-    const simulationRequestId = requestId || randomUUID();
-    const simulationSessionId = sessionId || simulationRequestId;
-    const outcome = await executeToolStepInPlan({
-      toolName: targetTool,
-      params,
-      policyDomain: policyDomain || inferPolicyDomain(targetTool),
-      requestId: simulationRequestId,
-      sessionId: simulationSessionId,
-      dryRun: true,
-      stepIndex: 0,
-      includeHooks,
-    });
-
-    const replayContract = {
-      generatedAt: new Date().toISOString(),
-      source: 'agentic_simulate_mutation',
-      targetTool,
-      policyDomain: policyDomain || inferPolicyDomain(targetTool),
-      requestId: simulationRequestId,
-      sessionId: simulationSessionId,
-      runtime,
-      simulation: outcome,
-      simulationHash: replayEventHash(outcome),
-      deterministicSignature: replayEventHash({
-        tool: targetTool,
-        params: compactReplayValue(params || {}),
-        status: outcome.status,
-        paramsHash: outcome.paramsHash,
-      }),
-    };
-
-    await addAgenticReplayEvent({
-      eventId: randomUUID(),
-      tool: 'agentic_simulate_mutation',
-      status: outcome.status,
-      requestId: simulationRequestId,
-      sessionId: simulationSessionId,
-      policyDomain: policyDomain || inferPolicyDomain(targetTool),
-      occurredAt: new Date().toISOString(),
-      elapsedMs: outcome.elapsedMs || 0,
-      params: compactReplayValue({
-        tool: targetTool,
-        params,
-        includeHooks,
-      }),
-      paramsHash: replayEventHash({ tool: targetTool, params }),
-      result: compactReplayValue(replayContract),
-      resultHash: replayEventHash(replayContract),
-      policy: compactReplayValue(outcome.policy || null),
-      permission: compactReplayValue(outcome.permission || null),
-      charge: compactReplayValue(outcome.charge || null),
-      error: outcome.error || null,
-      notes: {
-        simulation: true,
-        targetTool,
-      },
-      source: 'agentic_simulate_mutation',
-      agentic: true,
-    });
-
-    return {
-      success: true,
-      generatedAt: replayContract.generatedAt,
-      engine: 'stateset-icommerce',
-      tool: 'agentic_simulate_mutation',
-      requestId: simulationRequestId,
-      sessionId: simulationSessionId,
-      targetTool,
-      outcome,
-      replayContract,
-    };
+  // Mutation simulate/replay bodies live in ./mcp/mutation-simulator.js.
+  // We wire the per-server helpers (getToolRuntimeMeta, executeToolStepInPlan,
+  // addAgenticReplayEvent, listAgenticReplayEvents) here.
+  const mutationDeps = {
+    getToolRuntimeMeta,
+    inferPolicyDomain,
+    executeToolStepInPlan,
+    addAgenticReplayEvent,
+    listAgenticReplayEvents,
   };
-
-  const replayMutationToolCall = async ({
-    eventId = null,
-    requestId = null,
-    tool = null,
-    dryRun = true,
-    includeHooks = false,
-    sessionId = null,
-  }) => {
-    const replayEvents = await listAgenticReplayEvents({
-      limit: 200,
-      eventId,
-      requestId,
-      tool: tool ? normalizeToolName(tool) : null,
-    });
-    const sourceEvent = (replayEvents.events || []).find((event) => {
-      if (!event?.tool || event.tool.startsWith('agentic_')) return false;
-      const runtime = getToolRuntimeMeta(event.tool);
-      if (runtime.permission === 'unknown' || runtime.sideEffect !== 'write') return false;
-      return event.params && typeof event.params === 'object';
-    });
-
-    if (!sourceEvent) {
-      return {
-        success: false,
-        error: 'No replayable mutation event found for the provided filters.',
-        filters: {
-          eventId,
-          requestId,
-          tool: tool || null,
-        },
-      };
-    }
-
-    const replayRequestId = randomUUID();
-    const replaySessionId = sessionId || replayRequestId;
-    const replayOutcome = await executeToolStepInPlan({
-      toolName: sourceEvent.tool,
-      params: sourceEvent.params || {},
-      policyDomain: sourceEvent.policyDomain || inferPolicyDomain(sourceEvent.tool),
-      requestId: replayRequestId,
-      sessionId: replaySessionId,
-      dryRun: dryRun !== false,
-      stepIndex: 0,
-      includeHooks,
-    });
-
-    const originalParamsHash =
-      sourceEvent.paramsHash || replayEventHash(compactReplayValue(sourceEvent.params || {}));
-    const deterministic = {
-      paramsMatch: originalParamsHash === replayOutcome.paramsHash,
-      resultHashMatch:
-        typeof sourceEvent.resultHash === 'string'
-          ? sourceEvent.resultHash === replayOutcome.resultHash
-          : null,
-      originalParamsHash,
-      replayParamsHash: replayOutcome.paramsHash,
-      originalResultHash: sourceEvent.resultHash || null,
-      replayResultHash: replayOutcome.resultHash || null,
-    };
-
-    await addAgenticReplayEvent({
-      eventId: randomUUID(),
-      tool: 'agentic_replay_mutation',
-      status: replayOutcome.status,
-      requestId: replayRequestId,
-      sessionId: replaySessionId,
-      policyDomain: sourceEvent.policyDomain || inferPolicyDomain(sourceEvent.tool),
-      occurredAt: new Date().toISOString(),
-      elapsedMs: replayOutcome.elapsedMs || 0,
-      params: compactReplayValue({
-        sourceEventId: sourceEvent.eventId || null,
-        sourceTool: sourceEvent.tool,
-        dryRun: dryRun !== false,
-      }),
-      paramsHash: replayEventHash({
-        sourceEventId: sourceEvent.eventId || null,
-        sourceTool: sourceEvent.tool,
-        dryRun: dryRun !== false,
-      }),
-      result: compactReplayValue({
-        replayOutcome,
-        deterministic,
-      }),
-      resultHash: replayEventHash({
-        replayOutcome,
-        deterministic,
-      }),
-      policy: compactReplayValue(replayOutcome.policy || null),
-      permission: compactReplayValue(replayOutcome.permission || null),
-      charge: compactReplayValue(replayOutcome.charge || null),
-      error: replayOutcome.error || null,
-      notes: {
-        phase: 'replay',
-        sourceEventId: sourceEvent.eventId || null,
-        sourceRequestId: sourceEvent.requestId || null,
-      },
-      source: 'agentic_replay_mutation',
-      agentic: true,
-    });
-
-    return {
-      success: true,
-      generatedAt: new Date().toISOString(),
-      engine: 'stateset-icommerce',
-      tool: 'agentic_replay_mutation',
-      requestId: replayRequestId,
-      sessionId: replaySessionId,
-      sourceEvent: {
-        eventId: sourceEvent.eventId || null,
-        requestId: sourceEvent.requestId || null,
-        tool: sourceEvent.tool,
-        occurredAt: sourceEvent.occurredAt || null,
-        status: sourceEvent.status || null,
-      },
-      replay: replayOutcome,
-      deterministic,
-    };
-  };
+  const simulateMutationToolCall = createSimulateMutationToolCall(mutationDeps);
+  const replayMutationToolCall = createReplayMutationToolCall(mutationDeps);
 
   const executeAgenticPlan = async ({
     steps,
@@ -2953,171 +2521,18 @@ export function createStatesetMcpServer({
     };
   };
 
-  const evaluatePolicy = async (toolName, params, extra, policyDomain = null) => {
-    if (!policyEngineInstance) {
-      const domain = policyDomain || inferPolicyDomain(toolName);
-      return {
-        allowed: true,
-        params,
-        domain,
-        policyDecisionBundle: buildPolicyDecisionBundle({
-          toolName,
-          domain,
-          inputParams: params,
-          outputParams: params,
-          actions: [],
-          explanations: [],
-          allowed: true,
-        }),
-      };
-    }
-
-    await policyLoad;
-
-    const domain = policyDomain || inferPolicyDomain(toolName);
-    const policyContext = {
-      domain,
-      tool: toolName,
-      params,
-      allowApply,
-      requestId: extra?.requestId || null,
-      sessionId: extra?.sessionId || null,
-    };
-
-    let result;
-    try {
-      result = await policyEngineInstance.evaluate(domain, policyContext);
-    } catch (error) {
-      if (telemetry) {
-        telemetry.logCustomEvent('policy_evaluation_failed', {
-          tool: toolName,
-          domain,
-          error: error.message,
-        });
-      }
-      return {
-        allowed: true,
-        params,
-        domain,
-        policyDecisionBundle: buildPolicyDecisionBundle({
-          toolName,
-          domain,
-          inputParams: params,
-          outputParams: params,
-          actions: [],
-          explanations: [],
-          allowed: true,
-        }),
-      };
-    }
-
-    const actions = Array.isArray(result?.actions) ? result.actions : [];
-    const notifyActions = actions.filter((action) => action?.type === 'notify');
-
-    let transformedParams = params;
-    const transformAudit = [];
-    for (const action of actions) {
-      if (action?.type === 'transform') {
-        const { output, auditEntries } = applyPolicyTransform(
-          transformedParams,
-          action.transform,
-          [],
-        );
-        transformedParams = output;
-        for (const entry of auditEntries) {
-          transformAudit.push({
-            ...entry,
-            ruleId: action.metadata?.ruleId || null,
-            ruleName: action.metadata?.ruleName || null,
-            policySetId: action.metadata?.policySetId || null,
-          });
-        }
-      }
-    }
-
-    if (telemetry) {
-      telemetry.logCustomEvent('policy_evaluation', {
-        tool: toolName,
-        domain,
-        allowed: !result?.shouldDeny,
-        actionCount: actions.length,
-        actionTypes: actions.map((action) => action?.type).filter(Boolean),
-        transformAuditCount: transformAudit.length,
-      });
-    }
-
-    if (notifyActions.length > 0) {
-      for (const action of notifyActions) {
-        if (telemetry) {
-          telemetry.logCustomEvent('policy_notify', {
-            tool: toolName,
-            domain,
-            message: action.notification?.message || action.message || null,
-          });
-        }
-      }
-    }
-
-    const explanations = result?.explanations || [];
-    const policyDecisionBundle = buildPolicyDecisionBundle({
-      toolName,
-      domain,
-      inputParams: params,
-      outputParams: transformedParams,
-      actions,
-      explanations,
-      allowed: !result?.shouldDeny,
-      reason: result?.shouldDeny
-        ? explanations
-            .filter((e) => (e?.actionType || e?.type || '') === 'deny')
-            .map((e) => e?.reason)
-            .filter(Boolean)
-            .join('; ')
-        : null,
-    });
-
-    if (result?.shouldDeny) {
-      const denyExplanations = explanations
-        .filter((e) => e.actionType === 'deny')
-        .map((e) => (typeof e.toJSON === 'function' ? e.toJSON() : e));
-
-      const reason =
-        denyExplanations
-          .map((e) => e.reason || `Rule "${e.ruleName}" denied this operation`)
-          .filter(Boolean)
-          .join('; ') || 'Tool denied by policy';
-
-      const remediation =
-        denyExplanations
-          .map((e) => e.remediation)
-          .filter(Boolean)
-          .join('; ') || null;
-
-      return {
-        allowed: false,
-        params: transformedParams,
-        reason,
-        remediation,
-        explanations: denyExplanations,
-        transformAudit,
-        actions,
-        domain,
-        evaluation: result,
-        policyDecisionBundle,
-      };
-    }
-
-    return {
-      allowed: true,
-      params: transformedParams,
-      explanations: explanations.map((e) => (typeof e.toJSON === 'function' ? e.toJSON() : e)),
-      transformAudit,
-      actions,
-      domain,
-      evaluation: result,
-      policyDecisionBundle,
-    };
-  };
+  // evaluatePolicy's body lives in ./mcp/policy-evaluator.js. The factory
+  // wires the per-server policy engine, readiness promise, and audit deps.
+  const evaluatePolicy = createEvaluatePolicy({
+    policyEngine: policyEngineInstance,
+    policyReady: policyLoad,
+    allowApply,
+    telemetry,
+    inferPolicyDomain,
+    getToolRuntimeMeta,
+    signAuditArtifact,
+    bundleVersion: AGENTIC_POLICY_DECISION_BUNDLE_VERSION,
+  });
 
   // ---------------------------------------------------------------------------
   // Treasury helpers
@@ -3147,185 +2562,30 @@ export function createStatesetMcpServer({
     process.env.TREASURY_TOKEN,
   );
   const treasuryIdentityDbPath = treasury?.erc8004DbPath || dbPath;
-  let treasuryIdentityLoaded = false;
-  let treasuryIdentityCache = null;
 
-  const resolveTreasuryIdentity = async () => {
-    if (!treasuryRegistry) return null;
-    if (treasuryIdentityLoaded) return treasuryIdentityCache;
-    treasuryIdentityLoaded = true;
-    try {
-      const { getIdentity } = await import('./erc8004/index.js');
-      treasuryIdentityCache = getIdentity(
-        treasuryIdentityDbPath,
-        treasuryRegistry,
-        treasuryAgentId,
-      );
-    } catch {
-      treasuryIdentityCache = null;
-    }
-    if (!treasuryIdentityCache) {
-      throw new Error(`ERC-8004 identity not found for ${treasuryRegistry}:${treasuryAgentId}`);
-    }
-    return treasuryIdentityCache;
-  };
-
-  const resolveTreasuryAgentId = async () => {
-    const identity = await resolveTreasuryIdentity();
-    return identity?.agent_id || treasuryAgentId;
-  };
-
-  const buildTreasuryIdentityMetadata = async () => {
-    const identity = await resolveTreasuryIdentity();
-    if (!identity) return {};
-    return {
-      erc8004: {
-        registry: treasuryRegistry,
-        agentId: identity.agent_id,
-        wallet: identity.agent_wallet,
-        owner: identity.owner_address,
-      },
-    };
-  };
-
-  // ---------------------------------------------------------------------------
-  // Telemetry & audit helpers
-  // ---------------------------------------------------------------------------
-
-  const wrapWithTelemetry = (toolName, fn) => {
-    return async (params, extra) => {
-      const startTime = Date.now();
-      try {
-        const result = await fn(params, extra);
-        if (telemetry) {
-          const duration = Date.now() - startTime;
-          telemetry.logToolCall(toolName, params, result, duration);
-        }
-        return result;
-      } catch (error) {
-        if (telemetry) {
-          const duration = Date.now() - startTime;
-          telemetry.logToolCall(toolName, params, { error: error.message }, duration);
-        }
-        throw error;
-      }
-    };
-  };
-
-  const buildAuditContext = (extra, toolName) => ({
-    taskId: extra?.requestId || null,
-    requestId: extra?.requestId || null,
-    sessionId: extra?.sessionId || null,
-    toolName,
+  // ERC-8004 identity resolution + treasury charging live in
+  // ./mcp/tool-wrappers.js. The identity resolver caches per-server; the
+  // charger is a closure over treasury config + identity.
+  const treasuryIdentity = createTreasuryIdentityResolver({
+    registry: treasuryRegistry,
+    dbPath: treasuryIdentityDbPath,
+    agentId: treasuryAgentId,
   });
+  const resolveTreasuryIdentity = treasuryIdentity.resolveIdentity;
+  const resolveTreasuryAgentId = treasuryIdentity.getAgentId;
+  const buildTreasuryIdentityMetadata = treasuryIdentity.getMetadata;
 
-  const maybeChargeForTool = async (
-    toolName,
-    extra,
-    { dryRun = false, allowChargeWrite = false, paymentCredential = null } = {},
-  ) => {
-    if (!treasuryEnabled) {
-      return { charged: false };
-    }
-    try {
-      const { loadTreasuryContext, getToolPricing, resolveToken, recordFee } =
-        await import('./treasury/index.js');
-      const { toSmallestUnit } = await import('./chains/config.js');
-      const ctx = await loadTreasuryContext(treasuryContextOptions);
-      const rule = getToolPricing(ctx.pricing, toolName);
-      if (!rule) return { charged: false };
-
-      if (!allowApply && !allowChargeWrite) {
-        return {
-          charged: false,
-          blocked: true,
-          reason: `Tool ${toolName} requires a treasury charge. Re-run with --apply.`,
-        };
-      }
-
-      const token = resolveToken(rule.chainId, rule.tokenSymbol, ctx.registry);
-      if (!token) {
-        return {
-          charged: false,
-          blocked: true,
-          reason: `Unknown token ${rule.tokenSymbol} on ${rule.chainId}.`,
-        };
-      }
-      const amount = Number(rule.amount);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        return {
-          charged: false,
-          blocked: true,
-          reason: `Invalid pricing amount for ${toolName}.`,
-        };
-      }
-      const effectiveAgentId = await resolveTreasuryAgentId();
-      const identityMeta = await buildTreasuryIdentityMetadata();
-      const balance = ctx.store.getBalance({
-        agentId: effectiveAgentId,
-        chainId: rule.chainId,
-        tokenSymbol: token.symbol,
-        tokenDecimals: token.decimals,
-      });
-
-      const required = toSmallestUnit(amount, token.decimals);
-
-      if (balance.balanceSmallest < required) {
-        return {
-          charged: false,
-          blocked: true,
-          reason: `Insufficient ${token.symbol} balance for ${toolName}. Required ${rule.amount} ${token.symbol}.`,
-        };
-      }
-
-      if (dryRun) {
-        return {
-          charged: false,
-          blocked: false,
-          simulated: true,
-          rule,
-        };
-      }
-
-      const audit = buildAuditContext(extra, toolName);
-      await recordFee(
-        {
-          agentId: effectiveAgentId,
-          chainId: rule.chainId,
-          tokenSymbol: token.symbol,
-          amount,
-          source: 'task',
-          metadata: {
-            pricingRule: rule,
-            mpp: paymentCredential
-              ? {
-                  challengeId: paymentCredential.challengeId || null,
-                  credentialId: paymentCredential.credentialId || null,
-                  paymentMethod: paymentCredential?.method?.kind || null,
-                }
-              : null,
-            ...identityMeta,
-          },
-          ...audit,
-        },
-        ctx,
-      );
-
-      return {
-        charged: true,
-        rule,
-        mpp: paymentCredential
-          ? {
-              challengeId: paymentCredential.challengeId || null,
-              credentialId: paymentCredential.credentialId || null,
-              paymentMethod: paymentCredential?.method?.kind || null,
-            }
-          : null,
-      };
-    } catch (error) {
-      return { charged: false, blocked: true, reason: error.message };
-    }
-  };
+  // ---------------------------------------------------------------------------
+  // Telemetry & audit helpers — bodies in ./mcp/tool-wrappers.js
+  // ---------------------------------------------------------------------------
+  const wrapWithTelemetry = createWrapWithTelemetry(telemetry);
+  const buildAuditContext = buildAuditContextImpl;
+  const maybeChargeForTool = createToolCharger({
+    treasuryEnabled: () => treasuryEnabled,
+    treasuryContextOptions: () => treasuryContextOptions,
+    allowApply,
+    identity: treasuryIdentity,
+  });
 
   const shouldReturnStructuredResults =
     structuredToolResults ||
@@ -3336,95 +2596,22 @@ export function createStatesetMcpServer({
   // Tool wrapper helpers — add hooks, permission checks, treasury, and telemetry
   // ---------------------------------------------------------------------------
 
-  const buildToolResultPayload = (basePayload, status, startedAt, toolMeta = {}) => {
-    if (!shouldReturnStructuredResults) {
-      return basePayload;
-    }
-
-    const agenticMeta = {
-      schemaVersion: AGENTIC_TOOL_RESULT_SCHEMA_VERSION,
+  // Result-envelope builders (the `_agentic` schema) live in
+  // ./mcp/result-builders.js. We curry the `structured` flag here so the
+  // ~17 call sites in this file don't have to thread it through.
+  const resultOptions = { structured: shouldReturnStructuredResults };
+  const buildToolResultPayload = (basePayload, status, startedAt, toolMeta = {}) =>
+    buildToolResultPayloadImpl(basePayload, status, startedAt, toolMeta, resultOptions);
+  const buildToolResultResponse = (result, status, startedAt, toolMeta = {}, isError = false) =>
+    buildToolResultResponseImpl(result, status, startedAt, toolMeta, isError, resultOptions);
+  const attachStructuredToolMetadataToResponse = (response, status, startedAt, toolMeta = {}) =>
+    attachStructuredToolMetadataToResponseImpl(
+      response,
       status,
-      tool: basePayload?.tool || toolMeta.name || null,
-      requestId: toolMeta.requestId ?? null,
-      sessionId: toolMeta.sessionId ?? null,
-      policy: compactReplayValue(toolMeta.policy || null),
-      permission: compactReplayValue(toolMeta.permission || null),
-      charge: compactReplayValue(toolMeta.charge || null),
-      mutation: compactReplayValue(toolMeta.mutationManifest || null),
-      timing: {
-        startedAt: new Date(startedAt).toISOString(),
-        completedAt: new Date().toISOString(),
-        elapsedMs: Date.now() - startedAt,
-      },
-    };
-
-    const withType = {
-      ...toolMeta.meta,
-      ...agenticMeta,
-    };
-
-    if (
-      basePayload === null ||
-      basePayload === undefined ||
-      Array.isArray(basePayload) ||
-      typeof basePayload !== 'object'
-    ) {
-      return {
-        result: basePayload,
-        _agentic: compactReplayValue(withType),
-      };
-    }
-
-    if (basePayload._agentic) {
-      return basePayload;
-    }
-
-    return {
-      ...basePayload,
-      _agentic: compactReplayValue(withType),
-    };
-  };
-
-  const buildToolResultResponse = (result, status, startedAt, toolMeta = {}, isError = false) => {
-    const payload = buildToolResultPayload(result, status, startedAt, toolMeta);
-    const response = {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(payload),
-        },
-      ],
-    };
-    if (isError) response.isError = true;
-    return response;
-  };
-
-  const attachStructuredToolMetadataToResponse = (response, status, startedAt, toolMeta = {}) => {
-    if (
-      !shouldReturnStructuredResults ||
-      !response ||
-      !response.content ||
-      !Array.isArray(response.content)
-    ) {
-      return response;
-    }
-
-    const first = response.content[0];
-    if (!first || first.type !== 'text' || typeof first.text !== 'string') {
-      return response;
-    }
-
-    try {
-      const parsedPayload = JSON.parse(first.text);
-      const payload = buildToolResultPayload(parsedPayload, status, startedAt, toolMeta);
-      return {
-        ...response,
-        content: [{ ...first, text: JSON.stringify(payload) }, ...response.content.slice(1)],
-      };
-    } catch {
-      return response;
-    }
-  };
+      startedAt,
+      toolMeta,
+      resultOptions,
+    );
 
   const wrapTool = (name, description, schema, handler, policyDomain = null) => {
     return sdkTool(name, description, schema, async (args, extra) => {
