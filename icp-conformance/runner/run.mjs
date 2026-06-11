@@ -74,13 +74,17 @@ function runVector(vectorName, iut) {
     return { kind: 'fail', reason: `vector directory not found: ${dir}` };
   }
 
-  const inputs = loadJson(join(dir, 'inputs.json'));
+  // Feed the IUT the *raw* bytes of inputs.json. A JSON.parse/JSON.stringify
+  // round-trip would normalize number forms (1.50 → 1.5, -0 → 0) before the
+  // IUT ever saw them, masking exactly the canonicalization divergences
+  // vector 02 exists to catch.
+  const rawInputs = loadText(join(dir, 'inputs.json'));
   const expected = loadJson(join(dir, 'expected.json'));
 
   const [cmd, ...argv] = iut.command;
   const child = spawnSync(cmd, [...argv, vectorName], {
     cwd: ROOT,
-    input: JSON.stringify(inputs),
+    input: rawInputs,
     encoding: 'utf8',
     timeout: 30000,
   });
@@ -209,6 +213,14 @@ function parseArgs(argv) {
 function loadJson(path) {
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    fatal(`could not read ${path}: ${err.message}`);
+  }
+}
+
+function loadText(path) {
+  try {
+    return readFileSync(path, 'utf8');
   } catch (err) {
     fatal(`could not read ${path}: ${err.message}`);
   }

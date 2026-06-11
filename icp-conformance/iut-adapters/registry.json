@@ -23,7 +23,7 @@
   "stateset-python": {
     "command": ["python3", "../crates/stateset-icp-iut-py/iut.py"],
     "language": "python",
-    "implementation": "crates/stateset-icp-iut-py (cryptography library + json.dumps with sort_keys)",
+    "implementation": "crates/stateset-icp-iut-py (cryptography library + recursive RFC 8785 serializer)",
     "version": "1.0.0",
     "supports": ["icp-1.0-core"]
   }

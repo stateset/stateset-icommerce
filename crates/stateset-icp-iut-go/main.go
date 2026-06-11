@@ -16,9 +16,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf16"
 )
 
 func main() {
@@ -237,10 +240,12 @@ func verifyOne(canonical, signatureHex, pubkeyHex string) bool {
 // ---------------------------------------------------------------------------
 // Canonical JSON encoder
 //
-// Matches the JS IUT's canonicalJson and the Rust IUT's serde_jcs output on
-// ICP-1.0 payload shapes (objects, arrays, strings, integers/decimals,
-// booleans, null). Produced by lexicographic key ordering + no whitespace +
-// standard JSON escapes (the same that encoding/json produces).
+// Matches the JS IUT's canonicalJson and the Rust IUT's serde_jcs output per
+// RFC 8785 on ICP-1.0 payload shapes (objects, arrays, strings,
+// integers/decimals, booleans, null). Produced by lexicographic key ordering
+// + no whitespace + standard JSON escapes (no HTML-safety escaping, per
+// RFC 8785 §3.2.2.2) + ECMAScript shortest-form number serialization
+// (RFC 8785 §3.2.2.3).
 // ---------------------------------------------------------------------------
 
 func canonicalJSON(v interface{}) (string, error) {
@@ -262,15 +267,19 @@ func writeCanonical(w *bytes.Buffer, v interface{}) error {
 			w.WriteString("false")
 		}
 	case string:
-		// json.Marshal handles all string escaping.
-		b, err := json.Marshal(x)
+		w.WriteString(encodeCanonicalString(x))
+	case json.Number:
+		// RFC 8785 treats every JSON number as an IEEE-754 double: parse the
+		// literal and re-serialize in ECMAScript shortest form ("1.50" → "1.5").
+		f, err := strconv.ParseFloat(string(x), 64)
+		if err != nil {
+			return fmt.Errorf("number %q is not an IEEE-754 double: %w", string(x), err)
+		}
+		s, err := formatCanonicalNumber(f)
 		if err != nil {
 			return err
 		}
-		w.Write(b)
-	case json.Number:
-		// Preserve the original number string form.
-		w.WriteString(string(x))
+		w.WriteString(s)
 	case []interface{}:
 		w.WriteByte('[')
 		for i, item := range x {
@@ -287,17 +296,20 @@ func writeCanonical(w *bytes.Buffer, v interface{}) error {
 		for k := range x {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		// RFC 8785 §3.2.3: sort by UTF-16 code unit (what JS Array.prototype
+		// .sort does). This differs from sort.Strings (UTF-8 byte = code
+		// point order) when an astral-plane key — whose UTF-16 form starts
+		// with a surrogate in 0xD800–0xDBFF — is compared against a BMP key
+		// above U+DFFF. (serde_jcs 0.1.0 sorts by UTF-8 bytes instead; no
+		// ICP-1.0 payload shape carries astral-plane keys, so the Rust IUT
+		// stays byte-identical on the conformance vectors.)
+		sort.Slice(keys, func(i, j int) bool { return lessUTF16(keys[i], keys[j]) })
 		w.WriteByte('{')
 		for i, k := range keys {
 			if i > 0 {
 				w.WriteByte(',')
 			}
-			kb, err := json.Marshal(k)
-			if err != nil {
-				return err
-			}
-			w.Write(kb)
+			w.WriteString(encodeCanonicalString(k))
 			w.WriteByte(':')
 			if err := writeCanonical(w, x[k]); err != nil {
 				return err
@@ -307,17 +319,96 @@ func writeCanonical(w *bytes.Buffer, v interface{}) error {
 	case float64:
 		// json.Decoder without UseNumber returns numbers as float64. The
 		// canonical IUT path should only hit this when input is parsed
-		// without UseNumber. We render via json.Marshal for ECMAScript-style
-		// number serialization.
-		b, err := json.Marshal(x)
+		// without UseNumber.
+		s, err := formatCanonicalNumber(x)
 		if err != nil {
 			return err
 		}
-		w.Write(b)
+		w.WriteString(s)
 	default:
 		return fmt.Errorf("canonicalJSON: unsupported type %T", v)
 	}
 	return nil
+}
+
+// encodeCanonicalString encodes s as a JSON string per RFC 8785 §3.2.2.2,
+// byte-identical to ECMAScript JSON.stringify: two-character escapes for
+// `"` `\` \b \f \n \r \t, lowercase \u00xx for the remaining control
+// characters below U+0020, and raw UTF-8 for everything else — including
+// `<`, `>`, `&` (no HTML-safety escaping), U+007F, and U+2028/U+2029 (no
+// JSONP-safety escaping). encoding/json diverges on all three classes
+// (HTML escapes, \u0008/\u000c instead of \b/\f, and escaped
+// line/paragraph separators), so the escaper is hand-rolled.
+func encodeCanonicalString(s string) string {
+	var out strings.Builder
+	out.Grow(len(s) + 2)
+	out.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			out.WriteString(`\"`)
+		case '\\':
+			out.WriteString(`\\`)
+		case '\b':
+			out.WriteString(`\b`)
+		case '\f':
+			out.WriteString(`\f`)
+		case '\n':
+			out.WriteString(`\n`)
+		case '\r':
+			out.WriteString(`\r`)
+		case '\t':
+			out.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(&out, `\u%04x`, r)
+			} else {
+				out.WriteRune(r)
+			}
+		}
+	}
+	out.WriteByte('"')
+	return out.String()
+}
+
+// lessUTF16 reports whether a sorts before b in lexicographic UTF-16
+// code-unit order (RFC 8785 §3.2.3 / ECMAScript string comparison).
+func lessUTF16(a, b string) bool {
+	ua := utf16.Encode([]rune(a))
+	ub := utf16.Encode([]rune(b))
+	for i := 0; i < len(ua) && i < len(ub); i++ {
+		if ua[i] != ub[i] {
+			return ua[i] < ub[i]
+		}
+	}
+	return len(ua) < len(ub)
+}
+
+// formatCanonicalNumber serializes an IEEE-754 double per RFC 8785 §3.2.2.3,
+// i.e. ECMAScript Number::toString semantics (the same bytes JSON.stringify
+// produces): shortest round-trip digits, plain decimal notation for
+// |x| in [1e-6, 1e21), exponent notation with explicit sign and no
+// leading-zero exponent digits otherwise, and "0" for negative zero.
+func formatCanonicalNumber(f float64) (string, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return "", fmt.Errorf("non-finite number %v cannot be canonicalized", f)
+	}
+	if f == 0 {
+		// Covers -0: ECMAScript Number::toString(-0) is "0".
+		return "0", nil
+	}
+	if abs := math.Abs(f); abs >= 1e-6 && abs < 1e21 {
+		return strconv.FormatFloat(f, 'f', -1, 64), nil
+	}
+	// Exponent range. Go pads the exponent to two digits ("1e-07"); ECMAScript
+	// does not ("1e-7"). Both keep the explicit sign.
+	s := strconv.FormatFloat(f, 'e', -1, 64)
+	mantissa, exp, _ := strings.Cut(s, "e")
+	digits := strings.TrimLeft(exp[1:], "0")
+	if digits == "" {
+		digits = "0"
+	}
+	return mantissa + "e" + exp[:1] + digits, nil
 }
 
 // ---------------------------------------------------------------------------

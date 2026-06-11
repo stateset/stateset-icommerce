@@ -102,25 +102,62 @@ jobs:
       - name: Run conformance suite (Python)
         working-directory: icp-conformance
         run: node runner/run.mjs --profile icp-1.0-core --iut stateset-python --verbose
+
+  cross-iut-determinism:
+    name: Cross-IUT determinism (JS × Rust × Go × Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install cryptography
+        run: pip install cryptography
+      - name: Build Rust IUT
+        run: cargo build -p stateset-icp-iut --release
+      - name: Build Go IUT
+        working-directory: crates/stateset-icp-iut-go
+        run: go build -o stateset-icp-iut-go .
       - name: Cross-IUT determinism check
         working-directory: icp-conformance
         run: |
-          echo "Both IUTs MUST produce byte-identical output for every vector."
-          js_out=$(cat vectors/icp-1.0/01-aid-derivation/inputs.json | node iut-adapters/reference-demo.mjs 01-aid-derivation)
-          rs_out=$(cat vectors/icp-1.0/01-aid-derivation/inputs.json | ../target/release/stateset-icp-iut 01-aid-derivation)
+          echo "All IUTs MUST produce byte-identical output for every vector."
+          inputs=vectors/icp-1.0/01-aid-derivation/inputs.json
+          js_out=$(node iut-adapters/reference-demo.mjs 01-aid-derivation < "$inputs")
+          rs_out=$(../target/release/stateset-icp-iut 01-aid-derivation < "$inputs")
+          go_out=$(../crates/stateset-icp-iut-go/stateset-icp-iut-go 01-aid-derivation < "$inputs")
+          py_out=$(python3 ../crates/stateset-icp-iut-py/iut.py 01-aid-derivation < "$inputs")
           # Compare the cryptographically-meaningful fields exactly.
-          for field in aid ed25519_pubkey_hex x25519_pubkey_hex intent_canonical_string intent_signature_hex tamper_rejected; do
-            jv=$(echo "$js_out" | python3 -c "import sys,json;print(json.load(sys.stdin)['$field'])")
-            rv=$(echo "$rs_out" | python3 -c "import sys,json;print(json.load(sys.stdin)['$field'])")
-            if [ "$jv" != "$rv" ]; then
-              echo "FAIL: $field divergence"
-              echo "  js: $jv"
-              echo "  rs: $rv"
-              exit 1
-            fi
-            echo "OK: $field matches across IUTs"
-          done
-          echo "All cryptographic fields byte-identical across JS + Rust IUTs."
+          check() {
+            impl=$1
+            out=$2
+            for field in aid ed25519_pubkey_hex x25519_pubkey_hex intent_canonical_string intent_signature_hex tamper_rejected; do
+              jv=$(echo "$js_out" | python3 -c "import sys,json;print(json.load(sys.stdin)['$field'])")
+              ov=$(echo "$out" | python3 -c "import sys,json;print(json.load(sys.stdin)['$field'])")
+              if [ "$jv" != "$ov" ]; then
+                echo "FAIL: $field divergence (reference-demo vs $impl)"
+                echo "  js:    $jv"
+                echo "  $impl: $ov"
+                exit 1
+              fi
+              echo "OK: $field matches (reference-demo vs $impl)"
+            done
+          }
+          check rust "$rs_out"
+          check go "$go_out"
+          check python "$py_out"
+          echo "All cryptographic fields byte-identical across JS + Rust + Go + Python IUTs."
 
   contracts:
     name: ICPEscrow Solidity tests (Foundry)

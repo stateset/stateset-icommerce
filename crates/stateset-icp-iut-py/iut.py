@@ -19,6 +19,7 @@ byte-identical bytes regardless of where the merchant or settler runs.
 
 import sys
 import json
+import math
 import hashlib
 
 try:
@@ -63,20 +64,114 @@ def base58btc_encode(data: bytes) -> str:
     return leading_ones + out
 
 
-def canonical_json(value) -> str:
-    """RFC-8785-compatible canonical JSON for ICP-1.0 payload shapes.
+# Two-character escapes per RFC 8785 §3.2.2.2 (the same set JSON.stringify
+# uses). Every other control character below U+0020 becomes \u00xx; everything
+# else — including <, >, &, U+007F, and U+2028/U+2029 — stays raw.
+_STRING_ESCAPES = {
+    '"': '\\"',
+    "\\": "\\\\",
+    "\b": "\\b",
+    "\f": "\\f",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+}
 
-    Same rule as JS IUT: lexicographic key ordering, no whitespace, standard
-    JSON escapes. Python's json.dumps with sort_keys=True + separators is
-    sufficient for the value shapes ICP-1.0 uses (objects, arrays, strings,
-    integers, decimals, booleans, null — no floats in monetary fields).
+
+def _encode_canonical_string(s: str) -> str:
+    """Encode s as a JSON string byte-identical to ECMAScript JSON.stringify."""
+    out = ['"']
+    for ch in s:
+        esc = _STRING_ESCAPES.get(ch)
+        if esc is not None:
+            out.append(esc)
+        elif ord(ch) < 0x20:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def _format_canonical_number(value: float) -> str:
+    """Serialize an IEEE-754 double per RFC 8785 §3.2.2.3.
+
+    I.e. ECMAScript Number::toString semantics — the bytes JSON.stringify
+    produces: shortest round-trip digits (Python's repr selects the same
+    digits), plain decimal notation for |x| in [1e-6, 1e21), exponent
+    notation with explicit sign and no zero-padded exponent otherwise, and
+    "0" for negative zero.
     """
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
+    if math.isnan(value) or math.isinf(value):
+        raise ValueError(f"non-finite number {value!r} cannot be canonicalized")
+    if value == 0.0:
+        # Covers -0.0: ECMAScript Number::toString(-0) is "0".
+        return "0"
+    sign = "-" if value < 0 else ""
+    # repr() gives the shortest digit string that round-trips; split it into
+    # significant digits + decimal exponent, then re-notate per ECMAScript
+    # (Python switches to exponent form at different thresholds than ES).
+    mantissa, _, exp_part = repr(abs(value)).partition("e")
+    int_part, _, frac_part = mantissa.partition(".")
+    raw_digits = (int_part + frac_part).lstrip("0")
+    digits = raw_digits.rstrip("0")
+    trailing_zeros = len(raw_digits) - len(digits)
+    # value == int(digits) * 10**exp10; n is the ES spec's decimal-point
+    # position: value == 0.<digits> * 10**n.
+    exp10 = (int(exp_part) if exp_part else 0) - len(frac_part) + trailing_zeros
+    k = len(digits)
+    n = k + exp10
+    if k <= n <= 21:
+        body = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        body = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        body = "0." + "0" * (-n) + digits
+    else:
+        e = n - 1
+        body = (
+            digits[0]
+            + ("." + digits[1:] if k > 1 else "")
+            + "e"
+            + ("+" if e >= 0 else "-")
+            + str(abs(e))
+        )
+    return sign + body
+
+
+def canonical_json(value) -> str:
+    """RFC 8785 (JCS) canonical JSON, mirroring the JS reference IUT.
+
+    Lexicographic key ordering by UTF-16 code unit (what Array.prototype.sort
+    does — encoding the key as UTF-16-BE and comparing bytes is equivalent;
+    Python's default str ordering is by code point, which diverges for
+    astral-plane characters), no whitespace, JSON.stringify string escapes,
+    and ECMAScript Number::toString number serialization.
+    """
+    if isinstance(value, bool):
+        # bool is a subclass of int — must dispatch before the int arm.
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        return _encode_canonical_string(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return _format_canonical_number(value)
+    if isinstance(value, list):
+        return "[" + ",".join(canonical_json(v) for v in value) + "]"
+    if isinstance(value, dict):
+        keys = sorted(value, key=lambda k: k.encode("utf-16-be", "surrogatepass"))
+        return (
+            "{"
+            + ",".join(
+                _encode_canonical_string(k) + ":" + canonical_json(value[k])
+                for k in keys
+            )
+            + "}"
+        )
+    raise TypeError(f"canonical_json: unsupported type {type(value).__name__}")
 
 
 # ---------------------------------------------------------------------------

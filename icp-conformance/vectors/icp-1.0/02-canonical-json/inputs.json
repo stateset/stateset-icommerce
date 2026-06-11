@@ -23,6 +23,15 @@
         ],
         "max_total": { "amount": "11.00", "currency": "USDC" }
       }
-    }
+    },
+    { "name": "html-escape-chars", "value": { "a": "<&>" } },
+    { "name": "url-query-params", "value": { "url": "https://x.test/a?b=1&c=<2>" } },
+    { "name": "non-minimal-numbers", "value": { "a": 1.50, "b": 10.0, "c": 0.500 } },
+    { "name": "exponent-boundaries", "value": { "a": 1e21, "b": 1e-6, "c": 1e-7 } },
+    { "name": "max-safe-integer", "value": { "n": 9007199254740991 } },
+    { "name": "negative-zero", "value": { "n": -0 } },
+    { "name": "line-paragraph-separators", "value": { "a": "x\u2028y\u2029z" } },
+    { "name": "backspace-formfeed", "value": { "a": "x\by\fz" } },
+    { "name": "control-char-sweep", "value": { "a": "\u0000\u0001\u001f\u007f" } }
   ]
 }
