@@ -6,6 +6,10 @@
  * These server actions provide AI-powered data fetching and operations
  * using the embedded StateSet commerce engine. They replace REST API calls
  * with direct embedded library calls for zero-latency data access.
+ *
+ * Every exported action is gated by `requireAdminSession()` — server
+ * actions bypass the API middleware, so each one must enforce the admin
+ * session itself (skipped in the auth-disabled dev mode, like middleware).
  */
 
 import {
@@ -38,6 +42,7 @@ import type {
   SystemHealthData,
   SystemEvent,
 } from '@/lib/types/dashboard-data';
+import { requireAdminSession } from '@/lib/shared/auth-session';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -92,18 +97,22 @@ function formatRelativeTime(iso: string | undefined): string {
 // ============================================================================
 
 export async function getDashboardMetrics(): Promise<DashboardMetrics> {
+  await requireAdminSession();
   return analyticsApi.getDashboardMetrics();
 }
 
 export async function getHourlyActivity(date?: string) {
+  await requireAdminSession();
   return analyticsApi.getHourlyActivity(date);
 }
 
 export async function getSystemHealth(): Promise<SystemHealth> {
+  await requireAdminSession();
   return analyticsApi.getSystemHealth();
 }
 
 export async function getSystemHealthData(): Promise<SystemHealthData> {
+  await requireAdminSession();
   const health = await analyticsApi.getSystemHealth();
 
   const overallStatus =
@@ -194,10 +203,12 @@ export async function getOrders(params?: {
   limit?: number;
   offset?: number;
 }): Promise<Order[]> {
+  await requireAdminSession();
   return ordersApi.list(params);
 }
 
 export async function getOrder(orderId: string): Promise<Order | null> {
+  await requireAdminSession();
   return ordersApi.get(orderId);
 }
 
@@ -207,6 +218,7 @@ export async function createOrder(params: {
   shippingAddress?: Address;
   billingAddress?: Address;
 }): Promise<Order> {
+  await requireAdminSession();
   return ordersApi.create(params);
 }
 
@@ -214,10 +226,12 @@ export async function updateOrderStatus(
   orderId: string,
   status: Order['status']
 ): Promise<Order> {
+  await requireAdminSession();
   return ordersApi.updateStatus(orderId, status);
 }
 
 export async function cancelOrder(orderId: string, reason?: string): Promise<Order> {
+  await requireAdminSession();
   return ordersApi.cancel(orderId, reason);
 }
 
@@ -225,11 +239,13 @@ export async function getOrderAnalytics(params?: {
   startDate?: string;
   endDate?: string;
 }): Promise<OrderAnalytics> {
+  await requireAdminSession();
   return ordersApi.getAnalytics(params);
 }
 
 // Order Pipeline data for generative UI
 export async function getOrderPipelineData() {
+  await requireAdminSession();
   const [orders, analytics] = await Promise.all([
     ordersApi.list({ limit: 100 }),
     ordersApi.getAnalytics(),
@@ -269,10 +285,12 @@ export async function getInventory(params?: {
   warehouseId?: string;
   lowStock?: boolean;
 }): Promise<InventoryItem[]> {
+  await requireAdminSession();
   return inventoryApi.list(params);
 }
 
 export async function getInventoryItem(sku: string): Promise<InventoryItem | null> {
+  await requireAdminSession();
   return inventoryApi.get(sku);
 }
 
@@ -281,6 +299,7 @@ export async function adjustInventory(
   quantity: number,
   reason?: string
 ) {
+  await requireAdminSession();
   return inventoryApi.adjust(sku, quantity, reason);
 }
 
@@ -289,6 +308,7 @@ export async function reserveInventory(
   quantity: number,
   orderId: string
 ) {
+  await requireAdminSession();
   return inventoryApi.reserve(sku, quantity, orderId);
 }
 
@@ -297,23 +317,28 @@ export async function releaseInventory(
   quantity: number,
   orderId: string
 ) {
+  await requireAdminSession();
   return inventoryApi.release(sku, quantity, orderId);
 }
 
 export async function getLowStockItems(threshold?: number): Promise<InventoryItem[]> {
+  await requireAdminSession();
   return inventoryApi.getLowStock(threshold);
 }
 
 export async function getInventoryAnalytics(): Promise<InventoryAnalytics> {
+  await requireAdminSession();
   return inventoryApi.getAnalytics();
 }
 
 export async function getDemandForecast(sku: string, days: number) {
+  await requireAdminSession();
   return inventoryApi.forecast(sku, days);
 }
 
 // Inventory Analytics data for generative UI
 export async function getInventoryAnalyticsData() {
+  await requireAdminSession();
   const [inventory, analytics, lowStock] = await Promise.all([
     inventoryApi.list(),
     inventoryApi.getAnalytics(),
@@ -358,10 +383,12 @@ export async function getReturns(params?: {
   status?: string;
   customerId?: string;
 }): Promise<Return[]> {
+  await requireAdminSession();
   return returnsApi.list(params);
 }
 
 export async function getReturn(returnId: string): Promise<Return | null> {
+  await requireAdminSession();
   return returnsApi.get(returnId);
 }
 
@@ -371,14 +398,17 @@ export async function createReturn(params: {
   reason: string;
   reasonCategory: Return['reasonCategory'];
 }): Promise<Return> {
+  await requireAdminSession();
   return returnsApi.create(params);
 }
 
 export async function approveReturn(returnId: string): Promise<Return> {
+  await requireAdminSession();
   return returnsApi.approve(returnId);
 }
 
 export async function rejectReturn(returnId: string, reason: string): Promise<Return> {
+  await requireAdminSession();
   return returnsApi.reject(returnId, reason);
 }
 
@@ -386,6 +416,7 @@ export async function receiveReturn(
   returnId: string,
   items: { productId: string; condition: string }[]
 ): Promise<Return> {
+  await requireAdminSession();
   return returnsApi.receive(returnId, items);
 }
 
@@ -393,6 +424,7 @@ export async function processRefund(
   returnId: string,
   method: Return['refundMethod']
 ): Promise<Return> {
+  await requireAdminSession();
   return returnsApi.processRefund(returnId, method);
 }
 
@@ -400,11 +432,13 @@ export async function getReturnAnalytics(params?: {
   startDate?: string;
   endDate?: string;
 }): Promise<ReturnAnalytics> {
+  await requireAdminSession();
   return returnsApi.getAnalytics(params);
 }
 
 // Returns Management data for generative UI
 export async function getReturnsManagementData() {
+  await requireAdminSession();
   const [returns, analytics] = await Promise.all([
     returnsApi.list(),
     returnsApi.getAnalytics(),
@@ -440,18 +474,22 @@ export async function getCustomers(params?: {
   limit?: number;
   offset?: number;
 }): Promise<Customer[]> {
+  await requireAdminSession();
   return customersApi.list(params);
 }
 
 export async function getCustomer(customerId: string): Promise<Customer | null> {
+  await requireAdminSession();
   return customersApi.get(customerId);
 }
 
 export async function getCustomerByEmail(email: string): Promise<Customer | null> {
+  await requireAdminSession();
   return customersApi.getByEmail(email);
 }
 
 export async function createCustomer(params: Partial<Customer>): Promise<Customer> {
+  await requireAdminSession();
   return customersApi.create(params);
 }
 
@@ -459,27 +497,33 @@ export async function updateCustomer(
   customerId: string,
   params: Partial<Customer>
 ): Promise<Customer> {
+  await requireAdminSession();
   return customersApi.update(customerId, params);
 }
 
 export async function getCustomerOrders(customerId: string): Promise<Order[]> {
+  await requireAdminSession();
   return customersApi.getOrders(customerId);
 }
 
 export async function getCustomerHealthScore(customerId: string) {
+  await requireAdminSession();
   return customersApi.getHealthScore(customerId);
 }
 
 export async function getCustomerSegments() {
+  await requireAdminSession();
   return customersApi.getSegments();
 }
 
 export async function getCustomerAnalytics(): Promise<CustomerAnalytics> {
+  await requireAdminSession();
   return customersApi.getAnalytics();
 }
 
 // Customer Health data for generative UI
 export async function getCustomerHealthData(): Promise<CustomerHealthData> {
+  await requireAdminSession();
   const [customers, analytics] = await Promise.all([
     customersApi.list({ limit: 100 }),
     customersApi.getAnalytics(),
@@ -583,22 +627,27 @@ export async function getSubscriptions(params?: {
   status?: string;
   customerId?: string;
 }): Promise<Subscription[]> {
+  await requireAdminSession();
   return subscriptionsApi.list(params);
 }
 
 export async function getSubscription(subscriptionId: string): Promise<Subscription | null> {
+  await requireAdminSession();
   return subscriptionsApi.get(subscriptionId);
 }
 
 export async function createSubscription(params: Partial<Subscription>): Promise<Subscription> {
+  await requireAdminSession();
   return subscriptionsApi.create(params);
 }
 
 export async function pauseSubscription(subscriptionId: string): Promise<Subscription> {
+  await requireAdminSession();
   return subscriptionsApi.pause(subscriptionId);
 }
 
 export async function resumeSubscription(subscriptionId: string): Promise<Subscription> {
+  await requireAdminSession();
   return subscriptionsApi.resume(subscriptionId);
 }
 
@@ -606,10 +655,12 @@ export async function cancelSubscription(
   subscriptionId: string,
   reason?: string
 ): Promise<Subscription> {
+  await requireAdminSession();
   return subscriptionsApi.cancel(subscriptionId, reason);
 }
 
 export async function getSubscriptionAnalytics(): Promise<SubscriptionAnalytics> {
+  await requireAdminSession();
   return subscriptionsApi.getAnalytics();
 }
 
@@ -621,26 +672,32 @@ export async function getProducts(params?: {
   status?: string;
   category?: string;
 }) {
+  await requireAdminSession();
   return productsApi.list(params);
 }
 
 export async function getProduct(productId: string) {
+  await requireAdminSession();
   return productsApi.get(productId);
 }
 
 export async function createProduct(params: Partial<Product>) {
+  await requireAdminSession();
   return productsApi.create(params);
 }
 
 export async function updateProduct(productId: string, params: Partial<Product>) {
+  await requireAdminSession();
   return productsApi.update(productId, params);
 }
 
 export async function deleteProduct(productId: string) {
+  await requireAdminSession();
   return productsApi.delete(productId);
 }
 
 export async function getProductAnalytics() {
+  await requireAdminSession();
   const products = await productsApi.list();
 
   // Calculate analytics from products
@@ -690,19 +747,23 @@ export async function getRevenueByPeriod(params: {
   endDate: string;
   groupBy: 'day' | 'week' | 'month';
 }) {
+  await requireAdminSession();
   return analyticsApi.getRevenueByPeriod(params);
 }
 
 export async function getTopProducts(limit?: number) {
+  await requireAdminSession();
   return analyticsApi.getTopProducts(limit);
 }
 
 export async function getConversionFunnel() {
+  await requireAdminSession();
   return analyticsApi.getConversionFunnel();
 }
 
 // Demand Forecasting data for generative UI
 export async function getDemandForecastingData() {
+  await requireAdminSession();
   const [inventory, analytics] = await Promise.all([
     inventoryApi.list(),
     inventoryApi.getAnalytics(),
@@ -857,6 +918,7 @@ export async function getDemandForecastingData() {
 
 // Subscription Analytics data for generative UI
 export async function getSubscriptionAnalyticsData() {
+  await requireAdminSession();
   const [subscriptions, analytics] = await Promise.all([
     subscriptionsApi.list(),
     subscriptionsApi.getAnalytics(),
@@ -950,6 +1012,7 @@ export async function getSubscriptionAnalyticsData() {
 
 // Agent Performance data for generative UI
 export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
+  await requireAdminSession();
   const [orders, inventory, returns, customers, subscriptions] = await Promise.all([
     ordersApi.list({ limit: 100 }),
     inventoryApi.list(),
@@ -1064,6 +1127,7 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
 
 // Financial Reconciliation data for generative UI
 export async function getFinancialReconciliationData(): Promise<FinancialReconciliationData> {
+  await requireAdminSession();
   const [orders, returns, subscriptions] = await Promise.all([
     ordersApi.list({ limit: 100 }),
     returnsApi.list(),
@@ -1166,6 +1230,7 @@ export async function getFinancialReconciliationData(): Promise<FinancialReconci
 
 // Comprehensive analytics for generative UI
 export async function getComprehensiveAnalytics() {
+  await requireAdminSession();
   const [
     dashboardMetrics,
     orderAnalytics,

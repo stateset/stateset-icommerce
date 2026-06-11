@@ -5,6 +5,27 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ADMIN_SESSION_COOKIE } from '@/lib/shared/auth-session';
+
+// Mock next/headers cookies() — the action is gated by
+// `requireAdminSession()`, so each test runs with a session cookie set.
+// (The auth-guard contract itself is covered in
+// tests/unit/app/actions/organizations.test.ts.)
+const cookieStore = vi.hoisted(() => new Map<string, { value: string }>());
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(() =>
+    Promise.resolve({
+      get: (name: string) => cookieStore.get(name),
+      set: (name: string, value: string, _opts?: unknown) => {
+        cookieStore.set(name, { value });
+      },
+      delete: (name: string) => {
+        cookieStore.delete(name);
+      },
+    })
+  ),
+}));
+
 import { listOrganizations } from '@/app/actions/organizations';
 
 describe('listOrganizations', () => {
@@ -12,6 +33,8 @@ describe('listOrganizations', () => {
 
   beforeEach(() => {
     originalEnv = process.env.NEXT_PUBLIC_ADMIN_DEV_ORGS;
+    cookieStore.clear();
+    cookieStore.set(ADMIN_SESSION_COOKIE, { value: 'test-session-token' });
   });
 
   afterEach(() => {

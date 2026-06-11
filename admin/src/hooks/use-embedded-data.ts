@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface UseEmbeddedDataResult<T> {
   data: T | null;
@@ -24,6 +24,13 @@ export function useEmbeddedData<T>(
   const [isLoading, setIsLoading] = useState(!initialData && enabled);
   const [error, setError] = useState<Error | null>(null);
 
+  // Consumers typically pass inline arrow fetchers whose identity changes on
+  // every render. Track the latest one in a ref so the effects below only
+  // re-fire on genuine signal changes (enabled / refreshInterval), not on
+  // fetcher identity churn — which would cause continuous refetch loops.
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
+
   const fetch = useCallback(async () => {
     if (!enabled) return;
 
@@ -31,14 +38,14 @@ export function useEmbeddedData<T>(
     setError(null);
 
     try {
-      const result = await fetcher();
+      const result = await fetcherRef.current();
       setData(result);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setIsLoading(false);
     }
-  }, [fetcher, enabled]);
+  }, [enabled]);
 
   useEffect(() => {
     fetch();
@@ -80,6 +87,11 @@ export function useEmbeddedPaginatedData<T>(
   const [isLoading, setIsLoading] = useState(enabled);
   const [error, setError] = useState<Error | null>(null);
 
+  // Same identity-churn guard as useEmbeddedData: only page/pageSize/enabled
+  // changes should trigger a refetch, never a new inline fetcher reference.
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
+
   const fetch = useCallback(async () => {
     if (!enabled) return;
 
@@ -88,7 +100,7 @@ export function useEmbeddedPaginatedData<T>(
 
     try {
       const offset = (page - 1) * pageSize;
-      const result = await fetcher({ limit: pageSize, offset });
+      const result = await fetcherRef.current({ limit: pageSize, offset });
       setItems(result.items);
       setTotal(result.total);
     } catch (err) {
@@ -96,7 +108,7 @@ export function useEmbeddedPaginatedData<T>(
     } finally {
       setIsLoading(false);
     }
-  }, [fetcher, page, pageSize, enabled]);
+  }, [page, pageSize, enabled]);
 
   useEffect(() => {
     fetch();

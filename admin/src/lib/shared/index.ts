@@ -66,6 +66,7 @@ export {
   requireRequestSessionToken,
   getServerSessionToken,
   requireServerSessionToken,
+  requireAdminSession,
   setSessionCookie,
   clearSessionCookie,
   isAuthenticatedRequest,

@@ -62,6 +62,23 @@ export async function requireServerSessionToken(
   return token;
 }
 
+/**
+ * Auth guard for server actions. Requires the admin session cookie and
+ * throws `AppError.unauthorized` when it is missing — except in the
+ * auth-disabled dev mode, where it is skipped exactly like the middleware
+ * bypass (`isAdminAuthDisabled()` is ignored in production).
+ *
+ * Returns the session token, or `null` when auth is disabled.
+ */
+export async function requireAdminSession(
+  message: string = 'Authentication required'
+): Promise<string | null> {
+  if (isAdminAuthDisabled()) {
+    return null;
+  }
+  return requireServerSessionToken(message);
+}
+
 export function setSessionCookie(response: NextResponse, token: string): NextResponse {
   response.cookies.set(ADMIN_SESSION_COOKIE, token, {
     httpOnly: true,

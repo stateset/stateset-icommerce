@@ -142,4 +142,70 @@ describe('useEmbeddedData', () => {
     expect(typeof result.current.refetch).toBe('function');
     expect(typeof result.current.mutate).toBe('function');
   });
+
+  it('fetches once even when the fetcher identity changes on every render', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue('data');
+    // Dashboard consumers pass inline arrow fetchers, so every render hands
+    // the hook a brand-new function reference.
+    const { result, rerender } = renderHook(() => useEmbeddedData(() => fetchSpy()));
+
+    await waitFor(() => {
+      expect(result.current.data).toBe('data');
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    for (let i = 0; i < 5; i++) {
+      rerender();
+    }
+    await act(async () => {});
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps refreshInterval cadence despite unstable fetcher identity', async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.fn().mockResolvedValue('data');
+    const { rerender } = renderHook(() =>
+      useEmbeddedData(() => fetchSpy(), { refreshInterval: 5000 })
+    );
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Re-renders alone must not trigger extra fetches or reset the interval.
+    rerender();
+    rerender();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('refetch() uses the latest fetcher passed on the most recent render', async () => {
+    const { result, rerender } = renderHook(
+      ({ value }: { value: string }) => useEmbeddedData(() => Promise.resolve(value)),
+      { initialProps: { value: 'first' } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.data).toBe('first');
+    });
+
+    rerender({ value: 'second' });
+    await act(async () => {});
+    // Identity churn alone must not refetch...
+    expect(result.current.data).toBe('first');
+
+    // ...but a manual refetch sees the freshest fetcher.
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.data).toBe('second');
+  });
 });

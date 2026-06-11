@@ -15,6 +15,8 @@
 // `${STATESET_API_URL}/api/v1/organizations` carrying the session
 // token, mirroring the pattern in `app/api/sessions/route.ts`.
 
+import { requireAdminSession } from '@/lib/shared/auth-session';
+
 interface OrgOption {
   id: string;
   name: string;
@@ -23,8 +25,14 @@ interface OrgOption {
 /**
  * Returns the org list visible to the current operator. Always serializable
  * — safe to pass directly to a Client Component.
+ *
+ * Gated by `requireAdminSession()` — server actions bypass the API
+ * middleware. The only render-time caller (`<TopBar />`) sits in the
+ * authenticated branch of the root layout, so the session cookie is
+ * always present (or auth is disabled) when this runs during render.
  */
 export async function listOrganizations(): Promise<OrgOption[]> {
+  await requireAdminSession();
   const dev = process.env.NEXT_PUBLIC_ADMIN_DEV_ORGS?.trim();
   if (dev) {
     return dev

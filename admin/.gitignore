@@ -1,5 +1,6 @@
 .next/
 .next_root_owned_*/
+coverage/
 node_modules/
 node_modules_root_owned_*/
 store.db
