@@ -12,6 +12,7 @@ import * as inventory from './inventory.js';
 import * as returns from './returns.js';
 import * as a2a from './a2a.js';
 import * as agentCards from './agent-cards.js';
+import * as agentReceipt from './agent-receipt.js';
 import * as agentRuntime from './agent-runtime.js';
 import * as a2aAutomation from './a2a-automation.js';
 import * as a2aIntelligence from './a2a-intelligence.js';
@@ -77,6 +78,7 @@ export const commands = {
   returns,
   a2a,
   'agent-cards': agentCards,
+  'agent-receipt': agentReceipt,
   'agent-runtime': agentRuntime,
   'a2a-automation': a2aAutomation,
   'a2a-intelligence': a2aIntelligence,
