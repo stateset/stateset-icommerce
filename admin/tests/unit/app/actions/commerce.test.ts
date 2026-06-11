@@ -142,7 +142,7 @@ describe('commerce actions auth guard', () => {
 
     it('rejects approveReturn and processRefund', async () => {
       await expect(approveReturn('ret-1')).rejects.toMatchObject(UNAUTHORIZED);
-      await expect(processRefund('ret-1', 'original_payment')).rejects.toMatchObject(
+      await expect(processRefund('ret-1', 'original')).rejects.toMatchObject(
         UNAUTHORIZED
       );
       expect(returnsApi.approve).not.toHaveBeenCalled();
