@@ -6,6 +6,91 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+- **ICP: RFC 8785 canonicalization parity across all four IUTs.** The Go
+  IUT HTML-escaped `<`, `>`, `&`, escaped U+0008/U+000C as ``/``
+  instead of `\b`/`\f`, passed non-minimal number literals (`1.50`) through
+  verbatim, and sorted object keys in code-point rather than UTF-16
+  code-unit order; the Python IUT serialized via bare `json.dumps`, so
+  float formatting diverged from ES `Number::toString` (`10.0` → `"10.0"`,
+  `1e-6` → `"1e-06"`). Both now implement explicit RFC 8785 serializers
+  mirroring the JS reference, verified byte-identical against it on a
+  3,000-case control-char/astral/double fuzz corpus. Vector
+  `02-canonical-json` grew from 11 to 20 sub-cases (HTML-escape chars,
+  non-minimal numbers, exponent boundaries, max safe integer, negative
+  zero, U+2028/U+2029, `\b`/`\f`, control-char sweep) with expected outputs
+  generated from the reference implementation, and the conformance runner
+  now pipes raw `inputs.json` bytes to IUTs so non-minimal-number inputs
+  reach them unnormalized.
+- **ICP: cross-IUT determinism CI gate actually runs.** The check invoked
+  the Rust IUT binary from a job that never built it (broken since
+  inception); it is now a self-contained job that builds the Rust and Go
+  IUTs and compares 6 cryptographic fields byte-for-byte across all four
+  implementations (was JS×Rust only).
+- **Admin: `useEmbeddedData` no longer refetches continuously.** Inline
+  arrow fetchers (used by every dashboard consumer) re-created the
+  `useCallback` each render, so the fetch effect re-fired back-to-back
+  instead of polling on `refreshInterval`. The hook now holds the latest
+  fetcher in a ref; regression tests pass a fresh fetcher identity per
+  render and assert single-fetch + interval cadence.
+- **CLI: treasury LLM-billing config defaulting.** A constant-true
+  expression in `claude-harness.js` made `TREASURY_LLM_BILLING` impossible
+  to disable at all 4 sites.
+
+### Security
+- **Admin: server actions now require an authenticated session.** All 63
+  exported `'use server'` actions (`commerce.ts`, `active-org.ts`,
+  `organizations.ts`) — including `processRefund`, `adjustInventory`, and
+  `approveReturn` — call `requireAdminSession()` first, mirroring
+  middleware semantics including the dev-only auth-disabled bypass
+  (hard-off in production). Previously they called straight into the
+  embedded engine with no check.
+- **Dependencies: high-severity npm advisories resolved.** Root lockfile
+  bumps minimatch (ReDoS), flatted, ajv, brace-expansion; cli lockfile
+  regenerated clearing its high advisory. `npm audit --audit-level=high`
+  exits 0 in both.
+- **HTTP: negotiations API hardened.** Monetary fields moved from `f64`
+  to `rust_decimal::Decimal` (string-serialized, matching the rest of the
+  API) and the in-memory store is now tenant-scoped — cross-tenant reads
+  and mutations 404. DB persistence via the V9 `a2a_negotiations` tables
+  remains a documented follow-up (no repository traits exist yet).
+
+### Changed
+- **ICP spec: normative signing encoding is RFC 8785 JCS JSON.** The spec
+  previously mandated Canonical CBOR signatures while the entire reference
+  stack (handler, SDKs, IUTs, conformance suite) signs JCS JSON. CBOR is
+  now an explicitly reserved binary profile planned for icp-1.1, with the
+  change propagated across ICP-1.0-DRAFT §5, canonicalization.md, PACKET,
+  SETTLERS, error-codes, ICPIPs, examples, and outreach docs. The
+  conformance clause now points at the live `icp-conformance/vectors/`
+  suite instead of a placeholder `test-vectors/` directory.
+- **HTTP: OpenAPI spec covers the full mounted surface.** 75/75 mounted
+  paths and 104 operations documented (was 41/73), including negotiations,
+  A2A messaging/credit, subscriptions, promotions, store credits,
+  warranties, segments, currency, and the SSE events stream. A new
+  bidirectional drift-guard test fails when a route is mounted without
+  spec coverage or vice versa. Query-parameter structs previously rendered
+  as `in: path` are fixed crate-wide (22 structs). `shipping-zones` (4
+  endpoints) is now mounted and documented after repairing the orphaned
+  module.
+
+### Removed
+- **Dead code:** bit-rotted orphan route files `routes/tax.rs` and
+  `routes/manufacturing.rs` (never mounted, ~18 compile errors against
+  redesigned core models; git history preserves them) and the unreferenced
+  `cli/stateset-doctor.js` (381 lines, superseded by `cli/bin/stateset-doctor.js`).
+- **Docs drift:** README "What's New in v1.6.0" no longer carries stale
+  v1.2.0 release-notes text (4-verb claim); ICP.md and the spec docs now
+  state the true shipped set — all 7 core intent verbs plus the
+  `channel.register` extension (ICPIP-0005). Stale MCP tool counts in
+  `cli/.claude/CLAUDE.md` corrected (737 tools / 63 domains).
+
+### Testing
+- **13 orphaned `cli/test/mcp/` files (246 tests) now run in CI** via the
+  `npm test` glob. Admin suite grew to 849 tests (auth-guard + refetch-loop
+  regressions). `stateset-http` at 524 tests including 4 new OpenAPI
+  drift-guard tests.
+
 ## [1.6.0] - 2026-05-19
 
 ### Added
