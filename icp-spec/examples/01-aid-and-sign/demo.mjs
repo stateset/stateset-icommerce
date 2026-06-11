@@ -10,10 +10,10 @@
 // Run:   node demo.mjs
 // Reqs:  Node 18+ (uses node:crypto Ed25519 + X25519 stock)
 //
-// This demo uses canonical JSON for clarity. Production ICP uses canonical
-// CBOR (RFC 8949 §4.2.2). The demo's signing approach is correct; only the
-// serialization differs. See `icp-spec/schemas/canonicalization.md`
-// (forthcoming) for the full CBOR rules.
+// This demo signs the RFC 8785 JCS (canonical JSON) encoding of the payload —
+// exactly what icp-1.0 specifies as the normative signing encoding (spec §5.1).
+// A binary Canonical CBOR profile (RFC 8949 §4.2.2) is reserved for icp-1.1.
+// See `icp-spec/schemas/canonicalization.md` for the full rules.
 
 import {
   generateKeyPairSync,
@@ -61,9 +61,9 @@ const now = new Date();
 const exp = new Date(now.getTime() + 600 * 1000); // §5.3: ≤600s for Intents
 
 const intent = {
-  // Order matters: this is the canonical JSON shape used in the demo.
-  // (Real ICP signs canonical CBOR; the per-key ordering rules are in
-  // schemas/canonicalization.md.)
+  // Declaration order here is cosmetic: signing uses the RFC 8785 JCS
+  // encoding (lexicographic key sort), the normative icp-1.0 rule per
+  // schemas/canonicalization.md §1.
   v: 'icp-1.0',
   verb: 'purchase.create',
   intent_id: `icp_int_${ulidLike()}`,

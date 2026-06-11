@@ -181,7 +181,7 @@
           "properties": {
             "alg": { "enum": ["ed25519", "ml-dsa-65", "ed25519+ml-dsa-65"] },
             "kid": { "type": "string", "description": "Principal's key identifier." },
-            "sig": { "type": "string", "description": "Hex or base64url-encoded signature bytes." }
+            "sig": { "type": "string", "description": "Signature bytes as lowercase hex (ICP-1.0 §5.2)." }
           }
         }
       }

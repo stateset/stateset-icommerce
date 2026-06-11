@@ -67,8 +67,11 @@ Result: **6/6 PASS** end-to-end.
 | GET  | `/icp/v1/settlements/:id`          | Fetch a SettlementReceipt |
 | GET  | `/healthz`                         | Liveness probe |
 
-All bodies are JSON. Production handlers SHOULD additionally accept
-`application/icp+cbor` per spec §5.1.
+All bodies are JSON (`application/icp+json`) — the normative icp-1.0
+encoding per spec §5.1. A binary Canonical CBOR encoding
+(`application/icp+cbor`) is reserved for a future binary profile
+(planned for icp-1.1); handlers MUST NOT emit or accept CBOR-signed
+messages under `v: "icp-1.0"`.
 
 ### OpenAPI
 
@@ -165,7 +168,8 @@ The handler itself doesn't change — only the Backend.
 - [ ] Replace in-memory `state` module with the engine's persistent store
 - [ ] Add per-AID rate limits (token bucket)
 - [ ] OpenTelemetry traces (one span per protocol step)
-- [ ] CBOR transport (`application/icp+cbor`) alongside JSON
+- [ ] CBOR transport (`application/icp+cbor`) when the reserved icp-1.1
+      binary profile ships (MUST NOT be enabled under `v: "icp-1.0"`)
 - [ ] Connect to a real Settler signing daemon for actual chain events
       (the current implementation simulates funding and release)
 - [ ] Replay nonce LRU cache, sized for `max(exp + 86400s)`

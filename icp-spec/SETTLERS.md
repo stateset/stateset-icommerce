@@ -103,7 +103,7 @@ EscrowEvents at every transition. Events are append-only with monotonic
 `seq`. Replay of events from `seq=0` MUST reconstruct the exact current
 state.
 
-```cbor
+```json
 {
   "type": "icp.escrow.event",
   "v": "icp-1.0",
@@ -136,7 +136,7 @@ At terminal state (`released` or `refunded`), the Settler MUST produce a
 SettlementReceipt and make it retrievable by `escrow_id` for at least
 **7 years** (audit retention).
 
-```cbor
+```json
 {
   "type": "icp.settlement.receipt",
   "v": "icp-1.0",

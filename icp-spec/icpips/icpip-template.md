@@ -33,7 +33,7 @@ NOT, SHOULD, SHOULD NOT, MAY) for normative requirements — these
 are interpreted per BCP 14.
 
 For Standards Track:
-- Describe the wire format change (CBOR + JSON canonicalization).
+- Describe the wire format change (canonical JSON; reserved CBOR profile if applicable).
 - Describe how existing implementations must migrate.
 - Provide a JSON Schema if applicable.
 - Define new error codes if applicable.

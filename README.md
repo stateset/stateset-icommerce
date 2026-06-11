@@ -71,7 +71,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.6.0](#whats-new-in-v110)
+- [What's New in v1.6.0](#whats-new-in-v160)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -319,26 +319,29 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ## What's New in v1.6.0
 
-**v1.6.0 adds the `inventory.query` verb** — the highest-call-volume verb
-in B2B agentic commerce. ICP-1.0 now covers **four intent verbs spanning
-~99% of commerce dollar volume**:
+**v1.6.0 completes three-language SDK symmetry on the ICP trust
+primitives.** The Rust and Python SDKs gain `verify_settlement_receipt`
+(mirroring the JS helper byte-for-byte), all three first-party SDKs now
+ship `registerWebhook` + `verifyWebhook` + `fetchChannelEvents` +
+`verifySettlementReceipt`, and operator-facing integration guides land
+under `icp-spec/guides/` (merchant integration, Settler implementation,
+ICPIP-0005 quickstart). See [`CHANGELOG.md`](./CHANGELOG.md) for the
+full entry.
+
+ICP-1.0 ships **all seven core intent verbs** — 100% of the addressable
+commerce verb surface:
 
 - `inventory.query`     — discovery (read-only, highest call volume)
 - `purchase.create`     — one-shot retail
 - `subscription.create` — recurring revenue (SaaS, streaming, B2B services)
+- `subscription.cancel` — signed, auditable subscription termination
 - `purchase.return`     — returns / refunds with `max_refund` ceiling
+- `quote.request`       — B2B wholesale RFQ (non-binding PriceProposal)
+- `payout.request`      — marketplace seller payouts (inverted signing)
 
-The new `inventory.query` returns a merchant-signed **InventorySnapshot**
-with a `valid_until` validity window. It doesn't trigger an escrow; it
-serves as the discovery primitive that precedes every value-transferring
-Intent. Snapshot-quote consistency rule: when a subsequent
-`purchase.create` Quote diverges from a still-valid snapshot's price for
-the same SKU, the merchant SHOULD include `snapshot_id` in the Quote
-metadata; conformant buyers MAY refuse divergent Quotes as price-walk
-attempts.
-
-Both the HTTP handler and the MCP server now advertise and accept all
-four verbs. **Handler 12/12 PASS, MCP 6/6 PASS** end-to-end.
+The HTTP handler and the MCP server accept all seven; the HTTP handler
+additionally accepts the `channel.register` extension verb (ICPIP-0005
+push channels).
 
 **v1.1.0** introduced the Intelligent Commerce Protocol (ICP) reference
 implementation set: normative spec, four cross-language conformance

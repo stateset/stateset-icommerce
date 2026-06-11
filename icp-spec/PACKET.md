@@ -33,7 +33,7 @@ settlement. No other public protocol covers this layer.
 | Asset | Status | Where |
 |---|---|---|
 | Open spec, ICP-1.0 draft | Normative, frozen surface | `icp-spec/ICP-1.0-DRAFT.md` |
-| Canonical serialization rules | Normative (CBOR + JSON) | `icp-spec/schemas/canonicalization.md` |
+| Canonical serialization rules | Normative (RFC 8785 JCS; CBOR reserved for icp-1.1) | `icp-spec/schemas/canonicalization.md` |
 | Error code enumeration | 60+ codes, 13 namespaces, frozen | `icp-spec/schemas/error-codes.md` |
 | Settler interface | Normative spec | `icp-spec/SETTLERS.md` |
 | First reference Settler binding | USDC on Base | `icp-spec/settlers/usdc-base.md` |

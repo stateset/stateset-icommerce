@@ -33,7 +33,7 @@ full-stack commerce platform.
                ▼                         ▼
 ┌──────────────────────────┐  ┌─────────────────────────┐
 │  ICP wire codec          │  │  Auth & identity        │
-│  - canonical CBOR        │  │  - AID resolution       │
+│  - canonical JSON (JCS)  │  │  - AID resolution       │
 │  - Ed25519 + ML-DSA-65   │  │  - PrincipalBinding     │
 │  - replay nonce cache    │  │     verification        │
 └──────────────┬───────────┘  └─────────────┬───────────┘
@@ -63,7 +63,7 @@ stateset-icp-handler/
 ├── Cargo.toml                          # workspace
 ├── crates/
 │   ├── icp-handler-core/               # Backend trait, types, errors
-│   ├── icp-handler-codec/              # Wire codec (CBOR/JSON, signing)
+│   ├── icp-handler-codec/              # Wire codec (canonical JSON, signing)
 │   ├── icp-handler-http/               # axum HTTP binding
 │   ├── icp-handler-grpc/               # tonic gRPC binding
 │   ├── icp-handler-mcp/                # MCP server binding
@@ -146,9 +146,9 @@ GET    /icp/v1/settlers              # this handler's accepted Settler allowlist
 GET    /icp/v1/.well-known/icp       # capabilities advertisement
 ```
 
-All bodies are CBOR (`Content-Type: application/icp+cbor`) by default with
-a JSON profile (`application/icp+json`) for ergonomics. Signatures are
-always computed over canonical CBOR per spec §5.1.
+All bodies are canonical JSON (`Content-Type: application/icp+json`); the
+binary CBOR profile (`application/icp+cbor`) is reserved for icp-1.1.
+Signatures are always computed over RFC 8785 JCS per spec §5.1.
 
 ## MCP binding
 
@@ -237,7 +237,7 @@ Most of what's needed already exists in the engine:
 | Need | Source |
 |---|---|
 | Ed25519 + ML-DSA-65 signing | `crates/stateset-crypto/src/sign.rs`, `pqc.rs` |
-| Canonical CBOR | `crates/stateset-crypto/src/canonicalize.rs` |
+| Canonical JSON (RFC 8785 JCS) | `crates/stateset-crypto/src/canonicalize.rs` |
 | Envelope/signature framing | `crates/stateset-protocol/src/envelope.rs` |
 | Escrow state machine | `crates/stateset-a2a/src/escrow/` |
 | Dispute logic | `crates/stateset-a2a/src/disputes/`, `dispute_rules.rs` |

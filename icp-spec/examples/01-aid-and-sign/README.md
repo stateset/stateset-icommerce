@@ -46,10 +46,11 @@ tampering is silently accepted (which would be a security bug).
 
 ## What this does NOT do
 
-- **Canonical CBOR.** Production ICP signs canonical CBOR (RFC 8949 §4.2.2).
-  The demo signs canonical JSON (RFC 8785 JCS subset) for readability and
-  to keep the demo dependency-free. The signing primitive (Ed25519 over
-  canonical bytes) is identical; only the serialization differs.
+- **Canonical CBOR.** ICP-1.0 signs canonical JSON (RFC 8785 JCS) — which
+  is exactly what the demo does (with a dependency-free JCS subset). The
+  binary CBOR profile (RFC 8949 §4.2.2) is reserved for icp-1.1; when it
+  ships, the signing primitive (Ed25519 over canonical bytes) stays
+  identical and only the serialization changes.
 - **PrincipalBinding signing.** The demo uses a placeholder
   `<would-be-signed-by-principal-key>`. A real PrincipalBinding is signed
   by the Principal's key, not the Agent's. See
@@ -76,7 +77,8 @@ The Rust equivalent (using `crates/stateset-crypto`) ships in
 
 ## Becoming test vector 01
 
-This demo is the human-readable seed for `test-vectors/icp-1.0/01-aid-derivation/`.
+This demo is the human-readable seed for
+`icp-conformance/vectors/icp-1.0/01-aid-derivation/`.
 The conformance vector replaces the random keypair with a deterministic
 HKDF-derived seed (so output is byte-identical across implementations)
 and asserts the resulting AID matches the recorded fixture.

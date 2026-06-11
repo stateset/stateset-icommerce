@@ -77,9 +77,10 @@ by every tick of the multibillion-dollar build loop.
   the final SettlementReceipt is co-signed. CI verifies the transcript
   is well-formed (>5KB, contains expected sections). The artifact
   that converts "interesting idea" into "let's set up a call." Tick 9.
-- [x] **`schemas/canonicalization.md`** — normative serialization rules
-  for both Canonical CBOR (RFC 8949 §4.2.2 deterministic) and Canonical
-  JSON (RFC 8785 JCS). JSON↔CBOR mapping table. Monetary-amount-as-string
+- [x] **`schemas/canonicalization.md`** — normative serialization rules:
+  Canonical JSON (RFC 8785 JCS, the icp-1.0 signing encoding) plus the
+  reserved Canonical CBOR binary profile (RFC 8949 §4.2.2, planned for
+  icp-1.1). JSON↔CBOR mapping table. Monetary-amount-as-string
   rule. Without this, second implementations cannot reproduce signatures.
   Tick 10.
 - [x] **`schemas/error-codes.md`** — full normative enumeration of
@@ -87,7 +88,7 @@ by every tick of the multibillion-dollar build loop.
   replay, policy, format, version, escrow, settlement, dispute, arbiter,
   rate, settler, conformance). Each with emission conditions + HTTP
   status mapping. Frozen for ICP-1.0 major. Tick 10.
-- [x] **Vector 02 — canonical-json (11 sub-cases)** — exercises every
+- [x] **Vector 02 — canonical-json (20 sub-cases)** — exercises every
   canonicalization rule: empty object/array, key reordering, nested
   reordering, array preservation, string escapes, bool/null, integers,
   decimals, monetary strings, full Intent regression. Both JS and Rust
@@ -888,7 +889,7 @@ by every tick of the multibillion-dollar build loop.
    contract events, signs ICP EscrowEvents, serves the discovery doc and
    POR endpoint. ~2,000 LOC TypeScript. Becomes `services/settler-stateset/`.
 5. **`examples/02-escrow-roundtrip/`** — full lifecycle demo against the
-   testnet contract. CBOR-correct.
+   testnet contract. Wire-format-correct.
 6. **Schemas for remaining intent verbs** (§6.2–§6.6) and Quote/EscrowEvent.
 7. **`schemas/canonicalization.md`** — JSON↔CBOR canonical mapping rules.
 8. **`schemas/error-codes.md`** — full enumeration.
@@ -923,7 +924,7 @@ If this is "make it a multibillion-dollar system," the score after 19 ticks:
   in 90 seconds. Tick 9.
 - ✅ **Spec is now genuinely implementable from scratch.** Canonicalization
   rules normative (canonicalization.md). Error codes enumerated (60+
-  codes across 13 namespaces). Second vector (canonical-json, 11
+  codes across 13 namespaces). Second vector (canonical-json, 20
   sub-cases) proves the rules produce identical bytes across two
   language ecosystems. A third-party team can now build a fresh ICP
   implementation against the spec alone, and CI will tell them when

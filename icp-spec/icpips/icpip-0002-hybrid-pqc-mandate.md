@@ -127,7 +127,7 @@ threshold determination.
 
 For high-value Intents, the signature envelope MUST be:
 
-```cbor
+```json
 {
   "alg": "ed25519+ml-dsa-65",
   "kid": <AID-string>,

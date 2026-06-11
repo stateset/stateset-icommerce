@@ -19,7 +19,7 @@ humans).
 
 ## Format
 
-```cbor
+```json
 {
   "type": "icp.error",
   "code": "<namespace>.<specific>",
@@ -127,7 +127,7 @@ humans).
 | Code                          | When emitted                                          |
 |-------------------------------|-------------------------------------------------------|
 | `format.bad_json`             | Request body is not valid JSON                       |
-| `format.bad_cbor`             | Request body is not valid CBOR                       |
+| `format.bad_cbor`             | Request body is not valid CBOR (reserved icp-1.1 binary profile) |
 | `format.canonicalization_failed` | Canonicalization rule violated (e.g. unsorted keys, indefinite-length CBOR) |
 | `format.missing_field`        | Required field absent                                |
 | `format.unknown_verb`         | Intent `verb` not implemented or not recognized      |

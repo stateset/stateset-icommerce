@@ -10,53 +10,26 @@ ICP-1.0 defines **two** canonicalization formats:
 
 | Format | Use | MIME / encoding |
 |---|---|---|
-| **Canonical CBOR** | Wire signing (normative) | `application/icp+cbor`, RFC 8949 §4.2.2 |
-| **Canonical JSON (JCS)** | API/debug/transport boundary | `application/icp+json`, RFC 8785 |
+| **Canonical JSON (JCS)** | Wire signing (normative for icp-1.0) | `application/icp+json`, RFC 8785 |
+| **Canonical CBOR** | Reserved — future binary profile (planned for icp-1.1) | `application/icp+cbor`, RFC 8949 §4.2.2 |
 
-Implementations **MUST** support Canonical CBOR. They **MAY** also
-accept and emit Canonical JSON at API boundaries (HTTP, MCP, gRPC). The
-signature payload is **always** the Canonical CBOR encoding, regardless
-of the transport.
+Implementations **MUST** support Canonical JSON. The signature payload
+is **always** the RFC 8785 JCS encoding of the payload object under
+`v: "icp-1.0"`, regardless of the transport (HTTP, MCP, gRPC). The
+conformance profile `icp-1.0-core` exercises these rules directly via
+vector `02-canonical-json`.
 
-A debug-mode profile (`icp-1.0-core-json-only`) covers implementations
-that sign over Canonical JSON only — useful during reference impl
-development. **JSON-only signatures MUST NOT be deployed to production.**
+Canonical CBOR is **reserved** for a future binary profile.
+Implementations **MUST NOT** emit or accept CBOR-signed messages under
+`v: "icp-1.0"`. The CBOR rules in §2 are specified now so that
+implementations can prepare for the binary profile without a breaking
+re-specification.
 
-## 1. Canonical CBOR (RFC 8949 §4.2.2, deterministic encoding)
-
-Reference: RFC 8949 §4.2.2 "Deterministically Encoded CBOR."
-
-An implementation **MUST**:
-
-1. Encode integers in the shortest form possible (e.g. encode `0..23`
-   as a single byte, never as multi-byte CBOR uints).
-2. Encode floats using only the shortest form that preserves the value
-   (half/single/double-precision selection per RFC 8949 §4.2.2 R4).
-3. Encode definite-length arrays and maps. Indefinite-length encoding
-   is FORBIDDEN.
-4. Sort map keys in lexicographic order of their **bytewise encoded
-   form** (NOT codepoint or string compare).
-5. Encode UTF-8 strings using the major-type-3 (`tstr`) encoding,
-   shortest form.
-6. Use tag `0` for RFC 3339 timestamps when carrying timestamps as tagged
-   values; or carry timestamps as plain `tstr` per the spec's choice.
-   ICP-1.0 normative form: plain `tstr`.
-7. Booleans: simple values `false=0xF4`, `true=0xF5`. Never as integers.
-8. Null: simple value `0xF6`. Never as the empty string or absent key.
-
-Negative cases (FORBIDDEN):
-- Indefinite-length encodings
-- Floats encoded in a longer form than necessary
-- Maps with unsorted keys
-- Duplicate keys
-- Leading-zero or non-minimal integer encodings
-
-## 2. Canonical JSON (RFC 8785 JCS)
+## 1. Canonical JSON (RFC 8785 JCS) — normative for icp-1.0
 
 Reference: RFC 8785 "JSON Canonicalization Scheme (JCS)."
 
-Implementations that support Canonical JSON **MUST** follow RFC 8785
-strictly. Key properties:
+Implementations **MUST** follow RFC 8785 strictly. Key properties:
 
 - UTF-8, no BOM.
 - No insignificant whitespace.
@@ -92,11 +65,42 @@ ASCII string content. The subset rules:
 
 This subset is fully RFC-8785-compatible for ICP-1.0 payload shapes.
 
-## 3. Mapping JSON ↔ CBOR
+## 2. Reserved: Canonical CBOR (RFC 8949 §4.2.2, deterministic encoding)
 
-When a payload is presented as Canonical JSON at an API boundary, an
-implementation that signs in Canonical CBOR **MUST** lossless-roundtrip
-through these rules:
+Reference: RFC 8949 §4.2.2 "Deterministically Encoded CBOR."
+
+These rules are **reserved** for the future binary profile (planned for
+icp-1.1); no icp-1.0 signature path exercises them. An implementation
+of the future binary profile **MUST**:
+
+1. Encode integers in the shortest form possible (e.g. encode `0..23`
+   as a single byte, never as multi-byte CBOR uints).
+2. Encode floats using only the shortest form that preserves the value
+   (half/single/double-precision selection per RFC 8949 §4.2.2 R4).
+3. Encode definite-length arrays and maps. Indefinite-length encoding
+   is FORBIDDEN.
+4. Sort map keys in lexicographic order of their **bytewise encoded
+   form** (NOT codepoint or string compare).
+5. Encode UTF-8 strings using the major-type-3 (`tstr`) encoding,
+   shortest form.
+6. Use tag `0` for RFC 3339 timestamps when carrying timestamps as tagged
+   values; or carry timestamps as plain `tstr` per the spec's choice.
+   ICP normative form: plain `tstr`.
+7. Booleans: simple values `false=0xF4`, `true=0xF5`. Never as integers.
+8. Null: simple value `0xF6`. Never as the empty string or absent key.
+
+Negative cases (FORBIDDEN):
+- Indefinite-length encodings
+- Floats encoded in a longer form than necessary
+- Maps with unsorted keys
+- Duplicate keys
+- Leading-zero or non-minimal integer encodings
+
+## 3. Mapping JSON ↔ CBOR (reserved profile)
+
+When the reserved CBOR profile ships, a payload presented as Canonical
+JSON at an API boundary by an implementation that signs in Canonical
+CBOR **MUST** lossless-roundtrip through these rules:
 
 | JSON | CBOR |
 |---|---|
@@ -118,8 +122,8 @@ float for the CBOR encoding are non-conformant.
 For every input value V and every conformant implementation:
 
 ```
-canonicalize_cbor(V) == canonicalize_cbor(V)   ; byte-identical
 canonicalize_json(V) == canonicalize_json(V)   ; byte-identical
+canonicalize_cbor(V) == canonicalize_cbor(V)   ; byte-identical
 ```
 
 This is the property the `icp-conformance` suite verifies, via vector
@@ -145,10 +149,10 @@ the protocol breaks.
 ## 6. Test vectors
 
 `icp-conformance/vectors/icp-1.0/02-canonical-json/` is the normative
-vector for canonical JSON. It contains 10 sub-cases (empty object,
+vector for canonical JSON. It contains 20 sub-cases (empty object,
 nested object, array preserves order, string escapes, boolean/null,
 integers, monetary string vs decimal, etc.). Both reference IUTs (JS
 and Rust) pass this vector with byte-identical outputs.
 
-Future vector `04-canonical-cbor` will cover the CBOR rules when
-CBOR-signed payloads ship in the wire format.
+Future vector `04-canonical-cbor` will cover the CBOR rules when the
+reserved CBOR profile ships (planned for icp-1.1).

@@ -28,7 +28,7 @@ settlement. No other public protocol covers this layer.
 | Layer | Artifact | Tests |
 |---|---|---|
 | **Spec** | [`icp-spec/ICP-1.0-DRAFT.md`](./icp-spec/ICP-1.0-DRAFT.md) — normative protocol; canonicalization rules; 60+ error codes | — |
-| **Wire** | **6 intent verbs shipping** (`purchase.create`, `subscription.create`, `subscription.cancel`, `purchase.return`, `inventory.query`, `quote.request`); 1 more (`payout.request`) deferred — see ICPIP-0004 | — |
+| **Wire** | **All 7 core intent verbs shipping** (`purchase.create`, `subscription.create`, `subscription.cancel`, `purchase.return`, `inventory.query`, `quote.request`, `payout.request` — see ICPIP-0003/0004), plus the `channel.register` extension verb (ICPIP-0005) | — |
 | **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic | 3 vectors × **4 IUTs (JS · Rust · Go · Python)** = **12 byte-identical PASS** |
 | **Reference contract** | [`icp-spec/contracts/usdc-base/ICPEscrow.sol`](./icp-spec/contracts/usdc-base/) — production-quality Solidity | **15/15 Foundry PASS** |
 | **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference + [`openapi.yaml`](./icp-handler/openapi.yaml) for codegen; ICPIP-0005 register + signed emit + state-transition publish + recovery API | **39/39 Node-test PASS** |
@@ -115,7 +115,22 @@ when the parties are autonomous AI agents:
   the only way out of a subscription is out-of-band — which produces
   no audit-grade record.
 
-Two more verbs ship in ICP-1.1: `quote.request`, `payout.request`.
+- **quote.request** — buyer Agent requests pricing without commitment;
+  the B2B wholesale RFQ primitive. Merchant signs a non-binding
+  PriceProposal with a `valid_until` window. The buyer commits later
+  with a `purchase.create` referencing `from_proposal_id`, and the
+  merchant must honor proposal prices while the proposal is valid.
+  (ICPIP-0003)
+
+- **payout.request** — seller Agent requests release of platform-held
+  funds; the marketplace payout primitive and the only verb with
+  inverted signing direction (the recipient signs the Intent). Platform
+  signs a PayoutAuthorization with itemized binding fees and the rail
+  finalization timing. (ICPIP-0004)
+
+All seven core verbs ship in ICP-1.0. ICPIP-0005 adds an eighth, the
+`channel.register` extension verb, for registering webhook/SSE push
+channels.
 
 ## What ICP is NOT
 

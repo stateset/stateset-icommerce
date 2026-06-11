@@ -21,8 +21,9 @@ this document are to be interpreted as described in BCP 14 (RFC 2119,
 RFC 8174) when, and only when, they appear in all capitals.
 
 An implementation is **ICP-1.0 conformant** if and only if it passes 100% of
-the `icp-conformance` test suite tagged `icp-1.0`, including all signed test
-vectors in `test-vectors/icp-1.0/`.
+the `icp-conformance` suite for spec version `icp-1.0` — every vector in
+`icp-conformance/vectors/icp-1.0/`, executed via the `icp-conformance`
+runner (`node runner/run.mjs --profile icp-1.0-core`).
 
 ## 3. Architecture
 
@@ -106,34 +107,43 @@ Intent above their configured trust-floor value.
 
 ### 5.1 Canonicalization
 
-ICP messages are encoded as **Canonical CBOR** (RFC 8949 §4.2.2 deterministic
-encoding). Every signed message is the CBOR encoding of a map with exactly
-two top-level keys:
+ICP messages are encoded as **Canonical JSON** (RFC 8785 JSON
+Canonicalization Scheme, JCS). Every signed message is a JSON object with
+exactly two top-level keys:
 
-```cbor
+```json
 {
-  "p": <payload-bytes>,        // CBOR-encoded payload object
+  "p": <payload-object>,       // the payload object (§6–§9)
   "s": <signature-array>       // array of signatures, see §5.2
 }
 ```
 
-JSON representation is permitted at API boundaries (REST, MCP) but signatures
-are computed over the canonical CBOR encoding only. JSON-to-CBOR
-canonicalization rules are in `schemas/canonicalization.md`.
+Signatures are computed over the RFC 8785 JCS encoding of the payload
+object only; verifiers **MUST** re-canonicalize the received payload and
+verify against those bytes. The canonicalization rules are in
+`schemas/canonicalization.md` §1.
+
+A binary **Canonical CBOR** encoding (RFC 8949 §4.2.2 deterministic
+encoding, `application/icp+cbor`) is **reserved** for a future binary
+profile, planned for icp-1.1. Implementations **MUST NOT** emit or accept
+CBOR-signed messages under `v: "icp-1.0"`. The reserved CBOR rules are
+specified in `schemas/canonicalization.md` §2 so implementations can
+prepare without a breaking re-specification.
 
 ### 5.2 Signatures
 
 The `s` array contains one or more signature objects:
 
-```cbor
+```json
 {
   "alg": "ed25519" | "ml-dsa-65" | "ed25519+ml-dsa-65",
   "kid": <AID-string>,
-  "sig": <signature-bytes>
+  "sig": <signature-hex>
 }
 ```
 
-When `alg` is the hybrid form, `sig` is the concatenation
+`sig` carries the signature bytes as lowercase hex. When `alg` is the
+hybrid form, the signature bytes are the concatenation
 `ed25519_sig || ml_dsa_65_sig`. Verifiers **MUST** verify both components.
 
 ### 5.3 Replay protection
@@ -152,7 +162,7 @@ Verifiers **MUST** reject any message with an already-seen nonce within the
 ## 6. Intent objects
 
 An **Intent** is an Agent's signed request for a commerce action. ICP-1.0
-defines six core verbs:
+defines seven core verbs:
 
 | Verb | Description | §  |
 |---|---|---|
@@ -161,9 +171,14 @@ defines six core verbs:
 | `inventory.query` | Agent requests inventory availability | 6.3 |
 | `quote.request` | Agent requests pricing without commitment | 6.4 |
 | `subscription.create` | Recurring purchase | 6.5 |
+| `subscription.cancel` | Cancel an existing subscription authorization | 6.5.1 |
 | `payout.request` | Agent requests release of held funds | 6.6 |
 
 Each verb has a normative JSON Schema in `schemas/intent.<verb>.schema.json`.
+
+Extension verbs MAY be defined through the ICPIP process (e.g.
+`channel.register`, ICPIP-0005); they follow the same envelope, signature,
+and replay rules as the core verbs.
 
 ### 6.1 purchase.create
 
@@ -211,7 +226,7 @@ Each subsequent billing cycle produces an **occurrence**: an automatic
 SHALL NOT initiate an occurrence whose Quote total exceeds
 `max_total_per_period` (the ceiling rule from §11.4 generalized to the
 recurring case). Buyers MAY cancel by signing a `subscription.cancel`
-Intent (verb specified in ICP-1.1).
+Intent (§6.5.1).
 
 ```json
 {
@@ -438,8 +453,6 @@ forward settlements (§S.3).
 
 These error codes are added to `schemas/error-codes.md` under the
 `policy.return.*` namespace.
-
-### 6.3 inventory.query
 
 ### 6.3 inventory.query
 
@@ -700,9 +713,9 @@ audit systems **MUST** treat the SettlementReceipt as authoritative.
 
 ## 10. Error model
 
-ICP errors are CBOR maps with normative shape:
+ICP errors are JSON objects with normative shape:
 
-```cbor
+```json
 {
   "type": "icp.error",
   "code": "<error-code>",          // see error-codes.md
@@ -751,12 +764,13 @@ sloppy Buyer Agent to auto-accept. The `max_total` field in the Intent is a
 
 ## 12. Test vectors
 
-`test-vectors/icp-1.0/` contains the normative reference vectors. Each vector
-file is a CBOR-encoded sequence of:
+`icp-conformance/vectors/icp-1.0/` contains the normative reference vectors,
+executed via the `icp-conformance` runner (§2). Each vector is a directory
+of JSON files (`description.md`, `inputs.json`, `expected.json`) covering:
 
-1. Input messages (Intent, Quote, Escrow events)
-2. Expected output (verification result, computed AIDs, derived state)
-3. Negative cases (tampered signatures, replayed nonces, expired Intents)
+1. Input messages (deterministic key material, payloads, signatures)
+2. Expected output (verification result, computed AIDs, canonical bytes)
+3. Negative cases (tampered payloads, bit-flipped or truncated signatures)
 
 Implementations **MUST** produce identical output on the positive cases and
 **MUST** reject the negative cases with the documented error code.
@@ -766,6 +780,7 @@ Implementations **MUST** produce identical output on the positive cases and
 - RFC 2119 / RFC 8174 — Key words for use in RFCs
 - RFC 8032 — Edwards-Curve Digital Signature Algorithm (Ed25519)
 - RFC 7748 — Elliptic Curves for Security (X25519)
+- RFC 8785 — JSON Canonicalization Scheme (JCS)
 - RFC 8949 — Concise Binary Object Representation (CBOR)
 - RFC 3339 — Date and Time on the Internet
 - FIPS 203 — Module-Lattice-Based Key-Encapsulation Mechanism (ML-KEM)

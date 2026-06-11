@@ -13,8 +13,8 @@ primitives on top.
 
 Rather than fork a snowflake, we wrote it up as an open spec — ICP-1.0,
 the Intelligent Commerce Protocol. It explicitly composes with x402 by
-naming x402 as a `Settler` rail. Wire format is canonical CBOR + Ed25519
-(+ optional ML-DSA-65). Reference impl is the StateSet Rust engine
+naming x402 as a `Settler` rail. Wire format is canonical JSON (RFC 8785
+JCS) + Ed25519 (+ optional ML-DSA-65). Reference impl is the StateSet Rust engine
 (250k LOC, 15.8k tests, v1.0.4 shipping).
 
 Spec is here: `github.com/stateset/icp-spec` (forthcoming, draft attached).

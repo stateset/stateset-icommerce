@@ -56,7 +56,7 @@ function fund(
     uint256 amount,           // exact match to Quote.total
     address merchantPayoutAddress,
     bytes32 fulfillmentDeadline,  // packed: deadline_unix || dispute_window_seconds
-    bytes calldata icpQuoteSignatureBundle  // canonical CBOR of the accepted Quote
+    bytes calldata icpQuoteSignatureBundle  // canonical JSON (RFC 8785 JCS) of the accepted Quote
 ) external;
 ```
 
@@ -76,7 +76,7 @@ After fulfillment AND dispute window elapsed:
 ```solidity
 function release(
     bytes32 escrowId,
-    bytes calldata icpFulfillmentReceiptCbor,
+    bytes calldata icpFulfillmentReceiptJcs,
     bytes calldata merchantReleaseSignature
 ) external;
 ```
