@@ -634,7 +634,7 @@ stateset-icommerce/cli/
 │   └── stateset-pay.js       # Native stablecoin payments
 ├── src/
 │   ├── claude-harness.js     # Multi-agent SDK integration
-│   ├── mcp-server.js         # MCP tools (67 total)
+│   ├── mcp-server.js         # Commerce MCP server (719 tools; 737 total across 63 domains)
 │   ├── chains/               # Blockchain integration
 │   │   ├── index.js          # Module exports
 │   │   ├── config.js         # Chain & token configurations

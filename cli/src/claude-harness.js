@@ -302,7 +302,7 @@ export async function runAgentLoop({
           tokenSymbol: envTreasuryToken || 'USDC',
           agentId: envTreasuryAgent,
           dbPath: envTreasuryDb,
-          chargeLlm: envTreasuryLlm || envTreasuryEnabled,
+          chargeLlm: process.env.TREASURY_LLM_BILLING === undefined ? true : envTreasuryLlm,
         }
       : null;
 
@@ -320,7 +320,8 @@ export async function runAgentLoop({
       treasuryConfig.dbPath = envTreasuryDb;
     }
     if (treasuryConfig.chargeLlm === undefined) {
-      treasuryConfig.chargeLlm = envTreasuryLlm || envTreasuryEnabled || true;
+      treasuryConfig.chargeLlm =
+        process.env.TREASURY_LLM_BILLING === undefined ? true : envTreasuryLlm;
     }
     if (!treasuryConfig.erc8004Registry && envTreasuryRegistry) {
       treasuryConfig.erc8004Registry = envTreasuryRegistry;
@@ -2427,7 +2428,7 @@ export function createAgentStreamSession(options = {}) {
           tokenSymbol: envTreasuryToken || 'USDC',
           agentId: envTreasuryAgent,
           dbPath: envTreasuryDb,
-          chargeLlm: envTreasuryLlm || envTreasuryEnabled,
+          chargeLlm: process.env.TREASURY_LLM_BILLING === undefined ? true : envTreasuryLlm,
         }
       : null;
 
@@ -2445,7 +2446,8 @@ export function createAgentStreamSession(options = {}) {
       treasuryConfig.dbPath = envTreasuryDb;
     }
     if (treasuryConfig.chargeLlm === undefined) {
-      treasuryConfig.chargeLlm = envTreasuryLlm || envTreasuryEnabled || true;
+      treasuryConfig.chargeLlm =
+        process.env.TREASURY_LLM_BILLING === undefined ? true : envTreasuryLlm;
     }
     if (!treasuryConfig.erc8004Registry && envTreasuryRegistry) {
       treasuryConfig.erc8004Registry = envTreasuryRegistry;
