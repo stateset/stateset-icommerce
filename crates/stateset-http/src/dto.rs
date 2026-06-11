@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 /// Query parameters for paginated list endpoints.
 #[derive(Debug, Clone, Deserialize, Serialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PaginationParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -88,6 +89,7 @@ pub fn decode_cursor(cursor: &str) -> Option<(String, String)> {
 
 /// Query parameters for `GET /api/v1/orders` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct OrderFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -125,6 +127,7 @@ impl OrderFilterParams {
 
 /// Query parameters for `GET /api/v1/customers` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct CustomerFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -158,6 +161,7 @@ impl CustomerFilterParams {
 
 /// Query parameters for `GET /api/v1/products` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ProductFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -197,6 +201,7 @@ impl ProductFilterParams {
 
 /// Query parameters for `GET /api/v1/returns` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ReturnFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -481,6 +486,7 @@ pub struct InventoryResponse {
 
 /// Query parameters for `GET /api/v1/inventory` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct InventoryFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -537,6 +543,7 @@ pub struct InventoryListResponse {
 
 /// Query parameters for `GET /api/v1/shipments` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ShipmentFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -617,6 +624,7 @@ pub struct ShipmentListResponse {
 
 /// Query parameters for `GET /api/v1/payments` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PaymentFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -716,6 +724,7 @@ pub struct PaymentListResponse {
 
 /// Query parameters for `GET /api/v1/invoices` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct InvoiceFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -950,6 +959,7 @@ pub struct VersionResponse {
 
 /// Query parameters for the SSE event stream endpoint.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct EventStreamParams {
     /// Optional event type filter (e.g. `order.*`).
     pub filter: Option<String>,

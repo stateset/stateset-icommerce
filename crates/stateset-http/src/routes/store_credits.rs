@@ -27,6 +27,7 @@ pub(crate) struct CreateStoreCreditRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct StoreCreditFilterParams {
     pub limit: Option<u32>,
     pub offset: Option<u32>,

@@ -10,10 +10,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use stateset_a2a::messaging::{A2AMessage, MessageQueue, MessageStatus, MessageType};
 use std::sync::{Arc, RwLock};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::error::HttpError;
+use crate::error::{ErrorBody, HttpError};
 use crate::state::AppState;
 
 type MsgStore = Arc<RwLock<MessageQueue>>;
@@ -48,12 +48,14 @@ pub struct SendMessageRequest {
     pub to_agent_id: String,
     pub from_agent_id: String,
     pub message_type: String,
+    #[schema(value_type = HashMap<String, String>)]
     pub payload: serde_json::Value,
     pub conversation_id: Option<String>,
 }
 
 /// Query params for listing messages.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct MessageFilterParams {
     pub to_agent_id: Option<String>,
     pub status: Option<String>,
@@ -89,8 +91,11 @@ fn msg_to_response(m: &A2AMessage) -> MessageResponse {
 }
 
 /// `POST /api/v1/a2a/messages`
+#[utoipa::path(post, path = "/api/v1/a2a/messages", tag = "a2a",
+    request_body = SendMessageRequest,
+    responses((status = 201, body = MessageResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip_all)]
-async fn send_message(
+pub(crate) async fn send_message(
     State(_state): State<AppState>,
     _headers: HeaderMap,
     Json(req): Json<SendMessageRequest>,
@@ -140,8 +145,11 @@ async fn send_message(
 }
 
 /// `GET /api/v1/a2a/messages`
+#[utoipa::path(get, path = "/api/v1/a2a/messages", tag = "a2a",
+    params(MessageFilterParams),
+    responses((status = 200, body = Vec<MessageResponse>)))]
 #[tracing::instrument(skip_all)]
-async fn list_messages(
+pub(crate) async fn list_messages(
     State(_state): State<AppState>,
     _headers: HeaderMap,
     Query(params): Query<MessageFilterParams>,
@@ -155,8 +163,11 @@ async fn list_messages(
 }
 
 /// `POST /api/v1/a2a/messages/:id/acknowledge`
+#[utoipa::path(post, path = "/api/v1/a2a/messages/{id}/acknowledge", tag = "a2a",
+    params(("id" = String, Path, description = "Message ID (UUID)")),
+    responses((status = 200, description = "Message acknowledged"), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip_all)]
-async fn acknowledge_message(
+pub(crate) async fn acknowledge_message(
     State(_state): State<AppState>,
     _headers: HeaderMap,
     Path(id): Path<Uuid>,

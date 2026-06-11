@@ -778,3 +778,204 @@ fn loyalty_account_get_uses_get() {
     let account = &spec["paths"]["/api/v1/loyalty/accounts/{id}"];
     assert!(account["get"].is_object(), "loyalty account should use GET");
 }
+
+// ============================================================================
+// 11. Router ↔ Spec Drift Guard (bidirectional)
+// ============================================================================
+//
+// These tests parse the actual `.route()` registrations out of the route
+// modules mounted in `src/routes/mod.rs` and compare them — path *and*
+// method — against the generated `OpenAPI` spec in both directions. They are
+// meant to fail loudly when someone mounts a route without documenting it
+// (or documents a route that is no longer mounted).
+
+const HTTP_METHODS: &[&str] = &["get", "post", "put", "patch", "delete"];
+
+fn routes_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes")
+}
+
+/// Route modules merged into the router, paired with the URL prefix they are
+/// nested under (`""` for the root-level health router, `"/api/v1"` for the
+/// v1 sub-router).
+///
+/// `crate::openapi::router()` is skipped: it serves the spec document and the
+/// docs UI, which intentionally do not describe themselves.
+fn mounted_modules() -> Vec<(String, &'static str)> {
+    let mod_rs = std::fs::read_to_string(routes_dir().join("mod.rs"))
+        .expect("src/routes/mod.rs should be readable");
+    let mut modules = Vec::new();
+    let mut prefix = "";
+    for line in mod_rs.lines() {
+        let line = line.trim();
+        if line.starts_with("fn v1_router") {
+            prefix = "/api/v1";
+        } else if line.starts_with("pub fn api_router") {
+            prefix = "";
+        }
+        let Some(rest) = line.strip_prefix(".merge(") else { continue };
+        let Some(name) = rest.strip_suffix("::router())") else { continue };
+        if name == "crate::openapi" {
+            continue;
+        }
+        modules.push((name.to_string(), prefix));
+    }
+    assert!(
+        modules.iter().any(|(name, _)| name == "health"),
+        "mod.rs parser should find the health router merge"
+    );
+    modules
+}
+
+/// Extract every `(path, methods)` registration from a route module's source
+/// by scanning `.route(...)` calls (paren-balanced, so closure-style handler
+/// wiring like the negotiations router parses correctly).
+fn parse_route_registrations(source: &str, file: &str) -> Vec<(String, Vec<String>)> {
+    let mut registrations = Vec::new();
+    let mut rest = source;
+    while let Some(idx) = rest.find(".route(") {
+        let after = &rest[idx + ".route(".len()..];
+        let mut depth = 1usize;
+        let mut in_str = false;
+        let mut end = after.len();
+        for (i, ch) in after.char_indices() {
+            match ch {
+                '"' => in_str = !in_str,
+                '(' if !in_str => depth += 1,
+                ')' if !in_str => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let call = &after[..end];
+        let path = call
+            .split('"')
+            .nth(1)
+            .unwrap_or_else(|| panic!("{file}: .route() call without a path literal: {call}"))
+            .to_string();
+        let methods = extract_methods(call);
+        assert!(!methods.is_empty(), "{file}: no HTTP methods found for route {path}");
+        registrations.push((path, methods));
+        rest = &after[end..];
+    }
+    registrations
+}
+
+/// Find the axum method-router constructors (`get(`, `post(`, ...) used
+/// inside a single `.route(...)` call, honouring identifier boundaries so
+/// handler names like `get_negotiation(` do not count.
+fn extract_methods(call: &str) -> Vec<String> {
+    let bytes = call.as_bytes();
+    let mut methods = Vec::new();
+    for method in HTTP_METHODS {
+        let mut search = 0;
+        while let Some(pos) = call[search..].find(method) {
+            let start = search + pos;
+            let end = start + method.len();
+            let boundary_before = start == 0 || {
+                let b = bytes[start - 1];
+                !b.is_ascii_alphanumeric() && b != b'_'
+            };
+            let opens_call = bytes.get(end) == Some(&b'(');
+            if boundary_before && opens_call && !methods.contains(&(*method).to_string()) {
+                methods.push((*method).to_string());
+            }
+            search = end;
+        }
+    }
+    methods
+}
+
+/// Every `(path, METHOD)` pair mounted on the live router, derived from the
+/// route module sources.
+fn mounted_operations() -> std::collections::BTreeSet<(String, String)> {
+    let mut operations = std::collections::BTreeSet::new();
+    for (module, prefix) in mounted_modules() {
+        let file = routes_dir().join(format!("{module}.rs"));
+        let source = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", file.display()));
+        for (path, methods) in parse_route_registrations(&source, &module) {
+            for method in methods {
+                operations.insert((format!("{prefix}{path}"), method));
+            }
+        }
+    }
+    operations
+}
+
+/// Every `(path, METHOD)` pair documented in the `OpenAPI` spec.
+fn spec_operations() -> std::collections::BTreeSet<(String, String)> {
+    let spec = spec_json();
+    let paths = spec["paths"].as_object().expect("paths must be an object");
+    let mut operations = std::collections::BTreeSet::new();
+    for (path, path_item) in paths {
+        for method in HTTP_METHODS {
+            if path_item.get(*method).is_some_and(Value::is_object) {
+                operations.insert((path.clone(), (*method).to_string()));
+            }
+        }
+    }
+    operations
+}
+
+#[test]
+fn every_mounted_route_is_documented() {
+    let mounted = mounted_operations();
+    let documented = spec_operations();
+    let missing: Vec<_> = mounted.difference(&documented).collect();
+    assert!(
+        missing.is_empty(),
+        "routes mounted in src/routes/mod.rs but missing from the OpenAPI spec — \
+         add #[utoipa::path] to the handler and register it in ApiDoc paths(): {missing:#?}"
+    );
+}
+
+#[test]
+fn every_documented_route_is_mounted() {
+    let mounted = mounted_operations();
+    let documented = spec_operations();
+    let unmounted: Vec<_> = documented.difference(&mounted).collect();
+    assert!(
+        unmounted.is_empty(),
+        "operations documented in the OpenAPI spec but not mounted on the router — \
+         remove the stale ApiDoc registration or mount the route: {unmounted:#?}"
+    );
+}
+
+#[test]
+fn drift_guard_parses_a_realistic_route_count() {
+    // Guards the parser itself: if the source-scanning logic silently breaks
+    // (e.g. a refactor of mod.rs changes the merge syntax), this fails before
+    // the bidirectional checks degrade into comparing empty sets.
+    let mounted = mounted_operations();
+    assert!(
+        mounted.len() >= 70,
+        "expected the route parser to find >= 70 mounted operations, found {}",
+        mounted.len()
+    );
+}
+
+#[test]
+fn every_route_module_file_is_mounted() {
+    // Guards against orphaned route files: present in src/routes/ but never
+    // declared in mod.rs and therefore never compiled or mounted.
+    let mounted: Vec<String> = mounted_modules().into_iter().map(|(name, _)| name).collect();
+    let entries = std::fs::read_dir(routes_dir()).expect("src/routes should be readable");
+    for entry in entries {
+        let path = entry.expect("dir entry").path();
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") || stem == "mod" {
+            continue;
+        }
+        assert!(
+            mounted.contains(&stem.to_string()),
+            "src/routes/{stem}.rs exists but is never merged into the router in mod.rs — \
+             mount it (and document its routes) or delete the file"
+        );
+    }
+}

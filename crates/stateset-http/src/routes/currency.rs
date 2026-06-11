@@ -30,6 +30,7 @@ pub(crate) struct ConvertCurrencyRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct RateFilterParams {
     pub base_currency: Option<String>,
 }

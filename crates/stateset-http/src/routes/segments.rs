@@ -20,6 +20,7 @@ pub(crate) struct CreateSegmentRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct SegmentFilterParams {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
@@ -137,7 +138,8 @@ pub(crate) async fn delete_segment(
 }
 
 #[utoipa::path(post, path = "/api/v1/segments/{id}/members/{customer_id}", tag = "segments",
-    params(("id" = String, Path), ("customer_id" = String, Path)),
+    params(("id" = String, Path, description = "Segment ID"),
+        ("customer_id" = String, Path, description = "Customer ID")),
     responses((status = 204, description = "Member added")))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn add_member(
@@ -152,7 +154,8 @@ pub(crate) async fn add_member(
 }
 
 #[utoipa::path(delete, path = "/api/v1/segments/{id}/members/{customer_id}", tag = "segments",
-    params(("id" = String, Path), ("customer_id" = String, Path)),
+    params(("id" = String, Path, description = "Segment ID"),
+        ("customer_id" = String, Path, description = "Customer ID")),
     responses((status = 204, description = "Member removed")))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn remove_member(

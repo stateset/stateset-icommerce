@@ -41,6 +41,7 @@ pub(crate) struct AddWishlistItemRequest {
 
 /// Query parameters for `GET /api/v1/wishlists` with filtering.
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct WishlistFilterParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,

@@ -25,8 +25,12 @@ pub fn router() -> Router<AppState> {
 ///
 /// Supports an optional `?filter=order.*` query parameter for event type
 /// filtering (prefix match with wildcard support).
+#[utoipa::path(get, path = "/api/v1/events/stream", tag = "events",
+    params(EventStreamParams),
+    responses((status = 200, description = "Server-Sent Events stream of commerce events",
+        body = String, content_type = "text/event-stream")))]
 #[tracing::instrument(skip(state, headers, params))]
-async fn event_stream(
+pub(crate) async fn event_stream(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<EventStreamParams>,

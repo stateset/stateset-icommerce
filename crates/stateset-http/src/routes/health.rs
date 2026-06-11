@@ -17,7 +17,7 @@ use axum::{
 };
 
 use crate::dto::{HealthResponse, ReadyResponse, VersionResponse};
-use crate::error::HttpError;
+use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, MetricsHeaderLimits};
 
 /// Build the health-check router.
@@ -103,6 +103,15 @@ pub(crate) async fn readiness(State(state): State<AppState>) -> (StatusCode, Jso
 }
 
 /// `GET /health/deep` — deep health check with DB connectivity and metrics.
+#[utoipa::path(
+    get,
+    path = "/health/deep",
+    tag = "health",
+    responses(
+        (status = 200, description = "Deep health report with DB latency and engine counters"),
+        (status = 500, description = "Database connectivity check failed", body = ErrorBody),
+    )
+)]
 #[tracing::instrument(skip(state))]
 pub(crate) async fn deep_health(
     State(state): State<AppState>,

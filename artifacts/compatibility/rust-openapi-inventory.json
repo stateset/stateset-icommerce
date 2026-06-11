@@ -7,33 +7,48 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 41,
-  "totalOperations": 58,
-  "totalSchemas": 55,
-  "totalTags": 13,
+  "totalPaths": 75,
+  "totalOperations": 104,
+  "totalSchemas": 87,
+  "totalTags": 23,
   "methods": [
     {
       "name": "DELETE",
-      "count": 5
+      "count": 8
     },
     {
       "name": "GET",
-      "count": 28
+      "count": 47
     },
     {
       "name": "PATCH",
-      "count": 5
+      "count": 10
     },
     {
       "name": "POST",
-      "count": 20
+      "count": 39
     }
   ],
   "tags": [
     {
+      "name": "a2a",
+      "description": "Agent-to-agent messaging and credit terms",
+      "count": 8
+    },
+    {
+      "name": "currency",
+      "description": "Exchange rates and currency conversion",
+      "count": 3
+    },
+    {
       "name": "customers",
       "description": "Customer management",
       "count": 5
+    },
+    {
+      "name": "events",
+      "description": "Real-time event streaming",
+      "count": 1
     },
     {
       "name": "gift_cards",
@@ -43,7 +58,7 @@
     {
       "name": "health",
       "description": "Health check endpoints",
-      "count": 4
+      "count": 5
     },
     {
       "name": "inventory",
@@ -61,6 +76,11 @@
       "count": 4
     },
     {
+      "name": "negotiations",
+      "description": "Agent-to-agent price negotiation",
+      "count": 5
+    },
+    {
       "name": "orders",
       "description": "Order lifecycle management",
       "count": 5
@@ -76,6 +96,11 @@
       "count": 5
     },
     {
+      "name": "promotions",
+      "description": "Promotion and discount management",
+      "count": 5
+    },
+    {
       "name": "returns",
       "description": "Return request processing",
       "count": 4
@@ -86,9 +111,34 @@
       "count": 4
     },
     {
+      "name": "segments",
+      "description": "Customer segment management",
+      "count": 6
+    },
+    {
       "name": "shipments",
       "description": "Shipment tracking and management",
       "count": 4
+    },
+    {
+      "name": "shipping",
+      "description": "Shipping zone management",
+      "count": 4
+    },
+    {
+      "name": "store_credits",
+      "description": "Store credit management",
+      "count": 4
+    },
+    {
+      "name": "subscriptions",
+      "description": "Recurring subscription management",
+      "count": 6
+    },
+    {
+      "name": "warranties",
+      "description": "Product warranty management",
+      "count": 3
     },
     {
       "name": "wishlists",
@@ -99,25 +149,41 @@
   "schemas": [
     "AddWishlistItemRequest",
     "AddressDto",
+    "AdjustStoreCreditRequest",
+    "ConversionResponse",
+    "ConvertCurrencyRequest",
+    "CounterOfferRequest",
+    "CreateCreditTermsRequest",
     "CreateCustomerRequest",
     "CreateGiftCardRequest",
     "CreateInvoiceRequest",
     "CreateLoyaltyProgramRequest",
+    "CreateNegotiationRequest",
     "CreateOrderItemRequest",
     "CreateOrderRequest",
     "CreatePaymentRequest",
     "CreateProductRequest",
+    "CreatePromotionRequest",
     "CreateRefundRequest",
     "CreateReturnItemRequest",
     "CreateReturnRequest",
     "CreateReviewRequest",
+    "CreateSegmentRequest",
     "CreateShipmentRequest",
+    "CreateShippingZoneRequest",
+    "CreateStoreCreditRequest",
+    "CreateSubscriptionRequest",
+    "CreateWarrantyRequest",
     "CreateWishlistRequest",
+    "CreditAmountRequest",
+    "CreditTermsResponse",
     "CustomerListResponse",
     "CustomerResponse",
     "EnrollCustomerRequest",
     "ErrorBody",
     "ErrorDetail",
+    "ExchangeRateListResponse",
+    "ExchangeRateResponse",
     "GiftCardListResponse",
     "GiftCardResponse",
     "HealthResponse",
@@ -130,6 +196,8 @@
     "LoyaltyAccountResponse",
     "LoyaltyProgramListResponse",
     "LoyaltyProgramResponse",
+    "MessageResponse",
+    "NegotiationResponse",
     "OrderItemResponse",
     "OrderListResponse",
     "OrderResponse",
@@ -137,23 +205,136 @@
     "PaymentResponse",
     "ProductListResponse",
     "ProductResponse",
+    "PromotionListResponse",
+    "PromotionResponse",
     "ReadyResponse",
     "RecordInvoicePaymentRequest",
     "ReturnListResponse",
     "ReturnResponse",
     "ReviewListResponse",
     "ReviewResponse",
+    "SegmentListResponse",
+    "SegmentResponse",
+    "SendMessageRequest",
+    "SetExchangeRateRequest",
     "ShipmentListResponse",
     "ShipmentResponse",
+    "ShippingZoneListResponse",
+    "ShippingZoneResponse",
+    "StoreCreditListResponse",
+    "StoreCreditResponse",
+    "SubscriptionListResponse",
+    "SubscriptionResponse",
     "TenantCacheResponse",
     "UpdateCustomerRequest",
     "UpdateProductRequest",
     "VersionResponse",
+    "WarrantyListResponse",
+    "WarrantyResponse",
     "WishlistItemResponse",
     "WishlistListResponse",
     "WishlistResponse"
   ],
   "operations": [
+    {
+      "path": "/api/v1/a2a/credit",
+      "method": "GET",
+      "operationId": "list_terms",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`GET /api/v1/a2a/credit`"
+    },
+    {
+      "path": "/api/v1/a2a/credit",
+      "method": "POST",
+      "operationId": "create_terms",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`POST /api/v1/a2a/credit`"
+    },
+    {
+      "path": "/api/v1/a2a/credit/{id}",
+      "method": "GET",
+      "operationId": "get_terms",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`GET /api/v1/a2a/credit/:id`"
+    },
+    {
+      "path": "/api/v1/a2a/credit/{id}/charge",
+      "method": "POST",
+      "operationId": "charge_credit",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`POST /api/v1/a2a/credit/:id/charge`"
+    },
+    {
+      "path": "/api/v1/a2a/credit/{id}/payment",
+      "method": "POST",
+      "operationId": "record_payment",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`POST /api/v1/a2a/credit/:id/payment`"
+    },
+    {
+      "path": "/api/v1/a2a/messages",
+      "method": "GET",
+      "operationId": "list_messages",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`GET /api/v1/a2a/messages`"
+    },
+    {
+      "path": "/api/v1/a2a/messages",
+      "method": "POST",
+      "operationId": "send_message",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`POST /api/v1/a2a/messages`"
+    },
+    {
+      "path": "/api/v1/a2a/messages/{id}/acknowledge",
+      "method": "POST",
+      "operationId": "acknowledge_message",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`POST /api/v1/a2a/messages/:id/acknowledge`"
+    },
+    {
+      "path": "/api/v1/currencies/convert",
+      "method": "POST",
+      "operationId": "convert_currency",
+      "tags": [
+        "currency"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/currencies/rates",
+      "method": "GET",
+      "operationId": "list_rates",
+      "tags": [
+        "currency"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/currencies/rates",
+      "method": "POST",
+      "operationId": "set_rate",
+      "tags": [
+        "currency"
+      ],
+      "summary": ""
+    },
     {
       "path": "/api/v1/customers",
       "method": "GET",
@@ -198,6 +379,15 @@
         "customers"
       ],
       "summary": "`PATCH /api/v1/customers/:id`"
+    },
+    {
+      "path": "/api/v1/events/stream",
+      "method": "GET",
+      "operationId": "event_stream",
+      "tags": [
+        "events"
+      ],
+      "summary": "`GET /api/v1/events/stream` — SSE endpoint."
     },
     {
       "path": "/api/v1/gift-cards",
@@ -344,6 +534,51 @@
       "summary": "`POST /api/v1/loyalty/programs`"
     },
     {
+      "path": "/api/v1/negotiations",
+      "method": "POST",
+      "operationId": "create_negotiation",
+      "tags": [
+        "negotiations"
+      ],
+      "summary": "`POST /api/v1/negotiations`"
+    },
+    {
+      "path": "/api/v1/negotiations/{id}",
+      "method": "GET",
+      "operationId": "get_negotiation",
+      "tags": [
+        "negotiations"
+      ],
+      "summary": "`GET /api/v1/negotiations/:id`"
+    },
+    {
+      "path": "/api/v1/negotiations/{id}/accept",
+      "method": "POST",
+      "operationId": "accept_negotiation",
+      "tags": [
+        "negotiations"
+      ],
+      "summary": "`POST /api/v1/negotiations/:id/accept`"
+    },
+    {
+      "path": "/api/v1/negotiations/{id}/counter-offer",
+      "method": "POST",
+      "operationId": "counter_offer",
+      "tags": [
+        "negotiations"
+      ],
+      "summary": "`POST /api/v1/negotiations/:id/counter-offer`"
+    },
+    {
+      "path": "/api/v1/negotiations/{id}/reject",
+      "method": "POST",
+      "operationId": "reject_negotiation",
+      "tags": [
+        "negotiations"
+      ],
+      "summary": "`POST /api/v1/negotiations/:id/reject`"
+    },
+    {
       "path": "/api/v1/orders",
       "method": "GET",
       "operationId": "list_orders",
@@ -479,6 +714,51 @@
       "summary": "`PATCH /api/v1/products/:id`"
     },
     {
+      "path": "/api/v1/promotions",
+      "method": "GET",
+      "operationId": "list_promotions",
+      "tags": [
+        "promotions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/promotions",
+      "method": "POST",
+      "operationId": "create_promotion",
+      "tags": [
+        "promotions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/promotions/{id}",
+      "method": "GET",
+      "operationId": "get_promotion",
+      "tags": [
+        "promotions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/promotions/{id}/activate",
+      "method": "PATCH",
+      "operationId": "activate_promotion",
+      "tags": [
+        "promotions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/promotions/{id}/deactivate",
+      "method": "PATCH",
+      "operationId": "deactivate_promotion",
+      "tags": [
+        "promotions"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/returns",
       "method": "GET",
       "operationId": "list_returns",
@@ -551,6 +831,60 @@
       "summary": "`GET /api/v1/reviews/{id}`"
     },
     {
+      "path": "/api/v1/segments",
+      "method": "GET",
+      "operationId": "list_segments",
+      "tags": [
+        "segments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/segments",
+      "method": "POST",
+      "operationId": "create_segment",
+      "tags": [
+        "segments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/segments/{id}",
+      "method": "DELETE",
+      "operationId": "delete_segment",
+      "tags": [
+        "segments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/segments/{id}",
+      "method": "GET",
+      "operationId": "get_segment",
+      "tags": [
+        "segments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/segments/{id}/members/{customer_id}",
+      "method": "DELETE",
+      "operationId": "remove_member",
+      "tags": [
+        "segments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/segments/{id}/members/{customer_id}",
+      "method": "POST",
+      "operationId": "add_member",
+      "tags": [
+        "segments"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/shipments",
       "method": "GET",
       "operationId": "list_shipments",
@@ -585,6 +919,159 @@
         "shipments"
       ],
       "summary": "`POST /api/v1/shipments/:id/deliver`"
+    },
+    {
+      "path": "/api/v1/shipping-zones",
+      "method": "GET",
+      "operationId": "list_zones",
+      "tags": [
+        "shipping"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/shipping-zones",
+      "method": "POST",
+      "operationId": "create_zone",
+      "tags": [
+        "shipping"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/shipping-zones/{id}",
+      "method": "DELETE",
+      "operationId": "delete_zone",
+      "tags": [
+        "shipping"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/shipping-zones/{id}",
+      "method": "GET",
+      "operationId": "get_zone",
+      "tags": [
+        "shipping"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/store-credits",
+      "method": "GET",
+      "operationId": "list_store_credits",
+      "tags": [
+        "store_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/store-credits",
+      "method": "POST",
+      "operationId": "create_store_credit",
+      "tags": [
+        "store_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/store-credits/{id}",
+      "method": "GET",
+      "operationId": "get_store_credit",
+      "tags": [
+        "store_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/store-credits/{id}/adjust",
+      "method": "POST",
+      "operationId": "adjust_store_credit",
+      "tags": [
+        "store_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/subscriptions",
+      "method": "GET",
+      "operationId": "list_subscriptions",
+      "tags": [
+        "subscriptions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/subscriptions",
+      "method": "POST",
+      "operationId": "create_subscription",
+      "tags": [
+        "subscriptions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/subscriptions/{id}",
+      "method": "GET",
+      "operationId": "get_subscription",
+      "tags": [
+        "subscriptions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/subscriptions/{id}/cancel",
+      "method": "PATCH",
+      "operationId": "cancel_subscription",
+      "tags": [
+        "subscriptions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/subscriptions/{id}/pause",
+      "method": "PATCH",
+      "operationId": "pause_subscription",
+      "tags": [
+        "subscriptions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/subscriptions/{id}/resume",
+      "method": "PATCH",
+      "operationId": "resume_subscription",
+      "tags": [
+        "subscriptions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warranties",
+      "method": "GET",
+      "operationId": "list_warranties",
+      "tags": [
+        "warranties"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warranties",
+      "method": "POST",
+      "operationId": "create_warranty",
+      "tags": [
+        "warranties"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warranties/{id}",
+      "method": "GET",
+      "operationId": "get_warranty",
+      "tags": [
+        "warranties"
+      ],
+      "summary": ""
     },
     {
       "path": "/api/v1/wishlists",
@@ -648,6 +1135,15 @@
         "health"
       ],
       "summary": "`GET /health` — simple liveness probe."
+    },
+    {
+      "path": "/health/deep",
+      "method": "GET",
+      "operationId": "deep_health",
+      "tags": [
+        "health"
+      ],
+      "summary": "`GET /health/deep` — deep health check with DB connectivity and metrics."
     },
     {
       "path": "/health/ready",

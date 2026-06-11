@@ -27,6 +27,7 @@ pub(crate) struct CreatePromotionRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct PromotionFilterParams {
     pub limit: Option<u32>,
     pub offset: Option<u32>,

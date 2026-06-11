@@ -18,12 +18,36 @@ use crate::dto::{
     TenantCacheResponse, UpdateCustomerRequest, UpdateProductRequest, VersionResponse,
 };
 use crate::error::ErrorBody;
+use crate::routes::a2a_credit::{
+    CreateCreditTermsRequest, CreditAmountRequest, CreditTermsResponse,
+};
+use crate::routes::a2a_messaging::{MessageResponse, SendMessageRequest};
+use crate::routes::currency::{
+    ConversionResponse, ConvertCurrencyRequest, ExchangeRateListResponse, ExchangeRateResponse,
+    SetExchangeRateRequest,
+};
 use crate::routes::gift_cards::{CreateGiftCardRequest, GiftCardListResponse, GiftCardResponse};
 use crate::routes::loyalty::{
     CreateLoyaltyProgramRequest, EnrollCustomerRequest, LoyaltyAccountResponse,
     LoyaltyProgramListResponse, LoyaltyProgramResponse,
 };
+use crate::routes::negotiations::{
+    CounterOfferRequest, CreateNegotiationRequest, NegotiationResponse,
+};
+use crate::routes::promotions::{CreatePromotionRequest, PromotionListResponse, PromotionResponse};
 use crate::routes::reviews::{CreateReviewRequest, ReviewListResponse, ReviewResponse};
+use crate::routes::segments::{CreateSegmentRequest, SegmentListResponse, SegmentResponse};
+use crate::routes::shipping_zones::{
+    CreateShippingZoneRequest, ShippingZoneListResponse, ShippingZoneResponse,
+};
+use crate::routes::store_credits::{
+    AdjustStoreCreditRequest, CreateStoreCreditRequest, StoreCreditListResponse,
+    StoreCreditResponse,
+};
+use crate::routes::subscriptions::{
+    CreateSubscriptionRequest, SubscriptionListResponse, SubscriptionResponse,
+};
+use crate::routes::warranties::{CreateWarrantyRequest, WarrantyListResponse, WarrantyResponse};
 use crate::routes::wishlists::{
     AddWishlistItemRequest, CreateWishlistRequest, WishlistItemResponse, WishlistListResponse,
     WishlistResponse,
@@ -44,6 +68,7 @@ use crate::state::AppState;
         // Health
         crate::routes::health::health,
         crate::routes::health::readiness,
+        crate::routes::health::deep_health,
         crate::routes::health::metrics,
         crate::routes::health::version,
         // Orders
@@ -112,6 +137,62 @@ use crate::state::AppState;
         crate::routes::loyalty::list_programs,
         crate::routes::loyalty::enroll_customer,
         crate::routes::loyalty::get_account,
+        // Negotiations
+        crate::routes::negotiations::create_negotiation,
+        crate::routes::negotiations::get_negotiation,
+        crate::routes::negotiations::counter_offer,
+        crate::routes::negotiations::accept_negotiation,
+        crate::routes::negotiations::reject_negotiation,
+        // A2A Messaging
+        crate::routes::a2a_messaging::send_message,
+        crate::routes::a2a_messaging::list_messages,
+        crate::routes::a2a_messaging::acknowledge_message,
+        // A2A Credit
+        crate::routes::a2a_credit::create_terms,
+        crate::routes::a2a_credit::list_terms,
+        crate::routes::a2a_credit::get_terms,
+        crate::routes::a2a_credit::charge_credit,
+        crate::routes::a2a_credit::record_payment,
+        // Subscriptions
+        crate::routes::subscriptions::create_subscription,
+        crate::routes::subscriptions::list_subscriptions,
+        crate::routes::subscriptions::get_subscription,
+        crate::routes::subscriptions::pause_subscription,
+        crate::routes::subscriptions::resume_subscription,
+        crate::routes::subscriptions::cancel_subscription,
+        // Store Credits
+        crate::routes::store_credits::create_store_credit,
+        crate::routes::store_credits::list_store_credits,
+        crate::routes::store_credits::get_store_credit,
+        crate::routes::store_credits::adjust_store_credit,
+        // Promotions
+        crate::routes::promotions::create_promotion,
+        crate::routes::promotions::list_promotions,
+        crate::routes::promotions::get_promotion,
+        crate::routes::promotions::activate_promotion,
+        crate::routes::promotions::deactivate_promotion,
+        // Currency
+        crate::routes::currency::list_rates,
+        crate::routes::currency::set_rate,
+        crate::routes::currency::convert_currency,
+        // Warranties
+        crate::routes::warranties::create_warranty,
+        crate::routes::warranties::list_warranties,
+        crate::routes::warranties::get_warranty,
+        // Segments
+        crate::routes::segments::create_segment,
+        crate::routes::segments::list_segments,
+        crate::routes::segments::get_segment,
+        crate::routes::segments::delete_segment,
+        crate::routes::segments::add_member,
+        crate::routes::segments::remove_member,
+        // Shipping Zones
+        crate::routes::shipping_zones::create_zone,
+        crate::routes::shipping_zones::list_zones,
+        crate::routes::shipping_zones::get_zone,
+        crate::routes::shipping_zones::delete_zone,
+        // Events
+        crate::routes::events::event_stream,
     ),
     components(schemas(
         // Request DTOs
@@ -173,6 +254,48 @@ use crate::state::AppState;
         LoyaltyProgramResponse,
         LoyaltyProgramListResponse,
         LoyaltyAccountResponse,
+        // Negotiations
+        CreateNegotiationRequest,
+        CounterOfferRequest,
+        NegotiationResponse,
+        // A2A Messaging
+        SendMessageRequest,
+        MessageResponse,
+        // A2A Credit
+        CreateCreditTermsRequest,
+        CreditAmountRequest,
+        CreditTermsResponse,
+        // Subscriptions
+        CreateSubscriptionRequest,
+        SubscriptionResponse,
+        SubscriptionListResponse,
+        // Store Credits
+        CreateStoreCreditRequest,
+        AdjustStoreCreditRequest,
+        StoreCreditResponse,
+        StoreCreditListResponse,
+        // Promotions
+        CreatePromotionRequest,
+        PromotionResponse,
+        PromotionListResponse,
+        // Currency
+        SetExchangeRateRequest,
+        ConvertCurrencyRequest,
+        ExchangeRateResponse,
+        ExchangeRateListResponse,
+        ConversionResponse,
+        // Warranties
+        CreateWarrantyRequest,
+        WarrantyResponse,
+        WarrantyListResponse,
+        // Segments
+        CreateSegmentRequest,
+        SegmentResponse,
+        SegmentListResponse,
+        // Shipping Zones
+        CreateShippingZoneRequest,
+        ShippingZoneResponse,
+        ShippingZoneListResponse,
         // Error
         ErrorBody,
     )),
@@ -190,6 +313,16 @@ use crate::state::AppState;
         (name = "wishlists", description = "Customer wishlist management"),
         (name = "gift_cards", description = "Gift card management"),
         (name = "loyalty", description = "Loyalty program management"),
+        (name = "negotiations", description = "Agent-to-agent price negotiation"),
+        (name = "a2a", description = "Agent-to-agent messaging and credit terms"),
+        (name = "subscriptions", description = "Recurring subscription management"),
+        (name = "store_credits", description = "Store credit management"),
+        (name = "promotions", description = "Promotion and discount management"),
+        (name = "currency", description = "Exchange rates and currency conversion"),
+        (name = "warranties", description = "Product warranty management"),
+        (name = "segments", description = "Customer segment management"),
+        (name = "shipping", description = "Shipping zone management"),
+        (name = "events", description = "Real-time event streaming"),
     )
 )]
 #[derive(Debug)]

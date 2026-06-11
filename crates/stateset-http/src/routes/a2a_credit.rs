@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::error::HttpError;
+use crate::error::{ErrorBody, HttpError};
 use crate::state::AppState;
 
 type CreditStore = Arc<RwLock<HashMap<Uuid, CreditTerms>>>;
@@ -104,8 +104,11 @@ fn terms_to_response(t: &CreditTerms) -> CreditTermsResponse {
 }
 
 /// `POST /api/v1/a2a/credit`
+#[utoipa::path(post, path = "/api/v1/a2a/credit", tag = "a2a",
+    request_body = CreateCreditTermsRequest,
+    responses((status = 201, body = CreditTermsResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip_all)]
-async fn create_terms(
+pub(crate) async fn create_terms(
     State(_state): State<AppState>,
     _headers: HeaderMap,
     Json(req): Json<CreateCreditTermsRequest>,
@@ -145,8 +148,10 @@ async fn create_terms(
 }
 
 /// `GET /api/v1/a2a/credit`
+#[utoipa::path(get, path = "/api/v1/a2a/credit", tag = "a2a",
+    responses((status = 200, body = Vec<CreditTermsResponse>)))]
 #[tracing::instrument(skip_all)]
-async fn list_terms(
+pub(crate) async fn list_terms(
     State(_state): State<AppState>,
     _headers: HeaderMap,
     store: CreditStore,
@@ -157,8 +162,11 @@ async fn list_terms(
 }
 
 /// `GET /api/v1/a2a/credit/:id`
+#[utoipa::path(get, path = "/api/v1/a2a/credit/{id}", tag = "a2a",
+    params(("id" = String, Path, description = "Credit terms ID (UUID)")),
+    responses((status = 200, body = CreditTermsResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip_all)]
-async fn get_terms(
+pub(crate) async fn get_terms(
     State(_state): State<AppState>,
     _headers: HeaderMap,
     Path(id): Path<Uuid>,
@@ -172,8 +180,13 @@ async fn get_terms(
 }
 
 /// `POST /api/v1/a2a/credit/:id/charge`
+#[utoipa::path(post, path = "/api/v1/a2a/credit/{id}/charge", tag = "a2a",
+    params(("id" = String, Path, description = "Credit terms ID (UUID)")),
+    request_body = CreditAmountRequest,
+    responses((status = 200, body = CreditTermsResponse), (status = 400, body = ErrorBody),
+        (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip_all)]
-async fn charge_credit(
+pub(crate) async fn charge_credit(
     State(_state): State<AppState>,
     _headers: HeaderMap,
     Path(id): Path<Uuid>,
@@ -195,8 +208,13 @@ async fn charge_credit(
 }
 
 /// `POST /api/v1/a2a/credit/:id/payment`
+#[utoipa::path(post, path = "/api/v1/a2a/credit/{id}/payment", tag = "a2a",
+    params(("id" = String, Path, description = "Credit terms ID (UUID)")),
+    request_body = CreditAmountRequest,
+    responses((status = 200, body = CreditTermsResponse), (status = 400, body = ErrorBody),
+        (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip_all)]
-async fn record_payment(
+pub(crate) async fn record_payment(
     State(_state): State<AppState>,
     _headers: HeaderMap,
     Path(id): Path<Uuid>,

@@ -19,6 +19,7 @@ pub mod returns;
 pub mod reviews;
 pub mod segments;
 pub mod shipments;
+pub mod shipping_zones;
 pub mod store_credits;
 pub mod subscriptions;
 pub mod warranties;
@@ -81,6 +82,7 @@ fn v1_router() -> Router<AppState> {
         .merge(warranties::router())
         .merge(segments::router())
         .merge(events::router())
+        .merge(shipping_zones::router())
         .merge(crate::openapi::router())
 }
 
