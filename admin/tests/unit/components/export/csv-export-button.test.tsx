@@ -7,7 +7,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const downloadCsvSpy = vi.fn();
-const rowsToCsvSpy = vi.fn((rows: unknown[]) => `csv-of-${rows.length}-rows`);
+const rowsToCsvSpy = vi.fn(
+  (rows: unknown[], _cols: unknown[]) => `csv-of-${rows.length}-rows`,
+);
 
 vi.mock('@/lib/csv/csv', () => ({
   downloadCsv: (filename: string, csv: string) => downloadCsvSpy(filename, csv),
@@ -16,7 +18,7 @@ vi.mock('@/lib/csv/csv', () => ({
 
 import { CsvExportButton } from '@/components/export/csv-export-button';
 
-const COLUMNS = [{ header: 'Id', value: (r: { id: string }) => r.id }];
+const COLUMNS = [{ key: 'id', accessor: (r: { id: string }) => r.id }];
 
 beforeEach(() => {
   downloadCsvSpy.mockClear();

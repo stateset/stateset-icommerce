@@ -6,6 +6,7 @@ import { CpuChipIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/o
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getAgentPerformanceData } from '@/app/actions/commerce';
+import { SimulatedDataBadge } from '@/components/shared/simulated-data-badge';
 import { formatNumber, formatPercentage } from '@/lib/utils';
 import type {
   AgentPerformanceData,
@@ -83,9 +84,15 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
         </Card>
       </Grid>
 
-      {/* Response Time Trend */}
+      {/* Response Time Trend.
+          The hourly avg/p95/p99 series is generated deterministically in
+          getAgentPerformanceData — there is no real latency telemetry yet,
+          so this chart must carry the simulated-data badge. */}
       <Card>
-        <Title>Response Time Trend</Title>
+        <div className="flex items-center justify-between">
+          <Title>Response Time Trend</Title>
+          <SimulatedDataBadge />
+        </div>
         <Text className="text-gray-500 mb-4">Agent response times over the last 24 hours</Text>
         <AreaChart
           className="h-64"
@@ -163,9 +170,14 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
           />
         </Card>
 
-        {/* Task Success/Failure */}
+        {/* Task Success/Failure.
+            Daily success/failed/timeout counts are deterministic demo values
+            (no per-task outcome history exists in the engine yet). */}
         <Card>
-          <Title>Task Outcomes</Title>
+          <div className="flex items-center justify-between">
+            <Title>Task Outcomes</Title>
+            <SimulatedDataBadge />
+          </div>
           <Text className="text-gray-500 mb-4">Last 7 days performance</Text>
           <BarChart
             className="h-64"

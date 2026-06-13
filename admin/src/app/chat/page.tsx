@@ -87,7 +87,7 @@ export default function ChatPage() {
     {
       id: '1',
       role: 'assistant',
-      content: 'Hello! I\'m your AI commerce assistant powered by the embedded StateSet engine. Ask me anything about your orders, inventory, customers, or operations. I\'ll generate the right visualization for you.',
+      content: 'Hello! This is a scripted demo of the commerce assistant: your message is matched against keywords (no AI model is involved) to pick a dashboard view rendered from the embedded StateSet engine. Try asking about orders, inventory, customers, or operations.',
       timestamp: new Date(),
     },
   ]);
@@ -118,10 +118,11 @@ export default function ChatPage() {
     setInput('');
     setIsProcessing(true);
 
-    // Simulate AI processing
+    // Artificial delay so the scripted demo reads as "thinking"; there is
+    // no model call here — see the scripted-demo badge in the header.
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    // Classify intent and select component
+    // Classify intent and select component (keyword/registry matching)
     const result = classifyIntent(input);
 
     let assistantMessage: Message;
@@ -154,14 +155,18 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)]">
-      {/* Header */}
+      {/* Header.
+          Honesty note: this page is a scripted demo — classifyIntent() does
+          keyword/registry matching with an artificial delay; no AI model is
+          called. The badge below must stay until a real model is wired in. */}
       <div className="mb-4">
         <div className="flex items-center space-x-2 mb-2">
           <SparklesIcon className="w-8 h-8 text-indigo-600" />
-          <Title className="text-2xl">AI Commerce Assistant</Title>
+          <Title className="text-2xl">Commerce Assistant</Title>
+          <Badge color="amber" size="sm">Scripted demo — no AI model</Badge>
         </div>
         <Text className="text-gray-600">
-          Natural language interface to your embedded commerce engine. Ask questions and get real-time generative UI responses.
+          Demo interface: your question is matched against keywords to pick a dashboard view. Data in the views comes from the embedded commerce engine.
         </Text>
       </div>
 

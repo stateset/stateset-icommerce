@@ -4,6 +4,7 @@ import { Inter } from 'next/font/google';
 import { Suspense } from 'react';
 import './globals.css';
 import { Sidebar } from '@/components/sidebar';
+import { MobileNav } from '@/components/mobile-nav';
 import { SessionsSidebar } from '@/components/sessions-sidebar';
 import { TopBar } from '@/components/shared/top-bar';
 import { AdminLoginGate } from '@/lib/shared/admin-login-gate';
@@ -83,6 +84,8 @@ export default async function RootLayout({
           </Suspense>
           <Sidebar />
           <main id="main-content" className="flex-1 overflow-y-auto flex flex-col">
+            {/* Mobile disclosure nav (the sidebar is hidden below lg). */}
+            <MobileNav />
             {/* Top bar (org switcher; hides itself when there's ≤1 org). */}
             <Suspense fallback={null}>
               <TopBar />

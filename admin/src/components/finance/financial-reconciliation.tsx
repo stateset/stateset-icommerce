@@ -6,6 +6,7 @@ import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getFinancialReconciliationData } from '@/app/actions/commerce';
+import { SimulatedDataBadge } from '@/components/shared/simulated-data-badge';
 import { formatCurrency, formatPercentage } from '@/lib/utils';
 import type { FinancialReconciliationData, ReconciliationCategory, DiscrepancyItem, ReconciliationTransaction, TremorColor } from '@/lib/types/dashboard-data';
 
@@ -53,24 +54,37 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
       animate={{ opacity: 1, y: 0 }}
       className="space-y-6"
     >
-      {/* Key Metrics */}
+      {/* Key Metrics.
+          Reconciled/pending/discrepancy amounts are fixed ratios of real
+          revenue, not actual processor reconciliation — there is no payment
+          processor feed wired up yet. Net Cash (revenue minus refunds) is
+          computed from real engine data. */}
       <Grid numItems={2} numItemsSm={4} className="gap-4">
         <Card decoration="top" decorationColor="emerald">
-          <Text>Total Reconciled</Text>
+          <div className="flex items-center justify-between">
+            <Text>Total Reconciled</Text>
+            <SimulatedDataBadge />
+          </div>
           <Metric>{formatCurrency(summary?.totalReconciled || 458000)}</Metric>
           <Text className="text-xs text-emerald-600 mt-1">
             {formatPercentage(summary?.reconciledRate || 0.982)} of transactions
           </Text>
         </Card>
         <Card decoration="top" decorationColor="amber">
-          <Text>Pending Review</Text>
+          <div className="flex items-center justify-between">
+            <Text>Pending Review</Text>
+            <SimulatedDataBadge />
+          </div>
           <Metric>{formatCurrency(summary?.pendingAmount || 12500)}</Metric>
           <Text className="text-xs text-amber-600 mt-1">
             {summary?.pendingCount || 23} transactions
           </Text>
         </Card>
         <Card decoration="top" decorationColor="red">
-          <Text>Discrepancies</Text>
+          <div className="flex items-center justify-between">
+            <Text>Discrepancies</Text>
+            <SimulatedDataBadge />
+          </div>
           <Metric>{formatCurrency(summary?.discrepancyAmount || 3200)}</Metric>
           <Text className="text-xs text-red-600 mt-1">
             {summary?.discrepancyCount || 8} items flagged
@@ -82,11 +96,16 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
         </Card>
       </Grid>
 
-      {/* Reconciliation Progress */}
+      {/* Reconciliation Progress.
+          Per-category rates are hard-coded demo ratios applied to real
+          revenue totals (see getFinancialReconciliationData). */}
       <Card>
         <div className="flex items-center justify-between mb-4">
           <div>
-            <Title>Reconciliation Progress</Title>
+            <div className="flex items-center gap-2">
+              <Title>Reconciliation Progress</Title>
+              <SimulatedDataBadge />
+            </div>
             <Text className="text-gray-500">Current period status</Text>
           </div>
           <Badge color="emerald" size="lg">
@@ -132,9 +151,14 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
 
       {/* Charts Row */}
       <Grid numItems={1} numItemsLg={2} className="gap-6">
-        {/* Transaction Status */}
+        {/* Transaction Status.
+            Distribution is a fixed split of real revenue, not actual
+            reconciliation status counts. */}
         <Card>
-          <Title>Transaction Status Distribution</Title>
+          <div className="flex items-center justify-between">
+            <Title>Transaction Status Distribution</Title>
+            <SimulatedDataBadge />
+          </div>
           <Text className="text-gray-500 mb-4">Breakdown by reconciliation status</Text>
           <DonutChart
             className="h-64"
@@ -147,9 +171,14 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
           />
         </Card>
 
-        {/* Discrepancy Types */}
+        {/* Discrepancy Types.
+            Counts come from real return statuses, but amounts are fixed
+            shares of a simulated discrepancy total. */}
         <Card>
-          <Title>Discrepancy Analysis</Title>
+          <div className="flex items-center justify-between">
+            <Title>Discrepancy Analysis</Title>
+            <SimulatedDataBadge />
+          </div>
           <Text className="text-gray-500 mb-4">Common discrepancy types</Text>
           <BarChart
             className="h-64"
@@ -162,11 +191,16 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
         </Card>
       </Grid>
 
-      {/* Flagged Discrepancies */}
+      {/* Flagged Discrepancies.
+          Expected amounts come from real returns; the "actual"/"difference"
+          deltas are deterministic jitter, not processor-reported figures. */}
       <Card>
         <div className="flex items-center justify-between mb-4">
           <div>
-            <Title>Flagged Discrepancies</Title>
+            <div className="flex items-center gap-2">
+              <Title>Flagged Discrepancies</Title>
+              <SimulatedDataBadge />
+            </div>
             <Text className="text-gray-500">Items requiring attention</Text>
           </div>
           <Badge color="red" size="lg">
@@ -211,9 +245,14 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
         </div>
       </Card>
 
-      {/* Recent Transactions */}
+      {/* Recent Transactions.
+          Amounts/dates come from real orders, but TXN ids, sources, types and
+          reconciliation statuses are synthesized for display. */}
       <Card>
-        <Title>Recent Transactions</Title>
+        <div className="flex items-center justify-between">
+          <Title>Recent Transactions</Title>
+          <SimulatedDataBadge />
+        </div>
         <Text className="text-gray-500 mb-4">Latest reconciled transactions</Text>
         <div className="overflow-x-auto">
           <table className="w-full">
