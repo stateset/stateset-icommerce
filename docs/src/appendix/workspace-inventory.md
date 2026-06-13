@@ -31,8 +31,8 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 
 | Layer | Packages |
 | --- | --- |
-| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-client`, `stateset-icp-iut`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
-| L2 | `stateset-core`, `stateset-protocol`, `stateset-sync` |
+| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-client`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
+| L2 | `stateset-core`, `stateset-icp-iut`, `stateset-protocol`, `stateset-sync` |
 | L3 | `stateset-db`, `stateset-embedded-wasm` |
 | L4 | `stateset-embedded` |
 | L5 | `stateset-dotnet`, `stateset-embedded-node`, `stateset-go`, `stateset-http`, `stateset-java`, `stateset-kotlin`, `stateset-sdk`, `stateset-swift` |
@@ -43,7 +43,7 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 | Package | Direct dependents |
 | --- | --- |
 | `stateset-core` | 13 |
-| `stateset-crypto` | 12 |
+| `stateset-crypto` | 13 |
 | `stateset-embedded` | 10 |
 | `stateset-primitives` | 7 |
 | `stateset-db` | 4 |

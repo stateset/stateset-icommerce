@@ -2,9 +2,14 @@ const assert = require('node:assert/strict')
 const test = require('node:test')
 
 const { Commerce } = require('../index.js')
+const { loadToolkitModule } = require('./helpers/toolkit-availability.js')
 
-test('agent toolkit entrypoint exposes the embedded toolkit factory', async () => {
-  const toolkitModule = await import('@stateset/embedded/agent-toolkit')
+test('agent toolkit entrypoint exposes the embedded toolkit factory', async (t) => {
+  const { toolkitModule, skipReason } = await loadToolkitModule()
+  if (skipReason) {
+    t.skip(skipReason)
+    return
+  }
 
   assert.equal(typeof toolkitModule.createEmbeddedAgentToolkit, 'function')
   assert.equal(toolkitModule.createEmbeddedAgentKit, toolkitModule.createEmbeddedAgentToolkit)

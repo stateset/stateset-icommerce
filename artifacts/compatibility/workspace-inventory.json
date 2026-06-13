@@ -229,7 +229,9 @@
         "stateset-primitives"
       ],
       "stateset-icp-client": [],
-      "stateset-icp-iut": [],
+      "stateset-icp-iut": [
+        "stateset-crypto"
+      ],
       "stateset-java": [
         "stateset-core",
         "stateset-crypto",
@@ -278,7 +280,6 @@
         "stateset-authz",
         "stateset-crypto",
         "stateset-icp-client",
-        "stateset-icp-iut",
         "stateset-jobs",
         "stateset-macros",
         "stateset-migrations",
@@ -289,6 +290,7 @@
       ],
       [
         "stateset-core",
+        "stateset-icp-iut",
         "stateset-protocol",
         "stateset-sync"
       ],
@@ -336,7 +338,7 @@
       },
       {
         "name": "stateset-crypto",
-        "dependentCount": 12,
+        "dependentCount": 13,
         "dependents": [
           "stateset-core",
           "stateset-dotnet",
@@ -344,6 +346,7 @@
           "stateset-embedded-python",
           "stateset-embedded-wasm",
           "stateset-go",
+          "stateset-icp-iut",
           "stateset-java",
           "stateset-kotlin",
           "stateset-protocol",

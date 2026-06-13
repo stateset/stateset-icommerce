@@ -178,7 +178,12 @@ node --input-type=module -e "
   import fs from 'node:fs';
   const file = '.github/workflows/publish-rust-crates.yml';
   const original = fs.readFileSync(file, 'utf8');
-  fs.writeFileSync(file, original.replace('Version to release (e.g., 1.0.4)', 'Version to release (e.g., 0.9.5)'));
+  const planted = original.replace('Version to release (e.g., ${workspace_version})', 'Version to release (e.g., 0.9.5)');
+  if (planted === original) {
+    console.error('fixture setup failed: could not plant stale workflow example version');
+    process.exit(1);
+  }
+  fs.writeFileSync(file, planted);
 "
 
 set +e

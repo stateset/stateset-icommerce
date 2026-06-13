@@ -33,3 +33,16 @@ VND = "VND"
 aways = "aways"
 mape = "mape"
 Observ = "Observ"
+# `icp_ful` is an intentional ICP event/ID prefix (fulfillment), matching the
+# sibling `icp_evt`, `icp_set`, `icp_sub`, ... three-letter prefix convention.
+ful = "ful"
+# Plural collection-style locals in DB filter tests (`pendings`, `expireds`)
+# mirror the accepted `actives`/`cancelleds` siblings in the same test fns.
+pendings = "pendings"
+expireds = "expireds"
+
+[default.extend-identifiers]
+# Proper noun (HashiCorp Vault) and an intentional acronym stylization
+# ("AID" = Agent IDentifier) in ICP spec prose.
+HashiCorp = "HashiCorp"
+IDentifier = "IDentifier"

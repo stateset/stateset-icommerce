@@ -2,8 +2,19 @@ const assert = require('node:assert/strict')
 const test = require('node:test')
 
 const { Commerce } = require('../index.js')
+const { loadToolkitModule } = require('./helpers/toolkit-availability.js')
 
-test('framework helper subpaths expose engine-first adapters', async () => {
+test('framework helper subpaths expose engine-first adapters', async (t) => {
+  // The Commerce-instance path resolves tools through the real
+  // @stateset/cli agent toolkit (optional peer dependency). The
+  // toolkit-independent adapter contracts are covered for every
+  // environment in test/adapter-contracts.js.
+  const { skipReason } = await loadToolkitModule()
+  if (skipReason) {
+    t.skip(skipReason)
+    return
+  }
+
   const [openai, generic, langchain, vercelAi] = await Promise.all([
     import('@stateset/embedded/openai'),
     import('@stateset/embedded/generic'),
