@@ -32,9 +32,16 @@ pub fn router() -> Router<AppState> {
     path = "/api/v1/products",
     tag = "products",
     request_body = CreateProductRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-generated key. Replaying the same key with an \
+                identical body returns the original response without creating a duplicate; \
+                reusing it with a different body returns 422. Scoped per tenant."),
+    ),
     responses(
         (status = 201, description = "Product created", body = ProductResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]
@@ -145,7 +152,8 @@ pub(crate) async fn list_products(
         None => None,
     };
 
-    // Count total matching records (without pagination or cursor)
+    // Count total matching records (without pagination or cursor) using an
+    // efficient `SELECT COUNT(*)` rather than materializing the full result set.
     let count_filter = ProductFilter {
         status,
         product_type,
@@ -158,7 +166,7 @@ pub(crate) async fn list_products(
         offset: None,
         after_cursor: None,
     };
-    let total = commerce.products().list(count_filter)?.len();
+    let total = usize::try_from(commerce.products().count(count_filter)?).unwrap_or(usize::MAX);
 
     // Fetch the requested page
     let filter = ProductFilter {

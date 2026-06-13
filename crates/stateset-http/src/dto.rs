@@ -963,6 +963,11 @@ pub struct VersionResponse {
 pub struct EventStreamParams {
     /// Optional event type filter (e.g. `order.*`).
     pub filter: Option<String>,
+    /// Resume the stream after this event id. Equivalent to the standard SSE
+    /// `Last-Event-ID` request header; the header takes precedence when both
+    /// are supplied. Events with a greater id are replayed from the bounded
+    /// server-side buffer before the live stream resumes.
+    pub last_event_id: Option<u64>,
 }
 
 // ============================================================================

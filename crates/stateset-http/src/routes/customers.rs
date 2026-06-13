@@ -29,9 +29,16 @@ pub fn router() -> Router<AppState> {
     path = "/api/v1/customers",
     tag = "customers",
     request_body = CreateCustomerRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-generated key. Replaying the same key with an \
+                identical body returns the original response without creating a duplicate; \
+                reusing it with a different body returns 422. Scoped per tenant."),
+    ),
     responses(
         (status = 201, description = "Customer created", body = CustomerResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]
@@ -121,7 +128,8 @@ pub(crate) async fn list_customers(
         None => None,
     };
 
-    // Count total matching records (without pagination or cursor)
+    // Count total matching records (without pagination or cursor) using an
+    // efficient `SELECT COUNT(*)` rather than materializing the full result set.
     let count_filter = CustomerFilter {
         email: params.email.clone(),
         status,
@@ -131,7 +139,7 @@ pub(crate) async fn list_customers(
         offset: None,
         after_cursor: None,
     };
-    let total = commerce.customers().list(count_filter)?.len();
+    let total = usize::try_from(commerce.customers().count(count_filter)?).unwrap_or(usize::MAX);
 
     // Fetch the requested page
     let filter = CustomerFilter {

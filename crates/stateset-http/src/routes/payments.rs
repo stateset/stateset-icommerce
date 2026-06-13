@@ -122,7 +122,8 @@ pub(crate) async fn list_payments(
         .transpose()
         .map_err(|e| HttpError::BadRequest(format!("Invalid to_date: {e}")))?;
 
-    // Count total matching records (without pagination)
+    // Count total matching records (without pagination) using an efficient
+    // `SELECT COUNT(*)` rather than materializing the full result set.
     let count_filter = PaymentFilter {
         order_id,
         invoice_id: None,
@@ -138,7 +139,7 @@ pub(crate) async fn list_payments(
         limit: None,
         offset: None,
     };
-    let total = commerce.payments().list(count_filter)?.len();
+    let total = usize::try_from(commerce.payments().count(count_filter)?).unwrap_or(usize::MAX);
 
     // Fetch the requested page
     let filter = PaymentFilter {
@@ -173,9 +174,16 @@ pub(crate) async fn list_payments(
     path = "/api/v1/payments",
     tag = "payments",
     request_body = CreatePaymentRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-generated key. Replaying the same key with an \
+                identical body returns the original response without creating a duplicate; \
+                reusing it with a different body returns 422. Scoped per tenant."),
+    ),
     responses(
         (status = 201, description = "Payment created", body = PaymentResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]
@@ -243,12 +251,19 @@ pub(crate) async fn complete_payment(
     post,
     path = "/api/v1/payments/{id}/refund",
     tag = "payments",
-    params(("id" = String, Path, description = "Payment ID (UUID)")),
+    params(
+        ("id" = String, Path, description = "Payment ID (UUID)"),
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-generated key. Replaying the same key with an \
+                identical body returns the original response without creating a duplicate \
+                refund; reusing it with a different body returns 422. Scoped per tenant."),
+    ),
     request_body = CreateRefundRequest,
     responses(
         (status = 201, description = "Refund created", body = PaymentResponse),
         (status = 404, description = "Payment not found", body = ErrorBody),
         (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]

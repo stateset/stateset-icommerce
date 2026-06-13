@@ -131,9 +131,16 @@ pub(crate) async fn list_shipments(
     path = "/api/v1/shipments",
     tag = "shipments",
     request_body = CreateShipmentRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-generated key. Replaying the same key with an \
+                identical body returns the original response without creating a duplicate; \
+                reusing it with a different body returns 422. Scoped per tenant."),
+    ),
     responses(
         (status = 201, description = "Shipment created", body = ShipmentResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]

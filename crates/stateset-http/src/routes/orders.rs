@@ -34,9 +34,16 @@ pub fn router() -> Router<AppState> {
     path = "/api/v1/orders",
     tag = "orders",
     request_body = CreateOrderRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-generated key. Replaying the same key with an \
+                identical body returns the original response without creating a duplicate; \
+                reusing it with a different body returns 422. Scoped per tenant."),
+    ),
     responses(
         (status = 201, description = "Order created", body = OrderResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]
@@ -160,7 +167,8 @@ pub(crate) async fn list_orders(
         None => None,
     };
 
-    // Count total matching records (without pagination or cursor)
+    // Count total matching records (without pagination or cursor) using an
+    // efficient `SELECT COUNT(*)` rather than materializing the full result set.
     let count_filter = OrderFilter {
         customer_id,
         status,
@@ -172,7 +180,7 @@ pub(crate) async fn list_orders(
         offset: None,
         after_cursor: None,
     };
-    let total = commerce.orders().list(count_filter)?.len();
+    let total = usize::try_from(commerce.orders().count(count_filter)?).unwrap_or(usize::MAX);
 
     // Fetch the requested page
     let filter = OrderFilter {

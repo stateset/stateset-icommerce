@@ -3976,3 +3976,140 @@ async fn events_stream_endpoint_responds() {
     assert_ne!(resp.status(), StatusCode::NOT_FOUND, "events/stream should not be 404");
     assert_ne!(resp.status(), StatusCode::METHOD_NOT_ALLOWED, "events/stream should accept GET");
 }
+
+// ============================================================================
+// Idempotency-Key middleware
+// ============================================================================
+
+/// Build a minimal order-create payload for the seeded customer/product.
+fn order_payload(customer_id: &str, product_id: &str) -> Value {
+    json!({
+        "customer_id": customer_id,
+        "items": [{
+            "product_id": product_id,
+            "sku": "INT-SKU-001",
+            "name": "Test Widget",
+            "quantity": 1,
+            "unit_price": "19.99"
+        }]
+    })
+}
+
+fn order_post(payload: &Value, key: &str, tenant: &str) -> Request<Body> {
+    Request::post("/api/v1/orders")
+        .header("content-type", "application/json")
+        .header("idempotency-key", key)
+        .header("x-tenant-id", tenant)
+        .body(Body::from(serde_json::to_vec(payload).unwrap()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn idempotent_replay_returns_identical_response_and_no_duplicate() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    let payload = order_payload(&customer_id, &product_id);
+
+    let first =
+        router.clone().oneshot(order_post(&payload, "order-key-1", "tenant-a")).await.unwrap();
+    assert_eq!(first.status(), StatusCode::CREATED);
+    assert_eq!(
+        first.headers().get("idempotency-replayed").and_then(|v| v.to_str().ok()),
+        Some("false")
+    );
+    let first_body = axum::body::to_bytes(first.into_body(), usize::MAX).await.unwrap();
+
+    let second =
+        router.clone().oneshot(order_post(&payload, "order-key-1", "tenant-a")).await.unwrap();
+    assert_eq!(second.status(), StatusCode::CREATED);
+    assert_eq!(
+        second.headers().get("idempotency-replayed").and_then(|v| v.to_str().ok()),
+        Some("true")
+    );
+    let second_body = axum::body::to_bytes(second.into_body(), usize::MAX).await.unwrap();
+
+    // The replayed response is byte-identical to the original.
+    assert_eq!(first_body, second_body);
+
+    // Exactly one order was created despite two requests with the same key.
+    let orders = state.commerce().orders().list(Default::default()).unwrap();
+    assert_eq!(orders.len(), 1, "replay must not create a duplicate order");
+}
+
+#[tokio::test]
+async fn idempotent_conflicting_body_is_rejected() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    let payload = order_payload(&customer_id, &product_id);
+
+    let first =
+        router.clone().oneshot(order_post(&payload, "order-key-2", "tenant-a")).await.unwrap();
+    assert_eq!(first.status(), StatusCode::CREATED);
+
+    // Same key, different body (extra quantity) → 422 with the error envelope.
+    let mut conflicting = payload.clone();
+    conflicting["items"][0]["quantity"] = json!(99);
+    let conflict =
+        router.clone().oneshot(order_post(&conflicting, "order-key-2", "tenant-a")).await.unwrap();
+    assert_eq!(conflict.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let json = body_json(conflict).await;
+    assert_eq!(json["error"]["code"], "validation_error");
+
+    // The conflicting request did not create a second order.
+    let orders = state.commerce().orders().list(Default::default()).unwrap();
+    assert_eq!(orders.len(), 1);
+}
+
+#[tokio::test]
+async fn idempotency_keys_are_isolated_per_tenant() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    let payload = order_payload(&customer_id, &product_id);
+
+    // Same key + identical body, but different tenants → two fresh writes.
+    for tenant in ["tenant-a", "tenant-b"] {
+        let resp =
+            router.clone().oneshot(order_post(&payload, "shared-key", tenant)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        assert_eq!(
+            resp.headers().get("idempotency-replayed").and_then(|v| v.to_str().ok()),
+            Some("false"),
+            "each tenant's first use of the key must be a fresh write, not a replay"
+        );
+    }
+
+    // Both tenants resolved to the same in-memory engine here, so two orders
+    // exist — proving the idempotency cache is keyed per tenant, not global.
+    let orders = state.commerce().orders().list(Default::default()).unwrap();
+    assert_eq!(orders.len(), 2);
+}
+
+#[tokio::test]
+async fn requests_without_idempotency_key_are_not_deduplicated() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    let payload = order_payload(&customer_id, &product_id);
+
+    for _ in 0..2 {
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .header("x-tenant-id", "tenant-a")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        assert!(resp.headers().get("idempotency-replayed").is_none());
+    }
+
+    let orders = state.commerce().orders().list(Default::default()).unwrap();
+    assert_eq!(orders.len(), 2, "without a key, each request creates a new order");
+}

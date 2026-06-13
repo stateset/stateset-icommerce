@@ -22,7 +22,7 @@ axum = { version = "0.8", features = ["json", "query"] }
 tower = { version = "0.5", features = ["timeout"] }
 tower-http = { version = "0.6", features = ["compression-gzip", "cors", "trace", "request-id", "timeout", "util"] }
 tokio = { workspace = true }
-tokio-stream = { version = "0.1", features = ["time"] }
+tokio-stream = { version = "0.1", features = ["sync", "time"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
