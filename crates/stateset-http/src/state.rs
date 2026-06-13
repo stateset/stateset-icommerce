@@ -15,7 +15,11 @@ use std::{
 use axum::http::HeaderMap;
 use stateset_embedded::Commerce;
 
-use crate::{error::HttpError, middleware::X_TENANT_ID};
+use crate::{
+    error::HttpError,
+    events_replay::{DEFAULT_REPLAY_CAPACITY, EventReplayBuffer, EventReplayRegistry},
+    middleware::X_TENANT_ID,
+};
 
 /// Default cap for lazily created per-tenant databases.
 pub(crate) const DEFAULT_MAX_TENANT_DBS: usize = 256;
@@ -318,6 +322,7 @@ pub struct AppState {
     metrics_trusted_proxies: Option<Arc<Vec<IpCidr>>>,
     metrics_header_limits: MetricsHeaderLimits,
     max_tenant_dbs: usize,
+    event_replay: EventReplayRegistry,
 }
 
 impl fmt::Debug for AppState {
@@ -426,6 +431,7 @@ impl fmt::Debug for AppState {
             )
             .field("metrics_header_limits", &self.metrics_header_limits)
             .field("max_tenant_dbs", &self.max_tenant_dbs)
+            .field("event_replay", &self.event_replay)
             .finish()
     }
 }
@@ -495,6 +501,7 @@ impl AppState {
             metrics_trusted_proxies: None,
             metrics_header_limits: MetricsHeaderLimits::default(),
             max_tenant_dbs: DEFAULT_MAX_TENANT_DBS,
+            event_replay: EventReplayRegistry::new(DEFAULT_REPLAY_CAPACITY),
         }
     }
 
@@ -614,6 +621,23 @@ impl AppState {
     #[must_use]
     pub fn commerce(&self) -> &Commerce {
         &self.commerce
+    }
+
+    /// Get (or lazily create) the SSE replay buffer for a `Commerce` engine.
+    ///
+    /// The buffer assigns monotonic ids to events and retains a bounded window
+    /// for `Last-Event-ID` reconnection. Each engine (e.g. each tenant database)
+    /// has an independent buffer and background pump.
+    pub(crate) fn event_replay_buffer(&self, commerce: &Arc<Commerce>) -> Arc<EventReplayBuffer> {
+        self.event_replay.buffer_for(commerce)
+    }
+
+    /// Override the SSE replay ring capacity (used in tests to exercise overflow).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_event_replay_capacity(mut self, capacity: usize) -> Self {
+        self.event_replay = EventReplayRegistry::new(capacity);
+        self
     }
 
     /// Return the configured bearer token for `/metrics`, if set.
@@ -955,6 +979,34 @@ impl AppState {
             last_access_tick: access_tick,
         });
         Ok(Arc::clone(&entry.commerce))
+    }
+
+    /// Resolve the tenant [`Commerce`] engine and run a synchronous closure
+    /// against it on a blocking-friendly thread, off the async worker pool.
+    ///
+    /// The repository layer is synchronous: with the default SQLite backend the
+    /// calls are CPU/disk-bound and would otherwise stall a Tokio worker thread,
+    /// and the optional Postgres backend bridges to async via a blocking
+    /// `block_on` shim that *cannot* run inside an async runtime. Routing the
+    /// closure through [`tokio::task::spawn_blocking`] keeps the async executor
+    /// responsive under load and keeps the Postgres path valid.
+    ///
+    /// Tenant resolution happens before the closure is dispatched so that
+    /// routing errors (missing/invalid `x-tenant-id`) surface synchronously with
+    /// their normal status codes.
+    pub(crate) async fn run_blocking<F, T>(
+        &self,
+        tenant_id: Option<&str>,
+        f: F,
+    ) -> Result<T, HttpError>
+    where
+        F: FnOnce(&Commerce) -> Result<T, HttpError> + Send + 'static,
+        T: Send + 'static,
+    {
+        let commerce = self.commerce_for_tenant(tenant_id)?;
+        tokio::task::spawn_blocking(move || f(&commerce)).await.map_err(|join_error| {
+            HttpError::InternalError(format!("blocking commerce task failed: {join_error}"))
+        })?
     }
 
     fn next_tenant_access_tick(&self) -> u64 {

@@ -698,6 +698,9 @@ export class ICPClient {
       intent,
       signature: { alg: 'ed25519', kid: this.identity.aid, sig },
       _pubkey_hex: this.identity.ed25519_pubkey.toString('hex'),
+      // §4.2 AID→pubkey binding: the handler re-derives the AID from BOTH keys
+      // and rejects a mismatch, so the X25519 half must be supplied too.
+      _x_pubkey_hex: this.identity.x25519_pubkey.toString('hex'),
     };
     const r = await fetch(`${this.handlerUrl}/icp/v1/intents`, {
       method: 'POST',

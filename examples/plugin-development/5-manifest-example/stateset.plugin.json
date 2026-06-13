@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "A complete example plugin with manifest + config (demo)",
   "author": "StateSet",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "entry": "index.js",
   "kind": "general",
   "provides": ["commands", "hooks", "services", "httpRoutes"],

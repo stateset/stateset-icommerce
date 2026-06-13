@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/stateset/stateset-icommerce/blob/master/SECURITY.md
+    about: Do NOT open a public issue for vulnerabilities. Follow the responsible-disclosure process in SECURITY.md (email security@stateset.io).
+  - name: Questions & discussions
+    url: https://github.com/stateset/stateset-icommerce/discussions
+    about: Ask usage questions, share ideas, or get help. Please use Discussions instead of issues for open-ended topics.
+  - name: Contributing guide
+    url: https://github.com/stateset/stateset-icommerce/blob/master/CONTRIBUTING.md
+    about: Setup, build, testing, and pull-request workflow for all crates, bindings, and the CLI.

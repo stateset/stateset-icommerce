@@ -13,7 +13,7 @@
     <Company>StateSet</Company>
     <Description>StateSet Embedded Commerce - The SQLite of Commerce. A zero-dependency, local-first commerce engine for .NET applications.</Description>
     <PackageTags>commerce;ecommerce;embedded;sqlite;orders;inventory;customers;payments</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/stateset/stateset-icommerce</PackageProjectUrl>
     <RepositoryUrl>https://github.com/stateset/stateset-icommerce</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

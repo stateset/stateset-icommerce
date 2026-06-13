@@ -764,6 +764,41 @@ impl crate::AsyncDatabaseExt for PostgresDatabase {
     }
 }
 
+/// Shared multi-threaded Tokio runtime used to drive blocking Postgres calls.
+///
+/// Constructing a [`tokio::runtime::Runtime`] is expensive (it spawns a worker
+/// thread pool, an I/O reactor and a timer driver), so building one per
+/// repository call — as the original implementation did — was both slow and
+/// wasteful. Instead we lazily build a single multi-threaded runtime on first
+/// use and reuse it for every subsequent blocking call.
+///
+/// A *multi-threaded* runtime is required: [`block_on`] parks the calling
+/// thread while the future runs, and `sqlx` drives its connection pool on the
+/// runtime's worker threads. A current-thread runtime would deadlock under
+/// concurrent blocking callers.
+static SHARED_RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+/// Return a reference to the shared runtime, building it on first use.
+///
+/// Runtime construction can fail (e.g. the OS refuses to spawn threads). In that
+/// case nothing is cached and the error is propagated so a later call may retry.
+fn shared_runtime() -> stateset_core::Result<&'static tokio::runtime::Runtime> {
+    if let Some(rt) = SHARED_RUNTIME.get() {
+        return Ok(rt);
+    }
+    // Build outside `get_or_init` so a construction failure is not swallowed by
+    // the `OnceLock` (which can only ever store a successful value).
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {e}")))?;
+    Ok(SHARED_RUNTIME.get_or_init(|| rt))
+}
+
+/// Drive an async Postgres future to completion on a dedicated blocking runtime.
+///
+/// This bridges the synchronous [`stateset_core::traits`] repository API to the
+/// async `sqlx` backend. Calling it from *within* an existing async runtime is
+/// rejected (rather than silently nesting runtimes, which would panic or
+/// deadlock); async callers must use the async repository methods directly.
 pub(crate) fn block_on<F, T>(fut: F) -> stateset_core::Result<T>
 where
     F: Future<Output = stateset_core::Result<T>>,
@@ -774,9 +809,7 @@ where
         ));
     }
 
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {}", e)))?;
-    rt.block_on(fut)
+    shared_runtime()?.block_on(fut)
 }
 
 #[cfg(test)]

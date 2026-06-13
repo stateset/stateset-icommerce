@@ -29,9 +29,16 @@ pub fn router() -> Router<AppState> {
     path = "/api/v1/customers",
     tag = "customers",
     request_body = CreateCustomerRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-generated key. Replaying the same key with an \
+                identical body returns the original response without creating a duplicate; \
+                reusing it with a different body returns 422. Scoped per tenant."),
+    ),
     responses(
         (status = 201, description = "Customer created", body = CustomerResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]
@@ -41,7 +48,6 @@ pub(crate) async fn create_customer(
     Json(req): Json<CreateCustomerRequest>,
 ) -> Result<(axum::http::StatusCode, Json<CustomerResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let input = CreateCustomer {
         email: req.email,
@@ -52,7 +58,11 @@ pub(crate) async fn create_customer(
         tags: req.tags,
         metadata: req.metadata,
     };
-    let customer = commerce.customers().create(input)?;
+    let customer = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(commerce.customers().create(input)?)
+        })
+        .await?;
     Ok((axum::http::StatusCode::CREATED, Json(CustomerResponse::from(customer))))
 }
 
@@ -74,11 +84,14 @@ pub(crate) async fn get_customer(
     Path(id): Path<CustomerId>,
 ) -> Result<Json<CustomerResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let customer = commerce
-        .customers()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Customer {id} not found")))?;
+    let customer = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce
+                .customers()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Customer {id} not found")))
+        })
+        .await?;
     Ok(Json(CustomerResponse::from(customer)))
 }
 
@@ -100,7 +113,6 @@ pub(crate) async fn list_customers(
     Query(params): Query<CustomerFilterParams>,
 ) -> Result<Json<CustomerListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let limit = params.resolved_limit();
     let offset = params.resolved_offset();
@@ -121,7 +133,8 @@ pub(crate) async fn list_customers(
         None => None,
     };
 
-    // Count total matching records (without pagination or cursor)
+    // Count total matching records (without pagination or cursor) using an
+    // efficient `SELECT COUNT(*)` rather than materializing the full result set.
     let count_filter = CustomerFilter {
         email: params.email.clone(),
         status,
@@ -131,8 +144,6 @@ pub(crate) async fn list_customers(
         offset: None,
         after_cursor: None,
     };
-    let total = commerce.customers().list(count_filter)?.len();
-
     // Fetch the requested page
     let filter = CustomerFilter {
         email: params.email,
@@ -143,7 +154,16 @@ pub(crate) async fn list_customers(
         offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
         after_cursor,
     };
-    let mut customers = commerce.customers().list(filter)?;
+
+    let (total, mut customers) = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let total =
+                usize::try_from(commerce.customers().count(count_filter)?).unwrap_or(usize::MAX);
+            let customers = commerce.customers().list(filter)?;
+            Ok((total, customers))
+        })
+        .await?;
+
     let has_more = finalize_page(&mut customers, limit);
     let next_cursor = if has_more {
         customers.last().map(|c| encode_cursor(&c.created_at.to_rfc3339(), &c.id.to_string()))
@@ -181,7 +201,6 @@ pub(crate) async fn update_customer(
     Json(req): Json<UpdateCustomerRequest>,
 ) -> Result<Json<CustomerResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let status = req.status.as_deref().map(CustomerStatus::from_str).transpose().map_err(|e| {
         HttpError::BadRequest(format!(
@@ -199,7 +218,11 @@ pub(crate) async fn update_customer(
         tags: req.tags,
         metadata: req.metadata,
     };
-    let customer = commerce.customers().update(id, input)?;
+    let customer = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(commerce.customers().update(id, input)?)
+        })
+        .await?;
     Ok(Json(CustomerResponse::from(customer)))
 }
 
@@ -221,8 +244,9 @@ pub(crate) async fn delete_customer(
     Path(id): Path<CustomerId>,
 ) -> Result<axum::http::StatusCode, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    commerce.customers().delete(id)?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| Ok(commerce.customers().delete(id)?))
+        .await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 

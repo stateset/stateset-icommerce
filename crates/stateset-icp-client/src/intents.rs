@@ -8,7 +8,7 @@ use serde_json::Value;
 
 /// A signed `IntentEnvelope` ready for POST to `/icp/v1/intents`.
 ///
-/// Wire shape: `{ intent, signature: {alg, kid, sig}, _pubkey_hex }`.
+/// Wire shape: `{ intent, signature: {alg, kid, sig}, _pubkey_hex, _x_pubkey_hex }`.
 /// This matches the `JavaScript` reference SDK byte-for-byte.
 #[derive(Debug, Clone, Serialize)]
 pub struct IntentEnvelope {
@@ -19,6 +19,9 @@ pub struct IntentEnvelope {
     /// Convenience copy of the Agent's Ed25519 public key (hex) so the
     /// handler can verify without resolving the AID via DID document.
     pub _pubkey_hex: String,
+    /// Convenience copy of the Agent's X25519 public key (hex). Required by
+    /// the handler to re-derive and bind the AID per ICP-1.0 §4.2.
+    pub _x_pubkey_hex: String,
 }
 
 /// Build a signed `IntentEnvelope`:
@@ -35,6 +38,7 @@ pub fn build_intent_envelope(
         intent: intent_value,
         signature: Signature { alg: "ed25519".to_string(), kid: identity.aid().to_string(), sig },
         _pubkey_hex: hex::encode(identity.ed_pubkey()),
+        _x_pubkey_hex: hex::encode(identity.x_pubkey()),
     })
 }
 

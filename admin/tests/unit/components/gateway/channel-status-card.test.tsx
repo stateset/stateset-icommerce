@@ -21,14 +21,18 @@ import type { ChannelStats } from '@/lib/types/gateway';
 
 const ACTIVE_STATS: ChannelStats = {
   messagesReceived: 100,
+  responsesSent: 95,
   errors: 5,
+  blocked: 0,
   avgResponseMs: 142.6,
   lastMessageAt: new Date(Date.now() - 60_000).toISOString(),
 };
 
 const IDLE_STATS: ChannelStats = {
   messagesReceived: 0,
+  responsesSent: 0,
   errors: 0,
+  blocked: 0,
   avgResponseMs: 0,
   lastMessageAt: null,
 };

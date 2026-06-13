@@ -815,6 +815,19 @@ export const TOOL_PERMISSIONS = {
   x402_history: 'read',
   x402_receipt: 'read',
 
+  // Agent Receipts (x402 agent demo flows)
+  agent_receipt_purchase: 'write',
+  agent_receipt_status: 'read',
+  agent_receipt_dispute: 'write',
+  agent_receipt_resolve: 'admin',
+  agent_receipt_fx_quote: 'read',
+  agent_receipt_merchant_statement: 'read',
+  agent_receipt_request_payout: 'write',
+  agent_receipt_audit: 'read',
+  agent_receipt_sweep_yield: 'admin',
+  agent_receipt_refund: 'write',
+  agent_receipt_release: 'write',
+
   // Gift Cards
   create_gift_card: 'write',
   get_gift_card: 'read',

@@ -10,6 +10,7 @@
 //! $customer = $commerce->customers()->create("alice@example.com", "Alice", "Smith");
 //! ```
 
+use ext_php_rs::binary::Binary;
 use ext_php_rs::prelude::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -27,9 +28,15 @@ macro_rules! lock_commerce {
 }
 
 macro_rules! parse_uuid {
-    ($id:expr, $name:expr) => {
-        $id.parse().map_err(|_| PhpException::default(format!("Invalid {} UUID", $name)))?
-    };
+    ($id:expr, $name:expr) => {{
+        // `stateset_core::Id` is a public alias for `uuid::Uuid`. Parsing into the
+        // concrete UUID type (rather than letting inference flow through a later
+        // `.into()`) keeps the macro usable both directly and as `uuid.into()` to a
+        // typed newtype id (e.g. `OrderId`, `CustomerId`).
+        let parsed: stateset_core::Id =
+            $id.parse().map_err(|_| PhpException::default(format!("Invalid {} UUID", $name)))?;
+        parsed
+    }};
 }
 
 fn to_f64_or_nan<T>(value: T) -> f64
@@ -64,6 +71,19 @@ fn decimal_from_f64(value: f64, field: &str) -> PhpResult<Decimal> {
 
 fn optional_decimal_from_f64(value: Option<f64>, field: &str) -> PhpResult<Option<Decimal>> {
     value.map(|inner| decimal_from_f64(inner, field)).transpose()
+}
+
+/// Parse an optional ISO-8601 (`YYYY-MM-DD`) date string into a `NaiveDate`.
+///
+/// Returns a clean binding error on a malformed date rather than panicking.
+fn optional_naive_date(value: Option<&str>, field: &str) -> PhpResult<Option<chrono::NaiveDate>> {
+    value
+        .map(|raw| {
+            chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|err| {
+                PhpException::default(format!("Invalid {} (expected YYYY-MM-DD): {}", field, err))
+            })
+        })
+        .transpose()
 }
 
 // ============================================================================
@@ -379,7 +399,9 @@ impl Customers {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count customers: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count).map_err(|_| {
+            PhpException::default("Customer count exceeds supported range".to_string())
+        })
     }
 }
 
@@ -500,7 +522,10 @@ impl Order {
         self.tracking_number.clone()
     }
 
-    #[getter]
+    // Exposed to PHP as `getItems(): array`. A plain method (rather than a
+    // `#[getter]` property) because `Vec<OrderItem>` only needs to be returned
+    // to PHP (`IntoZval`); `#[getter]` would additionally require the element
+    // type to implement `FromZval` by value, which php-class types do not.
     pub fn get_items(&self) -> Vec<OrderItem> {
         self.items.clone()
     }
@@ -540,7 +565,7 @@ impl From<stateset_core::Order> for Order {
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
             total_amount: to_f64_or_nan(o.total_amount),
-            currency: o.currency,
+            currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
             tracking_number: o.tracking_number,
@@ -578,7 +603,7 @@ impl Orders {
     pub fn create(
         &self,
         customer_id: String,
-        items: Vec<ext_php_rs::types::ZendHashTable>,
+        items: Vec<&ext_php_rs::types::ZendHashTable>,
         currency: Option<String>,
         notes: Option<String>,
     ) -> PhpResult<Order> {
@@ -588,12 +613,11 @@ impl Orders {
         let order_items: Vec<stateset_core::CreateOrderItem> = items
             .into_iter()
             .map(|h| {
-                let sku: String = h.get("sku").and_then(|v| v.string().ok()).unwrap_or_default();
-                let name: String = h.get("name").and_then(|v| v.string().ok()).unwrap_or_default();
+                let sku: String = h.get("sku").and_then(|v| v.string()).unwrap_or_default();
+                let name: String = h.get("name").and_then(|v| v.string()).unwrap_or_default();
                 let quantity: i32 =
-                    h.get("quantity").and_then(|v| v.long().ok()).map(|l| l as i32).unwrap_or(1);
-                let unit_price: f64 =
-                    h.get("unit_price").and_then(|v| v.double().ok()).unwrap_or(0.0);
+                    h.get("quantity").and_then(|v| v.long()).map(|l| l as i32).unwrap_or(1);
+                let unit_price: f64 = h.get("unit_price").and_then(|v| v.double()).unwrap_or(0.0);
 
                 Ok(stateset_core::CreateOrderItem {
                     product_id: Default::default(),
@@ -610,9 +634,9 @@ impl Orders {
         let order = commerce
             .orders()
             .create(stateset_core::CreateOrder {
-                customer_id: cust_uuid,
+                customer_id: cust_uuid.into(),
                 items: order_items,
-                currency,
+                currency: currency.and_then(|c| c.parse().ok()),
                 notes,
                 ..Default::default()
             })
@@ -652,33 +676,34 @@ impl Orders {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count orders: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count)
+            .map_err(|_| PhpException::default("Order count exceeds supported range".to_string()))
     }
 
     pub fn ship(
         &self,
         id: String,
         tracking_number: Option<String>,
-        carrier: Option<String>,
+        _carrier: Option<String>,
     ) -> PhpResult<Order> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "order");
 
         let order = commerce
             .orders()
-            .ship(uuid, tracking_number, carrier)
+            .ship(uuid.into(), tracking_number.as_deref())
             .map_err(|e| PhpException::default(format!("Failed to ship order: {}", e)))?;
 
         Ok(order.into())
     }
 
-    pub fn cancel(&self, id: String, reason: Option<String>) -> PhpResult<Order> {
+    pub fn cancel(&self, id: String, _reason: Option<String>) -> PhpResult<Order> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "order");
 
         let order = commerce
             .orders()
-            .cancel(uuid, reason)
+            .cancel(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to cancel order: {}", e)))?;
 
         Ok(order.into())
@@ -690,7 +715,7 @@ impl Orders {
 
         let order = commerce
             .orders()
-            .confirm(uuid)
+            .update_status(uuid.into(), stateset_core::OrderStatus::Confirmed)
             .map_err(|e| PhpException::default(format!("Failed to confirm order: {}", e)))?;
 
         Ok(order.into())
@@ -702,7 +727,7 @@ impl Orders {
 
         let order = commerce
             .orders()
-            .deliver(uuid)
+            .deliver(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to deliver order: {}", e)))?;
 
         Ok(order.into())
@@ -821,7 +846,8 @@ impl Product {
         self.tags.clone()
     }
 
-    #[getter]
+    // Exposed to PHP as `getVariants(): array`. See `Order::get_items` for why
+    // this is a plain method rather than a `#[getter]` property.
     pub fn get_variants(&self) -> Vec<ProductVariant> {
         self.variants.clone()
     }
@@ -846,25 +872,18 @@ impl From<stateset_core::Product> for Product {
         Self {
             id: p.id.to_string(),
             name: p.name,
-            description: p.description,
-            vendor: p.vendor,
-            product_type: p.product_type,
+            // The embedded `Product` description is a plain `String`; the PHP
+            // surface keeps it optional and treats an empty string as "unset".
+            description: if p.description.is_empty() { None } else { Some(p.description) },
+            // `vendor` and `tags` are no longer part of the embedded product
+            // model; preserve the PHP surface with empty defaults.
+            vendor: None,
+            product_type: Some(format!("{}", p.product_type)),
             status: format!("{}", p.status),
-            tags: p.tags,
-            variants: p
-                .variants
-                .into_iter()
-                .map(|v| ProductVariant {
-                    id: v.id.to_string(),
-                    sku: v.sku,
-                    name: v.name,
-                    price: to_f64_or_nan(v.price),
-                    compare_at_price: v.compare_at_price.and_then(|p| p.to_f64()),
-                    inventory_quantity: v.inventory_quantity,
-                    weight: v.weight.and_then(|w| w.to_f64()),
-                    barcode: v.barcode,
-                })
-                .collect(),
+            tags: Vec::new(),
+            // Variants are managed independently of the product record in the
+            // current embedded API, so they are no longer populated here.
+            variants: Vec::new(),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         }
@@ -887,7 +906,7 @@ impl Products {
         &self,
         name: String,
         description: Option<String>,
-        vendor: Option<String>,
+        _vendor: Option<String>,
         product_type: Option<String>,
     ) -> PhpResult<Product> {
         let commerce = lock_commerce!(self.commerce);
@@ -897,8 +916,7 @@ impl Products {
             .create(stateset_core::CreateProduct {
                 name,
                 description,
-                vendor,
-                product_type,
+                product_type: product_type.and_then(|t| t.parse().ok()),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create product: {}", e)))?;
@@ -937,7 +955,8 @@ impl Products {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count products: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count)
+            .map_err(|_| PhpException::default("Product count exceeds supported range".to_string()))
     }
 
     pub fn get_by_sku(&self, sku: String) -> PhpResult<Option<ProductVariant>> {
@@ -954,7 +973,9 @@ impl Products {
             name: v.name,
             price: to_f64_or_nan(v.price),
             compare_at_price: v.compare_at_price.and_then(|p| p.to_f64()),
-            inventory_quantity: v.inventory_quantity,
+            // Per-variant inventory is tracked by SKU in the inventory module
+            // rather than on the variant record; default to 0 here.
+            inventory_quantity: 0,
             weight: v.weight.and_then(|w| w.to_f64()),
             barcode: v.barcode,
         }))
@@ -976,6 +997,12 @@ pub struct InventoryItem {
     reorder_point: Option<i32>,
     reorder_quantity: Option<i32>,
     location_id: Option<String>,
+}
+
+/// Convert a `Decimal` quantity into the `i32` surface PHP expects, saturating
+/// on overflow and truncating any fractional component.
+fn decimal_to_i32(value: Decimal) -> i32 {
+    value.to_i32().unwrap_or_else(|| if value.is_sign_negative() { i32::MIN } else { i32::MAX })
 }
 
 #[php_impl]
@@ -1025,17 +1052,39 @@ impl InventoryItem {
     }
 }
 
-impl From<stateset_core::InventoryItem> for InventoryItem {
-    fn from(i: stateset_core::InventoryItem) -> Self {
+impl InventoryItem {
+    /// Build the PHP-facing item from the core item record plus an optional
+    /// aggregated stock level (the embedded API splits item metadata from the
+    /// per-location stock balances). When stock is unavailable the quantity
+    /// fields fall back to zero.
+    fn from_parts(
+        item: &stateset_core::InventoryItem,
+        stock: Option<&stateset_core::StockLevel>,
+    ) -> Self {
         Self {
-            id: i.id.to_string(),
-            sku: i.sku,
-            quantity_on_hand: i.quantity_on_hand,
-            quantity_reserved: i.quantity_reserved,
-            quantity_available: i.quantity_available,
-            reorder_point: i.reorder_point,
-            reorder_quantity: i.reorder_quantity,
-            location_id: i.location_id.map(|id| id.to_string()),
+            id: item.id.to_string(),
+            sku: item.sku.clone(),
+            quantity_on_hand: stock.map(|s| decimal_to_i32(s.total_on_hand)).unwrap_or(0),
+            quantity_reserved: stock.map(|s| decimal_to_i32(s.total_allocated)).unwrap_or(0),
+            quantity_available: stock.map(|s| decimal_to_i32(s.total_available)).unwrap_or(0),
+            reorder_point: None,
+            reorder_quantity: None,
+            location_id: None,
+        }
+    }
+}
+
+impl From<stateset_core::StockLevel> for InventoryItem {
+    fn from(s: stateset_core::StockLevel) -> Self {
+        Self {
+            id: String::new(),
+            sku: s.sku,
+            quantity_on_hand: decimal_to_i32(s.total_on_hand),
+            quantity_reserved: decimal_to_i32(s.total_allocated),
+            quantity_available: decimal_to_i32(s.total_available),
+            reorder_point: None,
+            reorder_quantity: None,
+            location_id: None,
         }
     }
 }
@@ -1057,30 +1106,46 @@ impl Inventory {
     ) -> PhpResult<InventoryItem> {
         let commerce = lock_commerce!(self.commerce);
 
+        let name = sku.clone();
         let item = commerce
             .inventory()
-            .create(stateset_core::CreateInventoryItem {
-                sku,
-                quantity_on_hand: quantity,
-                reorder_point,
-                reorder_quantity,
+            .create_item(stateset_core::CreateInventoryItem {
+                sku: sku.clone(),
+                name,
+                initial_quantity: Some(Decimal::from(quantity)),
+                reorder_point: reorder_point.map(Decimal::from),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create inventory: {}", e)))?;
 
-        Ok(item.into())
+        let stock = commerce
+            .inventory()
+            .get_stock(&sku)
+            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?;
+
+        let mut php_item = InventoryItem::from_parts(&item, stock.as_ref());
+        php_item.reorder_point = reorder_point;
+        php_item.reorder_quantity = reorder_quantity;
+        Ok(php_item)
     }
 
     pub fn get(&self, id: String) -> PhpResult<Option<InventoryItem>> {
         let commerce = lock_commerce!(self.commerce);
-        let uuid = parse_uuid!(id, "inventory");
+        let item_id: i64 =
+            id.parse().map_err(|_| PhpException::default("Invalid inventory id".to_string()))?;
 
         let item = commerce
             .inventory()
-            .get(uuid)
+            .get_item(item_id)
             .map_err(|e| PhpException::default(format!("Failed to get inventory: {}", e)))?;
 
-        Ok(item.map(|i| i.into()))
+        let Some(item) = item else { return Ok(None) };
+        let stock = commerce
+            .inventory()
+            .get_stock(&item.sku)
+            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?;
+
+        Ok(Some(InventoryItem::from_parts(&item, stock.as_ref())))
     }
 
     pub fn get_by_sku(&self, sku: String) -> PhpResult<Option<InventoryItem>> {
@@ -1088,10 +1153,16 @@ impl Inventory {
 
         let item = commerce
             .inventory()
-            .get_by_sku(&sku)
+            .get_item_by_sku(&sku)
             .map_err(|e| PhpException::default(format!("Failed to get inventory: {}", e)))?;
 
-        Ok(item.map(|i| i.into()))
+        let Some(item) = item else { return Ok(None) };
+        let stock = commerce
+            .inventory()
+            .get_stock(&item.sku)
+            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?;
+
+        Ok(Some(InventoryItem::from_parts(&item, stock.as_ref())))
     }
 
     pub fn list(&self) -> PhpResult<Vec<InventoryItem>> {
@@ -1102,54 +1173,77 @@ impl Inventory {
             .list(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list inventory: {}", e)))?;
 
-        Ok(items.into_iter().map(|i| i.into()).collect())
+        let mut result = Vec::with_capacity(items.len());
+        for item in &items {
+            let stock = commerce
+                .inventory()
+                .get_stock(&item.sku)
+                .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?;
+            result.push(InventoryItem::from_parts(item, stock.as_ref()));
+        }
+        Ok(result)
     }
 
     pub fn adjust(
         &self,
-        id: String,
+        sku: String,
         adjustment: i32,
         reason: Option<String>,
     ) -> PhpResult<InventoryItem> {
         let commerce = lock_commerce!(self.commerce);
-        let uuid = parse_uuid!(id, "inventory");
+        let reason = reason.unwrap_or_else(|| "adjustment".to_string());
 
-        let item = commerce
+        commerce
             .inventory()
-            .adjust(uuid, adjustment, reason)
+            .adjust(&sku, Decimal::from(adjustment), &reason)
             .map_err(|e| PhpException::default(format!("Failed to adjust inventory: {}", e)))?;
 
-        Ok(item.into())
+        let stock = commerce
+            .inventory()
+            .get_stock(&sku)
+            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?
+            .ok_or_else(|| PhpException::default(format!("No stock found for {}", sku)))?;
+
+        Ok(stock.into())
     }
 
     pub fn reserve(
         &self,
-        id: String,
+        sku: String,
         quantity: i32,
         order_id: Option<String>,
     ) -> PhpResult<InventoryItem> {
         let commerce = lock_commerce!(self.commerce);
-        let uuid = parse_uuid!(id, "inventory");
-        let order_uuid = order_id.and_then(|s| s.parse().ok());
+        let reference_id = order_id.unwrap_or_default();
 
-        let item = commerce
+        commerce
             .inventory()
-            .reserve(uuid, quantity, order_uuid)
+            .reserve(&sku, Decimal::from(quantity), "order", &reference_id, None)
             .map_err(|e| PhpException::default(format!("Failed to reserve inventory: {}", e)))?;
 
-        Ok(item.into())
+        let stock = commerce
+            .inventory()
+            .get_stock(&sku)
+            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?
+            .ok_or_else(|| PhpException::default(format!("No stock found for {}", sku)))?;
+
+        Ok(stock.into())
     }
 
-    pub fn release(&self, id: String, quantity: i32) -> PhpResult<InventoryItem> {
+    /// Release a reservation by its id.
+    ///
+    /// The embedded API tracks reservations as distinct records, so this
+    /// releases the reservation identified by `reservation_id` in full.
+    pub fn release(&self, reservation_id: String) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
-        let uuid = parse_uuid!(id, "inventory");
+        let uuid = parse_uuid!(reservation_id, "reservation");
 
-        let item = commerce
+        commerce
             .inventory()
-            .release(uuid, quantity)
-            .map_err(|e| PhpException::default(format!("Failed to release inventory: {}", e)))?;
+            .release_reservation(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to release reservation: {}", e)))?;
 
-        Ok(item.into())
+        Ok(true)
     }
 }
 
@@ -1224,8 +1318,8 @@ impl From<stateset_core::Return> for Return {
             order_id: r.order_id.to_string(),
             customer_id: r.customer_id.to_string(),
             status: format!("{}", r.status),
-            reason: r.reason,
-            refund_amount: to_f64_or_nan(r.refund_amount),
+            reason: format!("{}", r.reason),
+            refund_amount: r.refund_amount.map(to_f64_or_nan).unwrap_or(0.0),
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
         }
@@ -1243,10 +1337,15 @@ impl Returns {
     pub fn create(&self, order_id: String, reason: String) -> PhpResult<Return> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(order_id, "order");
+        let reason = reason.parse().unwrap_or(stateset_core::ReturnReason::Other);
 
         let ret = commerce
             .returns()
-            .create(stateset_core::CreateReturn { order_id: uuid, reason, ..Default::default() })
+            .create(stateset_core::CreateReturn {
+                order_id: uuid.into(),
+                reason,
+                ..Default::default()
+            })
             .map_err(|e| PhpException::default(format!("Failed to create return: {}", e)))?;
 
         Ok(ret.into())
@@ -1275,14 +1374,13 @@ impl Returns {
         Ok(returns.into_iter().map(|r| r.into()).collect())
     }
 
-    pub fn approve(&self, id: String, refund_amount: Option<f64>) -> PhpResult<Return> {
+    pub fn approve(&self, id: String, _refund_amount: Option<f64>) -> PhpResult<Return> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "return");
-        let amount = optional_decimal_from_f64(refund_amount, "refund_amount")?;
 
         let ret = commerce
             .returns()
-            .approve(uuid, amount)
+            .approve(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to approve return: {}", e)))?;
 
         Ok(ret.into())
@@ -1291,10 +1389,11 @@ impl Returns {
     pub fn reject(&self, id: String, reason: Option<String>) -> PhpResult<Return> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "return");
+        let reason = reason.unwrap_or_else(|| "rejected".to_string());
 
         let ret = commerce
             .returns()
-            .reject(uuid, reason)
+            .reject(uuid.into(), &reason)
             .map_err(|e| PhpException::default(format!("Failed to reject return: {}", e)))?;
 
         Ok(ret.into())
@@ -1317,10 +1416,16 @@ impl Payments {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(order_id, "order");
         let decimal_amount = decimal_from_f64(amount, "amount")?;
+        let payment_method = method.and_then(|m| m.parse().ok()).unwrap_or_default();
 
         commerce
             .payments()
-            .record(uuid, decimal_amount, method)
+            .create(stateset_core::CreatePayment {
+                order_id: Some(uuid.into()),
+                payment_method,
+                amount: decimal_amount,
+                ..Default::default()
+            })
             .map_err(|e| PhpException::default(format!("Failed to record payment: {}", e)))?;
 
         Ok(true)
@@ -1406,7 +1511,8 @@ impl Cart {
         self.status.clone()
     }
 
-    #[getter]
+    // Exposed to PHP as `getItems(): array`. See `Order::get_items` for why this
+    // is a plain method rather than a `#[getter]` property.
     pub fn get_items(&self) -> Vec<CartItem> {
         self.items.clone()
     }
@@ -1466,8 +1572,8 @@ impl From<stateset_core::Cart> for Cart {
                 })
                 .collect(),
             subtotal: to_f64_or_nan(c.subtotal),
-            total: to_f64_or_nan(c.total),
-            currency: c.currency,
+            total: to_f64_or_nan(c.grand_total),
+            currency: c.currency.to_string(),
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
         }
@@ -1490,7 +1596,7 @@ impl Carts {
             .carts()
             .create(stateset_core::CreateCart {
                 customer_id: cust_uuid,
-                currency,
+                currency: currency.and_then(|c| c.parse().ok()),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create cart: {}", e)))?;
@@ -1530,13 +1636,13 @@ impl Carts {
         unit_price: f64,
     ) -> PhpResult<Cart> {
         let commerce = lock_commerce!(self.commerce);
-        let uuid = parse_uuid!(cart_id, "cart");
+        let cart_id: stateset_core::CartId = parse_uuid!(cart_id, "cart").into();
         let price = decimal_from_f64(unit_price, "unit_price")?;
 
-        let cart = commerce
+        commerce
             .carts()
             .add_item(
-                uuid,
+                cart_id,
                 stateset_core::AddCartItem {
                     sku,
                     name,
@@ -1547,17 +1653,29 @@ impl Carts {
             )
             .map_err(|e| PhpException::default(format!("Failed to add item: {}", e)))?;
 
+        let cart = commerce
+            .carts()
+            .get(cart_id)
+            .map_err(|e| PhpException::default(format!("Failed to load cart: {}", e)))?
+            .ok_or_else(|| PhpException::default("Cart not found".to_string()))?;
+
         Ok(cart.into())
     }
 
     pub fn checkout(&self, cart_id: String) -> PhpResult<Order> {
         let commerce = lock_commerce!(self.commerce);
-        let uuid = parse_uuid!(cart_id, "cart");
+        let cart_id: stateset_core::CartId = parse_uuid!(cart_id, "cart").into();
+
+        let result = commerce
+            .carts()
+            .complete(cart_id)
+            .map_err(|e| PhpException::default(format!("Failed to checkout: {}", e)))?;
 
         let order = commerce
-            .carts()
-            .checkout(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to checkout: {}", e)))?;
+            .orders()
+            .get(result.order_id)
+            .map_err(|e| PhpException::default(format!("Failed to load order: {}", e)))?
+            .ok_or_else(|| PhpException::default("Checkout order not found".to_string()))?;
 
         Ok(order.into())
     }
@@ -1610,16 +1728,23 @@ impl Analytics {
     pub fn sales_summary(&self, days: Option<i64>) -> PhpResult<SalesSummary> {
         let commerce = lock_commerce!(self.commerce);
 
+        // The embedded analytics API is driven by an `AnalyticsQuery`. Translate
+        // the PHP `days` argument (default 30) into a custom date range ending now.
+        let days = days.unwrap_or(30).max(0);
+        let end = chrono::Utc::now();
+        let start = end - chrono::Duration::days(days);
+        let query = stateset_core::AnalyticsQuery::new().date_range(start, end);
+
         let summary = commerce
             .analytics()
-            .sales_summary(days.unwrap_or(30))
+            .sales_summary(query)
             .map_err(|e| PhpException::default(format!("Failed to get sales summary: {}", e)))?;
 
         Ok(SalesSummary {
             total_revenue: to_f64_or_nan(summary.total_revenue),
-            total_orders: summary.total_orders,
+            total_orders: i64::try_from(summary.order_count).unwrap_or(i64::MAX),
             average_order_value: to_f64_or_nan(summary.average_order_value),
-            total_items_sold: summary.total_items_sold,
+            total_items_sold: i64::try_from(summary.items_sold).unwrap_or(i64::MAX),
         })
     }
 }
@@ -1703,7 +1828,7 @@ impl From<stateset_core::Shipment> for Shipment {
             id: s.id.to_string(),
             order_id: s.order_id.to_string(),
             tracking_number: s.tracking_number,
-            carrier: s.carrier,
+            carrier: Some(s.carrier.to_string()),
             status: format!("{}", s.status),
             shipped_at: s.shipped_at.map(|t| t.to_rfc3339()),
             delivered_at: s.delivered_at.map(|t| t.to_rfc3339()),
@@ -1733,9 +1858,9 @@ impl Shipments {
         let shipment = commerce
             .shipments()
             .create(stateset_core::CreateShipment {
-                order_id: uuid,
+                order_id: uuid.into(),
                 tracking_number,
-                carrier,
+                carrier: carrier.and_then(|c| c.parse().ok()),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create shipment: {}", e)))?;
@@ -1783,7 +1908,7 @@ impl Shipments {
 
         let shipments = commerce
             .shipments()
-            .for_order(uuid)
+            .for_order(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get shipments: {}", e)))?;
 
         Ok(shipments.into_iter().map(|s| s.into()).collect())
@@ -1795,7 +1920,7 @@ impl Shipments {
 
         let shipment = commerce
             .shipments()
-            .ship(uuid)
+            .ship(uuid.into(), None)
             .map_err(|e| PhpException::default(format!("Failed to ship: {}", e)))?;
 
         Ok(shipment.into())
@@ -1807,7 +1932,7 @@ impl Shipments {
 
         let shipment = commerce
             .shipments()
-            .mark_delivered(uuid)
+            .mark_delivered(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to mark delivered: {}", e)))?;
 
         Ok(shipment.into())
@@ -1819,7 +1944,7 @@ impl Shipments {
 
         let shipment = commerce
             .shipments()
-            .cancel(uuid)
+            .cancel(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to cancel shipment: {}", e)))?;
 
         Ok(shipment.into())
@@ -1833,7 +1958,9 @@ impl Shipments {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count shipments: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count).map_err(|_| {
+            PhpException::default("Shipment count exceeds supported range".to_string())
+        })
     }
 }
 
@@ -1911,13 +2038,13 @@ impl From<stateset_core::Warranty> for Warranty {
     fn from(w: stateset_core::Warranty) -> Self {
         Self {
             id: w.id.to_string(),
-            product_id: w.product_id.to_string(),
+            product_id: w.product_id.map(|id| id.to_string()).unwrap_or_default(),
             order_id: w.order_id.map(|id| id.to_string()),
             customer_id: w.customer_id.to_string(),
             warranty_type: format!("{}", w.warranty_type),
             status: format!("{}", w.status),
             start_date: w.start_date.to_rfc3339(),
-            end_date: w.end_date.to_rfc3339(),
+            end_date: w.end_date.map(|d| d.to_rfc3339()).unwrap_or_default(),
             created_at: w.created_at.to_rfc3339(),
         }
     }
@@ -1972,9 +2099,9 @@ impl From<stateset_core::WarrantyClaim> for WarrantyClaim {
         Self {
             id: c.id.to_string(),
             warranty_id: c.warranty_id.to_string(),
-            description: c.description,
+            description: c.issue_description,
             status: format!("{}", c.status),
-            resolution: c.resolution,
+            resolution: Some(format!("{}", c.resolution)),
             created_at: c.created_at.to_rfc3339(),
         }
     }
@@ -2002,10 +2129,10 @@ impl Warranties {
         let warranty = commerce
             .warranties()
             .create(stateset_core::CreateWarranty {
-                product_id: prod_uuid,
-                customer_id: cust_uuid,
-                warranty_type,
-                duration_months,
+                product_id: Some(prod_uuid.into()),
+                customer_id: cust_uuid.into(),
+                warranty_type: warranty_type.parse().ok(),
+                duration_months: Some(duration_months),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create warranty: {}", e)))?;
@@ -2071,8 +2198,8 @@ impl Warranties {
         let claim = commerce
             .warranties()
             .create_claim(stateset_core::CreateWarrantyClaim {
-                warranty_id: uuid,
-                description,
+                warranty_id: uuid.into(),
+                issue_description: description,
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create claim: {}", e)))?;
@@ -2083,14 +2210,14 @@ impl Warranties {
     pub fn approve_claim(
         &self,
         claim_id: String,
-        resolution: Option<String>,
+        _resolution: Option<String>,
     ) -> PhpResult<WarrantyClaim> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(claim_id, "claim");
 
         let claim = commerce
             .warranties()
-            .approve_claim(uuid, resolution)
+            .approve_claim(uuid)
             .map_err(|e| PhpException::default(format!("Failed to approve claim: {}", e)))?;
 
         Ok(claim.into())
@@ -2099,10 +2226,11 @@ impl Warranties {
     pub fn deny_claim(&self, claim_id: String, reason: Option<String>) -> PhpResult<WarrantyClaim> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(claim_id, "claim");
+        let reason = reason.unwrap_or_else(|| "denied".to_string());
 
         let claim = commerce
             .warranties()
-            .deny_claim(uuid, reason)
+            .deny_claim(uuid, &reason)
             .map_err(|e| PhpException::default(format!("Failed to deny claim: {}", e)))?;
 
         Ok(claim.into())
@@ -2116,7 +2244,9 @@ impl Warranties {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count warranties: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count).map_err(|_| {
+            PhpException::default("Warranty count exceeds supported range".to_string())
+        })
     }
 }
 
@@ -2175,7 +2305,7 @@ impl From<stateset_core::Supplier> for Supplier {
             name: s.name,
             email: s.email,
             phone: s.phone,
-            status: format!("{}", s.status),
+            status: if s.is_active { "active".to_string() } else { "inactive".to_string() },
             created_at: s.created_at.to_rfc3339(),
         }
     }
@@ -2257,8 +2387,8 @@ impl From<stateset_core::PurchaseOrder> for PurchaseOrder {
             po_number: p.po_number,
             supplier_id: p.supplier_id.to_string(),
             status: format!("{}", p.status),
-            total_amount: to_f64_or_nan(p.total_amount),
-            currency: p.currency,
+            total_amount: to_f64_or_nan(p.total),
+            currency: p.currency.to_string(),
             expected_date: p.expected_date.map(|d| d.to_rfc3339()),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
@@ -2330,7 +2460,7 @@ impl PurchaseOrders {
             .purchase_orders()
             .create(stateset_core::CreatePurchaseOrder {
                 supplier_id: uuid,
-                currency,
+                currency: currency.and_then(|c| c.parse().ok()),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create PO: {}", e)))?;
@@ -2379,7 +2509,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .approve(uuid)
+            .approve(uuid, "system")
             .map_err(|e| PhpException::default(format!("Failed to approve PO: {}", e)))?;
 
         Ok(po.into())
@@ -2417,7 +2547,9 @@ impl PurchaseOrders {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count POs: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count).map_err(|_| {
+            PhpException::default("Purchase order count exceeds supported range".to_string())
+        })
     }
 }
 
@@ -2527,10 +2659,10 @@ impl From<stateset_core::Invoice> for Invoice {
             order_id: i.order_id.map(|id| id.to_string()),
             status: format!("{}", i.status),
             subtotal: to_f64_or_nan(i.subtotal),
-            tax: to_f64_or_nan(i.tax),
+            tax: to_f64_or_nan(i.tax_amount),
             total: to_f64_or_nan(i.total),
-            currency: i.currency,
-            due_date: i.due_date.map(|d| d.to_rfc3339()),
+            currency: i.currency.to_string(),
+            due_date: Some(i.due_date.to_rfc3339()),
             paid_at: i.paid_at.map(|d| d.to_rfc3339()),
             created_at: i.created_at.to_rfc3339(),
             updated_at: i.updated_at.to_rfc3339(),
@@ -2559,9 +2691,9 @@ impl Invoices {
         let invoice = commerce
             .invoices()
             .create(stateset_core::CreateInvoice {
-                customer_id: cust_uuid,
+                customer_id: cust_uuid.into(),
                 order_id: order_uuid,
-                due_days,
+                days_until_due: due_days,
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create invoice: {}", e)))?;
@@ -2623,7 +2755,13 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .record_payment(uuid, decimal_amount)
+            .record_payment(
+                uuid,
+                stateset_core::RecordInvoicePayment {
+                    amount: decimal_amount,
+                    ..Default::default()
+                },
+            )
             .map_err(|e| PhpException::default(format!("Failed to record payment: {}", e)))?;
 
         Ok(invoice.into())
@@ -2672,7 +2810,8 @@ impl Invoices {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count invoices: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count)
+            .map_err(|_| PhpException::default("Invoice count exceeds supported range".to_string()))
     }
 }
 
@@ -2723,9 +2862,11 @@ impl From<stateset_core::BomComponent> for BomComponent {
         Self {
             id: c.id.to_string(),
             bom_id: c.bom_id.to_string(),
-            component_sku: c.component_sku,
-            quantity: c.quantity,
-            unit_cost: to_f64_or_nan(c.unit_cost),
+            component_sku: c.component_sku.unwrap_or_default(),
+            quantity: decimal_to_i32(c.quantity),
+            // The embedded BOM component no longer carries a unit cost; cost is
+            // tracked via the cost-accounting module.
+            unit_cost: 0.0,
         }
     }
 }
@@ -2796,9 +2937,11 @@ impl From<stateset_core::BillOfMaterials> for BillOfMaterials {
             id: b.id.to_string(),
             product_id: b.product_id.to_string(),
             name: b.name,
-            version: b.version,
+            version: b.revision,
             status: format!("{}", b.status),
-            total_cost: to_f64_or_nan(b.total_cost),
+            // Rolled-up BOM cost is computed by the cost-accounting module and is
+            // no longer stored on the BOM record.
+            total_cost: 0.0,
             created_at: b.created_at.to_rfc3339(),
             updated_at: b.updated_at.to_rfc3339(),
         }
@@ -2825,9 +2968,9 @@ impl BomApi {
         let bom = commerce
             .bom()
             .create(stateset_core::CreateBom {
-                product_id: uuid,
+                product_id: uuid.into(),
                 name,
-                version,
+                revision: version,
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create BOM: {}", e)))?;
@@ -2863,20 +3006,22 @@ impl BomApi {
         bom_id: String,
         component_sku: String,
         quantity: i32,
-        unit_cost: f64,
+        _unit_cost: f64,
     ) -> PhpResult<BomComponent> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(bom_id, "bom");
-        let cost = decimal_from_f64(unit_cost, "unit_cost")?;
 
         let component = commerce
             .bom()
-            .add_component(stateset_core::AddBomComponent {
-                bom_id: uuid,
-                component_sku,
-                quantity,
-                unit_cost: cost,
-            })
+            .add_component(
+                uuid,
+                stateset_core::CreateBomComponent {
+                    name: component_sku.clone(),
+                    component_sku: Some(component_sku),
+                    quantity: Decimal::from(quantity),
+                    ..Default::default()
+                },
+            )
             .map_err(|e| PhpException::default(format!("Failed to add component: {}", e)))?;
 
         Ok(component.into())
@@ -2938,7 +3083,8 @@ impl BomApi {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count BOMs: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count)
+            .map_err(|_| PhpException::default("BOM count exceeds supported range".to_string()))
     }
 }
 
@@ -3026,12 +3172,12 @@ impl From<stateset_core::WorkOrder> for WorkOrder {
         Self {
             id: w.id.to_string(),
             work_order_number: w.work_order_number,
-            bom_id: w.bom_id.to_string(),
-            quantity: w.quantity,
+            bom_id: w.bom_id.map(|id| id.to_string()).unwrap_or_default(),
+            quantity: decimal_to_i32(w.quantity_to_build),
             status: format!("{}", w.status),
             priority: format!("{}", w.priority),
-            started_at: w.started_at.map(|t| t.to_rfc3339()),
-            completed_at: w.completed_at.map(|t| t.to_rfc3339()),
+            started_at: w.actual_start.map(|t| t.to_rfc3339()),
+            completed_at: w.actual_end.map(|t| t.to_rfc3339()),
             created_at: w.created_at.to_rfc3339(),
             updated_at: w.updated_at.to_rfc3339(),
         }
@@ -3058,9 +3204,9 @@ impl WorkOrders {
         let work_order = commerce
             .work_orders()
             .create(stateset_core::CreateWorkOrder {
-                bom_id: uuid,
-                quantity,
-                priority,
+                bom_id: Some(uuid),
+                quantity_to_build: Decimal::from(quantity),
+                priority: priority.and_then(|p| p.parse().ok()),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create work order: {}", e)))?;
@@ -3103,13 +3249,14 @@ impl WorkOrders {
         Ok(work_order.into())
     }
 
-    pub fn complete(&self, id: String) -> PhpResult<WorkOrder> {
+    pub fn complete(&self, id: String, quantity_completed: f64) -> PhpResult<WorkOrder> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
+        let quantity = decimal_from_f64(quantity_completed, "quantity_completed")?;
 
         let work_order = commerce
             .work_orders()
-            .complete(uuid)
+            .complete(uuid, quantity)
             .map_err(|e| PhpException::default(format!("Failed to complete work order: {}", e)))?;
 
         Ok(work_order.into())
@@ -3159,7 +3306,9 @@ impl WorkOrders {
             .count(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to count work orders: {}", e)))?;
 
-        Ok(count)
+        i64::try_from(count).map_err(|_| {
+            PhpException::default("Work order count exceeds supported range".to_string())
+        })
     }
 }
 
@@ -3202,12 +3351,17 @@ impl ExchangeRate {
 impl From<stateset_core::ExchangeRate> for ExchangeRate {
     fn from(r: stateset_core::ExchangeRate) -> Self {
         Self {
-            from_currency: r.from_currency,
-            to_currency: r.to_currency,
+            from_currency: r.base_currency.to_string(),
+            to_currency: r.quote_currency.to_string(),
             rate: to_f64_or_nan(r.rate),
-            updated_at: r.updated_at.to_rfc3339(),
+            updated_at: r.rate_at.to_rfc3339(),
         }
     }
+}
+
+/// Parse a currency code string (e.g. `"USD"`) into the core [`Currency`] enum.
+fn parse_currency(code: &str) -> PhpResult<stateset_core::Currency> {
+    code.parse().map_err(|_| PhpException::default(format!("Invalid currency code: {}", code)))
 }
 
 #[php_class(name = "StateSet\\CurrencyOps")]
@@ -3220,10 +3374,12 @@ pub struct CurrencyOps {
 impl CurrencyOps {
     pub fn get_rate(&self, from: String, to: String) -> PhpResult<Option<ExchangeRate>> {
         let commerce = lock_commerce!(self.commerce);
+        let from = parse_currency(&from)?;
+        let to = parse_currency(&to)?;
 
         let rate = commerce
             .currency()
-            .get_rate(&from, &to)
+            .get_rate(from, to)
             .map_err(|e| PhpException::default(format!("Failed to get rate: {}", e)))?;
 
         Ok(rate.map(|r| r.into()))
@@ -3234,7 +3390,7 @@ impl CurrencyOps {
 
         let rates = commerce
             .currency()
-            .list_rates()
+            .list_rates(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list rates: {}", e)))?;
 
         Ok(rates.into_iter().map(|r| r.into()).collect())
@@ -3243,10 +3399,17 @@ impl CurrencyOps {
     pub fn set_rate(&self, from: String, to: String, rate: f64) -> PhpResult<ExchangeRate> {
         let commerce = lock_commerce!(self.commerce);
         let decimal_rate = decimal_from_f64(rate, "rate")?;
+        let base_currency = parse_currency(&from)?;
+        let quote_currency = parse_currency(&to)?;
 
         let exchange_rate = commerce
             .currency()
-            .set_rate(&from, &to, decimal_rate)
+            .set_rate(stateset_core::SetExchangeRate {
+                base_currency,
+                quote_currency,
+                rate: decimal_rate,
+                source: Some("manual".to_string()),
+            })
             .map_err(|e| PhpException::default(format!("Failed to set rate: {}", e)))?;
 
         Ok(exchange_rate.into())
@@ -3255,13 +3418,15 @@ impl CurrencyOps {
     pub fn convert(&self, amount: f64, from: String, to: String) -> PhpResult<f64> {
         let commerce = lock_commerce!(self.commerce);
         let decimal_amount = decimal_from_f64(amount, "amount")?;
+        let from = parse_currency(&from)?;
+        let to = parse_currency(&to)?;
 
-        let converted = commerce
+        let result = commerce
             .currency()
-            .convert(decimal_amount, &from, &to)
+            .convert(stateset_core::ConvertCurrency { amount: decimal_amount, from, to })
             .map_err(|e| PhpException::default(format!("Failed to convert: {}", e)))?;
 
-        to_f64_result(converted, "converted amount")
+        to_f64_result(result.converted_amount, "converted amount")
     }
 
     pub fn base_currency(&self) -> PhpResult<String> {
@@ -3272,7 +3437,7 @@ impl CurrencyOps {
             .base_currency()
             .map_err(|e| PhpException::default(format!("Failed to get base currency: {}", e)))?;
 
-        Ok(base)
+        Ok(base.to_string())
     }
 
     pub fn enabled_currencies(&self) -> PhpResult<Vec<String>> {
@@ -3283,19 +3448,15 @@ impl CurrencyOps {
             .enabled_currencies()
             .map_err(|e| PhpException::default(format!("Failed to get currencies: {}", e)))?;
 
-        Ok(currencies)
+        Ok(currencies.into_iter().map(|c| c.to_string()).collect())
     }
 
     pub fn format(&self, amount: f64, currency: String) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
         let decimal_amount = decimal_from_f64(amount, "amount")?;
+        let currency = parse_currency(&currency)?;
 
-        let formatted = commerce
-            .currency()
-            .format(decimal_amount, &currency)
-            .map_err(|e| PhpException::default(format!("Failed to format: {}", e)))?;
-
-        Ok(formatted)
+        Ok(commerce.currency().format(decimal_amount, currency))
     }
 }
 
@@ -3378,10 +3539,10 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
             name: p.name,
             description: p.description,
             price: to_f64_or_nan(p.price),
-            currency: p.currency,
-            interval: format!("{}", p.interval),
-            interval_count: p.interval_count,
-            trial_days: p.trial_days,
+            currency: p.currency.to_string(),
+            interval: format!("{}", p.billing_interval),
+            interval_count: p.custom_interval_days.unwrap_or(1),
+            trial_days: Some(p.trial_days),
             status: format!("{}", p.status),
             created_at: p.created_at.to_rfc3339(),
         }
@@ -3463,7 +3624,7 @@ impl From<stateset_core::Subscription> for Subscription {
             status: format!("{}", s.status),
             current_period_start: s.current_period_start.to_rfc3339(),
             current_period_end: s.current_period_end.to_rfc3339(),
-            canceled_at: s.canceled_at.map(|t| t.to_rfc3339()),
+            canceled_at: s.cancelled_at.map(|t| t.to_rfc3339()),
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
         }
@@ -3494,8 +3655,8 @@ impl Subscriptions {
             .create_plan(stateset_core::CreateSubscriptionPlan {
                 name,
                 price: decimal_price,
-                interval,
-                interval_count,
+                billing_interval: interval.parse().unwrap_or_default(),
+                custom_interval_days: interval_count,
                 trial_days,
                 ..Default::default()
             })
@@ -3536,7 +3697,7 @@ impl Subscriptions {
             .subscriptions()
             .subscribe(stateset_core::CreateSubscription {
                 plan_id: plan_uuid,
-                customer_id: cust_uuid,
+                customer_id: cust_uuid.into(),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to subscribe: {}", e)))?;
@@ -3573,7 +3734,7 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .pause(uuid)
+            .pause(uuid.into(), stateset_core::PauseSubscription::default())
             .map_err(|e| PhpException::default(format!("Failed to pause subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -3585,7 +3746,7 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .resume(uuid)
+            .resume(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to resume subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -3594,10 +3755,14 @@ impl Subscriptions {
     pub fn cancel(&self, id: String, at_period_end: Option<bool>) -> PhpResult<Subscription> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "subscription");
+        let cancel = stateset_core::CancelSubscription {
+            immediate: Some(!at_period_end.unwrap_or(true)),
+            ..Default::default()
+        };
 
         let subscription = commerce
             .subscriptions()
-            .cancel(uuid, at_period_end.unwrap_or(true))
+            .cancel(uuid.into(), cancel)
             .map_err(|e| PhpException::default(format!("Failed to cancel subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -3609,7 +3774,7 @@ impl Subscriptions {
 
         let subscriptions = commerce
             .subscriptions()
-            .for_customer(uuid)
+            .get_customer_subscriptions(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get subscriptions: {}", e)))?;
 
         Ok(subscriptions.into_iter().map(|s| s.into()).collect())
@@ -3621,7 +3786,7 @@ impl Subscriptions {
 
         let active = commerce
             .subscriptions()
-            .is_active(uuid)
+            .is_active(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to check subscription: {}", e)))?;
 
         Ok(active)
@@ -3727,17 +3892,22 @@ impl Promotion {
 
 impl From<stateset_core::Promotion> for Promotion {
     fn from(p: stateset_core::Promotion) -> Self {
+        // The discount value is whichever of the percentage/fixed amounts is set.
+        let discount_value =
+            p.percentage_off.or(p.fixed_amount_off).and_then(|d| d.to_f64()).unwrap_or(0.0);
         Self {
             id: p.id.to_string(),
             code: p.code,
             name: p.name,
             description: p.description,
-            discount_type: format!("{}", p.discount_type),
-            discount_value: to_f64_or_nan(p.discount_value),
-            min_purchase: p.min_purchase.and_then(|m| m.to_f64()),
-            max_uses: p.max_uses,
-            uses_count: p.uses_count,
-            starts_at: p.starts_at.map(|t| t.to_rfc3339()),
+            discount_type: format!("{}", p.promotion_type),
+            discount_value,
+            // The embedded promotion model no longer tracks a minimum-purchase
+            // value at the top level (it lives in promotion conditions).
+            min_purchase: None,
+            max_uses: p.total_usage_limit,
+            uses_count: p.usage_count,
+            starts_at: Some(p.starts_at.to_rfc3339()),
             ends_at: p.ends_at.map(|t| t.to_rfc3339()),
             status: format!("{}", p.status),
             created_at: p.created_at.to_rfc3339(),
@@ -3763,18 +3933,29 @@ impl Promotions {
         max_uses: Option<i32>,
     ) -> PhpResult<Promotion> {
         let commerce = lock_commerce!(self.commerce);
+        let _ = min_purchase;
         let decimal_value = decimal_from_f64(discount_value, "discount_value")?;
-        let decimal_min = optional_decimal_from_f64(min_purchase, "min_purchase")?;
+        let promotion_type: stateset_core::PromotionType =
+            discount_type.parse().unwrap_or_default();
+
+        // The embedded model splits the discount value into typed fields; route
+        // the value to the percentage or fixed-amount field based on the type.
+        let (percentage_off, fixed_amount_off) =
+            if matches!(promotion_type, stateset_core::PromotionType::PercentageOff) {
+                (Some(decimal_value), None)
+            } else {
+                (None, Some(decimal_value))
+            };
 
         let promotion = commerce
             .promotions()
             .create(stateset_core::CreatePromotion {
-                code,
+                code: Some(code),
                 name,
-                discount_type,
-                discount_value: decimal_value,
-                min_purchase: decimal_min,
-                max_uses,
+                promotion_type,
+                percentage_off,
+                fixed_amount_off,
+                total_usage_limit: max_uses,
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create promotion: {}", e)))?;
@@ -3822,7 +4003,7 @@ impl Promotions {
 
         let promotion = commerce
             .promotions()
-            .activate(uuid)
+            .activate(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to activate promotion: {}", e)))?;
 
         Ok(promotion.into())
@@ -3834,7 +4015,7 @@ impl Promotions {
 
         let promotion = commerce
             .promotions()
-            .deactivate(uuid)
+            .deactivate(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to deactivate promotion: {}", e)))?;
 
         Ok(promotion.into())
@@ -3850,16 +4031,15 @@ impl Promotions {
         Ok(promotions.into_iter().map(|p| p.into()).collect())
     }
 
-    pub fn is_valid(&self, code: String, order_total: Option<f64>) -> PhpResult<bool> {
+    pub fn is_valid(&self, code: String, _order_total: Option<f64>) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
-        let decimal_total = optional_decimal_from_f64(order_total, "order_total")?;
 
-        let valid = commerce
+        let coupon = commerce
             .promotions()
-            .is_valid(&code, decimal_total)
+            .validate_coupon(&code)
             .map_err(|e| PhpException::default(format!("Failed to validate promotion: {}", e)))?;
 
-        Ok(valid)
+        Ok(coupon.is_some())
     }
 
     pub fn delete(&self, id: String) -> PhpResult<bool> {
@@ -3868,7 +4048,7 @@ impl Promotions {
 
         commerce
             .promotions()
-            .delete(uuid)
+            .delete(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to delete promotion: {}", e)))?;
 
         Ok(true)
@@ -3934,11 +4114,11 @@ impl From<stateset_core::TaxJurisdiction> for TaxJurisdiction {
         Self {
             id: j.id.to_string(),
             name: j.name,
-            country: j.country,
-            state: j.state,
+            country: j.country_code,
+            state: j.state_code,
             city: j.city,
-            postal_code: j.postal_code,
-            status: format!("{}", j.status),
+            postal_code: j.postal_codes.into_iter().next(),
+            status: if j.active { "active".to_string() } else { "inactive".to_string() },
         }
     }
 }
@@ -3995,7 +4175,7 @@ impl From<stateset_core::TaxRate> for TaxRate {
             name: r.name,
             rate: to_f64_or_nan(r.rate),
             tax_type: format!("{}", r.tax_type),
-            status: format!("{}", r.status),
+            status: if r.active { "active".to_string() } else { "inactive".to_string() },
         }
     }
 }
@@ -4011,23 +4191,42 @@ impl Tax {
     pub fn calculate(&self, amount: f64, jurisdiction_id: String) -> PhpResult<f64> {
         let commerce = lock_commerce!(self.commerce);
         let decimal_amount = decimal_from_f64(amount, "amount")?;
-        let uuid = parse_uuid!(jurisdiction_id, "jurisdiction");
+        // Validate the jurisdiction id even though the embedded calculation is
+        // address-driven; this preserves the binding's input validation.
+        let jurisdiction = parse_uuid!(jurisdiction_id, "jurisdiction");
 
-        let tax = commerce
+        // The embedded `calculate` takes a full `TaxCalculationRequest`; model the
+        // PHP `amount` as a single standard-rate line item priced at `amount`.
+        let request = stateset_core::TaxCalculationRequest {
+            line_items: vec![stateset_core::TaxLineItem {
+                id: jurisdiction.to_string(),
+                quantity: Decimal::ONE,
+                unit_price: decimal_amount,
+                tax_category: stateset_core::ProductTaxCategory::Standard,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let result = commerce
             .tax()
-            .calculate(decimal_amount, uuid)
+            .calculate(request)
             .map_err(|e| PhpException::default(format!("Failed to calculate tax: {}", e)))?;
 
-        to_f64_result(tax, "tax amount")
+        to_f64_result(result.total_tax, "tax amount")
     }
 
     pub fn get_effective_rate(&self, jurisdiction_id: String) -> PhpResult<f64> {
         let commerce = lock_commerce!(self.commerce);
-        let uuid = parse_uuid!(jurisdiction_id, "jurisdiction");
+        // Validate the supplied jurisdiction id (address-driven rate below).
+        let _jurisdiction = parse_uuid!(jurisdiction_id, "jurisdiction");
 
         let rate = commerce
             .tax()
-            .get_effective_rate(uuid)
+            .get_effective_rate(
+                &stateset_core::TaxAddress::default(),
+                stateset_core::ProductTaxCategory::Standard,
+            )
             .map_err(|e| PhpException::default(format!("Failed to get rate: {}", e)))?;
 
         to_f64_result(rate, "tax rate")
@@ -4057,8 +4256,8 @@ impl Tax {
             .tax()
             .create_jurisdiction(stateset_core::CreateTaxJurisdiction {
                 name,
-                country,
-                state,
+                country_code: country,
+                state_code: state,
                 city,
                 ..Default::default()
             })
@@ -4071,9 +4270,12 @@ impl Tax {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(jurisdiction_id, "jurisdiction");
 
+        let filter =
+            stateset_core::TaxRateFilter { jurisdiction_id: Some(uuid), ..Default::default() };
+
         let rates = commerce
             .tax()
-            .list_rates(uuid)
+            .list_rates(filter)
             .map_err(|e| PhpException::default(format!("Failed to list rates: {}", e)))?;
 
         Ok(rates.into_iter().map(|r| r.into()).collect())
@@ -4096,7 +4298,7 @@ impl Tax {
                 jurisdiction_id: uuid,
                 name,
                 rate: decimal_rate,
-                tax_type,
+                tax_type: tax_type.parse().unwrap_or_default(),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create rate: {}", e)))?;
@@ -4151,7 +4353,7 @@ impl Quality {
         let inspection = commerce
             .quality()
             .create_inspection(stateset_core::CreateInspection {
-                inspection_type,
+                inspection_type: inspection_type.parse().unwrap_or_default(),
                 reference_type,
                 reference_id: ref_uuid,
                 ..Default::default()
@@ -4185,9 +4387,9 @@ impl Quality {
             .quality()
             .create_hold(stateset_core::CreateQualityHold {
                 sku,
-                quantity_held: quantity,
+                quantity: Decimal::from(quantity),
                 reason,
-                hold_type,
+                hold_type: hold_type.parse().unwrap_or_default(),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create hold: {}", e)))?;
@@ -4201,7 +4403,10 @@ impl Quality {
 
         commerce
             .quality()
-            .release_hold(uuid, &released_by)
+            .release_hold(
+                uuid,
+                stateset_core::ReleaseQualityHold { released_by, release_notes: None },
+            )
             .map_err(|e| PhpException::default(format!("Failed to release hold: {}", e)))?;
 
         Ok(true)
@@ -4225,7 +4430,11 @@ impl Lots {
 
         let lot = commerce
             .lots()
-            .create(stateset_core::CreateLot { sku, quantity_produced, ..Default::default() })
+            .create(stateset_core::CreateLot {
+                sku,
+                quantity: Decimal::from(quantity_produced),
+                ..Default::default()
+            })
             .map_err(|e| PhpException::default(format!("Failed to create lot: {}", e)))?;
 
         Ok(lot.id.to_string())
@@ -4296,10 +4505,10 @@ impl Serials {
 
         let serial = commerce
             .serials()
-            .create(stateset_core::CreateSerial { sku, lot_number, ..Default::default() })
+            .create(stateset_core::CreateSerialNumber { sku, lot_number, ..Default::default() })
             .map_err(|e| PhpException::default(format!("Failed to create serial: {}", e)))?;
 
-        Ok(serial.serial_number)
+        Ok(serial.serial)
     }
 
     pub fn get(&self, id: String) -> PhpResult<Option<String>> {
@@ -4311,7 +4520,7 @@ impl Serials {
             .get(uuid)
             .map_err(|e| PhpException::default(format!("Failed to get serial: {}", e)))?;
 
-        Ok(serial.map(|s| s.serial_number))
+        Ok(serial.map(|s| s.serial))
     }
 
     pub fn list(&self) -> PhpResult<Vec<String>> {
@@ -4322,7 +4531,7 @@ impl Serials {
             .list(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list serials: {}", e)))?;
 
-        Ok(serials.into_iter().map(|s| s.serial_number).collect())
+        Ok(serials.into_iter().map(|s| s.serial).collect())
     }
 
     pub fn mark_sold(
@@ -4373,7 +4582,7 @@ impl WarehouseApi {
             .create_warehouse(stateset_core::CreateWarehouse {
                 code,
                 name,
-                warehouse_type,
+                warehouse_type: warehouse_type.parse().unwrap_or_default(),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create warehouse: {}", e)))?;
@@ -4397,7 +4606,7 @@ impl WarehouseApi {
 
         let warehouses = commerce
             .warehouse()
-            .list_warehouses()
+            .list_warehouses(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list warehouses: {}", e)))?;
 
         Ok(warehouses.into_iter().map(|w| w.id).collect())
@@ -4416,7 +4625,7 @@ impl WarehouseApi {
             .warehouse()
             .create_location(stateset_core::CreateLocation {
                 warehouse_id,
-                location_type,
+                location_type: location_type.parse().unwrap_or_default(),
                 zone,
                 aisle,
                 ..Default::default()
@@ -4450,13 +4659,17 @@ impl Receiving {
             .map(|p| p.parse())
             .transpose()
             .map_err(|_| PhpException::default("Invalid PO UUID".to_string()))?;
+        let receipt_type = receipt_type.parse().unwrap_or_default();
 
         let receipt = commerce
             .receiving()
             .create_receipt(stateset_core::CreateReceipt {
                 receipt_type,
                 warehouse_id,
-                purchase_order_id: po_uuid,
+                // The purchase order is referenced via the generic reference
+                // fields in the current receipt model.
+                reference_type: po_uuid.map(|_| "purchase_order".to_string()),
+                reference_id: po_uuid,
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create receipt: {}", e)))?;
@@ -4493,7 +4706,7 @@ impl Receiving {
 
         commerce
             .receiving()
-            .complete_receipt(uuid)
+            .complete_receiving(uuid)
             .map_err(|e| PhpException::default(format!("Failed to complete receipt: {}", e)))?;
 
         Ok(true)
@@ -4519,15 +4732,17 @@ impl Fulfillment {
         priority: i32,
     ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
-        let uuids: Result<Vec<uuid::Uuid>, _> = order_ids.iter().map(|id| id.parse()).collect();
-        let uuids = uuids.map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
+        let order_ids: Result<Vec<stateset_core::OrderId>, _> =
+            order_ids.iter().map(|id| id.parse()).collect();
+        let order_ids =
+            order_ids.map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
 
         let wave = commerce
             .fulfillment()
             .create_wave(stateset_core::CreateWave {
                 warehouse_id,
-                order_ids: uuids.into_iter().map(|u| u.into()).collect(),
-                priority,
+                order_ids,
+                priority: Some(priority),
                 ..Default::default()
             })
             .map_err(|e| PhpException::default(format!("Failed to create wave: {}", e)))?;
@@ -4541,7 +4756,7 @@ impl Fulfillment {
 
         let wave = commerce
             .fulfillment()
-            .get_wave(uuid)
+            .get_wave(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get wave: {}", e)))?;
 
         Ok(wave.map(|w| w.wave_number))
@@ -4553,7 +4768,7 @@ impl Fulfillment {
 
         commerce
             .fulfillment()
-            .release_wave(uuid)
+            .release_wave(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to release wave: {}", e)))?;
 
         Ok(true)
@@ -4565,7 +4780,7 @@ impl Fulfillment {
 
         commerce
             .fulfillment()
-            .complete_wave(uuid)
+            .complete_wave(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to complete wave: {}", e)))?;
 
         Ok(true)
@@ -4592,6 +4807,9 @@ impl AccountsPayable {
     ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
         let supp_uuid = parse_uuid!(supplier_id, "supplier");
+        let due_date = chrono::DateTime::parse_from_rfc3339(&due_date)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
 
         let bill = commerce
             .accounts_payable()
@@ -4672,7 +4890,7 @@ impl AccountsReceivable {
             .get_dso(days)
             .map_err(|e| PhpException::default(format!("Failed to get DSO: {}", e)))?;
 
-        Ok(dso)
+        to_f64_result(dso, "days sales outstanding")
     }
 
     pub fn create_credit_memo(
@@ -4689,9 +4907,10 @@ impl AccountsReceivable {
             .accounts_receivable()
             .create_credit_memo(stateset_core::CreateCreditMemo {
                 customer_id: cust_uuid,
+                original_invoice_id: None,
+                reason: reason.parse().unwrap_or_default(),
                 amount: decimal_amount,
-                reason,
-                ..Default::default()
+                notes: None,
             })
             .map_err(|e| PhpException::default(format!("Failed to create credit memo: {}", e)))?;
 
@@ -4719,7 +4938,9 @@ impl CostAccounting {
             .get_item_cost(&sku)
             .map_err(|e| PhpException::default(format!("Failed to get cost: {}", e)))?;
 
-        Ok(cost.map(|c| to_f64_or_nan(c.current_cost)))
+        // The embedded `ItemCost` has no single "current cost"; `standard_cost`
+        // is the canonical posted cost surfaced to PHP.
+        Ok(cost.map(|c| to_f64_or_nan(c.standard_cost)))
     }
 
     pub fn set_item_cost(
@@ -4730,11 +4951,18 @@ impl CostAccounting {
     ) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
         let std = decimal_from_f64(standard_cost, "standard_cost")?;
-        let curr = optional_decimal_from_f64(current_cost, "current_cost")?;
+        // `SetItemCost` exposes no dedicated "current cost" field (average/last
+        // cost are derived from transactions); validate the optional input for a
+        // clean error but apply only the standard cost.
+        let _curr = optional_decimal_from_f64(current_cost, "current_cost")?;
 
         commerce
             .cost_accounting()
-            .set_item_cost(&sku, std, curr)
+            .set_item_cost(stateset_core::SetItemCost {
+                sku,
+                standard_cost: Some(std),
+                ..Default::default()
+            })
             .map_err(|e| PhpException::default(format!("Failed to set cost: {}", e)))?;
 
         Ok(true)
@@ -4771,8 +4999,8 @@ impl CreditApi {
 
         let account = commerce
             .credit()
-            .create_account(stateset_core::CreateCreditAccount {
-                customer_id: cust_uuid,
+            .create_credit_account(stateset_core::CreateCreditAccount {
+                customer_id: cust_uuid.into(),
                 credit_limit: limit,
                 ..Default::default()
             })
@@ -4788,7 +5016,7 @@ impl CreditApi {
 
         let result = commerce
             .credit()
-            .check_credit(cust_uuid, amount)
+            .check_credit(cust_uuid.into(), amount)
             .map_err(|e| PhpException::default(format!("Failed to check credit: {}", e)))?;
 
         Ok(result.approved)
@@ -4806,7 +5034,7 @@ impl CreditApi {
 
         commerce
             .credit()
-            .adjust_limit(cust_uuid, limit, &reason)
+            .adjust_credit_limit(cust_uuid.into(), limit, &reason)
             .map_err(|e| PhpException::default(format!("Failed to adjust limit: {}", e)))?;
 
         Ok(true)
@@ -4835,14 +5063,25 @@ impl Backorders {
         let commerce = lock_commerce!(self.commerce);
         let ord_uuid = parse_uuid!(order_id, "order");
 
+        let expected_date = expected_date
+            .and_then(|d| chrono::DateTime::parse_from_rfc3339(&d).ok())
+            .map(|d| d.with_timezone(&chrono::Utc));
+
         let backorder = commerce
-            .backorders()
-            .create(stateset_core::CreateBackorder {
+            .backorder()
+            .create_backorder(stateset_core::CreateBackorder {
                 order_id: ord_uuid,
+                // The PHP surface does not carry a customer id for backorders;
+                // the order linkage is sufficient for the embedded API.
+                customer_id: stateset_core::CustomerId::nil().into_uuid(),
+                order_line_id: None,
                 sku,
-                quantity,
+                quantity: Decimal::from(quantity),
+                priority: None,
                 expected_date,
-                ..Default::default()
+                promised_date: None,
+                source_location_id: None,
+                notes: None,
             })
             .map_err(|e| PhpException::default(format!("Failed to create backorder: {}", e)))?;
 
@@ -4854,8 +5093,8 @@ impl Backorders {
         let uuid = parse_uuid!(id, "backorder");
 
         let backorder = commerce
-            .backorders()
-            .get(uuid)
+            .backorder()
+            .get_backorder(uuid)
             .map_err(|e| PhpException::default(format!("Failed to get backorder: {}", e)))?;
 
         Ok(backorder.map(|b| b.backorder_number))
@@ -4865,8 +5104,8 @@ impl Backorders {
         let commerce = lock_commerce!(self.commerce);
 
         let backorders = commerce
-            .backorders()
-            .list(Default::default())
+            .backorder()
+            .list_backorders(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list backorders: {}", e)))?;
 
         Ok(backorders.into_iter().map(|b| b.id.to_string()).collect())
@@ -4877,8 +5116,8 @@ impl Backorders {
         let uuid = parse_uuid!(id, "backorder");
 
         commerce
-            .backorders()
-            .cancel(uuid)
+            .backorder()
+            .cancel_backorder(uuid)
             .map_err(|e| PhpException::default(format!("Failed to cancel backorder: {}", e)))?;
 
         Ok(true)
@@ -4888,7 +5127,7 @@ impl Backorders {
         let commerce = lock_commerce!(self.commerce);
 
         let count = commerce
-            .backorders()
+            .backorder()
             .count_pending()
             .map_err(|e| PhpException::default(format!("Failed to count: {}", e)))?;
 
@@ -4921,8 +5160,13 @@ impl GeneralLedger {
             .create_account(stateset_core::CreateGlAccount {
                 account_number,
                 name,
-                account_type,
-                ..Default::default()
+                description: None,
+                account_type: account_type.parse().unwrap_or(stateset_core::AccountType::Asset),
+                account_sub_type: None,
+                parent_account_id: None,
+                is_header: None,
+                is_posting: None,
+                currency: None,
             })
             .map_err(|e| PhpException::default(format!("Failed to create account: {}", e)))?;
 
@@ -4946,7 +5190,7 @@ impl GeneralLedger {
 
         let accounts = commerce
             .general_ledger()
-            .list_accounts()
+            .list_accounts(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list accounts: {}", e)))?;
 
         Ok(accounts.into_iter().map(|a| a.id.to_string()).collect())
@@ -4959,13 +5203,16 @@ impl GeneralLedger {
     ) -> PhpResult<f64> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(account_id, "account");
+        let as_of = optional_naive_date(as_of_date.as_deref(), "as_of_date")?;
 
         let balance = commerce
             .general_ledger()
-            .get_account_balance(uuid, as_of_date.as_deref())
+            .get_account_balance(uuid, as_of)
             .map_err(|e| PhpException::default(format!("Failed to get balance: {}", e)))?;
 
-        to_f64_result(balance, "account balance")
+        // The embedded API returns `None` when the account has no posted balance;
+        // surface that to PHP as 0.0.
+        to_f64_result(balance.unwrap_or(Decimal::ZERO), "account balance")
     }
 
     pub fn initialize_chart_of_accounts(&self) -> PhpResult<Vec<String>> {
@@ -4988,8 +5235,9 @@ impl GeneralLedger {
 // binding can verify the language-neutral test corpus at
 // `bindings/test-vectors/v1.json`. Counterparts in every wired binding.
 //
-// Each method is `pub fn` returning `PhpResult<Vec<u8>>`, which ext-php-rs
-// marshals to a PHP `string` (binary-safe). Errors raise PHP exceptions.
+// Each method returns `PhpResult<Binary<u8>>`, which ext-php-rs marshals to a
+// PHP `string` (binary-safe) — plain `Vec<u8>` would become a PHP array, which
+// breaks the corpus tests' bin2hex()/hash() calls. Errors raise PHP exceptions.
 
 #[php_class(name = "StateSet\\Crypto")]
 #[derive(Default)]
@@ -4998,16 +5246,17 @@ pub struct Crypto;
 #[php_impl]
 impl Crypto {
     /// Return the RFC 8785 JCS canonical-form bytes for a JSON string.
-    pub fn jcs_canonicalize(json: String) -> PhpResult<Vec<u8>> {
+    pub fn jcs_canonicalize(json: String) -> PhpResult<Binary<u8>> {
         let value: serde_json::Value = serde_json::from_str(&json)
             .map_err(|e| PhpException::default(format!("invalid JSON: {e}")))?;
         ::stateset_crypto::canonicalize::canonicalize_json_bytes(&value)
+            .map(Binary::from)
             .map_err(|e| PhpException::default(format!("canonicalize: {e}")).into())
     }
 
     /// Compute the VES v1.0 payload-plain hash. Returns 32 bytes.
     /// `salt`, when provided, must be exactly 16 bytes.
-    pub fn payload_plain_hash(json: String, salt: Option<Vec<u8>>) -> PhpResult<Vec<u8>> {
+    pub fn payload_plain_hash(json: String, salt: Option<Binary<u8>>) -> PhpResult<Binary<u8>> {
         let value: serde_json::Value = serde_json::from_str(&json)
             .map_err(|e| PhpException::default(format!("invalid JSON: {e}")))?;
         let salt_arr = match salt {
@@ -5025,14 +5274,13 @@ impl Crypto {
                 Some(buf)
             }
         };
-        let digest =
-            ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref())
-                .map_err(|e| PhpException::default(format!("payload_plain_hash: {e}")))?;
-        Ok(digest.to_vec())
+        let digest = ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref())
+            .map_err(|e| PhpException::default(format!("payload_plain_hash: {e}")))?;
+        Ok(Binary::from(digest.to_vec()))
     }
 
     /// Compute the merkle root of a list of 32-byte leaves. Returns 32 bytes.
-    pub fn merkle_root(leaves: Vec<Vec<u8>>) -> PhpResult<Vec<u8>> {
+    pub fn merkle_root(leaves: Vec<Binary<u8>>) -> PhpResult<Binary<u8>> {
         let mut typed: Vec<[u8; 32]> = Vec::with_capacity(leaves.len());
         for (i, leaf) in leaves.iter().enumerate() {
             if leaf.len() != 32 {
@@ -5046,7 +5294,7 @@ impl Crypto {
             buf.copy_from_slice(leaf);
             typed.push(buf);
         }
-        Ok(::stateset_crypto::merkle::compute_merkle_root(&typed).to_vec())
+        Ok(Binary::from(::stateset_crypto::merkle::compute_merkle_root(&typed).to_vec()))
     }
 }
 

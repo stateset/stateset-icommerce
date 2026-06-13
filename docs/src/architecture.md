@@ -43,7 +43,7 @@ stateset-primitives | stateset-crypto | stateset-pricing | stateset-observabilit
 stateset-policy | stateset-authz | stateset-a2a | stateset-jobs
 stateset-migrations | stateset-macros
         ->
-stateset-core | stateset-protocol | stateset-sync
+stateset-core | stateset-sync
         ->
 stateset-db
         ->
@@ -61,7 +61,7 @@ That graph matters more than the directory count, because it tells you where cha
 | Layer | Primary crates/surfaces | Purpose |
 |-------|--------------------------|---------|
 | Foundation | `stateset-primitives`, `stateset-crypto`, `stateset-pricing`, `stateset-observability`, `stateset-policy`, `stateset-authz`, `stateset-a2a`, `stateset-jobs`, `stateset-migrations`, `stateset-macros` | Narrow capabilities and cross-cutting building blocks |
-| Domain kernel | `stateset-core`, `stateset-protocol`, `stateset-sync` | Commerce models, wire contracts, and sync/runtime logic |
+| Domain kernel | `stateset-core`, `stateset-sync` | Commerce models, wire contracts, and sync/runtime logic |
 | Persistence + product API | `stateset-db`, `stateset-embedded` | Storage and the main embeddable commerce surface |
 | Edge adapters | `stateset-http`, `stateset-sdk`, `stateset-ffi`, `bindings/*` | Transport, Rust facade, C-style interop, and runtime packaging |
 | Operator surfaces | `cli/`, `admin/` | MCP, agents, automation, and operations UI |

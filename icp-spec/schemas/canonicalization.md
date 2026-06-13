@@ -149,10 +149,12 @@ the protocol breaks.
 ## 6. Test vectors
 
 `icp-conformance/vectors/icp-1.0/02-canonical-json/` is the normative
-vector for canonical JSON. It contains 20 sub-cases (empty object,
+vector for canonical JSON. It contains 22 sub-cases (empty object,
 nested object, array preserves order, string escapes, boolean/null,
-integers, monetary string vs decimal, etc.). Both reference IUTs (JS
-and Rust) pass this vector with byte-identical outputs.
+integers, monetary string vs decimal, raw-UTF-16 key ordering with
+escaped-char and astral-plane keys, >2^53 integer literals as IEEE-754
+doubles, etc.). All four reference IUTs (JS, Rust, Go, Python) pass this
+vector with byte-identical outputs.
 
 Future vector `04-canonical-cbor` will cover the CBOR rules when the
 reserved CBOR profile ships (planned for icp-1.1).

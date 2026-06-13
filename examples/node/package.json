@@ -28,7 +28,7 @@
     "embedded"
   ],
   "author": "StateSet <support@stateset.com>",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "dependencies": {
     "@stateset/embedded": "^1.6.0"
   }

@@ -55,6 +55,8 @@
 mod dto;
 mod error;
 pub mod etag;
+mod events_replay;
+mod idempotency;
 mod middleware;
 pub mod openapi;
 pub mod routes;

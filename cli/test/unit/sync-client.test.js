@@ -1412,6 +1412,8 @@ describe('SequencerClient — verifyInclusion', () => {
   /**
    * Helper: compute the leaf hash the same way verifyInclusion does.
    * This mirrors the fixed implementation so the tests can build valid roots.
+   * payloadKind is bound into the signing hash exactly as the producer
+   * (outbox.js) and the corrected verifyInclusion do.
    */
   function makeLeafHash(envelope, sequenceNumber) {
     const eventSigningHash = computeEventSigningHash({
@@ -1425,6 +1427,7 @@ describe('SequencerClient — verifyInclusion', () => {
       entityType: envelope.entityType,
       entityId: envelope.entityId,
       eventType: envelope.eventType,
+      payloadKind: envelope.payloadKind || 0,
       baseVersion: envelope.baseVersion || null,
       createdAt: envelope.createdAt,
       payloadPlainHash: hexToBuffer(envelope.payloadPlainHash),
@@ -1550,6 +1553,63 @@ describe('SequencerClient — verifyInclusion', () => {
       root,
     );
     assert.strictEqual(result, true);
+  });
+
+  it('binds payloadKind: a proof built for an encrypted envelope must NOT verify as plaintext', () => {
+    // Regression for the leaf-hash payloadKind omission. The signing hash
+    // (and therefore the leaf hash and Merkle root) commits to payloadKind, so
+    // an inclusion proof valid for an encrypted envelope (payloadKind=1) must
+    // not verify when the same envelope is presented as plaintext (payloadKind=0),
+    // and vice versa — otherwise encrypted and plaintext events are confusable.
+    const client = new SequencerClient(makeConfig());
+
+    // Same envelope content, only payloadKind differs.
+    const encryptedEnvelope = makeEnvelope({ sequenceNumber: 7, payloadKind: 1 });
+    const plaintextEnvelope = makeEnvelope({ sequenceNumber: 7, payloadKind: 0 });
+
+    // Root computed for the ENCRYPTED envelope.
+    const encryptedRoot = makeLeafHash(encryptedEnvelope, 7).toString('hex');
+    // Root computed for the PLAINTEXT envelope.
+    const plaintextRoot = makeLeafHash(plaintextEnvelope, 7).toString('hex');
+
+    // The two roots must differ now that payloadKind is bound.
+    assert.notStrictEqual(encryptedRoot, plaintextRoot);
+
+    // Self-consistent proofs verify.
+    assert.strictEqual(
+      client.verifyInclusion(
+        encryptedEnvelope,
+        { merkleRoot: encryptedRoot, leafIndex: 7, proofHashes: [], leafCount: 1 },
+        encryptedRoot,
+      ),
+      true,
+    );
+    assert.strictEqual(
+      client.verifyInclusion(
+        plaintextEnvelope,
+        { merkleRoot: plaintextRoot, leafIndex: 7, proofHashes: [], leafCount: 1 },
+        plaintextRoot,
+      ),
+      true,
+    );
+
+    // Cross-verification must fail in both directions.
+    assert.strictEqual(
+      client.verifyInclusion(
+        plaintextEnvelope,
+        { merkleRoot: encryptedRoot, leafIndex: 7, proofHashes: [], leafCount: 1 },
+        encryptedRoot,
+      ),
+      false,
+    );
+    assert.strictEqual(
+      client.verifyInclusion(
+        encryptedEnvelope,
+        { merkleRoot: plaintextRoot, leafIndex: 7, proofHashes: [], leafCount: 1 },
+        plaintextRoot,
+      ),
+      false,
+    );
   });
 });
 

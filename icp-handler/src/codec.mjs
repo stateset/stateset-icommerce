@@ -108,10 +108,94 @@ export function newId(prefix) {
  * a directly-supplied `_pubkey_hex` field on Intents to short-circuit AID
  * resolution. In a real handler this calls a resolver (DNS-over-HTTPS,
  * .well-known endpoint, on-chain registry).
+ *
+ * NOTE: this helper does NOT bind the returned key to the claimed AID — see
+ * `resolveAidPubkey`, which the handler uses on the verification path to
+ * enforce ICP-1.0-DRAFT §4.2 (AID = Base58btc(SHA-256(ed_pk || 0x00 || x_pk))).
  */
 export function pubkeyForAid(aid, hintHex) {
   if (hintHex) return Buffer.from(hintHex, 'hex');
   throw new Error(
     `cannot resolve ${aid}: no resolver configured and no _pubkey_hex hint provided`,
   );
+}
+
+/**
+ * Error thrown when a supplied public key does not derive to the claimed AID.
+ * The `.code` field maps to the registered `auth.*` error namespace.
+ */
+export class AidBindingError extends Error {
+  constructor(message, code = 'auth.aid_resolution_failed') {
+    super(message);
+    this.name = 'AidBindingError';
+    this.code = code;
+  }
+}
+
+/**
+ * Resolve an AID to its raw Ed25519 public key AND verify the AID→pubkey
+ * binding per ICP-1.0-DRAFT §4.2.
+ *
+ * The handler receives the Agent's key material out-of-band via two
+ * convenience fields on the Intent envelope:
+ *   - `_pubkey_hex`   — raw hex of the Agent's Ed25519 public key (REQUIRED).
+ *   - `_x_pubkey_hex` — raw hex of the Agent's X25519 public key (OPTIONAL but
+ *                       REQUIRED to verify the binding; without it the full AID
+ *                       cannot be re-derived).
+ *
+ * Binding rule:
+ *   - If both keys are supplied, the handler re-derives
+ *       aid' = aid:v1:z + Base58btc(SHA-256(ed_pk || 0x00 || x_pk))
+ *     and rejects (throws `AidBindingError`) unless `aid' === aid`. This closes
+ *     the "any key verifies as any AID" hole — a forged `_pubkey_hex` no longer
+ *     impersonates an arbitrary AID.
+ *   - If only `_pubkey_hex` is supplied, the binding CANNOT be checked (the
+ *     X25519 half of the preimage is absent). The handler rejects with
+ *     `auth.aid_resolution_failed` for any `aid:v1:z…`-shaped AID, because a
+ *     spec AID is only meaningful when its derivation can be verified. Callers
+ *     that genuinely cannot supply the X25519 key must register through a real
+ *     resolver (out of scope for the reference handler).
+ *
+ * @param {string} aid              The claimed Agent AID (`intent.buyer`/`seller`).
+ * @param {string} edHintHex        Raw hex of the Ed25519 public key.
+ * @param {string} [xHintHex]       Raw hex of the X25519 public key.
+ * @returns {Buffer} the 32-byte raw Ed25519 public key, bound to `aid`.
+ * @throws {AidBindingError} if the binding cannot be established or fails.
+ */
+export function resolveAidPubkey(aid, edHintHex, xHintHex) {
+  if (!edHintHex) {
+    throw new AidBindingError(
+      `cannot resolve ${aid}: no resolver configured and no _pubkey_hex hint provided`,
+    );
+  }
+  const edRaw = Buffer.from(edHintHex, 'hex');
+  if (edRaw.length !== 32) {
+    throw new AidBindingError(`_pubkey_hex must be 32 bytes, got ${edRaw.length}`);
+  }
+
+  // A spec AID (`aid:v1:z…`) can only be honored if we can re-derive it.
+  const isSpecAid = typeof aid === 'string' && aid.startsWith('aid:v1:z');
+
+  if (!xHintHex) {
+    if (isSpecAid) {
+      throw new AidBindingError(
+        `cannot verify AID binding for ${aid}: _x_pubkey_hex (X25519 public key) is required to re-derive the AID per §4.2`,
+      );
+    }
+    // Non-spec AID with no X key: nothing to bind against; return the key as-is.
+    return edRaw;
+  }
+
+  const xRaw = Buffer.from(xHintHex, 'hex');
+  if (xRaw.length !== 32) {
+    throw new AidBindingError(`_x_pubkey_hex must be 32 bytes, got ${xRaw.length}`);
+  }
+
+  const derived = deriveAidFromPubkeys(edRaw, xRaw);
+  if (derived !== aid) {
+    throw new AidBindingError(
+      `AID binding failed: supplied pubkeys derive to ${derived}, not the claimed ${aid}`,
+    );
+  }
+  return edRaw;
 }

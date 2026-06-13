@@ -244,8 +244,8 @@ during ML-DSA-65's maturation period.
 is a KEM (encryption), not a signature scheme. The ML-DSA family is
 NIST's signature counterpart. ML-KEM-768 is in scope for a SEPARATE
 future ICPIP addressing confidential Intent payloads (currently
-ICP-1.0 uses X25519 for ECDH; future ICPIP-0005 will mandate hybrid
-X25519+ML-KEM-768 for confidential intents).
+ICP-1.0 uses X25519 for ECDH; the solicited ICPIP-0007 will mandate
+hybrid X25519+ML-KEM-768 for confidential intents).
 
 **Alternative 4: Different threshold ($1k? $100k?).** Rejected —
 $10,000 matches the existing BSA CTR threshold and ICP's existing
@@ -392,7 +392,7 @@ PrincipalBinding revocation URLs are currently HTTPS endpoints. Post-CRQC,
 HTTPS itself is broken (TLS 1.3 uses classical KEMs). The revocation
 infrastructure MUST migrate to PQC-secured transport (TLS 1.3 with
 hybrid X25519+ML-KEM-768, or future TLS 1.4) on the same timeline as
-this signature mandate. A separate ICPIP (forthcoming, ICPIP-0005)
+this signature mandate. A separate ICPIP (forthcoming, ICPIP-0007)
 will address confidential transport for revocation and PrincipalBinding.
 
 ## Test Vectors

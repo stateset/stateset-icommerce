@@ -320,6 +320,7 @@ test.skip('verifyWebhook: end-to-end against live handler (covered handler-side)
           intent,
           signature: { alg: 'ed25519', kid: agentAid, sig: handlerSign(canonical, agentKp.privateKey) },
           _pubkey_hex: agentEdRaw.toString('hex'),
+          _x_pubkey_hex: agentXRaw.toString('hex'),
         };
       }
 

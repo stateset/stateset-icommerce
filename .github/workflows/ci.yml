@@ -189,7 +189,6 @@ jobs:
           cargo check -p stateset-observability --all-targets
           cargo check -p stateset-test-utils --all-targets
           cargo check -p stateset-crypto --all-targets
-          cargo check -p stateset-protocol --all-targets
           cargo check -p stateset-sync --all-targets
           cargo check -p stateset-core --features metrics --all-targets
           cargo check -p stateset-db --no-default-features --features postgres --all-targets
@@ -219,7 +218,6 @@ jobs:
           cargo check -p stateset-observability --all-targets
           cargo check -p stateset-test-utils --all-targets
           cargo check -p stateset-crypto --all-targets
-          cargo check -p stateset-protocol --all-targets
           cargo check -p stateset-sync --all-targets
           cargo check -p stateset-core --features metrics --all-targets
           cargo check -p stateset-db --no-default-features --features postgres --all-targets
@@ -284,7 +282,9 @@ jobs:
           - language: javascript
             build-mode: none
           - language: rust
-            build-mode: manual
+            # CodeQL's Rust extractor only supports build-mode `none`
+            # (manual/autobuild are rejected as of CodeQL 2.25.x).
+            build-mode: none
     permissions:
       security-events: write
       actions: read
@@ -295,29 +295,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        if: matrix.language == 'rust'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: rustfmt
-
-      - name: Cache cargo
-        if: matrix.language == 'rust'
-        uses: Swatinem/rust-cache@v2
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-
-      - name: Build (Rust manual)
-        if: matrix.language == 'rust'
-        run: |
-          # Default-members keeps this scoped to the core crates and skips bindings
-          # that need extra toolchains (Node, Python, JDK, etc.).
-          cargo build --workspace
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
@@ -351,8 +333,6 @@ jobs:
             -p stateset-core --all-features
           cargo doc --no-deps --document-private-items \
             -p stateset-crypto
-          cargo doc --no-deps --document-private-items \
-            -p stateset-protocol
           cargo doc --no-deps --document-private-items \
             -p stateset-db --all-features
           cargo doc --no-deps --document-private-items \
@@ -457,14 +437,17 @@ jobs:
         # Keep the PQC wire/signing crates on the primary CI path instead of
         # relying on manual validation or downstream binding jobs.
         run: |
-          cargo test -p stateset-crypto -p stateset-protocol -p stateset-sync
+          cargo test -p stateset-crypto -p stateset-sync
 
       - name: Mutation Testing (Core)
         if: >
           (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
           (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci-mutants'))
         run: |
-          cargo install cargo-mutants
+          # Pin + --locked: newer cargo-mutants releases (27.x) resolve transitive
+          # deps that raise the effective MSRV above the runner's stable rustc.
+          # 25.3.1 declares MSRV 1.78 and builds clean against its committed lockfile.
+          cargo install cargo-mutants --version 25.3.1 --locked
           cargo mutants -p stateset-core --test-threads 1 --in-cargo-test-dir
 
   node-bindings:
@@ -712,9 +695,14 @@ jobs:
           working-directory: bindings/ruby
 
       - name: Install Rust
+        # Pin to the workspace toolchain (rust-toolchain.toml) so this binding
+        # resolves dependencies exactly like the workspace. (The committed
+        # Cargo.lock fix — pinning cfg-if to the real published 1.0.4 rather
+        # than a phantom 1.1.0 — is what unblocks the build; this pin keeps the
+        # binding aligned with the workspace toolchain going forward.)
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: stable
+          toolchain: "1.90"
 
       - name: Test
         working-directory: bindings/ruby
@@ -1034,9 +1022,14 @@ jobs:
           tools: composer
 
       - name: Install Rust
+        # Pin to the workspace toolchain (rust-toolchain.toml) so this binding
+        # resolves dependencies exactly like the workspace. (The committed
+        # Cargo.lock fix — pinning auto_impl to the real published 1.3.0 rather
+        # than a phantom 1.5.0 — is what unblocks the build; this pin keeps the
+        # binding aligned with the workspace toolchain going forward.)
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: stable
+          toolchain: "1.90"
 
       - name: Check package metadata
         working-directory: bindings/php

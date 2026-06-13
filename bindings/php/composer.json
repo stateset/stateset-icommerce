@@ -2,7 +2,7 @@
     "name": "stateset/embedded",
     "description": "Local-first commerce engine for PHP - embedded SQLite-powered commerce operations",
     "type": "library",
-    "license": "MIT",
+    "license": "(MIT OR Apache-2.0)",
     "version": "1.6.0",
     "keywords": [
         "commerce",

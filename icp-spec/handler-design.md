@@ -238,7 +238,7 @@ Most of what's needed already exists in the engine:
 |---|---|
 | Ed25519 + ML-DSA-65 signing | `crates/stateset-crypto/src/sign.rs`, `pqc.rs` |
 | Canonical JSON (RFC 8785 JCS) | `crates/stateset-crypto/src/canonicalize.rs` |
-| Envelope/signature framing | `crates/stateset-protocol/src/envelope.rs` |
+| Envelope/signature framing | `crates/stateset-sync/src/http_transport.rs` (`VesEventEnvelope`) |
 | Escrow state machine | `crates/stateset-a2a/src/escrow/` |
 | Dispute logic | `crates/stateset-a2a/src/disputes/`, `dispute_rules.rs` |
 | Replay nonce cache | extract from `crates/stateset-sync/` |

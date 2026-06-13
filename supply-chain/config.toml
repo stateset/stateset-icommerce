@@ -23,82 +23,79 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
 [policy.stateset-a2a]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-authz]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-core]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-crypto]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-db]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-dotnet]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-embedded]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-embedded-node]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-embedded-python]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-embedded-wasm]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-ffi]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-go]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-http]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-java]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-jobs]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-kotlin]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-macros]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-migrations]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-observability]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-policy]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-pricing]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-primitives]
-audit-as-crates-io = true
-
-[policy.stateset-protocol]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-sdk]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-swift]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.stateset-sync]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [[exemptions.aead]]
 version = "0.5.2"
@@ -321,7 +318,7 @@ version = "2.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.crc32fast]]
-version = "1.6.0"
+version = "1.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.criterion]]
@@ -502,10 +499,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hashbrown]]
 version = "0.14.5"
-criteria = "safe-to-deploy"
-
-[[exemptions.hashbrown]]
-version = "0.16.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.hashlink]]
@@ -832,10 +825,6 @@ criteria = "safe-to-deploy"
 version = "3.5.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.proc-macro2]]
-version = "1.0.106"
-criteria = "safe-to-deploy"
-
 [[exemptions.prometheus]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
@@ -904,10 +893,6 @@ criteria = "safe-to-deploy"
 version = "0.11.14"
 criteria = "safe-to-deploy"
 
-[[exemptions.quote]]
-version = "1.0.45"
-criteria = "safe-to-deploy"
-
 [[exemptions.r-efi]]
 version = "5.3.0"
 criteria = "safe-to-deploy"
@@ -969,7 +954,7 @@ version = "0.7.46"
 criteria = "safe-to-deploy"
 
 [[exemptions.rs_merkle]]
-version = "1.6.0"
+version = "1.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.rsa]]
@@ -1148,110 +1133,6 @@ criteria = "safe-to-deploy"
 version = "1.2.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.stateset-a2a]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-authz]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-core]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-crypto]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-db]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-dotnet]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-embedded]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-embedded-node]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-embedded-python]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-embedded-wasm]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-ffi]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-go]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-http]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-java]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-jobs]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-kotlin]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-macros]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-migrations]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-observability]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-policy]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-pricing]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-primitives]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-protocol]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-sdk]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-swift]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.stateset-sync]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.stringprep]]
 version = "0.1.5"
 criteria = "safe-to-deploy"
@@ -1416,6 +1297,10 @@ criteria = "safe-to-deploy"
 version = "0.9.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.ureq]]
+version = "2.12.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.url]]
 version = "2.5.8"
 criteria = "safe-to-deploy"
@@ -1494,6 +1379,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.web-time]]
 version = "1.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.webpki-roots]]
+version = "0.26.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.webpki-roots]]

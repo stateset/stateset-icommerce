@@ -38,20 +38,24 @@ icp-handler listening on http://127.0.0.1:8787
 ## Test it
 
 ```sh
-PORT=0 node --test test/roundtrip.test.mjs
+npm test                                    # PORT=0 node --test test/
+PORT=0 node --test test/roundtrip.test.mjs  # just the end-to-end flow
 ```
 
 The roundtrip test:
 1. Generates a fresh buyer Agent (Ed25519 + X25519, AID per spec §4.2)
 2. Builds and signs a real ICP-1.0 `purchase.create` Intent
-3. POSTs it and asserts the Quote price (5% handling fee on $59.98 = $62.98)
+3. POSTs it (with both pubkeys so the handler can verify the §4.2 binding)
+   and asserts the Quote price (5% handling fee on $59.98 = $62.98)
 4. Accepts the Quote, gets funding instructions
 5. Fulfills the escrow, gets a co-signed SettlementReceipt
 6. Re-fetches the SettlementReceipt by ID
 7. Asserts bad signature, disallowed Settler, and over-max-total all fail
    with the correct spec-defined error codes
 
-Result: **6/6 PASS** end-to-end.
+`test/aid-binding.test.mjs` and `test/replay-guard.test.mjs` cover the MUST-level
+identity and replay guarantees: a forged pubkey cannot impersonate an arbitrary
+AID, and a replayed nonce is rejected with `replay.nonce_seen`.
 
 ## Surface
 
@@ -163,8 +167,10 @@ The handler itself doesn't change — only the Backend.
 ## Production checklist
 
 - [ ] Replace `generateKeyPairSync` with a KMS-backed signing key
-- [ ] Replace `_pubkey_hex` resolver with a real AID resolver
-      (DNS-over-HTTPS, on-chain registry, or `.well-known/icp-agent`)
+- [ ] Replace the `_pubkey_hex` / `_x_pubkey_hex` key hints with a real AID
+      resolver (DNS-over-HTTPS, on-chain registry, or `.well-known/icp-agent`).
+      The §4.2 AID→pubkey binding is already enforced against the supplied
+      keys — the resolver just removes the need to carry them on the wire.
 - [ ] Replace in-memory `state` module with the engine's persistent store
 - [ ] Add per-AID rate limits (token bucket)
 - [ ] OpenTelemetry traces (one span per protocol step)
@@ -172,11 +178,24 @@ The handler itself doesn't change — only the Backend.
       binary profile ships (MUST NOT be enabled under `v: "icp-1.0"`)
 - [ ] Connect to a real Settler signing daemon for actual chain events
       (the current implementation simulates funding and release)
-- [ ] Replay nonce LRU cache, sized for `max(exp + 86400s)`
+- [x] Replay-nonce guard (bounded LRU+TTL, §5.3). DONE in-process; a
+      horizontally-scaled deployment must back it with a shared/durable store
+      (Redis, etc.) sized for `max(exp + 86400s)`, since the in-memory guard is
+      per-instance.
 
 ## Status
 
-ICP-1.0 conformance: **partial** (purchase.create only). Tracks the spec.
+ICP-1.0 conformance: implements **all seven core verbs** (`purchase.create`,
+`purchase.return`, `inventory.query`, `quote.request`, `subscription.create`,
+`subscription.cancel`, `payout.request`) plus the `channel.register` extension
+verb (ICPIP-0005). Tracks the spec.
+
+The MUST-level security boundary is enforced: signature verification, AID→pubkey
+binding (§4.2), nonce-replay rejection (§5.3, bounded LRU+TTL guard, keyed on
+`(signer AID, nonce)`), replay-window enforcement, the Settler allowlist gate,
+and the `max_total` ceiling. The replay guard is per-process and in-memory —
+correct for a single instance; a horizontally-scaled deployment needs a shared
+store (see the production checklist).
 
 This server demonstrates the protocol works end-to-end at HTTP. It is
 NOT yet a production handler.

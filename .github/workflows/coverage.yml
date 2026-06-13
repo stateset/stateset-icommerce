@@ -97,7 +97,15 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Run benchmarks
-        run: cargo bench -p stateset-core -p stateset-db -p stateset-embedded -- --noplot
+        # Name the Criterion bench targets explicitly: a bare `cargo bench -p ...`
+        # also runs each package's lib target under the libtest harness, which
+        # rejects Criterion-only flags like `--noplot` with an
+        # unrecognized-option error.
+        run: |
+          cargo bench -p stateset-core --bench core_benchmarks -- --noplot
+          cargo bench -p stateset-db --bench db_benchmarks -- --noplot
+          cargo bench -p stateset-embedded --bench api_benchmarks -- --noplot
+          cargo bench -p stateset-embedded --bench performance_benchmarks -- --noplot
 
   cli-coverage:
     name: CLI Coverage
@@ -121,6 +129,9 @@ jobs:
 
       - name: Run coverage
         working-directory: cli
+        # Explicit `shell: bash` enables pipefail so test failures are not
+        # masked by the exit status of `tee`.
+        shell: bash
         run: npm run test:coverage 2>&1 | tee coverage-output.txt
 
       - name: Check coverage threshold
@@ -177,6 +188,12 @@ jobs:
 
       - name: Run coverage
         working-directory: bindings/node
+        # Explicit `shell: bash` enables pipefail so test failures are not
+        # masked by the exit status of `tee`. This job intentionally runs
+        # without the optional @stateset/cli peer stack; the toolkit
+        # integration tests skip themselves (loudly) and the full toolkit
+        # path is exercised by the `node-bindings` job in ci.yml.
+        shell: bash
         run: npm run check:coverage 2>&1 | tee coverage-output.txt
 
       - name: Check coverage threshold

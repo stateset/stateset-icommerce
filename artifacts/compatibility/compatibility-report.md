@@ -20,7 +20,6 @@
 | `stateset-ffi` | `default` | SKIPPED | 0 |
 | `stateset-sdk` | `default` | SKIPPED | 0 |
 | `stateset-http` | `default` | SKIPPED | 0 |
-| `stateset-protocol` | `default` | SKIPPED | 0 |
 | `stateset-migrations` | `default` | SKIPPED | 0 |
 | `stateset-authz` | `default` | SKIPPED | 0 |
 
@@ -36,5 +35,4 @@
 | `stateset-http` | `-` | `-` |
 | `stateset-migrations` | `-` | `-` |
 | `stateset-primitives` | `arbitrary, default, sqlx-postgres, std` | `std` |
-| `stateset-protocol` | `-` | `-` |
 | `stateset-sdk` | `core, crypto, default, full, macros, policy` | `core` |

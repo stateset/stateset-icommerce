@@ -159,6 +159,12 @@ Verifiers **MUST** reject any message with an already-seen nonce within the
 `exp` window, and **SHOULD** maintain a nonce cache for at least
 `max(iat + 86400s)` seconds.
 
+> **Non-normative.** A byte-identical retry of a `purchase.create` Intent would
+> otherwise trip this nonce check; ICPIP-0006 specifies how idempotent replay
+> (same `intent_id` + identical canonical bytes) takes precedence over the
+> nonce guard and returns the original Quote. See that ICPIP — this section's
+> normative replay rule is unchanged.
+
 ## 6. Intent objects
 
 An **Intent** is an Agent's signed request for a commerce action. ICP-1.0
@@ -212,6 +218,11 @@ and replay rules as the core verbs.
 return a Quote with `total > max_total`. This binds the merchant's price-quote
 to the buyer's authority and prevents Agents from being upsold beyond their
 mandate.
+
+> **Non-normative.** Retry idempotency for `purchase.create` (a byte-identical
+> retry returns the original Quote; a reused `intent_id` with different terms is
+> rejected) is specified in ICPIP-0006. It is not part of ICP-1.0's normative
+> text; see that ICPIP for the proposed semantics and error codes.
 
 ### 6.5 subscription.create
 
@@ -522,6 +533,12 @@ The merchant signs an **InventorySnapshot** in response:
   "signature": { "alg": "ed25519", "kid": "<merchant-aid>", "sig": "..." }
 }
 ```
+
+> **Non-normative.** Opaque cursor pagination over `total_matching_skus`
+> (request `cursor`, response `next_cursor`, page-size bounds, and
+> stability-under-mutation guarantees) is specified in ICPIP-0006. The
+> `max_results`/`total_matching_skus` fields above are normative ICP-1.0;
+> the cursor mechanism that walks them is proposed in that ICPIP.
 
 **Snapshot validity.** The `valid_until` field tells the buyer how long
 the prices/availability are guaranteed. After expiry, prices are stale.

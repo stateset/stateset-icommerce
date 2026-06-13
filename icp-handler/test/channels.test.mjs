@@ -70,6 +70,7 @@ function buildChannelRegisterIntent(channel) {
     intent,
     signature: { alg: 'ed25519', kid: agentAid, sig },
     _pubkey_hex: agentEdPubRaw.toString('hex'),
+    _x_pubkey_hex: agentXPubRaw.toString('hex'),
   };
 }
 

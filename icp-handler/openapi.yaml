@@ -684,12 +684,18 @@ components:
         (`{alg, kid, sig}`). The signature is NEVER embedded inside the
         `intent` object itself (ICP-1.0 §5.1).
 
-        `_pubkey_hex` is an optional convenience field — the raw hex
-        of the Agent's Ed25519 public key. The handler uses it to
-        bootstrap signature verification before the Agent's AID is
-        resolvable via a DID document. Production deployments resolving
-        AIDs via `.well-known/icp` of the Agent or a DID registry MAY
-        omit this field.
+        `_pubkey_hex` and `_x_pubkey_hex` are convenience fields carrying
+        the Agent's raw Ed25519 and X25519 public keys. The handler uses
+        them to (1) re-derive the Agent's AID per ICP-1.0 §4.2
+        (`aid:v1:z` + Base58btc(SHA-256(ed_pk || 0x00 || x_pk))) and
+        reject any `signature.kid` that does not match — closing the
+        "any key verifies as any AID" hole — and (2) verify the Ed25519
+        signature. For an `aid:v1:z…`-shaped `kid`, BOTH keys are
+        required: without the X25519 half the binding cannot be
+        re-derived and the request is rejected with
+        `auth.aid_resolution_failed`. Production deployments resolving
+        AIDs via `.well-known/icp` or a DID registry MAY supply these via
+        the resolver instead.
       properties:
         intent:
           $ref: '#/components/schemas/IntentBase'
@@ -699,8 +705,16 @@ components:
           type: string
           pattern: '^[0-9a-f]{64}$'
           description: |
-            Optional. 32-byte raw hex of the Agent's Ed25519 public key.
-            Lets the handler verify without an external AID-resolution round-trip.
+            32-byte raw hex of the Agent's Ed25519 public key. REQUIRED
+            unless the handler resolves the AID via an external resolver.
+        _x_pubkey_hex:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: |
+            32-byte raw hex of the Agent's X25519 public key. REQUIRED to
+            verify the §4.2 AID binding for `aid:v1:z…`-shaped signer
+            identities; omitting it for a spec AID is rejected with
+            `auth.aid_resolution_failed`.
 
     Signature:
       type: object

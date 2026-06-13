@@ -25,6 +25,11 @@ curl -s "$HOST/icp/v1/settlers" | jq .
 
 echo ""
 echo "=== POST /icp/v1/intents (unsigned, expect signature.invalid) ==="
+# The signature `kid` ("demo") is not a spec `aid:v1:z…` AID, so the handler
+# cannot re-derive a binding from it; it falls through to Ed25519 verification,
+# which fails against the all-zero key. A real client supplies `kid` = its AID
+# plus `_pubkey_hex` AND `_x_pubkey_hex` so the handler can verify the §4.2
+# binding (see test/aid-binding.test.mjs).
 curl -s -X POST "$HOST/icp/v1/intents" \
   -H 'content-type: application/json' \
   -d '{
@@ -39,7 +44,7 @@ curl -s -X POST "$HOST/icp/v1/intents" \
       "max_total": {"amount":"2","currency":"USDC"},
       "expiry": "2026-12-31T00:00:00Z",
       "principal_binding": {},
-      "nonce": "0",
+      "nonce": "0123456789abcdef0123456789abcdef",
       "iat": "2026-05-09T00:00:00Z",
       "exp": "2026-05-09T00:09:59Z"
     },

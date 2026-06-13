@@ -156,7 +156,14 @@ def canonical_json(value) -> str:
     if isinstance(value, str):
         return _encode_canonical_string(value)
     if isinstance(value, int):
-        return str(value)
+        # RFC 8785 §3.2.2.3: every JSON number is an IEEE-754 double. Python's
+        # json.load parses integer literals as arbitrary-precision int (exact
+        # beyond 2^53), but a conforming JS/Go implementation rounds the literal
+        # to the nearest double at parse time. Convert to float so e.g.
+        # 12345678901234567890 canonicalizes to 12345678901234567000 and
+        # 1000000000000000000000 to 1e+21 — byte-identical to the other IUTs.
+        # Within ±2^53 the conversion is exact and prints integrally.
+        return _format_canonical_number(float(value))
     if isinstance(value, float):
         return _format_canonical_number(value)
     if isinstance(value, list):

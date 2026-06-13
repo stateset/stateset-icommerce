@@ -73,6 +73,7 @@ function buildSignedIntent() {
     intent,
     signature: { alg: 'ed25519', kid: buyerAid, sig },
     _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    _x_pubkey_hex: buyerXPubRaw.toString('hex'),
   };
 }
 
@@ -206,6 +207,7 @@ test('subscription.create Intent → signed SubscriptionAuthorization', async ()
     intent,
     signature: { alg: 'ed25519', kid: buyerAid, sig },
     _pubkey_hex: buyerEdPubRaw.toString('hex'),
+    _x_pubkey_hex: buyerXPubRaw.toString('hex'),
   };
 
   const r = await fetch(`${baseUrl}/icp/v1/intents`, {
@@ -272,6 +274,7 @@ test('subscription with per-period cap above demo policy is rejected', async () 
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   assert.equal(r.status, 422);
@@ -315,6 +318,7 @@ test('purchase.return Intent → signed ReturnAuthorization', async () => {
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const rBody = await r.json();
@@ -379,6 +383,7 @@ test('purchase.return: large no-fault return rejected per demo policy', async ()
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   assert.equal(r.status, 422);
@@ -415,6 +420,7 @@ test('inventory.query → signed InventorySnapshot with 5 SKUs', async () => {
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const rBody = await r.json();
@@ -465,6 +471,7 @@ test('inventory.query with in_stock_only filter excludes out-of-stock SKUs', asy
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const j = await r.json();
@@ -508,6 +515,7 @@ test('subscription.cancel (immediate) → CancellationAuthorization with pro-rat
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const rBody = await r.json();
@@ -558,6 +566,7 @@ test('subscription.cancel on ANNUAL subscription downgrades to end-of-period', a
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const j = await r.json();
@@ -598,6 +607,7 @@ test('quote.request → signed PriceProposal with volume tier discount', async (
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const rBody = await r.json();
@@ -641,6 +651,7 @@ test('purchase.create with from_proposal_id honors proposal prices', async () =>
       intent: quoteIntent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(quoteIntent), buyerKp.privateKey) },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const { proposal } = await qr.json();
@@ -671,6 +682,7 @@ test('purchase.create with from_proposal_id honors proposal prices', async () =>
       intent: purchaseIntent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(purchaseIntent), buyerKp.privateKey) },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const prBody = await pr.json();
@@ -712,6 +724,7 @@ test('purchase.create with unknown from_proposal_id is rejected', async () => {
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   assert.equal(r.status, 422);
@@ -755,6 +768,7 @@ test('payout.request → signed PayoutAuthorization with itemized fees', async (
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: signEd25519(canonicalJson(intent), buyerKp.privateKey) },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const rBody = await r.json();
@@ -826,6 +840,7 @@ test('payout.request: insufficient balance is rejected', async () => {
       intent,
       signature: { alg: 'ed25519', kid: freshAid, sig: signEd25519(canonicalJson(intent), freshKp.privateKey) },
       _pubkey_hex: freshEdPubRaw.toString('hex'),
+      _x_pubkey_hex: freshXPubRaw.toString('hex'),
     }),
   });
   assert.equal(r.status, 422);
@@ -875,6 +890,7 @@ test('payout.request: exceeds max_per_payout is rejected', async () => {
       intent,
       signature: { alg: 'ed25519', kid: freshAid, sig: signEd25519(canonicalJson(intent), freshKp.privateKey) },
       _pubkey_hex: freshEdPubRaw.toString('hex'),
+      _x_pubkey_hex: freshXPubRaw.toString('hex'),
     }),
   });
   assert.equal(r.status, 422);

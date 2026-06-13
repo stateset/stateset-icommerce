@@ -14,9 +14,9 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 | Metric | Value |
 | --- | --- |
 | Workspace version | `1.6.0` |
-| Workspace members | 31 |
-| Default members | 20 |
-| Rust crates in workspace | 23 |
+| Workspace members | 30 |
+| Default members | 19 |
+| Rust crates in workspace | 22 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
 | CLI binaries | 50 |
@@ -31,8 +31,8 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 
 | Layer | Packages |
 | --- | --- |
-| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-client`, `stateset-icp-iut`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
-| L2 | `stateset-core`, `stateset-protocol`, `stateset-sync` |
+| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-client`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
+| L2 | `stateset-core`, `stateset-icp-iut`, `stateset-sync` |
 | L3 | `stateset-db`, `stateset-embedded-wasm` |
 | L4 | `stateset-embedded` |
 | L5 | `stateset-dotnet`, `stateset-embedded-node`, `stateset-go`, `stateset-http`, `stateset-java`, `stateset-kotlin`, `stateset-sdk`, `stateset-swift` |
@@ -45,7 +45,7 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 | `stateset-core` | 13 |
 | `stateset-crypto` | 12 |
 | `stateset-embedded` | 10 |
-| `stateset-primitives` | 7 |
+| `stateset-primitives` | 6 |
 | `stateset-db` | 4 |
 | `stateset-observability` | 2 |
 | `stateset-pricing` | 2 |
@@ -91,7 +91,7 @@ workspace membership because they require host runtimes or headers.
 | Group | Files |
 | --- | --- |
 | `tools` | 67 |
-| `commands` | 61 |
+| `commands` | 62 |
 | `a2a` | 44 |
 | `channels` | 29 |
 | `adapters` | 20 |

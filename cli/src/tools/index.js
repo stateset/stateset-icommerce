@@ -79,6 +79,7 @@ const TOOL_MODULES = {
   'a2a-observability': namedLoader('./a2a-observability.js', 'a2aObservabilityTools'),
   'a2a-platform': namedLoader('./a2a-platform.js', 'a2aPlatformTools'),
   'a2a-intelligence': namedLoader('./a2a-intelligence.js', 'a2aIntelligenceTools'),
+  'agent-receipt': namedLoader('./agent-receipt.js', 'agentReceiptTools'),
   'agentic-runtime': () => import('../mcp-server.js').then((m) => m.getStaticAgenticRuntimeTools()),
 };
 

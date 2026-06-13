@@ -13,6 +13,7 @@
  * tools call the contracts directly via ethers for sub-second responses.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -27,14 +28,64 @@ const ANVIL_URL = process.env.ANVIL_URL || 'http://localhost:8545';
 const BROADCAST_LOG =
   '/home/dom/icommerce-app/set/contracts/broadcast/DeployAgentReceipt.s.sol/84532001/run-latest.json';
 
-// Anvil default keys — same as the demo. In production these come from a KMS
-// or the agent's local keystore.
-const SEQUENCER_KEY =
-  process.env.SEQUENCER_KEY || '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
-const BUYER_KEY =
-  process.env.BUYER_KEY || '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a';
-const SELLER_KEY =
-  process.env.SELLER_KEY || '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6';
+// Well-known Anvil/Hardhat default keys, used ONLY in explicit demo/test mode.
+// These keys are public and MUST NEVER be used to sign value-bearing actions
+// against any real network. In production the corresponding env vars provide a
+// real key sourced from a KMS or the agent's local keystore. The Anvil fallback
+// is gated behind STATESET_ALLOW_DEMO_KEYS so the tool cannot silently sign with
+// a publicly-known private key outside the local demo.
+const DEMO_KEYS = {
+  operator: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+  buyer: '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a',
+  seller: '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6',
+};
+
+/** @typedef {'operator' | 'buyer' | 'seller'} SigningRole */
+
+/** Env var that holds the configured key for each signing role. */
+const ROLE_ENV_VAR = {
+  operator: 'SEQUENCER_KEY',
+  buyer: 'BUYER_KEY',
+  seller: 'SELLER_KEY',
+};
+
+/**
+ * Whether the publicly-known Anvil demo keys are permitted to sign.
+ * Enabled by setting STATESET_ALLOW_DEMO_KEYS to a truthy value (1/true/yes/on).
+ * @returns {boolean}
+ */
+function demoKeysAllowed() {
+  const flag = String(process.env.STATESET_ALLOW_DEMO_KEYS ?? '')
+    .trim()
+    .toLowerCase();
+  return flag === '1' || flag === 'true' || flag === 'yes' || flag === 'on';
+}
+
+/**
+ * Resolve the private key for a signing role.
+ *
+ * Prefers a real configured key from the role's env var. Falls back to the
+ * well-known Anvil demo key only when STATESET_ALLOW_DEMO_KEYS is set; otherwise
+ * throws so the tool can never sign with a publicly-known key outside the demo.
+ *
+ * @param {SigningRole} role
+ * @returns {string} The 0x-prefixed private key to sign with.
+ */
+export function resolveSigningKey(role) {
+  const envVar = ROLE_ENV_VAR[role];
+  const configured = envVar ? process.env[envVar] : undefined;
+  if (configured && configured.trim()) {
+    return configured.trim();
+  }
+  if (demoKeysAllowed()) {
+    return DEMO_KEYS[role];
+  }
+  throw new Error(
+    `No signing key configured for role "${role}". Set ${envVar} to a real ` +
+      'private key, or set STATESET_ALLOW_DEMO_KEYS=1 to use the public Anvil ' +
+      'demo keys (local demo/testnet only — never on a real network).',
+  );
+}
 
 const ESCROW_ABI = [
   'function dispute(bytes32 orderId, bytes32 reasonHash)',
@@ -95,8 +146,8 @@ function getProvider() {
 function escrowAs(role) {
   const { escrow } = loadAddresses();
   const provider = getProvider();
-  const key = role === 'buyer' ? BUYER_KEY : role === 'seller' ? SELLER_KEY : SEQUENCER_KEY;
-  const wallet = new Wallet(key, provider);
+  const signingRole = role === 'buyer' ? 'buyer' : role === 'seller' ? 'seller' : 'operator';
+  const wallet = new Wallet(resolveSigningKey(signingRole), provider);
   return { contract: new Contract(escrow, ESCROW_ABI, wallet), wallet };
 }
 
@@ -510,8 +561,10 @@ export const agentReceiptTools = [
 
         const provider = getProvider();
         const network = await provider.getNetwork();
-        const wallet =
-          role === 'seller' ? new Wallet(SELLER_KEY, provider) : new Wallet(BUYER_KEY, provider);
+        const wallet = new Wallet(
+          resolveSigningKey(role === 'seller' ? 'seller' : 'buyer'),
+          provider,
+        );
 
         // Check + auto-approve once
         const SSDC_ABI = [
@@ -538,10 +591,9 @@ export const agentReceiptTools = [
           approveTx = rcpt.hash;
         }
 
-        // Compose canonical message (must match bridge-ssdc-payout.mjs)
-        const nonce =
-          '0x' +
-          Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+        // Compose canonical message (must match bridge-ssdc-payout.mjs).
+        // 16 random bytes -> 32 hex chars, cryptographically secure (replay nonce).
+        const nonce = '0x' + crypto.randomBytes(16).toString('hex');
         const issuedAt = Math.floor(Date.now() / 1000);
         const sellerChecked = wallet.address;
         const message = [

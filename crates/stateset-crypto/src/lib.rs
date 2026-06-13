@@ -4,7 +4,7 @@
 //! VES v1.0 Cryptographic Operations
 //!
 //! Implements:
-//! - RFC 8785 JSON Canonicalization Scheme (JCS) via `serde_jcs`
+//! - RFC 8785 JSON Canonicalization Scheme (JCS) — see [`canonicalize`]
 //! - Domain-separated hashing per VES spec
 //! - Ed25519 signing for agent signatures
 //! - AES-256-GCM payload encryption (VES-ENC-1)

@@ -98,7 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo cyclonedx --format json --override-filename "stateset-icommerce-${TAG}.cdx" --target-only || true
-          ls *.cdx.json 2>/dev/null || true
+          ls -- *.cdx.json 2>/dev/null || true
 
       - name: Compute SHA256SUMS
         id: sums
@@ -107,7 +107,7 @@ jobs:
         run: |
           set -euo pipefail
           SUMS="stateset-icommerce-${TAG}.SHA256SUMS"
-          sha256sum stateset-icommerce-${TAG}.tar.gz > "$SUMS"
+          sha256sum "stateset-icommerce-${TAG}.tar.gz" > "$SUMS"
           for f in *.cdx.json; do
             [ -e "$f" ] && sha256sum "$f" >> "$SUMS"
           done
@@ -136,7 +136,8 @@ jobs:
           if ! gh release view "$TAG" > /dev/null 2>&1; then
             gh release create "$TAG" --title "$TAG" --notes "Signed release. See SECURITY.md for verification."
           fi
-          gh release upload "$TAG" --clobber \
-            "$TARBALL" \
-            "$SUMS" "${SUMS}.sig" "${SUMS}.pem" \
-            $(ls *.cdx.json 2>/dev/null || true)
+          artifacts=("$TARBALL" "$SUMS" "${SUMS}.sig" "${SUMS}.pem")
+          shopt -s nullglob
+          artifacts+=(*.cdx.json)
+          shopt -u nullglob
+          gh release upload "$TAG" --clobber "${artifacts[@]}"

@@ -50,6 +50,13 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Sine-hash pseudo-random in [min, max). SIMULATED DATA ONLY: values derived
+ * from this are demo fabrications, not engine measurements. Any widget that
+ * renders a number produced (directly or indirectly) by this helper must
+ * display `<SimulatedDataBadge />` so fabricated data is never presented as
+ * real (see components/shared/simulated-data-badge.tsx).
+ */
 function deterministicRatio(seed: number, min: number = 0, max: number = 1): number {
   const unit = (Math.sin(seed * 12.9898 + 78.233) + 1) / 2;
   return min + unit * (max - min);
@@ -1010,7 +1017,14 @@ export async function getSubscriptionAnalyticsData() {
   };
 }
 
-// Agent Performance data for generative UI
+// Agent Performance data for generative UI.
+//
+// SIMULATED DATA: task volumes are derived from real orders/inventory/returns
+// counts, but success rates, response-time trends (avg/p95/p99), daily
+// success/failed/timeout outcomes and task durations are deterministic demo
+// values — there is no agent latency/outcome telemetry in the engine yet.
+// The consuming widgets (agent-performance.tsx) badge those charts as
+// simulated; keep the badges in sync if this changes.
 export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
   await requireAdminSession();
   const [orders, inventory, returns, customers, subscriptions] = await Promise.all([
@@ -1125,7 +1139,14 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
   };
 }
 
-// Financial Reconciliation data for generative UI
+// Financial Reconciliation data for generative UI.
+//
+// SIMULATED DATA: revenue/refund totals and cash flow come from real orders
+// and returns, but reconciliation rates, discrepancy deltas ("actual" vs
+// "expected") and transaction ids/sources/statuses are fabricated — no
+// payment-processor feed is wired up. The consuming widgets
+// (financial-reconciliation.tsx) badge those sections as simulated; keep the
+// badges in sync if this changes.
 export async function getFinancialReconciliationData(): Promise<FinancialReconciliationData> {
   await requireAdminSession();
   const [orders, returns, subscriptions] = await Promise.all([

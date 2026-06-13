@@ -25,11 +25,12 @@ pub mod subscriptions;
 pub mod warranties;
 pub mod wishlists;
 
-use axum::{Router, extract::DefaultBodyLimit};
+use axum::{Router, extract::DefaultBodyLimit, middleware::from_fn_with_state};
 use std::time::Duration;
 use tower_http::compression::CompressionLayer;
 use tower_http::timeout::TimeoutLayer;
 
+use crate::idempotency::{IdempotencyLayer, idempotency};
 use crate::state::AppState;
 
 /// Default request timeout for all API endpoints (30 seconds).
@@ -52,6 +53,9 @@ pub fn api_router_with_body_limit(max_body_bytes: usize) -> Router<AppState> {
     Router::new()
         .merge(health::router())
         .nest("/api/v1", v1_router())
+        // Idempotency-Key handling for POST create endpoints. Applied before the
+        // body limit so oversized bodies are still rejected by `DefaultBodyLimit`.
+        .layer(from_fn_with_state(IdempotencyLayer::new(), idempotency))
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .layer(CompressionLayer::new())
         .layer(TimeoutLayer::new(REQUEST_TIMEOUT))

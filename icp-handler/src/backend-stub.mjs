@@ -8,7 +8,7 @@
 //   observe(intent_id) -> stream of EscrowEvent
 //   dispute(escrow_id, dispute_intent) -> DisputeOutcome | error
 
-import { canonicalJson, signEd25519, newId } from './codec.mjs';
+import { canonicalJson, signEd25519, newId, newNonceHex } from './codec.mjs';
 
 /**
  * Build, sign, and return a Quote for an Intent. The stub:
@@ -54,7 +54,7 @@ export function stubQuote(intent, merchantSigningKey) {
       escrow_terms: { release_on: 'fulfilled+24h', dispute_window: '168h' },
       expiry: exp.toISOString(),
       from_proposal_id: intent.from_proposal_id,
-      nonce: '00000000000000000000000000000000',
+      nonce: newNonceHex(), // §5.3: every signed payload carries a fresh, unique nonce
       iat: now.toISOString(),
       exp: exp.toISOString(),
     };
@@ -105,7 +105,7 @@ export function stubQuote(intent, merchantSigningKey) {
       dispute_window: '168h',
     },
     expiry: exp.toISOString(),
-    nonce: '00000000000000000000000000000000', // demo: deterministic for replay
+    nonce: newNonceHex(), // §5.3: every signed payload carries a fresh, unique nonce
     iat: now.toISOString(),
     exp: exp.toISOString(),
   };

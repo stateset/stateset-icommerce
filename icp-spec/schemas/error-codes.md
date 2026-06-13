@@ -50,6 +50,8 @@ humans).
 | `arbiter`   | Arbiter authorization / decision errors               |
 | `conformance` | Conformance test errors                             |
 | `channel`   | Push-channel registration / delivery errors (ICPIP-0005) |
+| `idempotency` | `purchase.create` idempotency-key conflicts (ICPIP-0006) |
+| `pagination` | `inventory.query` cursor pagination errors (ICPIP-0006) |
 
 ## Codes (ICP-1.0 normative)
 
@@ -227,6 +229,19 @@ humans).
 | `channel.event_type_unsupported`  | Filter requested an unknown event type                    |
 | `channel.url_unverified`          | Webhook URL failed verification challenge                 |
 
+### idempotency (ICPIP-0006)
+
+| Code                       | When emitted                                              |
+|----------------------------|-----------------------------------------------------------|
+| `idempotency.key_reused`   | `purchase.create` `intent_id` already seen with a different canonical fingerprint |
+
+### pagination (ICPIP-0006)
+
+| Code                        | When emitted                                             |
+|-----------------------------|----------------------------------------------------------|
+| `pagination.cursor_invalid` | `inventory.query` `cursor` is malformed, not issued by this merchant, or presented with a different filter set |
+| `pagination.cursor_expired` | `inventory.query` `cursor` was valid but its retention window elapsed |
+
 ## HTTP status mapping
 
 For HTTP transports, error codes map to status codes as follows:
@@ -246,6 +261,8 @@ For HTTP transports, error codes map to status codes as follows:
 | `rate.*`       | 429         |
 | `settler.*`    | 503         |
 | `channel.*`    | 401 / 404 / 409 / 410 / 422 (see per-code table) |
+| `idempotency.*` | 409 |
+| `pagination.*` | 400 (or 410 for `pagination.cursor_expired`) |
 
 ## Stability
 

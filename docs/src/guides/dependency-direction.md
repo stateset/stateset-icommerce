@@ -9,7 +9,7 @@ stateset-primitives | stateset-crypto | stateset-pricing | stateset-observabilit
 stateset-policy | stateset-authz | stateset-a2a | stateset-jobs
 stateset-migrations | stateset-macros
         ->
-stateset-core | stateset-protocol | stateset-sync
+stateset-core | stateset-sync
         ->
 stateset-db
         ->
@@ -43,7 +43,7 @@ They are important because they stay narrow. Most of them are conceptually stabl
 
 `stateset-core` is the main fan-in point for the product/runtime graph. It is where domain types, repository traits, services, validation, events, and errors converge. Changes here travel far.
 
-`stateset-protocol` and `stateset-sync` sit beside the core rather than above the CLI. That matters because sync and protocol are part of the Rust kernel story, not just operator tooling.
+`stateset-sync` sits beside the core rather than above the CLI. That matters because sync is part of the Rust kernel story, not just operator tooling. Its wire-format types (event envelopes, sync batches) and Merkle construction live in `stateset-sync` and `stateset-crypto` (the latter implements the VES v1.0 domain-separated Merkle tree).
 
 ### Storage and embeddable API
 

@@ -14,10 +14,8 @@
 //! Key traits use [`auto_impl`](https://docs.rs/auto_impl) so that `&T`,
 //! `Box<T>`, and `Arc<T>` automatically implement the trait when `T` does.
 
-pub mod async_repository;
 pub mod repository;
 
-pub use async_repository::{AsyncRepository, AsyncTransactional};
 pub use repository::{Repository, Transactional};
 
 use crate::errors::{BatchResult, Result};

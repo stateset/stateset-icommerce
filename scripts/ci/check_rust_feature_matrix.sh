@@ -13,7 +13,6 @@ bash "$(dirname "$0")/cargo_ci.sh" test -p stateset-sync --quiet
 bash "$(dirname "$0")/cargo_ci.sh" test -p stateset-authz --quiet
 bash "$(dirname "$0")/cargo_ci.sh" test -p stateset-crypto --quiet
 bash "$(dirname "$0")/cargo_ci.sh" test -p stateset-pricing --quiet
-bash "$(dirname "$0")/cargo_ci.sh" test -p stateset-protocol --quiet
 bash "$(dirname "$0")/cargo_ci.sh" test -p stateset-a2a --quiet
 bash "$(dirname "$0")/cargo_ci.sh" test -p stateset-ffi --all-features --quiet
 bash "$(dirname "$0")/cargo_ci.sh" test -p stateset-jobs --quiet

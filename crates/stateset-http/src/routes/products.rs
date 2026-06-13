@@ -32,9 +32,16 @@ pub fn router() -> Router<AppState> {
     path = "/api/v1/products",
     tag = "products",
     request_body = CreateProductRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-generated key. Replaying the same key with an \
+                identical body returns the original response without creating a duplicate; \
+                reusing it with a different body returns 422. Scoped per tenant."),
+    ),
     responses(
         (status = 201, description = "Product created", body = ProductResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]
@@ -44,7 +51,6 @@ pub(crate) async fn create_product(
     Json(req): Json<CreateProductRequest>,
 ) -> Result<(axum::http::StatusCode, Json<ProductResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let product_type = req
         .product_type
@@ -60,7 +66,11 @@ pub(crate) async fn create_product(
         product_type,
         ..Default::default()
     };
-    let product = commerce.products().create(input)?;
+    let product = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(commerce.products().create(input)?)
+        })
+        .await?;
     Ok((axum::http::StatusCode::CREATED, Json(ProductResponse::from(product))))
 }
 
@@ -82,11 +92,14 @@ pub(crate) async fn get_product(
     Path(id): Path<ProductId>,
 ) -> Result<Json<ProductResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let product = commerce
-        .products()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Product {id} not found")))?;
+    let product = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce
+                .products()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Product {id} not found")))
+        })
+        .await?;
     Ok(Json(ProductResponse::from(product)))
 }
 
@@ -108,7 +121,6 @@ pub(crate) async fn list_products(
     Query(params): Query<ProductFilterParams>,
 ) -> Result<Json<ProductListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let limit = params.resolved_limit();
     let offset = params.resolved_offset();
@@ -145,7 +157,8 @@ pub(crate) async fn list_products(
         None => None,
     };
 
-    // Count total matching records (without pagination or cursor)
+    // Count total matching records (without pagination or cursor) using an
+    // efficient `SELECT COUNT(*)` rather than materializing the full result set.
     let count_filter = ProductFilter {
         status,
         product_type,
@@ -158,8 +171,6 @@ pub(crate) async fn list_products(
         offset: None,
         after_cursor: None,
     };
-    let total = commerce.products().list(count_filter)?.len();
-
     // Fetch the requested page
     let filter = ProductFilter {
         status,
@@ -173,7 +184,16 @@ pub(crate) async fn list_products(
         offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
         after_cursor,
     };
-    let mut products = commerce.products().list(filter)?;
+
+    let (total, mut products) = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let total =
+                usize::try_from(commerce.products().count(count_filter)?).unwrap_or(usize::MAX);
+            let products = commerce.products().list(filter)?;
+            Ok((total, products))
+        })
+        .await?;
+
     let has_more = finalize_page(&mut products, limit);
     let next_cursor = if has_more {
         products.last().map(|p| encode_cursor(&p.name, &p.id.to_string()))
@@ -211,7 +231,6 @@ pub(crate) async fn update_product(
     Json(req): Json<UpdateProductRequest>,
 ) -> Result<Json<ProductResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let status = req
         .status
@@ -228,7 +247,11 @@ pub(crate) async fn update_product(
         attributes: None,
         seo: None,
     };
-    let product = commerce.products().update(id, input)?;
+    let product = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(commerce.products().update(id, input)?)
+        })
+        .await?;
     Ok(Json(ProductResponse::from(product)))
 }
 
@@ -250,8 +273,9 @@ pub(crate) async fn delete_product(
     Path(id): Path<ProductId>,
 ) -> Result<axum::http::StatusCode, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    commerce.products().delete(id)?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| Ok(commerce.products().delete(id)?))
+        .await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 

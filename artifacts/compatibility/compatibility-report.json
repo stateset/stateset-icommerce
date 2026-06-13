@@ -240,15 +240,6 @@
       "default_feature_members": []
     },
     {
-      "crate": "stateset-protocol",
-      "feature_set": "default",
-      "status": "SKIPPED",
-      "duration_seconds": 0,
-      "command": "cargo check --locked -p stateset-protocol --all-targets",
-      "declared_features": [],
-      "default_feature_members": []
-    },
-    {
       "crate": "stateset-migrations",
       "feature_set": "default",
       "status": "SKIPPED",

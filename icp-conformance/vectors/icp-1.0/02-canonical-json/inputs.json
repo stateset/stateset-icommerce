@@ -32,6 +32,8 @@
     { "name": "negative-zero", "value": { "n": -0 } },
     { "name": "line-paragraph-separators", "value": { "a": "x\u2028y\u2029z" } },
     { "name": "backspace-formfeed", "value": { "a": "x\by\fz" } },
-    { "name": "control-char-sweep", "value": { "a": "\u0000\u0001\u001f\u007f" } }
+    { "name": "control-char-sweep", "value": { "a": "\u0000\u0001\u001f\u007f" } },
+    { "name": "utf16-key-order", "value": { "\t": 1, "!": 2, "\"": 3, "A": 4, "\ud800\udc00": 5, "\ufb01": 6 } },
+    { "name": "bigint-literals", "value": { "big": 12345678901234567890, "e21": 1000000000000000000000 } }
   ]
 }

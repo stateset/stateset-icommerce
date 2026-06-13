@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "author": "StateSet",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "displayName": "Manifest Example Plugin",
   "category": "analytics",
   "motivation": "Demonstrates full plugin capabilities including manifest validation, configuration options, and comprehensive feature set",

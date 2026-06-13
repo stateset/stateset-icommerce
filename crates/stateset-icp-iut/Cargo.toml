@@ -13,12 +13,19 @@ description = "ICP-1.0 conformance Implementation-Under-Test adapter (Rust). Rea
 workspace = true
 
 [dependencies]
+stateset-crypto = { workspace = true }
 ed25519-dalek = { workspace = true }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 sha2 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-serde_jcs = { workspace = true }
+# `float_roundtrip` makes serde_json parse decimal floats to the correctly
+# rounded (round-to-nearest) IEEE-754 double, matching ECMAScript Number(),
+# Go strconv.ParseFloat, and Python float(). Without it, serde_json's default
+# fast-path rounds a handful of knife-edge decimals (e.g.
+# 9.999999999999997e+22) one ULP off, which then canonicalizes to different
+# bytes than the JS/Go/Python IUTs — a cross-implementation signature break.
+# The differential fuzzer (tools/fuzz-canonical.mjs) catches exactly this.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 hex = { workspace = true }
 anyhow = "1"
 

@@ -87,6 +87,8 @@ describe('csv · CUSTOMER_CSV_COLUMNS', () => {
     totalSpent: 199.99,
     averageOrderValue: 66.66,
     lastOrderDate: '2026-04-01',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-04-01T00:00:00.000Z',
   };
 
   it('exposes the expected canonical column keys', () => {
@@ -113,6 +115,8 @@ describe('csv · CUSTOMER_CSV_COLUMNS', () => {
       totalOrders: 0,
       totalSpent: 0,
       averageOrderValue: 0,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
     };
     const csv = rowsToCsv([minimal], CUSTOMER_CSV_COLUMNS);
     const dataRow = csv.split('\n')[1];
@@ -140,6 +144,7 @@ describe('csv · INVENTORY_CSV_COLUMNS', () => {
     warehouseId: 'WH-MAIN',
     location: 'A1',
     lastRestocked: '2026-04-01',
+    updatedAt: '2026-04-01T00:00:00.000Z',
   };
 
   it('exposes the expected canonical column keys', () => {

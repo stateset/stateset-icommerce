@@ -20,7 +20,9 @@ import {
 import { cn } from '@/lib/utils';
 import { APP_VERSION } from '@/lib/version';
 
-const navigation = [
+// Shared with the mobile disclosure nav (components/mobile-nav.tsx) so the
+// two menus can never drift apart.
+export const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'AI Chat', href: '/chat', icon: ChatBubbleLeftRightIcon },
   { name: 'Orders', href: '/orders', icon: ShoppingCartIcon },

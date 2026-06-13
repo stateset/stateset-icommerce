@@ -403,7 +403,7 @@ stateset-primitives | stateset-crypto | stateset-pricing | stateset-observabilit
 stateset-policy | stateset-authz | stateset-a2a | stateset-jobs
 stateset-migrations | stateset-macros
         ->
-stateset-core | stateset-protocol | stateset-sync
+stateset-core | stateset-sync
         ->
 stateset-db
         ->
@@ -419,7 +419,7 @@ admin | cli
 | Layer | Primary crates/surfaces | Role |
 |-------|--------------------------|------|
 | Foundation | `stateset-primitives`, `stateset-crypto`, `stateset-pricing`, `stateset-observability`, `stateset-policy`, `stateset-authz`, `stateset-a2a`, `stateset-jobs`, `stateset-migrations`, `stateset-macros` | Narrow building blocks and cross-cutting capabilities |
-| Domain kernel | `stateset-core`, `stateset-protocol`, `stateset-sync` | Pure commerce logic, wire formats, sync/runtime contracts |
+| Domain kernel | `stateset-core`, `stateset-sync` | Pure commerce logic, wire formats, sync/runtime contracts |
 | Storage + product API | `stateset-db`, `stateset-embedded` | Persistence and the main embeddable commerce surface |
 | Edge adapters | `stateset-http`, `stateset-sdk`, `stateset-ffi`, `bindings/*` | Transport, Rust facade, C-style interop, and language-specific packaging |
 | Operator surfaces | `cli/`, `admin/` | MCP, agents, automation, and admin UX |
@@ -1359,7 +1359,6 @@ stateset-icommerce/
 │   ├── stateset-observability/     # Metrics + tracing helpers
 │   ├── stateset-macros/            # Proc macros
 │   ├── stateset-policy/            # Policy DSL engine (YAML, conditions, transforms)
-│   ├── stateset-protocol/          # Wire types (EventEnvelope, SyncBatch, Merkle)
 │   ├── stateset-http/              # Axum REST + SSE transport layer
 │   ├── stateset-a2a/               # Agent-to-Agent commerce
 │   ├── stateset-sync/              # Sync engine (outbox, conflict, transport)

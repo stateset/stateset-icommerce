@@ -14,14 +14,14 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | Metric | Value |
 | --- | --- |
 | Tool modules | 61 |
-| Command modules on disk | 60 |
-| Command modules in registry | 60 |
+| Command modules on disk | 61 |
+| Command modules in registry | 61 |
 | Tool-backed command modules | 0 |
-| Uncovered tool modules | 1 |
+| Uncovered tool modules | 0 |
 | Uncovered tool-backed actions | 0 |
 | Command-only modules | 0 |
 | Registry mismatches | 0 |
-| Fully covered | no |
+| Fully covered | yes |
 
 ## Module Coverage
 
@@ -87,12 +87,13 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `undefined` |  | undefined | undefined | - |
 | `undefined` |  | undefined | undefined | - |
 | `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
 
 ## Uncovered Tool Modules
 
 | Module | Status | Actions | Aliases |
 | --- | --- | --- | --- |
-| `agent-receipt` | missing command coverage | - | - |
+| None | - | - | - |
 
 ## Uncovered Tool-Backed Actions
 
