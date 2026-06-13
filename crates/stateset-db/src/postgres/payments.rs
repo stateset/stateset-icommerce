@@ -561,6 +561,17 @@ impl PgPaymentRepository {
     }
 
     /// Create refund (async)
+    ///
+    /// The payment read, the over-refund validation, and the refund `INSERT` all
+    /// run inside ONE transaction, and the payment row is locked with
+    /// `SELECT ... FOR UPDATE` up front. The lock serializes concurrent
+    /// `create_refund_async` calls for the same payment: each caller sees the
+    /// other's freshly-inserted in-flight refund and cannot both pass the
+    /// remaining-balance check. (Previously the read+validate happened on a
+    /// lock-free pool connection with no transaction, so two callers could each
+    /// validate against the same stale balance and together over-refund the
+    /// payment once both were completed — the TOCTOU race that the SQLite
+    /// backend already closed with its `IMMEDIATE` transaction.)
     pub async fn create_refund_async(&self, input: CreateRefund) -> Result<Refund> {
         if let Some(key) = input.idempotency_key.as_deref() {
             if let Some(existing) = self.get_refund_by_idempotency_key_async(key).await? {
@@ -569,16 +580,55 @@ impl PgPaymentRepository {
         }
 
         let raw_payment_id = input.payment_id.into_uuid();
-        let payment = self.get_async(raw_payment_id).await?.ok_or(CommerceError::NotFound)?;
-        // `validate_refund` enforces that the payment is in a refundable status
-        // and that the requested amount is positive and does not exceed the
-        // remaining refundable balance, resolving `None` to a full remaining
-        // refund.
-        let refund_amount = payment.validate_refund(input.amount)?;
-
         let id = Uuid::new_v4();
         let now = Utc::now();
         let refund_number = generate_refund_number();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Lock the payment row for the duration of the transaction so a
+        // concurrent refund of the same payment is serialized behind us.
+        let row = sqlx::query_as::<_, PaymentRow>(
+            "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
+             description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
+             FROM payments WHERE id = $1 FOR UPDATE"
+        )
+        .bind(raw_payment_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let mut payment = Self::row_to_payment(row)?;
+
+        // Reserve against in-flight (non-terminal) refunds as well as the
+        // already-committed `amount_refunded`. A `Pending`/`Processing` refund
+        // has not yet folded its amount into `amount_refunded`, but it WILL once
+        // completed, so it must count against the remaining refundable balance to
+        // prevent concurrent over-refund. `Failed`/`Cancelled` refunds release
+        // their reservation and are excluded.
+        //
+        // The `amount` column is `DECIMAL`, so `SUM` is exact NUMERIC arithmetic;
+        // a missing row (`NULL`) coalesces to zero.
+        let in_flight: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(amount), 0) FROM refunds \
+             WHERE payment_id = $1 AND status IN ($2, $3)",
+        )
+        .bind(raw_payment_id)
+        .bind(RefundStatus::Pending.to_string())
+        .bind(RefundStatus::Processing.to_string())
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        // Fold the in-flight reservation into the payment's refunded total so the
+        // unmodified `validate_refund` guard sees the true remaining balance.
+        // `validate_refund` still owns all of the rules (refundable status,
+        // positive amount, not exceeding remaining), resolving `None` to a full
+        // remaining refund.
+        payment.amount_refunded += in_flight;
+        let refund_amount = payment.validate_refund(input.amount)?;
 
         sqlx::query(
             "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
@@ -596,9 +646,11 @@ impl PgPaymentRepository {
         .bind(&input.notes)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
     }

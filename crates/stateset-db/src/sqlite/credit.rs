@@ -229,12 +229,31 @@ impl SqliteCreditRepository {
     fn recalculate_available_credit(&self, customer_id: CustomerId) -> Result<()> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        // available = limit - balance - holds
+        // available = limit - balance - holds.
+        //
+        // `credit_limit`, `current_balance`, and `hold_amount` are TEXT columns
+        // (migration 021), so subtracting in SQL
+        // ('CAST(credit_limit AS REAL) - CAST(current_balance AS REAL) - ...')
+        // coerces every operand to an IEEE-754 float and stores the rounded
+        // result (e.g. 1000.00 - 999.90 - 0 = 0.09999999999990905 instead of
+        // 0.10). `check_credit` then approves/denies orders against that drifted
+        // value. Instead we read the three exact TEXT values, subtract with
+        // `rust_decimal::Decimal`, and write the exact string back.
+        let (limit, balance, hold): (String, String, String) = conn
+            .query_row(
+                "SELECT credit_limit, current_balance, hold_amount FROM credit_accounts WHERE customer_id = ?",
+                [customer_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(map_db_error)?;
+
+        let available = parse_decimal_strict(&limit, "credit_account", "credit_limit")?
+            - parse_decimal_strict(&balance, "credit_account", "current_balance")?
+            - parse_decimal_strict(&hold, "credit_account", "hold_amount")?;
+
         conn.execute(
-            "UPDATE credit_accounts SET available_credit =
-             CAST(credit_limit AS REAL) - CAST(current_balance AS REAL) - CAST(hold_amount AS REAL)
-             WHERE customer_id = ?",
-            [customer_id.to_string()],
+            "UPDATE credit_accounts SET available_credit = ? WHERE customer_id = ?",
+            [&available.to_string(), &customer_id.to_string()],
         )
         .map_err(map_db_error)?;
 
@@ -369,14 +388,16 @@ impl CreditRepository for SqliteCreditRepository {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
         }
-        if filter.over_limit == Some(true) {
-            sql.push_str(" AND CAST(current_balance AS REAL) > CAST(credit_limit AS REAL)");
-        }
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
+        // NB: when filtering `over_limit`, the SQL `LIMIT` is intentionally
+        // omitted here and re-applied in Rust *after* the exact comparison, so
+        // the row cap counts only matching accounts.
+        if filter.over_limit != Some(true) {
+            if let Some(limit) = filter.limit {
+                sql.push_str(&format!(" LIMIT {limit}"));
+            }
         }
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
@@ -390,6 +411,19 @@ impl CreditRepository for SqliteCreditRepository {
         for row in rows {
             accounts.push(row.map_err(map_db_error)?);
         }
+
+        // Apply the over-limit filter in Rust on the already-parsed `Decimal`
+        // values. `current_balance` and `credit_limit` are TEXT columns, so
+        // comparing them in SQL with `CAST(... AS REAL)` coerces both operands
+        // to IEEE-754 floats and can misclassify accounts right at the boundary;
+        // the `Decimal` comparison is exact.
+        if filter.over_limit == Some(true) {
+            accounts.retain(|acc| acc.current_balance > acc.credit_limit);
+            if let Some(limit) = filter.limit {
+                accounts.truncate(limit as usize);
+            }
+        }
+
         Ok(accounts)
     }
 
@@ -1334,5 +1368,80 @@ mod tests {
         // Releasing the only hold drops hold_amount to exactly 0 (never below).
         let acct = repo.release_credit_reservation(cust, order).expect("release");
         assert_eq!(acct.hold_amount, Decimal::ZERO);
+    }
+
+    #[test]
+    fn available_credit_is_exact_after_charge() {
+        // Regression: available_credit was derived in SQL as
+        // 'CAST(credit_limit AS REAL) - CAST(current_balance AS REAL) - CAST(hold_amount AS REAL)',
+        // so limit 1000.00 minus a 999.90 balance produced 0.09999999999990905
+        // instead of exactly 0.10. With Decimal arithmetic it must be exact.
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000.00));
+
+        let acct =
+            repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(999.90)).expect("charge");
+        assert_eq!(acct.current_balance, dec!(999.90));
+        // available = 1000.00 - 999.90 - 0 = exactly 0.10
+        assert_eq!(acct.available_credit, dec!(0.10));
+    }
+
+    #[test]
+    fn available_credit_is_exact_after_charge_and_hold() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000.00));
+
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(999.80)).expect("charge");
+        let acct =
+            repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(0.10)).expect("hold");
+        // available = 1000.00 - 999.80 - 0.10 = exactly 0.10
+        assert_eq!(acct.available_credit, dec!(0.10));
+    }
+
+    #[test]
+    fn check_credit_approves_and_denies_on_exact_available() {
+        // With the float-drift bug, available was 0.0999999... so an order of
+        // exactly 0.10 would be DENIED (0.0999... < 0.10). On the exact value it
+        // must be APPROVED, and an order of 0.11 must be DENIED.
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000.00));
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(999.90)).expect("charge");
+
+        let exact = repo.check_credit(cust, dec!(0.10)).expect("check exact");
+        assert_eq!(exact.available_credit, dec!(0.10));
+        assert!(exact.approved, "order equal to exact available must be approved: {exact:?}");
+
+        let over = repo.check_credit(cust, dec!(0.11)).expect("check over");
+        assert!(!over.approved, "order exceeding available must be denied");
+        assert!(over.requires_approval);
+    }
+
+    #[test]
+    fn over_limit_filter_is_exact_at_the_boundary() {
+        // A balance exactly equal to the limit is NOT over-limit (strict '>'),
+        // and the comparison must use exact decimals rather than CAST-as-REAL
+        // float coercion.
+        let repo = fresh_repo();
+
+        let at_limit = CustomerId::new();
+        make_account(&repo, at_limit, dec!(100.00));
+        repo.charge_credit(at_limit, stateset_core::OrderId::new(), dec!(100.00)).expect("charge");
+
+        let over = CustomerId::new();
+        make_account(&repo, over, dec!(100.00));
+        repo.charge_credit(over, stateset_core::OrderId::new(), dec!(100.01)).expect("charge over");
+
+        let flagged = repo.get_over_limit_customers().expect("over limit");
+        assert!(
+            flagged.iter().any(|a| a.customer_id == over),
+            "the over-limit account must be reported"
+        );
+        assert!(
+            !flagged.iter().any(|a| a.customer_id == at_limit),
+            "an account exactly at its limit must not be reported as over-limit"
+        );
     }
 }
