@@ -371,7 +371,7 @@ for (let i = 0; i < count; i++) {
 // fuzzer's load-bearing property is that every reported divergence is
 // independently reproducible; feeding thousands of values in a single
 // multi-hundred-KB JSON document risks tripping a parser's large-input edge
-// cases (observed: V8's JSON.parse mis-reads one escaped key in a 150 KB
+// cases (observed: V8's JSON.parse misreads one escaped key in a 150 KB
 // document where serde_json, encoding/json, and Python's json all agree),
 // producing an irreproducible false positive. Chunking keeps each value in a
 // small, isolatable context — and ~20 spawns/adapter for 1000 values stays

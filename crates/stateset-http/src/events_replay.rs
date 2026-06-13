@@ -17,7 +17,7 @@
 //! (`event: stream_reset`) before replaying whatever remains in the buffer, so
 //! the client knows it must reconcile state out-of-band (e.g. via a REST list).
 //!
-//! Each distinct [`Commerce`](stateset_embedded::Commerce) instance gets its own
+//! Each distinct [`Commerce`] instance gets its own
 //! buffer and background pump, created lazily on first subscription and keyed by
 //! the `Arc<Commerce>` pointer in [`EventReplayRegistry`].
 
