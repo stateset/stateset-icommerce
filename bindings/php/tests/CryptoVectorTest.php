@@ -30,9 +30,15 @@ class CryptoVectorTest extends TestCase
 
     protected function setUp(): void
     {
-        if (!extension_loaded('stateset_embedded')) {
+        // ext-php-rs registers the module under the package name; accept the
+        // known variants so the test runs (not silently skips) when the native
+        // extension is actually loaded.
+        $loaded = extension_loaded('stateset-embedded-php')
+            || extension_loaded('stateset_embedded_php')
+            || extension_loaded('stateset_embedded');
+        if (!$loaded) {
             $this->markTestSkipped(
-                'stateset_embedded extension not loaded; run with ' .
+                'stateset-embedded-php extension not loaded; run with ' .
                 'php -d extension=$PWD/target/release/libstateset_embedded.so'
             );
         }

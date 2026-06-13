@@ -11,7 +11,11 @@
 
 namespace StateSet;
 
-if (\extension_loaded('stateset_embedded')) {
+// Skip the stub declarations whenever the native extension is present. Guard on
+// the class itself (name-agnostic) rather than extension_loaded(), because
+// ext-php-rs registers the module under the package name (stateset-embedded-php),
+// not the stub's historical 'stateset_embedded'.
+if (\class_exists('StateSet\\Commerce', false)) {
     return;
 }
 
