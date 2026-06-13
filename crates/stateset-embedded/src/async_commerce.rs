@@ -446,6 +446,11 @@ use stateset_observability::{Metrics, MetricsConfig, MetricsSnapshot, init_metri
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 use stateset_core::{
     A2APurchase, A2APurchaseFilter, A2ASkill, AgentCard, AgentCardFilter, CreateA2APurchase,
     CreateA2AQuote, CreateAgentCard, CreateX402PaymentIntent, PurchaseStatus, QuoteStatus,
@@ -494,6 +499,8 @@ macro_rules! impl_opaque_debug {
 pub struct AsyncCommerce {
     db: Arc<PostgresDatabase>,
     metrics: Metrics,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl AsyncCommerce {
@@ -504,7 +511,12 @@ impl AsyncCommerce {
     /// * `url` - PostgreSQL connection string (e.g., `<postgres://user:pass@localhost/db>`)
     pub async fn connect(url: &str) -> Result<Self> {
         let db = PostgresDatabase::connect(url).await?;
-        Ok(Self { db: Arc::new(db), metrics: init_metrics(MetricsConfig::default()) })
+        Ok(Self {
+            db: Arc::new(db),
+            metrics: init_metrics(MetricsConfig::default()),
+            #[cfg(feature = "events")]
+            event_system: Arc::new(EventSystem::new()),
+        })
     }
 
     /// Connect with custom options.
@@ -521,17 +533,43 @@ impl AsyncCommerce {
     ) -> Result<Self> {
         let db = PostgresDatabase::connect_with_options(url, max_connections, acquire_timeout_secs)
             .await?;
-        Ok(Self { db: Arc::new(db), metrics: init_metrics(MetricsConfig::default()) })
+        Ok(Self {
+            db: Arc::new(db),
+            metrics: init_metrics(MetricsConfig::default()),
+            #[cfg(feature = "events")]
+            event_system: Arc::new(EventSystem::new()),
+        })
     }
 
     /// Create from an existing `PostgresDatabase` instance.
     pub fn from_database(db: Arc<PostgresDatabase>) -> Self {
-        Self { db, metrics: init_metrics(MetricsConfig::default()) }
+        Self {
+            db,
+            metrics: init_metrics(MetricsConfig::default()),
+            #[cfg(feature = "events")]
+            event_system: Arc::new(EventSystem::new()),
+        }
     }
 
     /// Access async order operations.
     pub fn orders(&self) -> AsyncOrders {
-        AsyncOrders::new(self.db.clone(), self.metrics.clone())
+        AsyncOrders::new(
+            self.db.clone(),
+            self.metrics.clone(),
+            #[cfg(feature = "events")]
+            self.event_system.clone(),
+        )
+    }
+
+    /// Access the event system for pub/sub and webhook management.
+    ///
+    /// Mirrors [`Commerce::events`](crate::Commerce::events) so that async
+    /// PostgreSQL users can subscribe to the same [`CommerceEvent`] stream that
+    /// the sync facade emits.
+    #[cfg(feature = "events")]
+    #[must_use]
+    pub fn events(&self) -> &EventSystem {
+        &self.event_system
     }
 
     /// Access async inventory operations.
@@ -718,20 +756,104 @@ impl AsyncCommerce {
 pub struct AsyncOrders {
     db: Arc<PostgresDatabase>,
     metrics: Metrics,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl AsyncOrders {
-    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
-        Self { db, metrics }
+    pub(crate) const fn new(
+        db: Arc<PostgresDatabase>,
+        metrics: Metrics,
+        #[cfg(feature = "events")] event_system: Arc<EventSystem>,
+    ) -> Self {
+        Self {
+            db,
+            metrics,
+            #[cfg(feature = "events")]
+            event_system,
+        }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
     }
 
     /// Create a new order.
+    ///
+    /// Mirrors the sync [`Orders::create`](crate::Orders::create) behaviour:
+    /// it computes the expected order total via `stateset_pricing`, warns on
+    /// pricing drift between the persisted total and the engine total, records
+    /// metrics, and emits a [`CommerceEvent::OrderCreated`] event.
     pub async fn create(&self, input: CreateOrder) -> Result<Order> {
+        // Validate pricing: compute expected total via pricing engine.
+        let pricing_items: Vec<stateset_pricing::LineItem> = input
+            .items
+            .iter()
+            .map(|item| stateset_pricing::LineItem {
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                unit_price: item.unit_price,
+                quantity: item.quantity as u32,
+                discount: item.discount.map(stateset_pricing::LineDiscount::FixedAmount),
+                tax_rate: None,
+            })
+            .collect();
+        let pricing_input = stateset_pricing::OrderTotalInput {
+            items: pricing_items,
+            shipping_cost: Decimal::ZERO,
+            shipping_tax_rate: None,
+            order_discount: None,
+            fees: vec![],
+            rounding: {
+                let minor = stateset_pricing::minor_units_for_currency(
+                    &input.currency.unwrap_or_default().to_string(),
+                );
+                stateset_pricing::RoundingPolicy::new(stateset_pricing::RoundingMode::HalfUp, minor)
+            },
+        };
+        let pricing_total = stateset_pricing::try_compute_order_total(&pricing_input).ok();
+        if let Some(ref computed) = pricing_total {
+            tracing::debug!(
+                computed_total = %computed.grand_total,
+                subtotal = %computed.subtotal,
+                discount = %computed.total_discount,
+                "Pricing engine computed order total"
+            );
+        }
+
         let order = self.db.orders().create_async(input).await?;
+
+        // Detect pricing drift: warn if DB total diverges from pricing engine.
+        if let Some(computed) = pricing_total {
+            let diff = (order.total_amount - computed.grand_total).abs();
+            if diff > Decimal::new(1, 2) {
+                // Divergence > $0.01
+                tracing::warn!(
+                    order_id = %order.id,
+                    db_total = %order.total_amount,
+                    engine_total = %computed.grand_total,
+                    diff = %diff,
+                    "Pricing drift detected: DB total differs from pricing engine"
+                );
+            }
+        }
+
         self.metrics.record_order_created(
             &order.customer_id.to_string(),
             order.total_amount.to_f64().unwrap_or(0.0),
         );
+
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::OrderCreated {
+                order_id: order.id,
+                customer_id: order.customer_id,
+                total_amount: order.total_amount,
+                item_count: order.items.len(),
+                timestamp: order.created_at,
+            });
+        }
         Ok(order)
     }
 
