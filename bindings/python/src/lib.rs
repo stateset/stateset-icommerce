@@ -367,7 +367,7 @@ impl Commerce {
 // ============================================================================
 
 /// Customer data returned from operations.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Customer {
     #[pyo3(get)]
@@ -560,7 +560,7 @@ impl Customers {
 // ============================================================================
 
 /// Order line item.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct OrderItem {
     #[pyo3(get)]
@@ -585,7 +585,7 @@ impl OrderItem {
 }
 
 /// Order data returned from operations.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Order {
     #[pyo3(get)]
@@ -668,7 +668,7 @@ impl TryFrom<stateset_core::Order> for Order {
 }
 
 /// Input for creating an order item.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct CreateOrderItemInput {
     #[pyo3(get, set)]
@@ -919,7 +919,7 @@ impl Orders {
 // ============================================================================
 
 /// Product data returned from operations.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Product {
     #[pyo3(get)]
@@ -960,7 +960,7 @@ impl From<stateset_core::Product> for Product {
 }
 
 /// Product variant data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ProductVariant {
     #[pyo3(get)]
@@ -1006,7 +1006,7 @@ impl TryFrom<stateset_core::ProductVariant> for ProductVariant {
 }
 
 /// Input for creating a product variant.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct CreateProductVariantInput {
     #[pyo3(get, set)]
@@ -1179,7 +1179,7 @@ impl Products {
 // ============================================================================
 
 /// Custom field definition (output).
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CustomFieldDefinition {
     #[pyo3(get)]
@@ -1207,7 +1207,7 @@ impl From<stateset_core::CustomFieldDefinition> for CustomFieldDefinition {
 }
 
 /// Input for defining a custom field in a type schema.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct CustomFieldDefinitionInput {
     #[pyo3(get, set)]
@@ -1238,7 +1238,7 @@ impl CustomFieldDefinitionInput {
 }
 
 /// Custom object type (schema) output.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CustomObjectType {
     #[pyo3(get)]
@@ -1275,7 +1275,7 @@ impl From<stateset_core::CustomObjectType> for CustomObjectType {
 }
 
 /// Custom object record output.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CustomObject {
     #[pyo3(get)]
@@ -1661,7 +1661,7 @@ impl CustomObjectsApi {
 // ============================================================================
 
 /// Inventory item data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct InventoryItem {
     #[pyo3(get)]
@@ -1699,7 +1699,7 @@ impl From<stateset_core::InventoryItem> for InventoryItem {
 }
 
 /// Stock level information.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct StockLevel {
     #[pyo3(get)]
@@ -1736,7 +1736,7 @@ impl TryFrom<stateset_core::StockLevel> for StockLevel {
 }
 
 /// Inventory reservation.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Reservation {
     #[pyo3(get)]
@@ -1947,7 +1947,7 @@ impl Inventory {
 // ============================================================================
 
 /// Return request data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Return {
     #[pyo3(get)]
@@ -1988,7 +1988,7 @@ impl From<stateset_core::Return> for Return {
 }
 
 /// Input for creating a return item.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct CreateReturnItemInput {
     #[pyo3(get, set)]
@@ -2193,7 +2193,7 @@ impl Returns {
 // ============================================================================
 
 /// Payment data returned from operations.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Payment {
     #[pyo3(get)]
@@ -2257,7 +2257,7 @@ impl TryFrom<stateset_core::Payment> for Payment {
 }
 
 /// Refund data returned from operations.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Refund {
     #[pyo3(get)]
@@ -2493,7 +2493,7 @@ impl Payments {
 // ============================================================================
 
 /// Shipment data returned from operations.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Shipment {
     #[pyo3(get)]
@@ -2722,7 +2722,7 @@ impl Shipments {
 // ============================================================================
 
 /// Warranty data returned from operations.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Warranty {
     #[pyo3(get)]
@@ -2775,7 +2775,7 @@ impl From<stateset_core::Warranty> for Warranty {
 }
 
 /// Warranty claim data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct WarrantyClaim {
     #[pyo3(get)]
@@ -3010,7 +3010,7 @@ impl Warranties {
 // ============================================================================
 
 /// Supplier data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Supplier {
     #[pyo3(get)]
@@ -3051,7 +3051,7 @@ impl From<stateset_core::Supplier> for Supplier {
 }
 
 /// Purchase order data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct PurchaseOrder {
     #[pyo3(get)]
@@ -3309,7 +3309,7 @@ impl PurchaseOrders {
 // ============================================================================
 
 /// Invoice data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Invoice {
     #[pyo3(get)]
@@ -3551,7 +3551,7 @@ impl Invoices {
 // ============================================================================
 
 /// Bill of Materials data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Bom {
     #[pyo3(get)]
@@ -3592,7 +3592,7 @@ impl From<stateset_core::BillOfMaterials> for Bom {
 }
 
 /// BOM component data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct BomComponent {
     #[pyo3(get)]
@@ -3795,7 +3795,7 @@ impl BomApi {
 // ============================================================================
 
 /// Work order data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct WorkOrder {
     #[pyo3(get)]
@@ -4019,7 +4019,7 @@ impl WorkOrders {
 // ============================================================================
 
 /// Cart address data.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct CartAddress {
     #[pyo3(get)]
@@ -4120,7 +4120,7 @@ impl From<&CartAddress> for stateset_core::CartAddress {
 }
 
 /// Cart item data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CartItem {
     #[pyo3(get)]
@@ -4190,7 +4190,7 @@ impl TryFrom<stateset_core::CartItem> for CartItem {
 }
 
 /// Shipping rate option.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ShippingRate {
     #[pyo3(get)]
@@ -4239,7 +4239,7 @@ impl TryFrom<stateset_core::ShippingRate> for ShippingRate {
 }
 
 /// Checkout result returned when completing a cart.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CheckoutResult {
     #[pyo3(get)]
@@ -4282,7 +4282,7 @@ impl TryFrom<stateset_core::CheckoutResult> for CheckoutResult {
 }
 
 /// Cart data returned from operations.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Cart {
     #[pyo3(get)]
@@ -4403,7 +4403,7 @@ impl TryFrom<stateset_core::Cart> for Cart {
 }
 
 /// Input for adding a cart item.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct AddCartItemInput {
     #[pyo3(get, set)]
@@ -5390,7 +5390,7 @@ fn build_analytics_query(
 }
 
 /// Sales summary metrics.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SalesSummary {
     #[pyo3(get)]
@@ -5418,7 +5418,7 @@ impl From<stateset_core::SalesSummary> for SalesSummary {
 }
 
 /// Revenue metrics grouped by time period.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct RevenueByPeriod {
     #[pyo3(get)]
@@ -5443,7 +5443,7 @@ impl From<stateset_core::RevenueByPeriod> for RevenueByPeriod {
 }
 
 /// Top selling product metrics.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TopProduct {
     #[pyo3(get)]
@@ -5474,7 +5474,7 @@ impl From<stateset_core::TopProduct> for TopProduct {
 }
 
 /// Product performance with period comparison.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ProductPerformance {
     #[pyo3(get)]
@@ -5514,7 +5514,7 @@ impl From<stateset_core::ProductPerformance> for ProductPerformance {
 }
 
 /// Customer segment metrics.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CustomerMetrics {
     #[pyo3(get)]
@@ -5542,7 +5542,7 @@ impl From<stateset_core::CustomerMetrics> for CustomerMetrics {
 }
 
 /// Top customer by spend.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TopCustomer {
     #[pyo3(get)]
@@ -5573,7 +5573,7 @@ impl From<stateset_core::TopCustomer> for TopCustomer {
 }
 
 /// Inventory health summary.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct InventoryHealth {
     #[pyo3(get)]
@@ -5601,7 +5601,7 @@ impl From<stateset_core::InventoryHealth> for InventoryHealth {
 }
 
 /// Low stock item.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct LowStockItem {
     #[pyo3(get)]
@@ -5638,7 +5638,7 @@ impl From<stateset_core::LowStockItem> for LowStockItem {
 }
 
 /// Inventory movement summary.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct InventoryMovement {
     #[pyo3(get)]
@@ -5672,7 +5672,7 @@ impl From<stateset_core::InventoryMovement> for InventoryMovement {
 }
 
 /// Order status breakdown.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct OrderStatusBreakdown {
     #[pyo3(get)]
@@ -5706,7 +5706,7 @@ impl From<stateset_core::OrderStatusBreakdown> for OrderStatusBreakdown {
 }
 
 /// Order fulfillment metrics.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct FulfillmentMetrics {
     #[pyo3(get)]
@@ -5737,7 +5737,7 @@ impl From<stateset_core::FulfillmentMetrics> for FulfillmentMetrics {
 }
 
 /// Return metrics.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ReturnMetrics {
     #[pyo3(get)]
@@ -5768,7 +5768,7 @@ fn trend_to_string(t: &stateset_core::Trend) -> String {
 }
 
 /// Demand forecast for a SKU.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct DemandForecast {
     #[pyo3(get)]
@@ -5808,7 +5808,7 @@ impl From<stateset_core::DemandForecast> for DemandForecast {
 }
 
 /// Revenue forecast.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct RevenueForecast {
     #[pyo3(get)]
@@ -6146,7 +6146,7 @@ fn rounding_mode_to_string(mode: &stateset_core::RoundingMode) -> String {
 }
 
 /// Exchange rate between currencies.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ExchangeRate {
     #[pyo3(get)]
@@ -6183,7 +6183,7 @@ impl From<stateset_core::ExchangeRate> for ExchangeRate {
 }
 
 /// Result of a currency conversion.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ConversionResult {
     #[pyo3(get)]
@@ -6217,7 +6217,7 @@ impl From<stateset_core::ConversionResult> for ConversionResult {
 }
 
 /// Store currency settings.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct StoreCurrencySettings {
     #[pyo3(get)]
@@ -6242,7 +6242,7 @@ impl From<stateset_core::StoreCurrencySettings> for StoreCurrencySettings {
 }
 
 /// Input for setting an exchange rate.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct SetExchangeRateInput {
     #[pyo3(get, set)]
@@ -6592,7 +6592,7 @@ impl CurrencyOperations {
 // ============================================================================
 
 /// Subscription plan data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SubscriptionPlan {
     #[pyo3(get)]
@@ -6647,7 +6647,7 @@ impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlan {
 }
 
 /// Subscription data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Subscription {
     #[pyo3(get)]
@@ -6704,7 +6704,7 @@ impl TryFrom<stateset_core::Subscription> for Subscription {
 }
 
 /// Billing cycle data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct BillingCycle {
     #[pyo3(get)]
@@ -6755,7 +6755,7 @@ impl TryFrom<stateset_core::BillingCycle> for BillingCycle {
 }
 
 /// Subscription event data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SubscriptionEvent {
     #[pyo3(get)]
@@ -7248,7 +7248,7 @@ impl Subscriptions {
 // ============================================================================
 
 /// Promotion output
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Promotion {
     #[pyo3(get)]
@@ -7338,7 +7338,7 @@ impl TryFrom<stateset_core::Promotion> for Promotion {
 }
 
 /// Coupon code output
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Coupon {
     #[pyo3(get)]
@@ -7384,7 +7384,7 @@ impl From<stateset_core::CouponCode> for Coupon {
 }
 
 /// Result of applying promotions
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ApplyPromotionsResult {
     #[pyo3(get)]
@@ -7426,7 +7426,7 @@ impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
 }
 
 /// An applied promotion
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct AppliedPromotion {
     #[pyo3(get)]
@@ -7456,7 +7456,7 @@ impl TryFrom<stateset_core::AppliedPromotion> for AppliedPromotion {
 }
 
 /// Promotion usage record
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct PromotionUsage {
     #[pyo3(get)]
@@ -7994,7 +7994,7 @@ impl PromotionsApi {
 // ============================================================================
 
 /// Tax jurisdiction data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TaxJurisdiction {
     #[pyo3(get)]
@@ -8046,7 +8046,7 @@ impl From<stateset_core::TaxJurisdiction> for TaxJurisdiction {
 }
 
 /// Tax rate data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TaxRate {
     #[pyo3(get)]
@@ -8103,7 +8103,7 @@ impl TryFrom<stateset_core::TaxRate> for TaxRate {
 }
 
 /// Tax exemption data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TaxExemption {
     #[pyo3(get)]
@@ -8158,7 +8158,7 @@ impl From<stateset_core::TaxExemption> for TaxExemption {
 }
 
 /// Tax settings data.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TaxSettings {
     #[pyo3(get)]
@@ -8213,7 +8213,7 @@ impl From<stateset_core::TaxSettings> for TaxSettings {
 }
 
 /// Tax calculation result.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TaxCalculationResult {
     #[pyo3(get)]
@@ -8252,7 +8252,7 @@ impl TryFrom<stateset_core::TaxCalculationResult> for TaxCalculationResult {
 }
 
 /// US state tax info.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct UsStateTaxInfo {
     #[pyo3(get)]
@@ -8294,7 +8294,7 @@ impl TryFrom<stateset_core::UsStateTaxInfo> for UsStateTaxInfo {
 }
 
 /// EU VAT info.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct EuVatInfo {
     #[pyo3(get)]
@@ -8330,7 +8330,7 @@ impl TryFrom<stateset_core::EuVatInfo> for EuVatInfo {
 }
 
 /// Canadian tax info.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CanadianTaxInfo {
     #[pyo3(get)]
@@ -8829,7 +8829,7 @@ impl TaxApi {
 // Quality Control Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Inspection {
     #[pyo3(get)]
@@ -8875,7 +8875,7 @@ impl From<stateset_core::Inspection> for Inspection {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct NonConformance {
     #[pyo3(get)]
@@ -8916,7 +8916,7 @@ impl TryFrom<stateset_core::NonConformance> for NonConformance {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct QualityHold {
     #[pyo3(get)]
@@ -9131,7 +9131,7 @@ impl QualityApi {
 // Lot/Batch Tracking Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Lot {
     #[pyo3(get)]
@@ -9269,7 +9269,7 @@ impl LotsApi {
 // Serial Number Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SerialNumber {
     #[pyo3(get)]
@@ -9376,7 +9376,7 @@ impl SerialsApi {
 // Warehouse Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Warehouse {
     #[pyo3(get)]
@@ -9409,7 +9409,7 @@ impl From<stateset_core::Warehouse> for Warehouse {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct WarehouseLocation {
     #[pyo3(get)]
@@ -9546,7 +9546,7 @@ impl WarehouseApi {
 // Receiving Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Receipt {
     #[pyo3(get)]
@@ -9582,7 +9582,7 @@ impl From<stateset_core::Receipt> for Receipt {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ReceiptLine {
     #[pyo3(get)]
@@ -9714,7 +9714,7 @@ impl ReceivingApi {
 // Fulfillment Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Wave {
     #[pyo3(get)]
@@ -9744,7 +9744,7 @@ impl From<stateset_core::Wave> for Wave {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct PickTask {
     #[pyo3(get)]
@@ -9888,7 +9888,7 @@ impl FulfillmentApi {
 // Accounts Payable Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Bill {
     #[pyo3(get)]
@@ -9926,7 +9926,7 @@ impl TryFrom<stateset_core::Bill> for Bill {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ApAgingSummary {
     #[pyo3(get)]
@@ -10087,7 +10087,7 @@ impl AccountsPayableApi {
 // Accounts Receivable Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ArAgingSummary {
     #[pyo3(get)]
@@ -10119,7 +10119,7 @@ impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummary {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CreditMemo {
     #[pyo3(get)]
@@ -10225,7 +10225,7 @@ impl AccountsReceivableApi {
 // Cost Accounting Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ItemCost {
     #[pyo3(get)]
@@ -10260,7 +10260,7 @@ impl TryFrom<stateset_core::ItemCost> for ItemCost {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct InventoryValuation {
     #[pyo3(get)]
@@ -10393,7 +10393,7 @@ impl CostAccountingApi {
 // Credit Management Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CreditAccount {
     #[pyo3(get)]
@@ -10428,7 +10428,7 @@ impl TryFrom<stateset_core::CreditAccount> for CreditAccount {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CreditCheckResult {
     #[pyo3(get)]
@@ -10553,7 +10553,7 @@ impl CreditApi {
 // Backorder Management Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Backorder {
     #[pyo3(get)]
@@ -10603,7 +10603,7 @@ impl TryFrom<stateset_core::Backorder> for Backorder {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct BackorderSummary {
     #[pyo3(get)]
@@ -10768,7 +10768,7 @@ impl BackorderApi {
 // General Ledger Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct GlAccount {
     #[pyo3(get)]
@@ -10800,7 +10800,7 @@ impl TryFrom<stateset_core::GlAccount> for GlAccount {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct JournalEntry {
     #[pyo3(get)]
@@ -10827,7 +10827,7 @@ impl From<stateset_core::JournalEntry> for JournalEntry {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TrialBalance {
     #[pyo3(get)]
@@ -10992,7 +10992,7 @@ pub struct VectorSearch {
 }
 
 /// Product search result with similarity score.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct ProductSearchResult {
     #[pyo3(get)]
@@ -11008,7 +11008,7 @@ pub struct ProductSearchResult {
 }
 
 /// Customer search result with similarity score.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct CustomerSearchResult {
     #[pyo3(get)]
@@ -11024,7 +11024,7 @@ pub struct CustomerSearchResult {
 }
 
 /// Embedding statistics.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct EmbeddingStats {
     #[pyo3(get)]
@@ -11339,7 +11339,7 @@ impl VectorSearch {
 // Sync Types
 // ============================================================================
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncEvent {
     #[pyo3(get)]
@@ -11415,7 +11415,7 @@ impl From<RustSyncEvent> for SyncEvent {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncStatus {
     #[pyo3(get)]
@@ -11485,7 +11485,7 @@ impl From<stateset_sdk::sync::SyncStatus> for SyncStatus {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncRemoteHead {
     #[pyo3(get)]
@@ -11506,7 +11506,7 @@ impl From<stateset_sdk::sync::RemoteHead> for SyncRemoteHead {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncAcknowledgement {
     #[pyo3(get)]
@@ -11533,7 +11533,7 @@ impl From<stateset_sdk::sync::PushAcknowledgement> for SyncAcknowledgement {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncRejection {
     #[pyo3(get)]
@@ -11563,7 +11563,7 @@ impl From<stateset_sdk::sync::PushRejection> for SyncRejection {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncPushResult {
     #[pyo3(get)]
@@ -11595,7 +11595,7 @@ impl From<stateset_sdk::sync::PushResult> for SyncPushResult {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncConfirmation {
     #[pyo3(get)]
@@ -11643,7 +11643,7 @@ impl From<stateset_sdk::sync::PushConfirmation> for SyncConfirmation {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncDeadLetter {
     #[pyo3(get)]
@@ -11670,7 +11670,7 @@ impl From<stateset_sdk::sync::DeadLetter> for SyncDeadLetter {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncPullResult {
     #[pyo3(get)]
@@ -11691,7 +11691,7 @@ impl From<stateset_sdk::sync::PullResult> for SyncPullResult {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncSnapshot {
     #[pyo3(get)]
@@ -11715,7 +11715,7 @@ impl From<stateset_sdk::SyncRuntimeSnapshot> for SyncSnapshot {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SyncFullSyncResult {
     #[pyo3(get)]
@@ -11779,7 +11779,7 @@ impl SyncRuntime {
         T: Ungil + Send,
     {
         let context = context.to_string();
-        py.allow_threads(move || {
+        py.detach(move || {
             let mut runtime = self.inner.lock().map_err(|error| format!("Lock error: {error}"))?;
             let executor = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
