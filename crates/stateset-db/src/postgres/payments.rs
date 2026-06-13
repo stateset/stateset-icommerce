@@ -652,9 +652,19 @@ impl PgPaymentRepository {
     }
 
     /// Complete refund (async)
+    ///
+    /// Marks the refund as completed and advances the parent payment's
+    /// `amount_refunded` / status in a single transaction. Both writes must
+    /// succeed or fail together: a partial failure would otherwise leave the
+    /// refund flagged complete while the payment balance lagged behind (or vice
+    /// versa). `amount_refunded` is a `DECIMAL` column in Postgres, so the
+    /// `+`/`>=` arithmetic is exact NUMERIC arithmetic (unlike the SQLite TEXT
+    /// columns, which require Rust-side `Decimal` math).
     pub async fn complete_refund_async(&self, id: Uuid) -> Result<Refund> {
         let refund = self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         sqlx::query(
             "UPDATE refunds SET status = $1, refunded_at = $2, updated_at = $3 WHERE id = $4",
@@ -663,7 +673,7 @@ impl PgPaymentRepository {
         .bind(now)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -677,9 +687,11 @@ impl PgPaymentRepository {
         .bind(refund.amount)
         .bind(now)
         .bind(refund.payment_id.into_uuid())
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
     }

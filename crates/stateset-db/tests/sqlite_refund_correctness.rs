@@ -221,3 +221,143 @@ fn two_partial_refunds_sum_to_exact_decimal_and_flip_to_refunded() {
     // And the status must flip to fully refunded.
     assert_eq!(reloaded.status, stateset_core::PaymentTransactionStatus::Refunded);
 }
+
+/// Atomicity / in-flight-reservation regression.
+///
+/// `create_refund` now reads the payment, validates the over-refund guard, and
+/// inserts the refund inside a single `IMMEDIATE` transaction, and the guard
+/// counts *in-flight* (`Pending`/`Processing`) refunds against the remaining
+/// balance — not just the already-committed `amount_refunded`.
+///
+/// Previously the over-refund check only saw `amount_refunded`, which is only
+/// updated on `complete_refund`. So two refunds could be *created* (both
+/// `Pending`) that together exceeded the payment, and completing both would
+/// over-refund the payment. This test pins the new behavior: a second pending
+/// refund that would exceed the balance is rejected at creation time even
+/// though the first refund has NOT been completed yet.
+#[test]
+fn second_pending_refund_exceeding_remaining_is_rejected_before_completion() {
+    let db = db();
+    let payment = completed_payment(&db, dec!(100.00));
+
+    // First refund of 60 is created but deliberately left Pending (not completed),
+    // so `amount_refunded` is still 0 on the payment row.
+    let r1 = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(60.00)),
+            ..Default::default()
+        })
+        .expect("first pending refund");
+
+    // The committed balance is untouched: amount_refunded is still 0.
+    let mid = db.payments().get(payment.id).expect("get").expect("payment present");
+    assert_eq!(mid.amount_refunded, dec!(0));
+
+    // A second refund of 60 would, once both complete, push the total to 120 >
+    // 100. Because the first 60 is reserved as an in-flight refund, the guard
+    // must reject this at creation time — without it, both pending refunds would
+    // persist and later over-refund the payment.
+    let err = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(60.00)),
+            ..Default::default()
+        })
+        .expect_err("second pending refund exceeding remaining must be rejected");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+    // Only the first refund should exist.
+    let refunds = db.payments().get_refunds(payment.id).expect("list refunds");
+    assert_eq!(refunds.len(), 1, "over-refunding second pending refund must not persist");
+    assert_eq!(refunds[0].id, r1.id);
+}
+
+/// A second pending refund within the remaining balance is allowed, and the
+/// reservation only consumes what each in-flight refund actually requests.
+#[test]
+fn second_pending_refund_within_remaining_is_allowed() {
+    let db = db();
+    let payment = completed_payment(&db, dec!(100.00));
+
+    // 40 + 50 = 90 <= 100: both fit even though neither is completed yet.
+    db.payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(40.00)),
+            ..Default::default()
+        })
+        .expect("first pending refund");
+
+    db.payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(50.00)),
+            ..Default::default()
+        })
+        .expect("second pending refund within remaining");
+
+    // A third refund of 20 would push the reserved total to 110 > 100 and is
+    // rejected, confirming the reservation accumulates across in-flight refunds.
+    let err = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(20.00)),
+            ..Default::default()
+        })
+        .expect_err("third refund exceeding reserved remaining must be rejected");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+    let refunds = db.payments().get_refunds(payment.id).expect("list refunds");
+    assert_eq!(refunds.len(), 2, "only the two fitting refunds should persist");
+}
+
+/// A failed (terminal) refund releases its reservation, so the remaining
+/// balance becomes available to a new refund again.
+#[test]
+fn failed_refund_releases_its_reservation() {
+    let db = db();
+    let payment = completed_payment(&db, dec!(100.00));
+
+    // Reserve the whole balance with a pending refund...
+    let r1 = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(100.00)),
+            ..Default::default()
+        })
+        .expect("full pending refund");
+
+    // ...while it is pending, no further refund can be created.
+    let err = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(10.00)),
+            ..Default::default()
+        })
+        .expect_err("balance fully reserved by pending refund");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+    // Fail the first refund: its reservation is released.
+    db.payments().fail_refund(r1.id, "processor declined").expect("fail refund");
+
+    // Now the full balance is refundable again.
+    let r2 = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(100.00)),
+            ..Default::default()
+        })
+        .expect("refund after failed reservation released");
+    db.payments().complete_refund(r2.id).expect("complete refund");
+
+    let reloaded = db.payments().get(payment.id).expect("get").expect("payment present");
+    assert_eq!(reloaded.amount_refunded, dec!(100.00));
+    assert_eq!(reloaded.status, stateset_core::PaymentTransactionStatus::Refunded);
+}
