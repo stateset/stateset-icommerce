@@ -111,6 +111,7 @@ async function main() {
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: buyerSig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const submitted = await submitRes.json();
@@ -160,6 +161,7 @@ async function main() {
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: '00'.repeat(64) },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const badSigBody = await badSig.json();

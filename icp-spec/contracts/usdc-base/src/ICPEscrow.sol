@@ -57,7 +57,7 @@ contract ICPEscrow is AccessControl, Pausable, ReentrancyGuard {
         uint64 fundedAt;             // unix seconds
         uint64 fulfillmentDeadline;  // unix seconds; merchant SHOULD fulfill by this time
         uint64 disputeWindow;        // seconds after fulfillmentDeadline before release is permitted
-        bytes32 quoteHash;           // keccak256(canonical_cbor(Quote)); off-chain proof anchor
+        bytes32 quoteHash;           // keccak256(JCS(Quote)) — RFC 8785 canonical JSON per ICP-1.0 §5.1; off-chain proof anchor
     }
 
     /// @notice The USDC token contract.

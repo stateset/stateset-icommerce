@@ -19,8 +19,17 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { generateKeyPairSync } from 'node:crypto';
 
-import { canonicalJson, verifyEd25519, signEd25519, newId, pubkeyForAid, publicKeyToRaw } from './codec.mjs';
+import {
+  canonicalJson,
+  verifyEd25519,
+  signEd25519,
+  newId,
+  resolveAidPubkey,
+  AidBindingError,
+  publicKeyToRaw,
+} from './codec.mjs';
 import * as state from './state.mjs';
+import { ReplayGuard } from './replay-guard.mjs';
 import {
   stubQuote,
   stubFundingInstructions,
@@ -42,6 +51,18 @@ import { publishToSubscribers, fetchChannelEvents } from './channel-emitter.mjs'
 const channelStore = new Map();
 
 const PORT = Number(process.env.PORT ?? 8787);
+
+// ---------------------------------------------------------------------------
+// Nonce replay guard — ICP-1.0-DRAFT §5.3. Keyed on (signer AID, nonce).
+// Sized via env with §5.3-compliant defaults: a 24h TTL (the floor for
+// long-running state transitions) and a 100k-entry LRU bound. Production
+// deployments back this with a shared/durable store; the reference impl is
+// per-process in-memory, which is correct for a single-instance handler.
+// ---------------------------------------------------------------------------
+const replayGuard = new ReplayGuard({
+  ttlMs: Number(process.env.ICP_NONCE_TTL_MS ?? 86_400_000),
+  maxEntries: Number(process.env.ICP_NONCE_MAX_ENTRIES ?? 100_000),
+});
 
 // ---------------------------------------------------------------------------
 // Merchant identity (this handler's signing key, used to sign Quotes,
@@ -185,16 +206,36 @@ async function handleSubmitIntent(req, res) {
   if (exp - iat > 600_000) return reply(res, 400, err('replay.window_too_long', 'exp-iat must be <= 600s'));
   if (now > exp) return reply(res, 400, err('replay.expired', 'Intent has expired'));
 
-  // 4. Signature verification
+  // 3b. Nonce presence (§5.3 — every payload MUST carry a nonce).
+  if (typeof intent.nonce !== 'string' || intent.nonce.length === 0) {
+    return reply(res, 400, err('format.missing_field', 'Intent.nonce is required (§5.3)'));
+  }
+
+  // 4. AID→pubkey binding + signature verification.
+  //
+  // `signature.kid` is the claimed signer identity. We re-derive the AID from
+  // the supplied key material (§4.2) and reject any mismatch, then verify the
+  // Ed25519 signature under the now-bound key. This closes the hole where any
+  // key could verify as any AID.
+  const signerAid = signature.kid;
   let edPubRaw;
   try {
-    edPubRaw = pubkeyForAid(intent.buyer, body._pubkey_hex);
+    edPubRaw = resolveAidPubkey(signerAid, body._pubkey_hex, body._x_pubkey_hex);
   } catch (e) {
-    return reply(res, 400, err('auth.aid_resolution_failed', e.message));
+    const code = e instanceof AidBindingError ? e.code : 'auth.aid_resolution_failed';
+    return reply(res, 401, err(code, e.message));
   }
   const canonical = canonicalJson(intent);
   if (!verifyEd25519(canonical, signature.sig, edPubRaw)) {
     return reply(res, 401, err('signature.invalid', 'Ed25519 verification failed'));
+  }
+
+  // 4b. Nonce replay (§5.3) — only consume a nonce AFTER the signature is
+  // proven valid, so an attacker can't burn a victim's nonce with a forged
+  // message. Keyed on the bound signer AID so distinct agents may reuse the
+  // same nonce bytes without colliding.
+  if (!replayGuard.checkAndRecord(signerAid, intent.nonce)) {
+    return reply(res, 400, err('replay.nonce_seen', `nonce already used by ${signerAid} within the replay window`));
   }
 
   // 5. Hand to backend — branch by verb
@@ -556,4 +597,4 @@ export async function stop() {
   server.close();
   await once(server, 'close');
 }
-export { server, merchantKp, merchantAid, merchantPubRaw };
+export { server, merchantKp, merchantAid, merchantPubRaw, replayGuard };

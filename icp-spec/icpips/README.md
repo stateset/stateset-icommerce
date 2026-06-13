@@ -13,7 +13,8 @@ spec.
 | [0003](./icpip-0003-quote-request.md) | `quote.request` verb specification (B2B wholesale RFQ) | Standards (Core) | Draft |
 | [0004](./icpip-0004-payout-request.md) | `payout.request` verb specification (marketplace payouts) | Standards (Core) | Draft |
 | [0005](./icpip-0005-push-channels.md) | Push channels — webhooks + Server-Sent Events for merchant→Agent push delivery | Standards (Core) | Draft |
-| 0006 | Hybrid X25519 + ML-KEM-768 mandate for confidential PrincipalBinding transport | Standards (Core) | Solicited (companion to 0002) |
+| [0006](./icpip-0006-idempotency-pagination.md) | Idempotency keys (`purchase.create`) and cursor pagination (`inventory.query`) | Standards (Core) | Draft |
+| 0007 | Hybrid X25519 + ML-KEM-768 mandate for confidential PrincipalBinding transport | Standards (Core) | Solicited (companion to 0002) |
 
 ## Template
 

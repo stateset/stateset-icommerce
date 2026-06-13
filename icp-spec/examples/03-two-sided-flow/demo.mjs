@@ -197,6 +197,7 @@ try {
       intent,
       signature: { alg: 'ed25519', kid: buyerAid, sig: buyerSig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
+      _x_pubkey_hex: buyerXPubRaw.toString('hex'),
     }),
   });
   const submitted = await submitRes.json();
