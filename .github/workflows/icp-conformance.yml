@@ -158,6 +158,14 @@ jobs:
           check go "$go_out"
           check python "$py_out"
           echo "All cryptographic fields byte-identical across JS + Rust + Go + Python IUTs."
+      - name: Differential canonicalization fuzz (JS × Rust × Go × Python)
+        working-directory: icp-conformance
+        run: |
+          echo "Fuzzing canonicalization: every IUT MUST emit byte-identical"
+          echo "canonical JSON for randomly-generated pathological values"
+          echo "(control-char-dense strings, escaped/astral object keys, doubles"
+          echo "at the 1e-6/1e21 exponent boundaries, >2^53 integer literals)."
+          node tools/fuzz-canonical.mjs --seed 0x1cebab1e --count 300
 
   contracts:
     name: ICPEscrow Solidity tests (Foundry)

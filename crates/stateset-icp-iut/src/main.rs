@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use stateset_crypto::canonicalize::canonicalize_json;
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
 
 fn main() {
@@ -98,7 +99,10 @@ fn run_01_aid_derivation(input: &Value) -> Result<Value> {
     }
 
     // --- Canonicalize and sign -------------------------------------------
-    let canonical = serde_jcs::to_string(&intent).context("canonicalize JSON")?;
+    // Runs the *production* RFC 8785 canonicalizer (stateset-crypto), so the
+    // IUT exercises the same code path that signs real ICP/VES envelopes —
+    // not a bypass implementation. See `stateset_crypto::canonicalize`.
+    let canonical = canonicalize_json(&intent).context("canonicalize JSON")?;
     let sig = ed_signing.sign(canonical.as_bytes());
     let sig_bytes = sig.to_bytes();
 
@@ -140,7 +144,7 @@ fn run_02_canonical_json(input: &Value) -> Result<Value> {
         let value = case.get("value").context("case missing 'value'")?;
         let name =
             case.get("name").and_then(Value::as_str).context("case missing 'name'")?.to_string();
-        let canonical = serde_jcs::to_string(value).context("canonicalize JSON")?;
+        let canonical = canonicalize_json(value).context("canonicalize JSON")?;
         canonical_strings.push(Value::String(canonical));
         names.push(Value::String(name));
     }

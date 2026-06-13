@@ -4129,9 +4129,9 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "serde",
- "serde_jcs",
  "serde_json",
  "sha2",
+ "stateset-crypto",
  "x25519-dalek",
 ]
 
@@ -4635,6 +4635,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

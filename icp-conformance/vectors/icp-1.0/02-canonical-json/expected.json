@@ -19,7 +19,9 @@
     "{\"n\":0}",
     "{\"a\":\"x y z\"}",
     "{\"a\":\"x\\by\\fz\"}",
-    "{\"a\":\"\\u0000\\u0001\\u001f\"}"
+    "{\"a\":\"\\u0000\\u0001\\u001f\"}",
+    "{\"\\t\":1,\"!\":2,\"\\\"\":3,\"A\":4,\"𐀀\":5,\"ﬁ\":6}",
+    "{\"big\":12345678901234567000,\"e21\":1e+21}"
   ],
   "names": [
     "empty-object",
@@ -41,7 +43,9 @@
     "negative-zero",
     "line-paragraph-separators",
     "backspace-formfeed",
-    "control-char-sweep"
+    "control-char-sweep",
+    "utf16-key-order",
+    "bigint-literals"
   ],
   "_provenance": {
     "note": "Outputs captured from the JS reference IUT (icp-conformance/iut-adapters/reference-demo.mjs). Rust IUT (crates/stateset-icp-iut) MUST produce identical bytes when run on the same inputs.json. CI enforces this via the cross-IUT determinism job."

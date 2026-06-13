@@ -88,12 +88,15 @@ by every tick of the multibillion-dollar build loop.
   replay, policy, format, version, escrow, settlement, dispute, arbiter,
   rate, settler, conformance). Each with emission conditions + HTTP
   status mapping. Frozen for ICP-1.0 major. Tick 10.
-- [x] **Vector 02 — canonical-json (20 sub-cases)** — exercises every
+- [x] **Vector 02 — canonical-json (22 sub-cases)** — exercises every
   canonicalization rule: empty object/array, key reordering, nested
   reordering, array preservation, string escapes, bool/null, integers,
-  decimals, monetary strings, full Intent regression. Both JS and Rust
-  IUTs PASS with byte-identical outputs. Conformance suite now: 2 PASS,
-  0 FAIL, 0 SKIP across both languages. Tick 10.
+  decimals, monetary strings, full Intent regression, raw-UTF-16 key
+  ordering (escaped-char + astral keys), and >2^53 integer literals
+  taking IEEE-754 double semantics. All four IUTs (JS / Rust / Go /
+  Python) PASS with byte-identical outputs. The Rust IUT canonicalizes
+  through `stateset-crypto` (sub-cases 21–22 caught the `serde_jcs`
+  raw-vs-escaped key-ordering bug; see canonicalize.rs rewrite). Tick 10.
 - [x] **Rust SDK `verify_settlement_receipt` helper** — Tick 60.
   Closes three-language symmetry on the dual-signature receipt
   verifier — every first-party SDK now ships both load-bearing
@@ -924,8 +927,8 @@ If this is "make it a multibillion-dollar system," the score after 19 ticks:
   in 90 seconds. Tick 9.
 - ✅ **Spec is now genuinely implementable from scratch.** Canonicalization
   rules normative (canonicalization.md). Error codes enumerated (60+
-  codes across 13 namespaces). Second vector (canonical-json, 20
-  sub-cases) proves the rules produce identical bytes across two
+  codes across 13 namespaces). Second vector (canonical-json, 22
+  sub-cases) proves the rules produce identical bytes across four
   language ecosystems. A third-party team can now build a fresh ICP
   implementation against the spec alone, and CI will tell them when
   they diverge. Tick 10.

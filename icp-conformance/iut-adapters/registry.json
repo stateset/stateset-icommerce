@@ -9,7 +9,7 @@
   "stateset-rust": {
     "command": ["../target/release/stateset-icp-iut"],
     "language": "rust",
-    "implementation": "crates/stateset-icp-iut (wraps stateset-crypto: ed25519-dalek, x25519-dalek, serde_jcs)",
+    "implementation": "crates/stateset-icp-iut (canonicalizes via stateset-crypto's hand-rolled RFC 8785 JCS impl; ed25519-dalek, x25519-dalek)",
     "version": "1.0.0",
     "supports": ["icp-1.0-core"]
   },

@@ -37,6 +37,8 @@ canonical" — either the bytes match or the protocol breaks.
 | 18 | U+2028/U+2029 stay raw (no JSONP-safety escape) | `{"a":"x\u2028y\u2029z"}` → raw separators in output    |
 | 19 | `\b`/`\f` two-char escapes (NOT `\u0008`/`\u000c`) | `{"a":"x\by\fz"}` → `{"a":"x\by\fz"}` with two-char escapes |
 | 20 | Control-char sweep: `\u00xx` only below U+0020, raw U+007F | `{"a":"\u0000\u0001\u001f\u007f"}` → `\u0000\u0001\u001f` escapes + raw DEL |
+| 21 | Key ordering by **raw** UTF-16 code unit (RFC 8785 §3.2.3), NOT escaped-form bytes | tab/bang/quote/letter + astral-vs-BMP keys → `\t`(0x09) < `!`(0x21) < `"`(0x22) < `A`(0x41) < astral U+10000 (first surrogate 0xD800) < `ﬁ`(U+FB01) |
+| 22 | Integer literals beyond 2^53 take IEEE-754 double semantics (RFC 8785 §3.2.2.3) | `{"big":12345678901234567890,"e21":1000000000000000000000}` → `{"big":12345678901234567000,"e21":1e+21}` |
 
 ## Pass criteria
 
@@ -56,6 +58,14 @@ this guarantee, vector 01 passing is a coincidence.
 The reference IUT canonicalizes via either:
 - The simplified subset described in `schemas/canonicalization.md` §1
   (sufficient for ICP-1.0 payload shapes), or
-- A full RFC 8785 JCS implementation (e.g. the Rust `serde_jcs` crate).
+- A full, spec-exact RFC 8785 JCS implementation. StateSet's Rust IUT
+  uses `stateset-crypto`'s hand-rolled canonicalizer
+  (`crates/stateset-crypto/src/canonicalize.rs`).
 
-Both produce identical output on the sub-cases below.
+Note: the `serde_jcs` 0.1.0 crate is **not** spec-exact — it sorts object
+keys by their JSON-*escaped* serialized bytes rather than by raw UTF-16
+code units, so it diverges on sub-case 21 (e.g. it emits `!` before `\t`,
+and the BMP ligature `ﬁ` before the astral key). Sub-cases 21–22 exist
+specifically to catch that class of bug; an IUT that passes them is doing
+RFC 8785 §3.2.3 key ordering and §3.2.2.3 double-precision number
+semantics correctly.
