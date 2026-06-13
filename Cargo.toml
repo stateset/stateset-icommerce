@@ -16,7 +16,6 @@ members = [
     "crates/stateset-integration-tests",
     "crates/stateset-sdk",
     "crates/stateset-http",
-    "crates/stateset-protocol",
     "crates/stateset-benches",
     "crates/stateset-pricing",
     "crates/stateset-ffi",
@@ -38,7 +37,6 @@ members = [
 # to compile libfuzzer-sys (requires nightly + libfuzzer linker support).
 exclude = [
     "crates/stateset-crypto/fuzz",
-    "crates/stateset-protocol/fuzz",
 ]
 # Ruby/PHP bindings are intentionally excluded from workspace membership because
 # they require host runtimes/headers (`ruby.h`, `php`) that are unavailable in
@@ -60,7 +58,6 @@ default-members = [
     "crates/stateset-jobs",
     "crates/stateset-sdk",
     "crates/stateset-http",
-    "crates/stateset-protocol",
     "crates/stateset-ffi",
     "crates/stateset-pricing",
     "crates/stateset-migrations",
@@ -216,7 +213,6 @@ stateset-sync = { path = "crates/stateset-sync", version = "1.6.0" }
 stateset-jobs = { path = "crates/stateset-jobs", version = "1.6.0" }
 stateset-sdk = { path = "crates/stateset-sdk", version = "1.6.0" }
 stateset-http = { path = "crates/stateset-http", version = "1.6.0" }
-stateset-protocol = { path = "crates/stateset-protocol", version = "1.6.0" }
 stateset-ffi = { path = "crates/stateset-ffi", version = "1.6.0" }
 stateset-pricing = { path = "crates/stateset-pricing", version = "1.6.0" }
 stateset-migrations = { path = "crates/stateset-migrations", version = "1.6.0" }

@@ -32,12 +32,6 @@ jobs:
             target: compute_payload_plain_hash
           - crate: stateset-crypto
             target: compute_merkle_root
-          - crate: stateset-protocol
-            target: envelope_deserialize
-          - crate: stateset-protocol
-            target: batch_deserialize
-          - crate: stateset-protocol
-            target: canonical_json
     steps:
       - name: Checkout
         uses: actions/checkout@v6

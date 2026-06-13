@@ -28,7 +28,6 @@ matrix=(
   "stateset-ffi|default|"
   "stateset-sdk|default|"
   "stateset-http|default|"
-  "stateset-protocol|default|"
   "stateset-migrations|default|"
   "stateset-authz|default|"
 )

@@ -28,7 +28,6 @@ CRATES=(
   stateset-observability
   stateset-macros
   stateset-policy
-  stateset-protocol
   stateset-db
   stateset-pricing
   stateset-a2a

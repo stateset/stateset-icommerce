@@ -88,9 +88,6 @@ audit-as-crates-io = false
 [policy.stateset-primitives]
 audit-as-crates-io = false
 
-[policy.stateset-protocol]
-audit-as-crates-io = false
-
 [policy.stateset-sdk]
 audit-as-crates-io = false
 

@@ -3848,7 +3848,6 @@ dependencies = [
 name = "stateset-core"
 version = "1.6.0"
 dependencies = [
- "async-trait",
  "auto_impl",
  "base64 0.22.1",
  "chrono",
@@ -4285,24 +4284,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "uuid",
-]
-
-[[package]]
-name = "stateset-protocol"
-version = "1.6.0"
-dependencies = [
- "chrono",
- "ed25519-dalek",
- "insta",
- "proptest",
- "serde",
- "serde_jcs",
- "serde_json",
- "sha2",
- "stateset-crypto",
- "stateset-primitives",
- "thiserror 1.0.69",
  "uuid",
 ]
 

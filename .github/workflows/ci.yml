@@ -189,7 +189,6 @@ jobs:
           cargo check -p stateset-observability --all-targets
           cargo check -p stateset-test-utils --all-targets
           cargo check -p stateset-crypto --all-targets
-          cargo check -p stateset-protocol --all-targets
           cargo check -p stateset-sync --all-targets
           cargo check -p stateset-core --features metrics --all-targets
           cargo check -p stateset-db --no-default-features --features postgres --all-targets
@@ -219,7 +218,6 @@ jobs:
           cargo check -p stateset-observability --all-targets
           cargo check -p stateset-test-utils --all-targets
           cargo check -p stateset-crypto --all-targets
-          cargo check -p stateset-protocol --all-targets
           cargo check -p stateset-sync --all-targets
           cargo check -p stateset-core --features metrics --all-targets
           cargo check -p stateset-db --no-default-features --features postgres --all-targets
@@ -336,8 +334,6 @@ jobs:
           cargo doc --no-deps --document-private-items \
             -p stateset-crypto
           cargo doc --no-deps --document-private-items \
-            -p stateset-protocol
-          cargo doc --no-deps --document-private-items \
             -p stateset-db --all-features
           cargo doc --no-deps --document-private-items \
             -p stateset-embedded
@@ -441,7 +437,7 @@ jobs:
         # Keep the PQC wire/signing crates on the primary CI path instead of
         # relying on manual validation or downstream binding jobs.
         run: |
-          cargo test -p stateset-crypto -p stateset-protocol -p stateset-sync
+          cargo test -p stateset-crypto -p stateset-sync
 
       - name: Mutation Testing (Core)
         if: >
