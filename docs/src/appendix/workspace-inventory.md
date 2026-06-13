@@ -91,7 +91,7 @@ workspace membership because they require host runtimes or headers.
 | Group | Files |
 | --- | --- |
 | `tools` | 67 |
-| `commands` | 61 |
+| `commands` | 62 |
 | `a2a` | 44 |
 | `channels` | 29 |
 | `adapters` | 20 |

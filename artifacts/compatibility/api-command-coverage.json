@@ -6,24 +6,23 @@
   },
   "summary": {
     "totalToolModules": 61,
-    "totalCommandModulesOnDisk": 60,
-    "totalCommandRegistryModules": 60,
+    "totalCommandModulesOnDisk": 61,
+    "totalCommandRegistryModules": 61,
     "totalToolBackedCommandModules": 0,
-    "uncoveredToolModules": 1,
+    "uncoveredToolModules": 0,
     "uncoveredToolBackedActions": 0,
     "commandOnlyModules": 0,
     "registryMismatches": 0,
-    "fullyCovered": false
+    "fullyCovered": true
   },
-  "uncoveredToolModules": [
-    "agent-receipt"
-  ],
+  "uncoveredToolModules": [],
   "commandOnlyModules": [],
   "registryMismatches": {
     "onDiskNotRegistered": [],
     "registeredMissingOnDisk": []
   },
   "coverageByModule": [
+    {},
     {},
     {},
     {},
