@@ -16,7 +16,7 @@ RSpec.describe StateSet::Crypto do
   # The corpus is at workspace-root `bindings/test-vectors/v1.json`;
   # rspec runs from `bindings/ruby/`, so corpus is at
   # `../test-vectors/v1.json`.
-  CORPUS_PATH = File.expand_path('../test-vectors/v1.json', __dir__)
+  CORPUS_PATH = File.expand_path('../../test-vectors/v1.json', __dir__)
 
   let(:corpus) do
     raw = File.read(CORPUS_PATH)
