@@ -5256,7 +5256,7 @@ impl Crypto {
 
     /// Compute the VES v1.0 payload-plain hash. Returns 32 bytes.
     /// `salt`, when provided, must be exactly 16 bytes.
-    pub fn payload_plain_hash(json: String, salt: Option<Vec<u8>>) -> PhpResult<Binary<u8>> {
+    pub fn payload_plain_hash(json: String, salt: Option<Binary<u8>>) -> PhpResult<Binary<u8>> {
         let value: serde_json::Value = serde_json::from_str(&json)
             .map_err(|e| PhpException::default(format!("invalid JSON: {e}")))?;
         let salt_arr = match salt {
@@ -5280,7 +5280,7 @@ impl Crypto {
     }
 
     /// Compute the merkle root of a list of 32-byte leaves. Returns 32 bytes.
-    pub fn merkle_root(leaves: Vec<Vec<u8>>) -> PhpResult<Binary<u8>> {
+    pub fn merkle_root(leaves: Vec<Binary<u8>>) -> PhpResult<Binary<u8>> {
         let mut typed: Vec<[u8; 32]> = Vec::with_capacity(leaves.len());
         for (i, leaf) in leaves.iter().enumerate() {
             if leaf.len() != 32 {
