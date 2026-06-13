@@ -981,6 +981,34 @@ impl AppState {
         Ok(Arc::clone(&entry.commerce))
     }
 
+    /// Resolve the tenant [`Commerce`] engine and run a synchronous closure
+    /// against it on a blocking-friendly thread, off the async worker pool.
+    ///
+    /// The repository layer is synchronous: with the default SQLite backend the
+    /// calls are CPU/disk-bound and would otherwise stall a Tokio worker thread,
+    /// and the optional Postgres backend bridges to async via a blocking
+    /// `block_on` shim that *cannot* run inside an async runtime. Routing the
+    /// closure through [`tokio::task::spawn_blocking`] keeps the async executor
+    /// responsive under load and keeps the Postgres path valid.
+    ///
+    /// Tenant resolution happens before the closure is dispatched so that
+    /// routing errors (missing/invalid `x-tenant-id`) surface synchronously with
+    /// their normal status codes.
+    pub(crate) async fn run_blocking<F, T>(
+        &self,
+        tenant_id: Option<&str>,
+        f: F,
+    ) -> Result<T, HttpError>
+    where
+        F: FnOnce(&Commerce) -> Result<T, HttpError> + Send + 'static,
+        T: Send + 'static,
+    {
+        let commerce = self.commerce_for_tenant(tenant_id)?;
+        tokio::task::spawn_blocking(move || f(&commerce)).await.map_err(|join_error| {
+            HttpError::InternalError(format!("blocking commerce task failed: {join_error}"))
+        })?
+    }
+
     fn next_tenant_access_tick(&self) -> u64 {
         self.tenant_access_clock.fetch_add(1, Ordering::Relaxed)
     }

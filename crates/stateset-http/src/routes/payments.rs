@@ -47,11 +47,14 @@ pub(crate) async fn get_payment(
     Path(id): Path<PaymentId>,
 ) -> Result<Json<PaymentResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let payment = commerce
-        .payments()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Payment {id} not found")))?;
+    let payment = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce
+                .payments()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Payment {id} not found")))
+        })
+        .await?;
     Ok(Json(PaymentResponse::from(payment)))
 }
 
@@ -73,7 +76,6 @@ pub(crate) async fn list_payments(
     Query(params): Query<PaymentFilterParams>,
 ) -> Result<Json<PaymentListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let limit = params.resolved_limit();
     let offset = params.resolved_offset();
@@ -139,8 +141,6 @@ pub(crate) async fn list_payments(
         limit: None,
         offset: None,
     };
-    let total = usize::try_from(commerce.payments().count(count_filter)?).unwrap_or(usize::MAX);
-
     // Fetch the requested page
     let filter = PaymentFilter {
         order_id,
@@ -157,7 +157,16 @@ pub(crate) async fn list_payments(
         limit: Some(overfetch_limit(limit)),
         offset: Some(offset),
     };
-    let mut payments = commerce.payments().list(filter)?;
+
+    let (total, mut payments) = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let total =
+                usize::try_from(commerce.payments().count(count_filter)?).unwrap_or(usize::MAX);
+            let payments = commerce.payments().list(filter)?;
+            Ok((total, payments))
+        })
+        .await?;
+
     let has_more = finalize_page(&mut payments, limit);
     Ok(Json(PaymentListResponse {
         payments: payments.into_iter().map(PaymentResponse::from).collect(),
@@ -193,7 +202,6 @@ pub(crate) async fn create_payment(
     Json(req): Json<CreatePaymentRequest>,
 ) -> Result<(StatusCode, Json<PaymentResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let currency =
         req.currency.as_deref().map(CurrencyCode::from_str).transpose().map_err(|e| {
@@ -219,7 +227,11 @@ pub(crate) async fn create_payment(
         external_id: req.external_id,
         ..Default::default()
     };
-    let payment = commerce.payments().create(input)?;
+    let payment = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(commerce.payments().create(input)?)
+        })
+        .await?;
     Ok((StatusCode::CREATED, Json(PaymentResponse::from(payment))))
 }
 
@@ -241,8 +253,11 @@ pub(crate) async fn complete_payment(
     Path(id): Path<PaymentId>,
 ) -> Result<Json<PaymentResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let payment = commerce.payments().mark_completed(id)?;
+    let payment = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(commerce.payments().mark_completed(id)?)
+        })
+        .await?;
     Ok(Json(PaymentResponse::from(payment)))
 }
 
@@ -274,7 +289,6 @@ pub(crate) async fn create_refund(
     Json(req): Json<CreateRefundRequest>,
 ) -> Result<(StatusCode, Json<PaymentResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
     let input = CreateRefund {
         payment_id: id,
         amount: Some(
@@ -284,11 +298,15 @@ pub(crate) async fn create_refund(
         reason: req.reason,
         ..Default::default()
     };
-    let _refund = commerce.payments().create_refund(input)?;
-    let payment = commerce
-        .payments()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Payment {id} not found")))?;
+    let payment = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce.payments().create_refund(input)?;
+            commerce
+                .payments()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Payment {id} not found")))
+        })
+        .await?;
     Ok((StatusCode::CREATED, Json(PaymentResponse::from(payment))))
 }
 

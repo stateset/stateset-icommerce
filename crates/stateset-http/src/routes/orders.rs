@@ -53,7 +53,6 @@ pub(crate) async fn create_order(
     Json(req): Json<CreateOrderRequest>,
 ) -> Result<(axum::http::StatusCode, Json<OrderResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
     let currency =
         req.currency.as_deref().map(CurrencyCode::from_str).transpose().map_err(|error| {
             HttpError::BadRequest(format!(
@@ -71,7 +70,9 @@ pub(crate) async fn create_order(
         payment_method: req.payment_method,
         shipping_method: req.shipping_method,
     };
-    let order = commerce.orders().create(input)?;
+    let order = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| Ok(commerce.orders().create(input)?))
+        .await?;
     Ok((axum::http::StatusCode::CREATED, Json(OrderResponse::from(order))))
 }
 
@@ -93,11 +94,14 @@ pub(crate) async fn get_order(
     Path(id): Path<OrderId>,
 ) -> Result<Json<OrderResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let order = commerce
-        .orders()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Order {id} not found")))?;
+    let order = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce
+                .orders()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Order {id} not found")))
+        })
+        .await?;
     Ok(Json(OrderResponse::from(order)))
 }
 
@@ -119,7 +123,6 @@ pub(crate) async fn list_orders(
     Query(params): Query<OrderFilterParams>,
 ) -> Result<Json<OrderListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     let limit = params.resolved_limit();
     let offset = params.resolved_offset();
@@ -180,7 +183,6 @@ pub(crate) async fn list_orders(
         offset: None,
         after_cursor: None,
     };
-    let total = usize::try_from(commerce.orders().count(count_filter)?).unwrap_or(usize::MAX);
 
     // Fetch the requested page
     let filter = OrderFilter {
@@ -194,7 +196,16 @@ pub(crate) async fn list_orders(
         offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
         after_cursor,
     };
-    let mut orders = commerce.orders().list(filter)?;
+
+    let (total, mut orders) = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let total =
+                usize::try_from(commerce.orders().count(count_filter)?).unwrap_or(usize::MAX);
+            let orders = commerce.orders().list(filter)?;
+            Ok((total, orders))
+        })
+        .await?;
+
     let has_more = finalize_page(&mut orders, limit);
     let next_cursor = if has_more {
         orders.last().map(|o| encode_cursor(&o.order_date.to_rfc3339(), &o.id.to_string()))
@@ -230,8 +241,9 @@ pub(crate) async fn cancel_order(
     Path(id): Path<OrderId>,
 ) -> Result<Json<OrderResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let order = commerce.orders().cancel(id)?;
+    let order = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| Ok(commerce.orders().cancel(id)?))
+        .await?;
     Ok(Json(OrderResponse::from(order)))
 }
 
@@ -254,8 +266,9 @@ pub(crate) async fn ship_order(
     Path(id): Path<OrderId>,
 ) -> Result<Json<OrderResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let order = commerce.orders().ship(id, None)?;
+    let order = state
+        .run_blocking(tenant_id.as_deref(), move |commerce| Ok(commerce.orders().ship(id, None)?))
+        .await?;
     Ok(Json(OrderResponse::from(order)))
 }
 
