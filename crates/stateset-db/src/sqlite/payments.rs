@@ -465,9 +465,12 @@ impl PaymentRepository for SqlitePaymentRepository {
             }
         }
 
-        // Get payment to determine refund amount
+        // Get payment to determine refund amount. `validate_refund` enforces
+        // that the payment is in a refundable status and that the requested
+        // amount is positive and does not exceed the remaining refundable
+        // balance, resolving `None` to a full remaining refund.
         let payment = self.get(input.payment_id)?.ok_or(CommerceError::NotFound)?;
-        let refund_amount = input.amount.unwrap_or(payment.amount - payment.amount_refunded);
+        let refund_amount = payment.validate_refund(input.amount)?;
 
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
@@ -539,14 +542,36 @@ impl PaymentRepository for SqlitePaymentRepository {
                 ],
             )?;
 
-            // Update payment amount_refunded
+            // Update payment amount_refunded.
+            //
+            // `amount`/`amount_refunded` are TEXT columns (migration 006), so
+            // doing the addition or comparison in SQL would coerce the values
+            // to IEEE-754 floats (e.g. '0.10' + '0.20' = 0.30000000000000004,
+            // and the `>= amount` status comparison would be wrong). Instead we
+            // read the current values, compute the new balance and status with
+            // `rust_decimal::Decimal` in Rust, and write the precomputed TEXT
+            // values back as bound parameters.
+            let (current_refunded, payment_amount): (String, String) = tx.query_row(
+                "SELECT amount_refunded, amount FROM payments WHERE id = ?",
+                params![refund.payment_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let current_refunded =
+                parse_decimal_row(&current_refunded, "payment", "amount_refunded")?;
+            let payment_amount = parse_decimal_row(&payment_amount, "payment", "amount")?;
+
+            let new_refunded = current_refunded + refund.amount;
+            let new_status = if new_refunded >= payment_amount {
+                PaymentTransactionStatus::Refunded
+            } else {
+                PaymentTransactionStatus::PartiallyRefunded
+            };
+
             tx.execute(
-                "UPDATE payments SET amount_refunded = amount_refunded + ?, status = CASE
-                 WHEN amount_refunded + ? >= amount THEN 'refunded' ELSE 'partially_refunded' END,
-                 updated_at = ? WHERE id = ?",
+                "UPDATE payments SET amount_refunded = ?, status = ?, updated_at = ? WHERE id = ?",
                 params![
-                    refund.amount.to_string(),
-                    refund.amount.to_string(),
+                    new_refunded.to_string(),
+                    new_status.to_string(),
                     now.to_rfc3339(),
                     refund.payment_id.to_string()
                 ],

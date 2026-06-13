@@ -570,7 +570,11 @@ impl PgPaymentRepository {
 
         let raw_payment_id = input.payment_id.into_uuid();
         let payment = self.get_async(raw_payment_id).await?.ok_or(CommerceError::NotFound)?;
-        let refund_amount = input.amount.unwrap_or(payment.amount - payment.amount_refunded);
+        // `validate_refund` enforces that the payment is in a refundable status
+        // and that the requested amount is positive and does not exceed the
+        // remaining refundable balance, resolving `None` to a full remaining
+        // refund.
+        let refund_amount = payment.validate_refund(input.amount)?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();

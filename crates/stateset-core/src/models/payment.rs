@@ -81,6 +81,18 @@ impl PaymentTransactionStatus {
     pub const fn is_in_progress(self) -> bool {
         matches!(self, Self::Pending | Self::Processing | Self::RequiresAction)
     }
+
+    /// Returns true if a payment in this status may be refunded.
+    ///
+    /// Only successfully captured funds can be refunded: a `Completed`
+    /// payment, or one that is already `PartiallyRefunded` (so the remaining
+    /// balance can be returned). `Pending`, `Processing`, `RequiresAction`,
+    /// `Failed`, `Cancelled`, `Disputed`, and fully `Refunded` payments are
+    /// not refundable.
+    #[must_use]
+    pub const fn is_refundable(self) -> bool {
+        matches!(self, Self::Completed | Self::PartiallyRefunded)
+    }
 }
 
 /// Payment method type
@@ -339,6 +351,55 @@ pub struct Payment {
     pub created_at: DateTime<Utc>,
     /// When payment was last updated
     pub updated_at: DateTime<Utc>,
+}
+
+impl Payment {
+    /// The amount of this payment that has not yet been refunded.
+    #[must_use]
+    pub fn refundable_remaining(&self) -> Decimal {
+        self.amount - self.amount_refunded
+    }
+
+    /// Validate and resolve a refund request against this payment.
+    ///
+    /// `requested` is the caller-supplied refund amount; when `None` the full
+    /// remaining refundable balance is used. Returns the resolved refund amount
+    /// on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::CommerceError::ValidationError`] when:
+    /// - the payment is not in a refundable status (only `Completed` /
+    ///   `PartiallyRefunded` payments can be refunded),
+    /// - the requested (or resolved) amount is zero or negative, or
+    /// - the requested amount exceeds the remaining refundable balance.
+    pub fn validate_refund(&self, requested: Option<Decimal>) -> crate::Result<Decimal> {
+        use crate::CommerceError;
+
+        if !self.status.is_refundable() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot refund a payment in status '{}'; only completed or partially refunded payments are refundable",
+                self.status
+            )));
+        }
+
+        let remaining = self.refundable_remaining();
+        let amount = requested.unwrap_or(remaining);
+
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Refund amount must be greater than zero".into(),
+            ));
+        }
+
+        if amount > remaining {
+            return Err(CommerceError::ValidationError(format!(
+                "Refund amount {amount} exceeds remaining refundable balance {remaining}"
+            )));
+        }
+
+        Ok(amount)
+    }
 }
 
 /// Input for creating a new payment
@@ -732,5 +793,115 @@ mod tests {
         assert!(Cancelled.is_terminal());
         assert!(!Pending.is_terminal());
         assert!(!Processing.is_terminal());
+    }
+
+    #[test]
+    fn payment_status_is_refundable() {
+        use PaymentTransactionStatus::*;
+        // Only successfully captured funds are refundable.
+        assert!(Completed.is_refundable());
+        assert!(PartiallyRefunded.is_refundable());
+        // Everything else is not.
+        assert!(!Pending.is_refundable());
+        assert!(!Processing.is_refundable());
+        assert!(!RequiresAction.is_refundable());
+        assert!(!Failed.is_refundable());
+        assert!(!Cancelled.is_refundable());
+        assert!(!Refunded.is_refundable());
+        assert!(!Disputed.is_refundable());
+    }
+
+    /// Build a minimal `Payment` for refund-validation tests.
+    fn payment_for_refund(
+        status: PaymentTransactionStatus,
+        amount: Decimal,
+        amount_refunded: Decimal,
+    ) -> Payment {
+        let now = Utc::now();
+        Payment {
+            id: PaymentId::new(),
+            payment_number: generate_payment_number(),
+            order_id: None,
+            invoice_id: None,
+            customer_id: None,
+            status,
+            payment_method: PaymentMethodType::CreditCard,
+            amount,
+            currency: CurrencyCode::default(),
+            amount_refunded,
+            external_id: None,
+            idempotency_key: None,
+            processor: None,
+            card_brand: None,
+            card_last4: None,
+            card_exp_month: None,
+            card_exp_year: None,
+            blockchain_network: None,
+            stablecoin_type: None,
+            from_wallet_address: None,
+            to_wallet_address: None,
+            tx_hash: None,
+            block_number: None,
+            confirmations: None,
+            token_address: None,
+            ves_intent_id: None,
+            billing_email: None,
+            billing_name: None,
+            billing_address: None,
+            description: None,
+            failure_reason: None,
+            failure_code: None,
+            metadata: None,
+            paid_at: None,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn validate_refund_resolves_full_remaining_when_amount_omitted() {
+        use rust_decimal_macros::dec;
+        let payment = payment_for_refund(PaymentTransactionStatus::Completed, dec!(100), dec!(40));
+        // Remaining refundable balance is 100 - 40 = 60.
+        assert_eq!(payment.validate_refund(None).expect("resolved"), dec!(60));
+    }
+
+    #[test]
+    fn validate_refund_rejects_non_refundable_status() {
+        use rust_decimal_macros::dec;
+        for status in [
+            PaymentTransactionStatus::Pending,
+            PaymentTransactionStatus::Processing,
+            PaymentTransactionStatus::RequiresAction,
+            PaymentTransactionStatus::Failed,
+            PaymentTransactionStatus::Cancelled,
+            PaymentTransactionStatus::Refunded,
+            PaymentTransactionStatus::Disputed,
+        ] {
+            let payment = payment_for_refund(status, dec!(100), dec!(0));
+            let err = payment
+                .validate_refund(Some(dec!(10)))
+                .expect_err("non-refundable status must be rejected");
+            assert!(matches!(err, crate::CommerceError::ValidationError(_)), "{status}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn validate_refund_rejects_non_positive_amount() {
+        use rust_decimal_macros::dec;
+        let payment = payment_for_refund(PaymentTransactionStatus::Completed, dec!(100), dec!(0));
+        assert!(payment.validate_refund(Some(dec!(0))).is_err());
+        assert!(payment.validate_refund(Some(dec!(-1))).is_err());
+    }
+
+    #[test]
+    fn validate_refund_rejects_amount_exceeding_remaining() {
+        use rust_decimal_macros::dec;
+        let payment =
+            payment_for_refund(PaymentTransactionStatus::PartiallyRefunded, dec!(100), dec!(70));
+        // Only 30 remains refundable; 31 must be rejected, 30 must pass.
+        assert!(payment.validate_refund(Some(dec!(31))).is_err());
+        assert_eq!(payment.validate_refund(Some(dec!(30))).expect("ok"), dec!(30));
     }
 }
