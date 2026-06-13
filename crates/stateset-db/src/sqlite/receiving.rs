@@ -498,29 +498,63 @@ impl ReceivingRepository for SqliteReceivingRepository {
             let reject_qty = line.quantity_rejected.unwrap_or(Decimal::ZERO);
             let serial_str = line.serial_numbers.as_ref().map(|v| v.join(","));
 
+            // received_quantity, rejected_quantity and expected_quantity are TEXT
+            // columns (migration 017), so accumulating in SQL via
+            // 'CAST(received_quantity AS REAL) + ?1' would coerce both operands to
+            // IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004) — corrupting
+            // the stored quantity and mis-classifying the status at the
+            // received/expected boundary. Read the current row, add with
+            // `rust_decimal::Decimal`, and write exact precomputed strings back.
+            let (cur_received, cur_rejected, expected, cur_status): (
+                String,
+                String,
+                String,
+                String,
+            ) = conn
+                .query_row(
+                    "SELECT received_quantity, rejected_quantity, expected_quantity, status
+                     FROM receipt_items WHERE id = ?1",
+                    params![line.receipt_item_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .map_err(map_db_error)?;
+
+            let new_received =
+                parse_decimal_strict(&cur_received, "receipt_item", "received_quantity")?
+                    + line.quantity_received;
+            let new_rejected =
+                parse_decimal_strict(&cur_rejected, "receipt_item", "rejected_quantity")?
+                    + reject_qty;
+            let expected = parse_decimal_strict(&expected, "receipt_item", "expected_quantity")?;
+
+            let new_status = if new_received >= expected {
+                "received"
+            } else if new_received > Decimal::ZERO {
+                "partially_received"
+            } else {
+                cur_status.as_str()
+            };
+
             // Update receipt item
             conn.execute(
                 "UPDATE receipt_items SET
-                 received_quantity = CAST(received_quantity AS REAL) + ?1,
-                 rejected_quantity = CAST(rejected_quantity AS REAL) + ?2,
+                 received_quantity = ?1,
+                 rejected_quantity = ?2,
                  lot_number = COALESCE(?3, lot_number),
                  serial_numbers = COALESCE(?4, serial_numbers),
                  expiration_date = COALESCE(?5, expiration_date),
                  notes = COALESCE(?6, notes),
-                 status = CASE
-                     WHEN CAST(received_quantity AS REAL) + ?1 >= CAST(expected_quantity AS REAL) THEN 'received'
-                     WHEN CAST(received_quantity AS REAL) + ?1 > 0 THEN 'partially_received'
-                     ELSE status
-                 END
+                 status = ?8
                  WHERE id = ?7",
                 params![
-                    line.quantity_received.to_string(),
-                    reject_qty.to_string(),
+                    new_received.to_string(),
+                    new_rejected.to_string(),
                     line.lot_number,
                     serial_str,
                     line.expiration_date.map(|d| d.to_rfc3339()),
                     line.notes,
                     line.receipt_item_id.to_string(),
+                    new_status,
                 ],
             )
             .map_err(map_db_error)?;
@@ -897,5 +931,123 @@ impl ReceivingRepository for SqliteReceivingRepository {
             }
         }
         Ok(receipts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        CreateReceipt, CreateReceiptItem, CreateWarehouse, ReceiptItemStatus, ReceiptType,
+        ReceiveItemLine, ReceiveItems, WarehouseRepository, WarehouseType,
+    };
+
+    /// A receiving repo backed by a DB that already has warehouse id 1 seeded
+    /// (receipts carry a FOREIGN KEY onto `warehouses`).
+    fn fresh_repo() -> SqliteReceivingRepository {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        db.warehouse()
+            .create_warehouse(CreateWarehouse {
+                code: "WH-RCV".into(),
+                name: "Receiving Test".into(),
+                warehouse_type: WarehouseType::Distribution,
+                ..Default::default()
+            })
+            .expect("seed warehouse");
+        db.receiving()
+    }
+
+    /// Create a receipt with a single line of the given expected quantity and
+    /// return `(receipt_id, receipt_item_id)`.
+    fn receipt_with_one_item(repo: &SqliteReceivingRepository, expected: Decimal) -> (Uuid, Uuid) {
+        let receipt = repo
+            .create_receipt(CreateReceipt {
+                receipt_type: ReceiptType::PurchaseOrder,
+                warehouse_id: 1,
+                items: vec![CreateReceiptItem {
+                    sku: "SKU-1".into(),
+                    expected_quantity: expected,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .expect("create receipt");
+        let items = repo.get_receipt_items(receipt.id).expect("items");
+        let item_id = items.first().expect("one item").id;
+        (receipt.id, item_id)
+    }
+
+    fn item_status(
+        repo: &SqliteReceivingRepository,
+        receipt_id: Uuid,
+        item_id: Uuid,
+    ) -> ReceiptItemStatus {
+        repo.get_receipt_items(receipt_id)
+            .expect("items")
+            .into_iter()
+            .find(|i| i.id == item_id)
+            .expect("item present")
+            .status
+    }
+
+    fn receive(repo: &SqliteReceivingRepository, receipt_id: Uuid, item_id: Uuid, qty: Decimal) {
+        repo.receive_items(ReceiveItems {
+            receipt_id,
+            items: vec![ReceiveItemLine {
+                receipt_item_id: item_id,
+                quantity_received: qty,
+                quantity_rejected: None,
+                rejection_reason: None,
+                lot_number: None,
+                serial_numbers: None,
+                expiration_date: None,
+                notes: None,
+            }],
+            receiving_location_id: None,
+            received_by: None,
+        })
+        .expect("receive items");
+    }
+
+    fn item_received(repo: &SqliteReceivingRepository, receipt_id: Uuid, item_id: Uuid) -> Decimal {
+        repo.get_receipt_items(receipt_id)
+            .expect("items")
+            .into_iter()
+            .find(|i| i.id == item_id)
+            .expect("item present")
+            .received_quantity
+    }
+
+    #[test]
+    fn two_partial_receipts_keep_received_quantity_exact() {
+        // Regression: received_quantity is a TEXT column and was accumulated via
+        // 'CAST(received_quantity AS REAL) + ?', so 0.1 + 0.2 stored as
+        // 0.30000000000000004. With Decimal arithmetic it must be exactly 0.3.
+        let repo = fresh_repo();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(1));
+
+        receive(&repo, rid, iid, dec!(0.1));
+        receive(&repo, rid, iid, dec!(0.2));
+
+        assert_eq!(item_received(&repo, rid, iid), dec!(0.3));
+    }
+
+    #[test]
+    fn receipt_item_status_tracks_received_vs_expected_exactly() {
+        let repo = fresh_repo();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(0.3));
+
+        // Partial receipt -> partially_received.
+        receive(&repo, rid, iid, dec!(0.1));
+        assert_eq!(item_status(&repo, rid, iid), ReceiptItemStatus::PartiallyReceived);
+
+        // 0.1 + 0.2 == 0.3 exactly meets expected -> received (a float residue
+        // of 0.30000000000000004 would also pass >=, but an under-count like
+        // 0.29999999999999998 would wrongly stay partially_received).
+        receive(&repo, rid, iid, dec!(0.2));
+        assert_eq!(item_status(&repo, rid, iid), ReceiptItemStatus::Received);
+        assert_eq!(item_received(&repo, rid, iid), dec!(0.3));
     }
 }
