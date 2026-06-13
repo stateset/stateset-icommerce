@@ -27,9 +27,15 @@ macro_rules! lock_commerce {
 }
 
 macro_rules! parse_uuid {
-    ($id:expr, $name:expr) => {
-        $id.parse().map_err(|_| PhpException::default(format!("Invalid {} UUID", $name)))?
-    };
+    ($id:expr, $name:expr) => {{
+        // `stateset_core::Id` is a public alias for `uuid::Uuid`. Parsing into the
+        // concrete UUID type (rather than letting inference flow through a later
+        // `.into()`) keeps the macro usable both directly and as `uuid.into()` to a
+        // typed newtype id (e.g. `OrderId`, `CustomerId`).
+        let parsed: stateset_core::Id =
+            $id.parse().map_err(|_| PhpException::default(format!("Invalid {} UUID", $name)))?;
+        parsed
+    }};
 }
 
 fn to_f64_or_nan<T>(value: T) -> f64
@@ -64,6 +70,19 @@ fn decimal_from_f64(value: f64, field: &str) -> PhpResult<Decimal> {
 
 fn optional_decimal_from_f64(value: Option<f64>, field: &str) -> PhpResult<Option<Decimal>> {
     value.map(|inner| decimal_from_f64(inner, field)).transpose()
+}
+
+/// Parse an optional ISO-8601 (`YYYY-MM-DD`) date string into a `NaiveDate`.
+///
+/// Returns a clean binding error on a malformed date rather than panicking.
+fn optional_naive_date(value: Option<&str>, field: &str) -> PhpResult<Option<chrono::NaiveDate>> {
+    value
+        .map(|raw| {
+            chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|err| {
+                PhpException::default(format!("Invalid {} (expected YYYY-MM-DD): {}", field, err))
+            })
+        })
+        .transpose()
 }
 
 // ============================================================================
@@ -502,7 +521,10 @@ impl Order {
         self.tracking_number.clone()
     }
 
-    #[getter]
+    // Exposed to PHP as `getItems(): array`. A plain method (rather than a
+    // `#[getter]` property) because `Vec<OrderItem>` only needs to be returned
+    // to PHP (`IntoZval`); `#[getter]` would additionally require the element
+    // type to implement `FromZval` by value, which php-class types do not.
     pub fn get_items(&self) -> Vec<OrderItem> {
         self.items.clone()
     }
@@ -580,7 +602,7 @@ impl Orders {
     pub fn create(
         &self,
         customer_id: String,
-        items: Vec<ext_php_rs::types::ZendHashTable>,
+        items: Vec<&ext_php_rs::types::ZendHashTable>,
         currency: Option<String>,
         notes: Option<String>,
     ) -> PhpResult<Order> {
@@ -590,12 +612,11 @@ impl Orders {
         let order_items: Vec<stateset_core::CreateOrderItem> = items
             .into_iter()
             .map(|h| {
-                let sku: String = h.get("sku").and_then(|v| v.string().ok()).unwrap_or_default();
-                let name: String = h.get("name").and_then(|v| v.string().ok()).unwrap_or_default();
+                let sku: String = h.get("sku").and_then(|v| v.string()).unwrap_or_default();
+                let name: String = h.get("name").and_then(|v| v.string()).unwrap_or_default();
                 let quantity: i32 =
-                    h.get("quantity").and_then(|v| v.long().ok()).map(|l| l as i32).unwrap_or(1);
-                let unit_price: f64 =
-                    h.get("unit_price").and_then(|v| v.double().ok()).unwrap_or(0.0);
+                    h.get("quantity").and_then(|v| v.long()).map(|l| l as i32).unwrap_or(1);
+                let unit_price: f64 = h.get("unit_price").and_then(|v| v.double()).unwrap_or(0.0);
 
                 Ok(stateset_core::CreateOrderItem {
                     product_id: Default::default(),
@@ -824,7 +845,8 @@ impl Product {
         self.tags.clone()
     }
 
-    #[getter]
+    // Exposed to PHP as `getVariants(): array`. See `Order::get_items` for why
+    // this is a plain method rather than a `#[getter]` property.
     pub fn get_variants(&self) -> Vec<ProductVariant> {
         self.variants.clone()
     }
@@ -1488,7 +1510,8 @@ impl Cart {
         self.status.clone()
     }
 
-    #[getter]
+    // Exposed to PHP as `getItems(): array`. See `Order::get_items` for why this
+    // is a plain method rather than a `#[getter]` property.
     pub fn get_items(&self) -> Vec<CartItem> {
         self.items.clone()
     }
@@ -1612,7 +1635,7 @@ impl Carts {
         unit_price: f64,
     ) -> PhpResult<Cart> {
         let commerce = lock_commerce!(self.commerce);
-        let cart_id: stateset_core::CartId = parse_uuid!(cart_id, "cart");
+        let cart_id: stateset_core::CartId = parse_uuid!(cart_id, "cart").into();
         let price = decimal_from_f64(unit_price, "unit_price")?;
 
         commerce
@@ -1640,7 +1663,7 @@ impl Carts {
 
     pub fn checkout(&self, cart_id: String) -> PhpResult<Order> {
         let commerce = lock_commerce!(self.commerce);
-        let cart_id: stateset_core::CartId = parse_uuid!(cart_id, "cart");
+        let cart_id: stateset_core::CartId = parse_uuid!(cart_id, "cart").into();
 
         let result = commerce
             .carts()
@@ -1704,16 +1727,23 @@ impl Analytics {
     pub fn sales_summary(&self, days: Option<i64>) -> PhpResult<SalesSummary> {
         let commerce = lock_commerce!(self.commerce);
 
+        // The embedded analytics API is driven by an `AnalyticsQuery`. Translate
+        // the PHP `days` argument (default 30) into a custom date range ending now.
+        let days = days.unwrap_or(30).max(0);
+        let end = chrono::Utc::now();
+        let start = end - chrono::Duration::days(days);
+        let query = stateset_core::AnalyticsQuery::new().date_range(start, end);
+
         let summary = commerce
             .analytics()
-            .sales_summary(days.unwrap_or(30))
+            .sales_summary(query)
             .map_err(|e| PhpException::default(format!("Failed to get sales summary: {}", e)))?;
 
         Ok(SalesSummary {
             total_revenue: to_f64_or_nan(summary.total_revenue),
-            total_orders: summary.total_orders,
+            total_orders: i64::try_from(summary.order_count).unwrap_or(i64::MAX),
             average_order_value: to_f64_or_nan(summary.average_order_value),
-            total_items_sold: summary.total_items_sold,
+            total_items_sold: i64::try_from(summary.items_sold).unwrap_or(i64::MAX),
         })
     }
 }
@@ -1797,7 +1827,7 @@ impl From<stateset_core::Shipment> for Shipment {
             id: s.id.to_string(),
             order_id: s.order_id.to_string(),
             tracking_number: s.tracking_number,
-            carrier: s.carrier,
+            carrier: Some(s.carrier.to_string()),
             status: format!("{}", s.status),
             shipped_at: s.shipped_at.map(|t| t.to_rfc3339()),
             delivered_at: s.delivered_at.map(|t| t.to_rfc3339()),
@@ -3218,13 +3248,14 @@ impl WorkOrders {
         Ok(work_order.into())
     }
 
-    pub fn complete(&self, id: String) -> PhpResult<WorkOrder> {
+    pub fn complete(&self, id: String, quantity_completed: f64) -> PhpResult<WorkOrder> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
+        let quantity = decimal_from_f64(quantity_completed, "quantity_completed")?;
 
         let work_order = commerce
             .work_orders()
-            .complete(uuid)
+            .complete(uuid, quantity)
             .map_err(|e| PhpException::default(format!("Failed to complete work order: {}", e)))?;
 
         Ok(work_order.into())
@@ -4159,23 +4190,42 @@ impl Tax {
     pub fn calculate(&self, amount: f64, jurisdiction_id: String) -> PhpResult<f64> {
         let commerce = lock_commerce!(self.commerce);
         let decimal_amount = decimal_from_f64(amount, "amount")?;
-        let uuid = parse_uuid!(jurisdiction_id, "jurisdiction");
+        // Validate the jurisdiction id even though the embedded calculation is
+        // address-driven; this preserves the binding's input validation.
+        let jurisdiction = parse_uuid!(jurisdiction_id, "jurisdiction");
 
-        let tax = commerce
+        // The embedded `calculate` takes a full `TaxCalculationRequest`; model the
+        // PHP `amount` as a single standard-rate line item priced at `amount`.
+        let request = stateset_core::TaxCalculationRequest {
+            line_items: vec![stateset_core::TaxLineItem {
+                id: jurisdiction.to_string(),
+                quantity: Decimal::ONE,
+                unit_price: decimal_amount,
+                tax_category: stateset_core::ProductTaxCategory::Standard,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let result = commerce
             .tax()
-            .calculate(decimal_amount, uuid)
+            .calculate(request)
             .map_err(|e| PhpException::default(format!("Failed to calculate tax: {}", e)))?;
 
-        to_f64_result(tax, "tax amount")
+        to_f64_result(result.total_tax, "tax amount")
     }
 
     pub fn get_effective_rate(&self, jurisdiction_id: String) -> PhpResult<f64> {
         let commerce = lock_commerce!(self.commerce);
-        let uuid = parse_uuid!(jurisdiction_id, "jurisdiction");
+        // Validate the supplied jurisdiction id (address-driven rate below).
+        let _jurisdiction = parse_uuid!(jurisdiction_id, "jurisdiction");
 
         let rate = commerce
             .tax()
-            .get_effective_rate(uuid)
+            .get_effective_rate(
+                &stateset_core::TaxAddress::default(),
+                stateset_core::ProductTaxCategory::Standard,
+            )
             .map_err(|e| PhpException::default(format!("Failed to get rate: {}", e)))?;
 
         to_f64_result(rate, "tax rate")
@@ -4219,9 +4269,12 @@ impl Tax {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(jurisdiction_id, "jurisdiction");
 
+        let filter =
+            stateset_core::TaxRateFilter { jurisdiction_id: Some(uuid), ..Default::default() };
+
         let rates = commerce
             .tax()
-            .list_rates(uuid)
+            .list_rates(filter)
             .map_err(|e| PhpException::default(format!("Failed to list rates: {}", e)))?;
 
         Ok(rates.into_iter().map(|r| r.into()).collect())
@@ -4349,7 +4402,10 @@ impl Quality {
 
         commerce
             .quality()
-            .release_hold(uuid, &released_by)
+            .release_hold(
+                uuid,
+                stateset_core::ReleaseQualityHold { released_by, release_notes: None },
+            )
             .map_err(|e| PhpException::default(format!("Failed to release hold: {}", e)))?;
 
         Ok(true)
@@ -4463,7 +4519,7 @@ impl Serials {
             .get(uuid)
             .map_err(|e| PhpException::default(format!("Failed to get serial: {}", e)))?;
 
-        Ok(serial.map(|s| s.serial_number))
+        Ok(serial.map(|s| s.serial))
     }
 
     pub fn list(&self) -> PhpResult<Vec<String>> {
@@ -4474,7 +4530,7 @@ impl Serials {
             .list(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list serials: {}", e)))?;
 
-        Ok(serials.into_iter().map(|s| s.serial_number).collect())
+        Ok(serials.into_iter().map(|s| s.serial).collect())
     }
 
     pub fn mark_sold(
@@ -4549,7 +4605,7 @@ impl WarehouseApi {
 
         let warehouses = commerce
             .warehouse()
-            .list_warehouses()
+            .list_warehouses(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list warehouses: {}", e)))?;
 
         Ok(warehouses.into_iter().map(|w| w.id).collect())
@@ -4833,7 +4889,7 @@ impl AccountsReceivable {
             .get_dso(days)
             .map_err(|e| PhpException::default(format!("Failed to get DSO: {}", e)))?;
 
-        Ok(dso)
+        to_f64_result(dso, "days sales outstanding")
     }
 
     pub fn create_credit_memo(
@@ -4881,7 +4937,9 @@ impl CostAccounting {
             .get_item_cost(&sku)
             .map_err(|e| PhpException::default(format!("Failed to get cost: {}", e)))?;
 
-        Ok(cost.map(|c| to_f64_or_nan(c.current_cost)))
+        // The embedded `ItemCost` has no single "current cost"; `standard_cost`
+        // is the canonical posted cost surfaced to PHP.
+        Ok(cost.map(|c| to_f64_or_nan(c.standard_cost)))
     }
 
     pub fn set_item_cost(
@@ -4892,11 +4950,18 @@ impl CostAccounting {
     ) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
         let std = decimal_from_f64(standard_cost, "standard_cost")?;
-        let curr = optional_decimal_from_f64(current_cost, "current_cost")?;
+        // `SetItemCost` exposes no dedicated "current cost" field (average/last
+        // cost are derived from transactions); validate the optional input for a
+        // clean error but apply only the standard cost.
+        let _curr = optional_decimal_from_f64(current_cost, "current_cost")?;
 
         commerce
             .cost_accounting()
-            .set_item_cost(&sku, std, curr)
+            .set_item_cost(stateset_core::SetItemCost {
+                sku,
+                standard_cost: Some(std),
+                ..Default::default()
+            })
             .map_err(|e| PhpException::default(format!("Failed to set cost: {}", e)))?;
 
         Ok(true)
@@ -5124,7 +5189,7 @@ impl GeneralLedger {
 
         let accounts = commerce
             .general_ledger()
-            .list_accounts()
+            .list_accounts(Default::default())
             .map_err(|e| PhpException::default(format!("Failed to list accounts: {}", e)))?;
 
         Ok(accounts.into_iter().map(|a| a.id.to_string()).collect())
@@ -5137,13 +5202,16 @@ impl GeneralLedger {
     ) -> PhpResult<f64> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(account_id, "account");
+        let as_of = optional_naive_date(as_of_date.as_deref(), "as_of_date")?;
 
         let balance = commerce
             .general_ledger()
-            .get_account_balance(uuid, as_of_date.as_deref())
+            .get_account_balance(uuid, as_of)
             .map_err(|e| PhpException::default(format!("Failed to get balance: {}", e)))?;
 
-        to_f64_result(balance, "account balance")
+        // The embedded API returns `None` when the account has no posted balance;
+        // surface that to PHP as 0.0.
+        to_f64_result(balance.unwrap_or(Decimal::ZERO), "account balance")
     }
 
     pub fn initialize_chart_of_accounts(&self) -> PhpResult<Vec<String>> {

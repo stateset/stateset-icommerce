@@ -1590,9 +1590,10 @@ class WorkOrders
      * Complete a work order.
      *
      * @param string $id Work order UUID
+     * @param float $quantityCompleted Quantity completed
      * @return WorkOrder
      */
-    public function complete(string $id): WorkOrder {}
+    public function complete(string $id, float $quantityCompleted): WorkOrder {}
 
     /**
      * Put a work order on hold.
