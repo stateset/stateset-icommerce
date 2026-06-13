@@ -7,6 +7,24 @@ This project follows Keep a Changelog and Semantic Versioning.
 ## [Unreleased]
 
 ### Fixed
+- **CI: trunk gates that had never run are now green.** gitleaks (required a
+  nonexistent `GITLEAKS_LICENSE` org secret → pinned checksum-verified binary,
+  82 historical findings triaged as false positives and allowlisted),
+  cargo-vet (first-party crates audited as crates.io copies → `audit-as-crates-io=false`,
+  pinned 0.10.2, exit 0), cargo-mutants (unpinned 27.x exceeded the 1.90
+  toolchain → pinned 25.3.1 `--locked`), CodeQL rust (manual build-mode
+  unsupported → `none`), typos (~15 findings fixed or narrowly allowlisted),
+  and the release-hygiene self-test (stale-version detection had regressed to
+  a no-op).
+- **Bindings: PHP and Ruby Cargo.lock pinned phantom crate versions.**
+  `auto_impl 1.5.0` and `cfg-if 1.1.0` do not exist on crates.io; corrected to
+  the real `1.3.0` / `1.0.4`, unblocking the native binding builds.
+- **ICP: RFC 8785 number rounding interop hazard.** A differential fuzzer
+  (new, checked in at `icp-conformance/tools/fuzz-canonical.mjs`) caught
+  serde_json rounding `9.999999999999997e+22` one ULP low vs V8/Go/Python/Rust
+  `str::parse`; fixed by enabling serde_json's `float_roundtrip` on the IUT.
+- **HTTP: `GET /api/v1/shipping-zones` returned page-length as `total`.** Now
+  counts the full matching set before pagination, matching the orders pattern.
 - **ICP: RFC 8785 canonicalization parity across all four IUTs.** The Go
   IUT HTML-escaped `<`, `>`, `&`, escaped U+0008/U+000C as ``/``
   instead of `\b`/`\f`, passed non-minimal number literals (`1.50`) through
@@ -38,6 +56,22 @@ This project follows Keep a Changelog and Semantic Versioning.
   to disable at all 4 sites.
 
 ### Security
+- **ICP handler: enforce the two verification MUSTs it was violating.**
+  Nonce-replay rejection (ICP-1.0-DRAFT §5.3) via a bounded per-`(aid, nonce)`
+  LRU returning `replay.nonce_seen`, and AID→pubkey binding (§4.2) — the
+  handler previously trusted the request-supplied pubkey verbatim, so any key
+  verified as any AID. The binding re-derives the AID from the supplied
+  Ed25519+X25519 keys (new optional `_x_pubkey_hex` on the wire) and rejects
+  mismatches; absent X key is rejected rather than skipped (skipping would
+  reopen the hole). 24 new handler tests.
+- **HTTP: Idempotency-Key support on REST mutations.** POST create endpoints
+  (orders, payments, refunds) honor an optional `Idempotency-Key` header:
+  first response cached per `(tenant, key)` in a bounded TTL store; identical
+  replay returns the stored response; same key + different body → 409. Runs
+  after auth so unauthorized requests never poison the cache; 5xx/429 stay
+  retryable.
+- **gitleaks: secret-scanning now actually runs** (see Fixed) — full-history
+  scan, no real secrets.
 - **Admin: server actions now require an authenticated session.** All 63
   exported `'use server'` actions (`commerce.ts`, `active-org.ts`,
   `organizations.ts`) — including `processRefund`, `adjustInventory`, and
@@ -56,6 +90,19 @@ This project follows Keep a Changelog and Semantic Versioning.
   remains a documented follow-up (no repository traits exist yet).
 
 ### Changed
+- **crypto: hand-rolled RFC 8785 canonicalizer replaces serde_jcs.**
+  serde_jcs 0.1.0 sorts object keys by their JSON-escaped form rather than
+  UTF-16 code units (§3.2.3 violation on escaped/control/astral keys); the new
+  `stateset-crypto` canonicalizer is spec-exact (UTF-16 key order,
+  `JSON.stringify` escapes, ECMAScript number formatting via ryu-js, integers
+  beyond 2^53 as f64). The ICP Rust IUT now canonicalizes and signs through
+  `stateset-crypto` instead of bypassing it — healing both the key-order bug
+  and the architecture seam where ICP crates reimplemented protocol crypto.
+- **HTTP: SSE `/api/v1/events/stream` supports resume.** Frames carry
+  monotonic event ids and honor `Last-Event-ID` from a bounded replay ring
+  (1024 events); buffer overflow emits a documented gap marker. Subscribe
+  precedes the ring snapshot so no event is lost in the snapshot→subscribe
+  window.
 - **ICP spec: normative signing encoding is RFC 8785 JCS JSON.** The spec
   previously mandated Canonical CBOR signatures while the entire reference
   stack (handler, SDKs, IUTs, conformance suite) signs JCS JSON. CBOR is
@@ -84,6 +131,21 @@ This project follows Keep a Changelog and Semantic Versioning.
   state the true shipped set — all 7 core intent verbs plus the
   `channel.register` extension (ICPIP-0005). Stale MCP tool counts in
   `cli/.claude/CLAUDE.md` corrected (737 tools / 63 domains).
+
+### Added
+- **ICPIP-0006: idempotency & pagination.** Draft specifying `purchase.create`
+  idempotency keyed on `intent_id` (duplicate id + identical canonical payload
+  → idempotent replay; same id, different payload → registered error) and
+  cursor pagination for `inventory.query` (opaque cursor, page-size bounds,
+  stability guarantees), with new error codes registered in the frozen registry.
+- **Admin app-router boundaries** (`error.tsx`, `loading.tsx`, `not-found.tsx`)
+  and a reusable `SimulatedDataBadge` labelling demo/synthetic dashboard data.
+- **Conformance: checked-in differential fuzz harness** and two new
+  `02-canonical-json` sub-cases (`utf16-key-order`, `bigint-literals`) wired
+  into the cross-IUT determinism CI job.
+- **Swift binding: crypto FFI surface** — `jcs_canonicalize`, `payload_plain_hash`,
+  `merkle_root`, `free_buffer` exported from the FFI crate and declared in the C
+  header, delegating to `stateset-crypto`.
 
 ### Testing
 - **13 orphaned `cli/test/mcp/` files (246 tests) now run in CI** via the
