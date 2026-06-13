@@ -156,5 +156,10 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "036_fix_updated_at_triggers",
             include_str!("../migrations/036_fix_updated_at_triggers.sql"),
         ),
+        // Commerce entity tables that previously existed only in #[cfg(test)]
+        // blocks and the PostgreSQL backend: shipping zones, gift cards, reviews,
+        // segments, store credits, wishlists, loyalty. Their mounted REST
+        // endpoints returned HTTP 500 'no such table' until provisioned here.
+        ("037_commerce_entities", include_str!("../migrations/037_commerce_entities.sql")),
     ]
 }

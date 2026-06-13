@@ -156,14 +156,13 @@ mod tests {
         (router, state)
     }
 
-    /// Attempt to create a shipping zone, returning `false` when the backing
-    /// `shipping_zones` table is not present in the current SQLite schema.
+    /// Create a shipping zone via the embedded commerce backend.
     ///
-    /// The SQLite migration set does not yet provision the `shipping_zones`
-    /// table (only the PostgreSQL backend does), so route-level tests must
-    /// tolerate environments where zone creation is unavailable. See the L7
-    /// note about the missing `shipping_zones` SQLite migration.
-    fn try_create_zone(state: &AppState, name: &str) -> bool {
+    /// The `shipping_zones` table is provisioned by SQLite migration
+    /// `037_commerce_entities`, so creation must succeed against the live
+    /// in-memory schema (it previously failed because the table was only
+    /// created in the PostgreSQL backend and in `#[cfg(test)]` blocks).
+    fn create_zone(state: &AppState, name: &str) {
         state
             .commerce()
             .shipping_zones()
@@ -174,7 +173,7 @@ mod tests {
                 postal_codes: Vec::new(),
                 priority: None,
             })
-            .is_ok()
+            .expect("create shipping zone against live SQLite schema");
     }
 
     #[tokio::test]
@@ -182,16 +181,9 @@ mod tests {
         let (app, state) = app_with_state();
 
         // Create more zones than the requested page size.
-        let mut created = 0u32;
-        for i in 0..5 {
-            if try_create_zone(&state, &format!("zone-{i}")) {
-                created += 1;
-            }
-        }
-        if created == 0 {
-            // shipping_zones table is unavailable in this SQLite schema; the
-            // pagination-total contract is covered by the orders suite instead.
-            return;
+        let created = 5u32;
+        for i in 0..created {
+            create_zone(&state, &format!("zone-{i}"));
         }
 
         let resp = app
