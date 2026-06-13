@@ -267,8 +267,7 @@ Understanding how an LLM interacts with iCommerce is critical to understanding t
 | `stateset-pricing` | Deterministic pricing engine | Pure functions, WASM-compatible |
 | `stateset-authz` | Authorization, RBAC, rate limiting | IO-free, framework-agnostic |
 | `stateset-observability` | Metrics, tracing, OpenTelemetry | Lock-free atomic counters |
-| `stateset-protocol` | Wire-format types for sync | IO-free, WASM-compatible |
-| `stateset-sync` | Event-sourcing sync engine | Outbox pattern, conflict resolution |
+| `stateset-sync` | Event-sourcing sync engine + wire types | Outbox pattern, conflict resolution |
 | `stateset-http` | Axum REST + SSE server | Auth, CORS, tracing middleware |
 | `stateset-jobs` | Background job scheduler | Cron, intervals, retries |
 | `stateset-ffi` | Stable C ABI | `#[repr(C)]`, ABI versioning |
@@ -1351,7 +1350,6 @@ stateset-embedded (unified API surface, async runtime)
 stateset-sdk (facade with feature gates)
 
 stateset-crypto ←─── (VES v1.0, Ed25519, AES-GCM, Merkle)
-stateset-protocol ←── (wire types, EventEnvelope, SyncBatch)
 stateset-policy ←──── (rule engine, conditions, actions)
 stateset-a2a ←─────── (splits, escrow, subscriptions)
 stateset-pricing ←──── (pure functions, deterministic)

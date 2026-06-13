@@ -87,10 +87,8 @@ post-quantum *hard* finality is the largest planned gap (see below).
   (`.github/workflows/ci.yml` `codeql` job, matrix-driven).
 - **`gitleaks`** scans the full git history on every push and PR
   (`.github/workflows/gitleaks.yml`).
-- **`cargo-fuzz`** runs nightly on six targets — three on
-  `stateset-crypto` (canonicalize_json, compute_payload_plain_hash,
-  compute_merkle_root) and three on `stateset-protocol`
-  (envelope_deserialize, batch_deserialize, canonical_json) —
+- **`cargo-fuzz`** runs nightly on three targets on `stateset-crypto`
+  (canonicalize_json, compute_payload_plain_hash, compute_merkle_root) —
   90-second soak each, persistent crash artifacts uploaded
   (`.github/workflows/fuzz-nightly.yml`).
 

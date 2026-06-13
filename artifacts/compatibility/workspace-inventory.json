@@ -6,9 +6,9 @@
   },
   "workspace": {
     "version": "1.6.0",
-    "memberCount": 31,
-    "defaultMemberCount": 20,
-    "rustCrateCount": 23,
+    "memberCount": 30,
+    "defaultMemberCount": 19,
+    "rustCrateCount": 22,
     "bindingCrateCount": 8,
     "members": [
       {
@@ -147,11 +147,6 @@
         "packageKind": "crate"
       },
       {
-        "name": "stateset-protocol",
-        "manifestPath": "crates/stateset-protocol/Cargo.toml",
-        "packageKind": "crate"
-      },
-      {
         "name": "stateset-sdk",
         "manifestPath": "crates/stateset-sdk/Cargo.toml",
         "packageKind": "crate"
@@ -250,10 +245,6 @@
       "stateset-policy": [],
       "stateset-pricing": [],
       "stateset-primitives": [],
-      "stateset-protocol": [
-        "stateset-crypto",
-        "stateset-primitives"
-      ],
       "stateset-sdk": [
         "stateset-core",
         "stateset-crypto",
@@ -291,7 +282,6 @@
       [
         "stateset-core",
         "stateset-icp-iut",
-        "stateset-protocol",
         "stateset-sync"
       ],
       [
@@ -338,7 +328,7 @@
       },
       {
         "name": "stateset-crypto",
-        "dependentCount": 13,
+        "dependentCount": 12,
         "dependents": [
           "stateset-core",
           "stateset-dotnet",
@@ -349,7 +339,6 @@
           "stateset-icp-iut",
           "stateset-java",
           "stateset-kotlin",
-          "stateset-protocol",
           "stateset-sdk",
           "stateset-swift",
           "stateset-sync"
@@ -373,14 +362,13 @@
       },
       {
         "name": "stateset-primitives",
-        "dependentCount": 7,
+        "dependentCount": 6,
         "dependents": [
           "stateset-core",
           "stateset-embedded-python",
           "stateset-ffi",
           "stateset-http",
           "stateset-java",
-          "stateset-protocol",
           "stateset-sdk"
         ]
       },

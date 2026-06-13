@@ -154,10 +154,9 @@ Both flagged JS sync bugs were already fixed in current code:
 - `.husky/pre-commit` runs `cargo fmt --check` + `cargo clippy -D warnings`
   when `*.rs` / `*.toml` is staged. Skippable via `SKIP_RUST=1`; no-ops
   when cargo isn't on PATH.
-- `crates/stateset-crypto/fuzz/` + `crates/stateset-protocol/fuzz/` —
-  6 cargo-fuzz targets (canonicalize_json, compute_payload_plain_hash,
-  compute_merkle_root, envelope_deserialize, batch_deserialize,
-  canonical_json) running 90 s nightly each via
+- `crates/stateset-crypto/fuzz/` —
+  3 cargo-fuzz targets (canonicalize_json, compute_payload_plain_hash,
+  compute_merkle_root) running 90 s nightly each via
   `.github/workflows/fuzz-nightly.yml`.
 - `supply-chain/{config,audits,imports.lock}.toml` — cargo-vet bootstrap
   with 6 trusted import feeds (Mozilla, Google, Embark Studios, Bytecode
