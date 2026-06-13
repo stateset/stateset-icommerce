@@ -533,11 +533,27 @@ impl CreditRepository for SqliteCreditRepository {
             ],
         ).map_err(map_db_error)?;
 
-        // Update hold amount
+        // Update hold amount.
+        //
+        // `hold_amount` is a TEXT column (migration 021), so adding in SQL
+        // ('CAST(hold_amount AS REAL) + ?') would coerce both operands to
+        // IEEE-754 floats ('0.10' + '0.20' = 0.30000000000000004). Instead we
+        // read the current value, add with `rust_decimal::Decimal` in Rust, and
+        // write the exact precomputed string back as a bound parameter.
+        let current_hold: String = conn
+            .query_row(
+                "SELECT hold_amount FROM credit_accounts WHERE customer_id = ?",
+                [customer_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+        let new_hold =
+            parse_decimal_strict(&current_hold, "credit_account", "hold_amount")? + amount;
         conn.execute(
-            "UPDATE credit_accounts SET hold_amount = CAST(hold_amount AS REAL) + ? WHERE customer_id = ?",
-            [&amount.to_string(), &customer_id.to_string()],
-        ).map_err(map_db_error)?;
+            "UPDATE credit_accounts SET hold_amount = ? WHERE customer_id = ?",
+            [&new_hold.to_string(), &customer_id.to_string()],
+        )
+        .map_err(map_db_error)?;
 
         self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
@@ -575,11 +591,27 @@ impl CreditRepository for SqliteCreditRepository {
         )
         .map_err(map_db_error)?;
 
-        // Update hold amount
+        // Update hold amount.
+        //
+        // `hold_amount` is a TEXT column (migration 021), so subtracting in SQL
+        // would coerce to IEEE-754 floats. Read the current value, subtract with
+        // `rust_decimal::Decimal`, clamp at zero in Rust, and write the exact
+        // string back as a bound parameter.
+        let current_hold: String = conn
+            .query_row(
+                "SELECT hold_amount FROM credit_accounts WHERE customer_id = ?",
+                [customer_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+        let new_hold = (parse_decimal_strict(&current_hold, "credit_account", "hold_amount")?
+            - amount)
+            .max(Decimal::ZERO);
         conn.execute(
-            "UPDATE credit_accounts SET hold_amount = MAX(0, CAST(hold_amount AS REAL) - ?) WHERE customer_id = ?",
-            [&amount.to_string(), &customer_id.to_string()],
-        ).map_err(map_db_error)?;
+            "UPDATE credit_accounts SET hold_amount = ? WHERE customer_id = ?",
+            [&new_hold.to_string(), &customer_id.to_string()],
+        )
+        .map_err(map_db_error)?;
 
         self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
@@ -596,11 +628,26 @@ impl CreditRepository for SqliteCreditRepository {
         // Release the reservation first
         self.release_credit_reservation(customer_id, order_id)?;
 
-        // Add to balance
+        // Add to balance.
+        //
+        // `current_balance` is a TEXT column (migration 021), so adding in SQL
+        // would coerce to IEEE-754 floats. Read the current value, add with
+        // `rust_decimal::Decimal`, and write the exact string back as a bound
+        // parameter.
+        let current_balance: String = conn
+            .query_row(
+                "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
+                [customer_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+        let new_balance =
+            parse_decimal_strict(&current_balance, "credit_account", "current_balance")? + amount;
         conn.execute(
-            "UPDATE credit_accounts SET current_balance = CAST(current_balance AS REAL) + ? WHERE customer_id = ?",
-            [&amount.to_string(), &customer_id.to_string()],
-        ).map_err(map_db_error)?;
+            "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
+            [&new_balance.to_string(), &customer_id.to_string()],
+        )
+        .map_err(map_db_error)?;
 
         // Record transaction
         self.record_transaction(RecordCreditTransaction {
@@ -979,11 +1026,25 @@ impl CreditRepository for SqliteCreditRepository {
     ) -> Result<CreditAccount> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        // Reduce balance
+        // Reduce balance.
+        //
+        // `current_balance` is a TEXT column (migration 021), so subtracting in
+        // SQL would coerce to IEEE-754 floats. Read the current value, subtract
+        // with `rust_decimal::Decimal`, clamp at zero in Rust, and write the
+        // exact string back as a bound parameter.
+        let current_balance: String = conn
+            .query_row(
+                "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
+                [customer_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+        let new_balance =
+            (parse_decimal_strict(&current_balance, "credit_account", "current_balance")? - amount)
+                .max(Decimal::ZERO);
         conn.execute(
-            "UPDATE credit_accounts SET current_balance = MAX(0, CAST(current_balance AS REAL) - ?)
-             WHERE customer_id = ?",
-            [&amount.to_string(), &customer_id.to_string()],
+            "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
+            [&new_balance.to_string(), &customer_id.to_string()],
         )
         .map_err(map_db_error)?;
 
@@ -1196,5 +1257,82 @@ mod tests {
     fn get_application_unknown_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get_application(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn two_reservations_keep_hold_amount_exact() {
+        // Regression: hold_amount is a TEXT column and was mutated via
+        // 'CAST(hold_amount AS REAL) + ?', so 0.10 + 0.20 stored as
+        // 0.30000000000000004. With Decimal arithmetic it must be exactly 0.30.
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000));
+
+        repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(0.10)).expect("hold 1");
+        let acct =
+            repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(0.20)).expect("hold 2");
+
+        assert_eq!(acct.hold_amount, dec!(0.30));
+        // available = limit - balance - holds = 1000 - 0 - 0.30
+        assert_eq!(acct.available_credit, dec!(999.70));
+    }
+
+    #[test]
+    fn release_reservation_keeps_hold_amount_exact() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000));
+
+        let order_a = stateset_core::OrderId::new();
+        repo.reserve_credit(cust, order_a, dec!(0.10)).expect("hold a");
+        repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(0.20)).expect("hold b");
+
+        // Releasing the 0.10 hold must leave exactly 0.20, not a float residue.
+        let acct = repo.release_credit_reservation(cust, order_a).expect("release a");
+        assert_eq!(acct.hold_amount, dec!(0.20));
+    }
+
+    #[test]
+    fn charge_then_partial_payment_keeps_balance_exact() {
+        // Regression: current_balance is TEXT, mutated via CAST(... AS REAL).
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000));
+
+        // Charge 0.10 then 0.20 -> balance must be exactly 0.30.
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(0.10)).expect("charge 1");
+        let acct =
+            repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(0.20)).expect("charge 2");
+        assert_eq!(acct.current_balance, dec!(0.30));
+
+        // Partial payment of 0.10 leaves exactly 0.20.
+        let acct = repo.apply_payment(cust, dec!(0.10), None).expect("payment");
+        assert_eq!(acct.current_balance, dec!(0.20));
+        assert_eq!(acct.available_credit, dec!(999.80));
+    }
+
+    #[test]
+    fn payment_clamps_balance_at_zero() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000));
+
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(50)).expect("charge");
+        // Overpaying must clamp the balance at exactly 0, never go negative.
+        let acct = repo.apply_payment(cust, dec!(75), None).expect("overpay");
+        assert_eq!(acct.current_balance, Decimal::ZERO);
+    }
+
+    #[test]
+    fn release_reservation_clamps_hold_at_zero() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000));
+
+        let order = stateset_core::OrderId::new();
+        repo.reserve_credit(cust, order, dec!(10)).expect("hold");
+        // Releasing the only hold drops hold_amount to exactly 0 (never below).
+        let acct = repo.release_credit_reservation(cust, order).expect("release");
+        assert_eq!(acct.hold_amount, Decimal::ZERO);
     }
 }

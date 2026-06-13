@@ -978,11 +978,28 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             .unwrap_or(false);
 
         if dest_exists {
+            // `quantity_on_hand` is a TEXT column (migration 016), so adding in
+            // SQL ('CAST(quantity_on_hand AS REAL) + ?1') would coerce both
+            // operands to IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004).
+            // Read the destination's current quantity, add with
+            // `rust_decimal::Decimal` in Rust, and write the exact precomputed
+            // string back as a bound parameter.
+            let dest_on_hand: String = conn
+                .query_row(
+                    "SELECT quantity_on_hand FROM location_inventory
+                     WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
+                    params![input.to_location_id, input.sku, lot_key],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+            let new_dest_qty =
+                parse_decimal_strict(&dest_on_hand, "location_inventory", "quantity_on_hand")?
+                    + input.quantity;
             conn.execute(
-                "UPDATE location_inventory SET quantity_on_hand = CAST(quantity_on_hand AS REAL) + ?1, updated_at = ?2
+                "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
                  WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
                 params![
-                    input.quantity.to_string(),
+                    new_dest_qty.to_string(),
                     now_str,
                     input.to_location_id,
                     input.sku,
@@ -1248,8 +1265,9 @@ mod tests {
     use crate::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        CreateLocation, CreateWarehouse, CreateZone, LocationFilter, LocationType, UpdateLocation,
-        UpdateWarehouse, WarehouseAddress, WarehouseFilter, WarehouseRepository, WarehouseType,
+        AdjustLocationInventory, CreateLocation, CreateWarehouse, CreateZone, LocationFilter,
+        LocationType, MoveInventory, UpdateLocation, UpdateWarehouse, WarehouseAddress,
+        WarehouseFilter, WarehouseRepository, WarehouseType,
     };
 
     fn fresh_repo() -> SqliteWarehouseRepository {
@@ -1500,5 +1518,63 @@ mod tests {
     fn get_location_unknown_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get_location(99_999).expect("ok").is_none());
+    }
+
+    #[test]
+    fn move_into_existing_dest_keeps_quantity_exact() {
+        // Regression: quantity_on_hand is a TEXT column and the destination
+        // receipt was mutated via 'CAST(quantity_on_hand AS REAL) + ?1', so
+        // 0.1 + 0.2 stored as 0.30000000000000004. With Decimal arithmetic the
+        // destination must hold exactly 0.3.
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-MV");
+        let src = make_loc(&repo, wh.id, "SRC-1");
+        let dst = make_loc(&repo, wh.id, "DST-1");
+        let lot = Uuid::new_v4();
+
+        // Seed the source with enough stock to move twice.
+        repo.adjust_inventory(AdjustLocationInventory {
+            location_id: src.id,
+            sku: "SKU-1".into(),
+            lot_id: Some(lot),
+            quantity: dec!(10),
+            reason: "seed source".into(),
+            reference_type: None,
+            reference_id: None,
+            performed_by: None,
+        })
+        .expect("seed source");
+
+        // First move creates the destination row (0.1).
+        repo.move_inventory(MoveInventory {
+            from_location_id: src.id,
+            to_location_id: dst.id,
+            sku: "SKU-1".into(),
+            lot_id: Some(lot),
+            quantity: dec!(0.1),
+            reason: None,
+            performed_by: None,
+        })
+        .expect("move 1");
+
+        // Second move hits the dest_exists branch: 0.1 + 0.2 must be exactly 0.3.
+        repo.move_inventory(MoveInventory {
+            from_location_id: src.id,
+            to_location_id: dst.id,
+            sku: "SKU-1".into(),
+            lot_id: Some(lot),
+            quantity: dec!(0.2),
+            reason: None,
+            performed_by: None,
+        })
+        .expect("move 2");
+
+        let dst_inv = repo.get_location_inventory(dst.id).expect("dest inventory");
+        let on_hand = dst_inv
+            .iter()
+            .find(|i| i.sku == "SKU-1")
+            .map(|i| i.quantity_on_hand)
+            .expect("dest row present");
+        assert_eq!(on_hand, dec!(0.3));
     }
 }
