@@ -736,7 +736,11 @@ export class SequencerClient {
    * @returns {boolean}
    */
   verifyInclusion(envelope, proof, expectedRoot) {
-    // Reconstruct the event signing hash (same computation as verifyEventSignature)
+    // Reconstruct the event signing hash (same computation as verifyEventSignature).
+    // payloadKind MUST be bound here: it is part of the canonical event signing
+    // preimage (computeEventSigningHash hashes u32BE(payloadKind)). Omitting it
+    // silently defaults to 0 (plaintext), letting an inclusion proof built for an
+    // encrypted envelope (payloadKind=1) verify as plaintext and vice versa.
     const eventSigningHash = computeEventSigningHash({
       vesVersion: envelope.vesVersion || 1,
       tenantId: envelope.tenantId,
@@ -748,6 +752,7 @@ export class SequencerClient {
       entityType: envelope.entityType,
       entityId: envelope.entityId,
       eventType: envelope.eventType,
+      payloadKind: envelope.payloadKind || 0,
       baseVersion: envelope.baseVersion || null,
       createdAt: envelope.createdAt,
       payloadPlainHash: hexToBuffer(envelope.payloadPlainHash),
@@ -785,7 +790,9 @@ export class SequencerClient {
    * @returns {boolean}
    */
   verifyEventSignature(envelope, publicKey) {
-    // Reconstruct the signing hash
+    // Reconstruct the signing hash. payloadKind is part of the canonical signing
+    // preimage and MUST be bound so an encrypted envelope cannot verify under the
+    // plaintext signing hash (or vice versa).
     const eventSigningHash = computeEventSigningHash({
       vesVersion: envelope.vesVersion || 1,
       tenantId: envelope.tenantId,
@@ -797,6 +804,7 @@ export class SequencerClient {
       entityType: envelope.entityType,
       entityId: envelope.entityId,
       eventType: envelope.eventType,
+      payloadKind: envelope.payloadKind || 0,
       baseVersion: envelope.baseVersion || null,
       createdAt: envelope.createdAt,
       payloadPlainHash: hexToBuffer(envelope.payloadPlainHash),

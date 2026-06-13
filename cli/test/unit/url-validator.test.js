@@ -11,6 +11,7 @@ import {
   fetchWithValidatedRedirects,
   validateFetchUrl,
   validateResolvedFetchUrl,
+  createPinnedLookup,
   isBlockedIpAddress,
   isSafeDisplayUrl,
 } from '../../src/utils/url-validator.js';
@@ -214,6 +215,98 @@ describe('validateResolvedFetchUrl', () => {
         }),
       /Unable to resolve URL host/,
     );
+  });
+
+  it('returns the validated addresses so callers can pin the connection', async () => {
+    const result = await validateResolvedFetchUrl('https://merchant.test/pay', {
+      cache: false,
+      lookup: async () => [
+        { address: '8.8.8.8', family: 4 },
+        { address: '2606:4700:4700::1111', family: 6 },
+      ],
+    });
+    assert.ok(result);
+    assert.equal(result.host, 'merchant.test');
+    assert.deepEqual(result.addresses, [
+      { address: '8.8.8.8', family: 4 },
+      { address: '2606:4700:4700::1111', family: 6 },
+    ]);
+  });
+
+  it('returns null for IP-literal hosts (nothing to pin)', async () => {
+    const result = await validateResolvedFetchUrl('https://8.8.8.8/pay', { cache: false });
+    assert.equal(result, null);
+  });
+
+  it('returns null for documentation hosts (nothing to pin)', async () => {
+    const result = await validateResolvedFetchUrl('https://example.com/pay', { cache: false });
+    assert.equal(result, null);
+  });
+});
+
+// ===========================================================================
+// createPinnedLookup — connection pinning closes the rebinding TOCTOU window
+// ===========================================================================
+
+describe('createPinnedLookup', () => {
+  function callLookup(lookup, hostname, options) {
+    return new Promise((resolve, reject) => {
+      lookup(hostname, options, (err, address, family) => {
+        if (err) reject(err);
+        else resolve({ address, family });
+      });
+    });
+  }
+
+  it('resolves the pinned host to a validated address', async () => {
+    const lookup = createPinnedLookup('merchant.test', [{ address: '8.8.8.8', family: 4 }]);
+    const result = await callLookup(lookup, 'merchant.test', {});
+    assert.deepEqual(result, { address: '8.8.8.8', family: 4 });
+  });
+
+  it('returns all validated addresses when options.all is set', async () => {
+    const lookup = createPinnedLookup('merchant.test', [
+      { address: '8.8.8.8', family: 4 },
+      { address: '1.1.1.1', family: 4 },
+    ]);
+    const result = await callLookup(lookup, 'merchant.test', { all: true });
+    assert.deepEqual(result.address, [
+      { address: '8.8.8.8', family: 4 },
+      { address: '1.1.1.1', family: 4 },
+    ]);
+  });
+
+  it('honors a requested address family when available', async () => {
+    const lookup = createPinnedLookup('merchant.test', [
+      { address: '8.8.8.8', family: 4 },
+      { address: '2606:4700:4700::1111', family: 6 },
+    ]);
+    const v6 = await callLookup(lookup, 'merchant.test', { family: 6 });
+    assert.equal(v6.address, '2606:4700:4700::1111');
+    assert.equal(v6.family, 6);
+  });
+
+  it('refuses a connect attempt to any host other than the pinned one', async () => {
+    const lookup = createPinnedLookup('merchant.test', [{ address: '8.8.8.8', family: 4 }]);
+    await assert.rejects(
+      () => callLookup(lookup, 'evil.test', {}),
+      /unexpected connect host evil\.test/,
+    );
+  });
+
+  it('drops addresses that became blocked at connect time (rebinding defense)', async () => {
+    // Simulate a validated set that, at connect time, re-checks as internal.
+    const lookup = createPinnedLookup('merchant.test', [{ address: '169.254.169.254', family: 4 }]);
+    await assert.rejects(
+      () => callLookup(lookup, 'merchant.test', {}),
+      /no validated public address/,
+    );
+  });
+
+  it('matches the pinned host case-insensitively', async () => {
+    const lookup = createPinnedLookup('merchant.test', [{ address: '8.8.8.8', family: 4 }]);
+    const result = await callLookup(lookup, 'Merchant.TEST', {});
+    assert.equal(result.address, '8.8.8.8');
   });
 });
 

@@ -318,10 +318,89 @@ function optionsForRedirect(options, status) {
 }
 
 /**
+ * Lazily-loaded undici `Agent` constructor, used to pin connections to the
+ * already-validated IP addresses. Resolved once and memoized; `false` means
+ * undici is unavailable in this runtime (connection pinning is then skipped and
+ * we fall back to re-validation only).
+ * @type {(new (options: any) => any) | false | null}
+ */
+let _undiciAgent = null;
+
+/**
+ * @returns {Promise<(new (options: any) => any) | false>}
+ */
+async function loadUndiciAgent() {
+  if (_undiciAgent !== null) return _undiciAgent;
+  try {
+    const undici = await import('undici');
+    _undiciAgent = typeof undici.Agent === 'function' ? undici.Agent : false;
+  } catch {
+    _undiciAgent = false;
+  }
+  return _undiciAgent;
+}
+
+/**
+ * Build a Node-style `lookup(hostname, options, callback)` that resolves the
+ * pinned host to exactly the already-validated addresses and re-checks each
+ * address against the SSRF block list at connect time. This pins the actual
+ * socket connection to the IPs we validated, closing the DNS-rebinding TOCTOU
+ * window between validation and connect.
+ *
+ * @param {string} pinnedHost - normalized hostname the pin applies to
+ * @param {ValidatedAddress[]} validatedAddresses
+ * @returns {(hostname: string, options: any, callback: (err: Error | null, address?: any, family?: number) => void) => void}
+ */
+export function createPinnedLookup(pinnedHost, validatedAddresses) {
+  return (hostname, optionsOrCallback, maybeCallback) => {
+    const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
+    const options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback || {};
+
+    // Only pin the host we validated. Any other hostname (should not happen for
+    // a single connection) is refused rather than silently resolved.
+    if (normalizeHostname(hostname) !== pinnedHost) {
+      callback(new Error(`SSRF blocked: unexpected connect host ${hostname}`));
+      return;
+    }
+
+    // Re-validate at connect time (defense in depth) and drop anything blocked.
+    const safe = validatedAddresses.filter(({ address }) => !isBlockedIpAddress(address));
+    if (safe.length === 0) {
+      callback(new Error(`SSRF blocked: ${pinnedHost} has no validated public address`));
+      return;
+    }
+
+    if (options.all) {
+      callback(
+        null,
+        safe.map(({ address, family }) => ({ address, family })),
+      );
+      return;
+    }
+
+    const requestedFamily = Number(options.family) || 0;
+    const chosen =
+      (requestedFamily && safe.find(({ family }) => family === requestedFamily)) || safe[0];
+    callback(null, chosen.address, chosen.family);
+  };
+}
+
+/**
  * Fetch a URL while validating the initial URL and every redirect target.
  *
  * The platform fetch implementation follows redirects automatically by default,
  * so callers that care about SSRF need redirect validation at the fetch layer.
+ *
+ * DNS-rebinding hardening: each hop is validated, and when running on the
+ * platform (undici) fetch we pin the connection to the exact IP addresses we
+ * validated via a custom connect-time `lookup`. This closes the TOCTOU window
+ * where a hostname resolves to a public IP during validation but to a
+ * private/loopback IP when the socket is actually opened.
+ *
+ * Residual: when a custom `fetch` is injected (e.g. tests) or undici is not
+ * available, connection pinning cannot be installed; in that case the
+ * validate-then-fetch sequence still resolves DNS a second time at connect, so a
+ * narrow rebinding window remains for those callers only.
  *
  * @param {string} url
  * @param {RequestInit} [options]
@@ -329,6 +408,7 @@ function optionsForRedirect(options, status) {
  * @returns {Promise<Response>}
  */
 export async function fetchWithValidatedRedirects(url, options = {}, validationOptions = {}) {
+  const customFetch = typeof validationOptions.fetch === 'function';
   const fetchImpl = validationOptions.fetch || globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
     throw new Error('fetch implementation is required');
@@ -340,33 +420,64 @@ export async function fetchWithValidatedRedirects(url, options = {}, validationO
   let currentUrl = String(url);
   let currentOptions = { ...options };
 
+  // Pin connections to validated IPs only for the real platform fetch. A custom
+  // fetch (tests / callers supplying their own transport) controls its own
+  // connections, so we leave it untouched.
+  const AgentCtor = customFetch ? false : await loadUndiciAgent();
+
   for (let redirectCount = 0; ; redirectCount += 1) {
-    await validateResolvedFetchUrl(currentUrl, {
+    const validated = await validateResolvedFetchUrl(currentUrl, {
       lookup: validationOptions.lookup,
       cache: validationOptions.cache,
     });
 
-    const response = await fetchImpl(currentUrl, {
+    /** @type {RequestInit & { dispatcher?: unknown }} */
+    const fetchOptions = {
       ...currentOptions,
       redirect: 'manual',
-    });
+    };
 
-    if (!REDIRECT_STATUSES.has(response.status)) {
-      return response;
+    // Install a per-request dispatcher that pins the socket to the validated
+    // addresses. `validated` is null for IP-literal / documentation hosts (no
+    // rebinding risk — the URL already targets a fixed address).
+    let dispatcher = null;
+    if (AgentCtor && validated && validated.addresses.length > 0) {
+      dispatcher = new AgentCtor({
+        connect: { lookup: createPinnedLookup(validated.host, validated.addresses) },
+      });
+      fetchOptions.dispatcher = dispatcher;
     }
 
-    const location = readHeader(response.headers, 'location');
-    if (!location) {
-      return response;
-    }
-    if (redirectCount >= maxRedirects) {
-      throw new Error(`Too many redirects while fetching ${url}`);
-    }
+    try {
+      const response = await fetchImpl(currentUrl, fetchOptions);
 
-    currentUrl = new URL(location, currentUrl).toString();
-    currentOptions = optionsForRedirect(currentOptions, response.status);
+      if (!REDIRECT_STATUSES.has(response.status)) {
+        return response;
+      }
+
+      const location = readHeader(response.headers, 'location');
+      if (!location) {
+        return response;
+      }
+      if (redirectCount >= maxRedirects) {
+        throw new Error(`Too many redirects while fetching ${url}`);
+      }
+
+      currentUrl = new URL(location, currentUrl).toString();
+      currentOptions = optionsForRedirect(currentOptions, response.status);
+    } finally {
+      if (dispatcher && typeof dispatcher.close === 'function') {
+        // Best-effort cleanup of the per-request pinned agent.
+        Promise.resolve(dispatcher.close()).catch(() => {});
+      }
+    }
   }
 }
+
+/**
+ * @typedef {{ address: string, family: number }} ValidatedAddress
+ * @typedef {{ host: string, addresses: ValidatedAddress[] } | null} ValidatedHostResult
+ */
 
 /**
  * Validate URL syntax and resolve DNS before fetching.
@@ -374,9 +485,14 @@ export async function fetchWithValidatedRedirects(url, options = {}, validationO
  * This closes the gap where a public-looking hostname resolves to loopback,
  * private, link-local, metadata, multicast, or reserved address space.
  *
+ * Returns the set of validated (safe) addresses for the host so callers can
+ * pin the connection to exactly those addresses, closing the DNS-rebinding
+ * TOCTOU window between validation and connect. Returns `null` when the host is
+ * already an IP literal or a documentation host (nothing to pin).
+ *
  * @param {string} url
  * @param {{ lookup?: DnsLookup, cache?: boolean }} [options]
- * @returns {Promise<void>}
+ * @returns {Promise<ValidatedHostResult>}
  */
 export async function validateResolvedFetchUrl(url, options = {}) {
   validateFetchUrl(url);
@@ -384,7 +500,7 @@ export async function validateResolvedFetchUrl(url, options = {}) {
   const parsed = new URL(url);
   const host = normalizeHostname(parsed.hostname);
   if (net.isIP(host) || isDocumentationHostname(host)) {
-    return;
+    return null;
   }
 
   const useCache = options.cache !== false;
@@ -408,12 +524,14 @@ export async function validateResolvedFetchUrl(url, options = {}) {
     throw new Error(message);
   }
 
-  /** @type {string[]} */
+  /** @type {ValidatedAddress[]} */
   const addresses = [];
   for (const record of Array.isArray(records) ? records : [records]) {
     const address = typeof record === 'string' ? record : record?.address;
     if (typeof address === 'string' && address) {
-      addresses.push(address);
+      const family =
+        typeof record === 'string' ? net.isIP(address) : record?.family || net.isIP(address);
+      addresses.push({ address, family: Number(family) || net.isIP(address) });
     }
   }
 
@@ -421,9 +539,9 @@ export async function validateResolvedFetchUrl(url, options = {}) {
     throw new Error(`Unable to resolve URL host ${host}: no DNS addresses returned`);
   }
 
-  const blocked = addresses.find((address) => isBlockedIpAddress(address));
+  const blocked = addresses.find(({ address }) => isBlockedIpAddress(address));
   if (blocked) {
-    const message = `SSRF blocked: ${host} resolves to internal address ${blocked}`;
+    const message = `SSRF blocked: ${host} resolves to internal address ${blocked.address}`;
     if (useCache) {
       dnsValidationCache.set(host, {
         expiresAt: Date.now() + DNS_CACHE_TTL_MS,
@@ -435,4 +553,5 @@ export async function validateResolvedFetchUrl(url, options = {}) {
 
   // Successful DNS validations are intentionally not cached. Hostnames can
   // legitimately change, and a stale allow decision weakens SSRF protection.
+  return { host, addresses };
 }
