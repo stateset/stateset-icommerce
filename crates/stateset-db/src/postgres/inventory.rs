@@ -237,8 +237,12 @@ impl PgInventoryRepository {
 
         Self::expire_reservations_for_item_in_tx(tx, item_id, location_id, now).await?;
 
+        // Lock the balance row FOR UPDATE so concurrent reservers serialize on it.
+        // Without the lock, two transactions could both read sufficient availability
+        // and both succeed, overselling stock (TOCTOU). This mirrors the atomic
+        // re-check the SQLite backend performs in its UPDATE WHERE clause.
         let balance: (Decimal, i32) = sqlx::query_as(
-            "SELECT quantity_available, version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+            "SELECT quantity_available, version FROM inventory_balances WHERE item_id = $1 AND location_id = $2 FOR UPDATE",
         )
         .bind(item_id)
         .bind(location_id)
@@ -278,6 +282,11 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
+        // Guard the UPDATE with both the optimistic version check and an atomic
+        // stock guard (`quantity_available >= $qty`). Defence-in-depth alongside the
+        // FOR UPDATE lock above: a 0-row result under the matching version can only
+        // mean the stock guard tripped, which we surface as an oversell-safe
+        // InsufficientStock error rather than silently overselling.
         let result = sqlx::query(
             r#"
             UPDATE inventory_balances
@@ -286,6 +295,7 @@ impl PgInventoryRepository {
                 version = version + 1,
                 updated_at = $2
             WHERE item_id = $3 AND location_id = $4 AND version = $5
+              AND quantity_available >= $1
             "#,
         )
         .bind(input.quantity)
@@ -298,10 +308,13 @@ impl PgInventoryRepository {
         .map_err(map_db_error)?;
 
         if result.rows_affected() == 0 {
-            return Err(CommerceError::VersionConflict {
-                entity: "inventory_balance".to_string(),
-                id: format!("{}:{}", item_id, location_id),
-                expected_version: current_version,
+            // The row is locked FOR UPDATE and the version matched our read, so a
+            // 0-row update indicates the stock guard failed (insufficient stock),
+            // not a lost optimistic-lock race.
+            return Err(CommerceError::InsufficientStock {
+                sku: input.sku.clone(),
+                requested: input.quantity.to_string(),
+                available: available.to_string(),
             });
         }
 
@@ -836,9 +849,13 @@ impl PgInventoryRepository {
 
         Self::expire_reservations_for_item_in_tx(&mut tx, item_id, location_id, now).await?;
 
-        // Check availability and get current version for optimistic locking
+        // Check availability and get current version for optimistic locking.
+        // Lock the balance row FOR UPDATE so concurrent reservers serialize on it:
+        // without the lock two transactions could both read sufficient availability
+        // and both succeed, overselling stock (TOCTOU). This mirrors the atomic
+        // re-check the SQLite backend performs in its UPDATE WHERE clause.
         let balance: (Decimal, i32) = sqlx::query_as(
-            "SELECT quantity_available, version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+            "SELECT quantity_available, version FROM inventory_balances WHERE item_id = $1 AND location_id = $2 FOR UPDATE",
         )
         .bind(item_id)
         .bind(location_id)
@@ -879,7 +896,11 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
-        // Update allocation with optimistic locking
+        // Update allocation with optimistic locking. Guard the UPDATE with both the
+        // optimistic version check and an atomic stock guard (`quantity_available >= $qty`)
+        // as defence-in-depth alongside the FOR UPDATE lock above: a 0-row result under
+        // the matching version can only mean the stock guard tripped, which we surface as
+        // an oversell-safe InsufficientStock error rather than silently overselling.
         let result = sqlx::query(
             r#"
             UPDATE inventory_balances
@@ -888,6 +909,7 @@ impl PgInventoryRepository {
                 version = version + 1,
                 updated_at = $2
             WHERE item_id = $3 AND location_id = $4 AND version = $5
+              AND quantity_available >= $1
             "#,
         )
         .bind(input.quantity)
@@ -900,10 +922,13 @@ impl PgInventoryRepository {
         .map_err(map_db_error)?;
 
         if result.rows_affected() == 0 {
-            return Err(CommerceError::VersionConflict {
-                entity: "inventory_balance".to_string(),
-                id: format!("{}:{}", item_id, location_id),
-                expected_version: current_version,
+            // The row is locked FOR UPDATE and the version matched our read, so a
+            // 0-row update indicates the stock guard failed (insufficient stock),
+            // not a lost optimistic-lock race.
+            return Err(CommerceError::InsufficientStock {
+                sku: input.sku.clone(),
+                requested: input.quantity.to_string(),
+                available: available.to_string(),
             });
         }
 

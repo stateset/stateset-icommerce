@@ -7,8 +7,8 @@ use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AdjustStoreCredit, CommerceError, CreateStoreCredit, CurrencyCode, Result, StoreCredit,
-    StoreCreditFilter, StoreCreditId, StoreCreditReason, StoreCreditRepository,
-    StoreCreditStatus, StoreCreditTransaction, StoreCreditTransactionType,
+    StoreCreditFilter, StoreCreditId, StoreCreditReason, StoreCreditRepository, StoreCreditStatus,
+    StoreCreditTransaction, StoreCreditTransactionType,
 };
 use uuid::Uuid;
 
@@ -67,16 +67,10 @@ impl PgStoreCreditRepository {
         } = row;
 
         let status: StoreCreditStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid store_credit.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid store_credit.status '{}': {}", status, e))
         })?;
         let reason: StoreCreditReason = reason.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid store_credit.reason '{}': {}",
-                reason, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid store_credit.reason '{}': {}", reason, e))
         })?;
         let currency: CurrencyCode = currency.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
@@ -233,11 +227,7 @@ impl PgStoreCreditRepository {
         rows.into_iter().map(Self::row_to_store_credit).collect::<Result<Vec<_>>>()
     }
 
-    pub async fn adjust_async(
-        &self,
-        id: Uuid,
-        input: AdjustStoreCredit,
-    ) -> Result<StoreCredit> {
+    pub async fn adjust_async(&self, id: Uuid, input: AdjustStoreCredit) -> Result<StoreCredit> {
         let now = Utc::now();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;

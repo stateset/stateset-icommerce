@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
-    CommerceError, CreateReview, ProductId, Result, Review, ReviewFilter, ReviewId, ReviewRepository,
-    ReviewStatus, ReviewSummary, UpdateReview,
+    CommerceError, CreateReview, ProductId, Result, Review, ReviewFilter, ReviewId,
+    ReviewRepository, ReviewStatus, ReviewSummary, UpdateReview,
 };
 use uuid::Uuid;
 

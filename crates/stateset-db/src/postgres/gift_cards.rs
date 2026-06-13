@@ -67,10 +67,7 @@ impl PgGiftCardRepository {
         } = row;
 
         let status: GiftCardStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid gift_card.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid gift_card.status '{}': {}", status, e))
         })?;
 
         Ok(GiftCard {
@@ -123,14 +120,8 @@ impl PgGiftCardRepository {
         let id = Uuid::new_v4();
         let hex = id.simple().to_string();
         let short = &hex[..16];
-        format!(
-            "{}-{}-{}-{}",
-            &short[0..4],
-            &short[4..8],
-            &short[8..12],
-            &short[12..16]
-        )
-        .to_uppercase()
+        format!("{}-{}-{}-{}", &short[0..4], &short[4..8], &short[8..12], &short[12..16])
+            .to_uppercase()
     }
 
     // ---- async methods ----
@@ -162,9 +153,7 @@ impl PgGiftCardRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_async(GiftCardId::from(id))
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(GiftCardId::from(id)).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Get gift card by ID (async)
@@ -223,10 +212,7 @@ impl PgGiftCardRepository {
             param_idx += 1;
         }
 
-        let sql = format!(
-            "UPDATE gift_cards SET {} WHERE id = ${param_idx}",
-            sets.join(", ")
-        );
+        let sql = format!("UPDATE gift_cards SET {} WHERE id = ${param_idx}", sets.join(", "));
 
         let mut query = sqlx::query(&sql).bind(now);
 
@@ -323,9 +309,7 @@ impl PgGiftCardRepository {
         let card = Self::row_to_gift_card(row)?;
 
         if card.status != GiftCardStatus::Active {
-            return Err(CommerceError::ValidationError(
-                "Gift card is not active".to_string(),
-            ));
+            return Err(CommerceError::ValidationError("Gift card is not active".to_string()));
         }
         if card.current_balance < amount {
             return Err(CommerceError::ValidationError(
@@ -334,11 +318,8 @@ impl PgGiftCardRepository {
         }
 
         let new_balance = card.current_balance - amount;
-        let new_status = if new_balance.is_zero() {
-            GiftCardStatus::Depleted
-        } else {
-            GiftCardStatus::Active
-        };
+        let new_status =
+            if new_balance.is_zero() { GiftCardStatus::Depleted } else { GiftCardStatus::Active };
 
         sqlx::query(
             "UPDATE gift_cards SET current_balance = $1, status = $2, updated_at = $3 WHERE id = $4",
