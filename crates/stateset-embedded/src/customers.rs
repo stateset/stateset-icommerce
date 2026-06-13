@@ -2,7 +2,7 @@
 
 use stateset_core::{
     AddressType, CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
-    CustomerId, Result, UpdateCustomer,
+    CustomerId, Result, UpdateCustomer, Validate,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -95,6 +95,8 @@ impl Customers {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateCustomer) -> Result<Customer> {
+        // Reject empty/malformed email or empty names before persisting.
+        input.validate()?;
         let customer = self.db.customers().create(input)?;
         self.metrics.record_customer_created(&customer.id.to_string());
         #[cfg(feature = "events")]
@@ -164,6 +166,8 @@ impl Customers {
 
     /// Add an address for a customer.
     pub fn add_address(&self, input: CreateCustomerAddress) -> Result<CustomerAddress> {
+        // Reject empty required address fields before persisting.
+        input.validate()?;
         let address = self.db.customers().add_address(input)?;
         #[cfg(feature = "events")]
         {

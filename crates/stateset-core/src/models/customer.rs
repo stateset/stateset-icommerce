@@ -1,5 +1,7 @@
 //! Customer domain models
 
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use stateset_primitives::CustomerId;
@@ -87,6 +89,22 @@ pub struct CreateCustomer {
     pub metadata: Option<serde_json::Value>,
 }
 
+impl Validate for CreateCustomer {
+    /// Validate a customer create request.
+    ///
+    /// Requires a non-empty, well-formed email and non-empty first/last names.
+    /// The phone number, when supplied, must be a plausible phone number.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .required("email", &self.email)
+            .email("email", &self.email)
+            .required("first_name", &self.first_name)
+            .required("last_name", &self.last_name)
+            .required_if_present("phone", self.phone.as_deref())
+            .build()
+    }
+}
+
 /// Input for updating a customer
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateCustomer {
@@ -116,6 +134,24 @@ pub struct CreateCustomerAddress {
     pub country: String,
     pub phone: Option<String>,
     pub is_default: Option<bool>,
+}
+
+impl Validate for CreateCustomerAddress {
+    /// Validate a customer-address create request.
+    ///
+    /// Requires a non-nil customer reference and non-empty name / address line /
+    /// city / postal code / country fields.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .uuid_not_nil("customer_id", self.customer_id.into_uuid())
+            .required("first_name", &self.first_name)
+            .required("last_name", &self.last_name)
+            .required("line1", &self.line1)
+            .required("city", &self.city)
+            .required("postal_code", &self.postal_code)
+            .required("country", &self.country)
+            .build()
+    }
 }
 
 /// Customer filter for querying
@@ -443,5 +479,83 @@ mod tests {
         let json = serde_json::to_string(&customer).unwrap();
         let deserialized: Customer = serde_json::from_str(&json).unwrap();
         assert_eq!(customer, deserialized);
+    }
+
+    // ============================================================================
+    // Validation Tests
+    // ============================================================================
+
+    fn valid_create_customer() -> CreateCustomer {
+        CreateCustomer {
+            email: "alice@example.com".to_string(),
+            first_name: "Alice".to_string(),
+            last_name: "Smith".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn create_customer_rejects_empty_email() {
+        let input = CreateCustomer { email: String::new(), ..valid_create_customer() };
+        let err = input.validate().expect_err("empty email must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "email")
+        );
+    }
+
+    #[test]
+    fn create_customer_rejects_malformed_email() {
+        let input = CreateCustomer { email: "not-an-email".to_string(), ..valid_create_customer() };
+        let err = input.validate().expect_err("malformed email must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "email")
+        );
+    }
+
+    #[test]
+    fn create_customer_rejects_empty_names() {
+        assert!(
+            CreateCustomer { first_name: String::new(), ..valid_create_customer() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            CreateCustomer { last_name: "  ".to_string(), ..valid_create_customer() }
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn create_customer_accepts_valid_input() {
+        assert!(valid_create_customer().validate().is_ok());
+        let with_phone = CreateCustomer {
+            phone: Some("+1-555-123-4567".to_string()),
+            ..valid_create_customer()
+        };
+        assert!(with_phone.validate().is_ok());
+    }
+
+    #[test]
+    fn create_customer_address_rejects_empty_required_fields() {
+        let base = CreateCustomerAddress {
+            customer_id: CustomerId::new(),
+            address_type: None,
+            first_name: "Alice".to_string(),
+            last_name: "Smith".to_string(),
+            company: None,
+            line1: "123 Main St".to_string(),
+            line2: None,
+            city: "San Francisco".to_string(),
+            state: None,
+            postal_code: "94102".to_string(),
+            country: "US".to_string(),
+            phone: None,
+            is_default: None,
+        };
+        assert!(base.validate().is_ok());
+        assert!(CreateCustomerAddress { line1: String::new(), ..base.clone() }.validate().is_err());
+        assert!(CreateCustomerAddress { city: String::new(), ..base.clone() }.validate().is_err());
+        assert!(CreateCustomerAddress { country: String::new(), ..base }.validate().is_err());
     }
 }

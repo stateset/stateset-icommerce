@@ -2,6 +2,8 @@
 //!
 //! Handles payment processing, refunds, and payment method management.
 
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -457,6 +459,20 @@ pub struct CreatePayment {
     pub metadata: Option<String>,
 }
 
+impl Validate for CreatePayment {
+    /// Validate a payment create request.
+    ///
+    /// Rejects a negative amount and a malformed billing email (when present).
+    /// A zero amount is permitted (e.g. a $0 authorization / free order); only
+    /// a negative amount is rejected.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .non_negative("amount", self.amount)
+            .email_if_present("billing_email", self.billing_email.as_deref())
+            .build()
+    }
+}
+
 /// Input for updating a payment
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdatePayment {
@@ -562,6 +578,19 @@ pub struct CreateRefund {
     pub idempotency_key: Option<String>,
     /// Additional notes
     pub notes: Option<String>,
+}
+
+impl Validate for CreateRefund {
+    /// Validate a refund create request.
+    ///
+    /// Requires a non-nil payment reference. The amount-specific rules
+    /// (positivity and not exceeding the remaining refundable balance) are
+    /// enforced against the live payment in [`Payment::validate_refund`], which
+    /// is where the refund's monetary semantics belong; this structural check
+    /// only guards the payment reference itself.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new().uuid_not_nil("payment_id", self.payment_id.into_uuid()).build()
+    }
 }
 
 /// A stored payment method for a customer
@@ -903,5 +932,84 @@ mod tests {
         // Only 30 remains refundable; 31 must be rejected, 30 must pass.
         assert!(payment.validate_refund(Some(dec!(31))).is_err());
         assert_eq!(payment.validate_refund(Some(dec!(30))).expect("ok"), dec!(30));
+    }
+
+    #[test]
+    fn create_payment_rejects_negative_amount() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let input = CreatePayment { amount: dec!(-1), ..Default::default() };
+        let err = input.validate().expect_err("negative amount must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "amount")
+        );
+    }
+
+    #[test]
+    fn create_payment_accepts_zero_and_positive_amount() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        // A zero authorization is legitimate; only negatives are rejected.
+        assert!(CreatePayment { amount: dec!(0), ..Default::default() }.validate().is_ok());
+        assert!(CreatePayment { amount: dec!(99.99), ..Default::default() }.validate().is_ok());
+    }
+
+    #[test]
+    fn create_payment_rejects_malformed_billing_email() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let input = CreatePayment {
+            amount: dec!(10),
+            billing_email: Some("not-an-email".to_string()),
+            ..Default::default()
+        };
+        let err = input.validate().expect_err("malformed billing email must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "billing_email")
+        );
+    }
+
+    #[test]
+    fn create_payment_accepts_valid_billing_email() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let input = CreatePayment {
+            amount: dec!(10),
+            billing_email: Some("alice@example.com".to_string()),
+            ..Default::default()
+        };
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn create_refund_rejects_nil_payment_id() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let input = CreateRefund {
+            payment_id: PaymentId::from_uuid(Uuid::nil()),
+            amount: Some(dec!(5)),
+            ..Default::default()
+        };
+        let err = input.validate().expect_err("a nil payment reference must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "payment_id")
+        );
+    }
+
+    #[test]
+    fn create_refund_accepts_valid_payment_reference() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let id = PaymentId::new();
+        // Structural validation passes regardless of amount; the amount's
+        // positivity/balance rules are enforced by `Payment::validate_refund`.
+        assert!(
+            CreateRefund { payment_id: id, amount: None, ..Default::default() }.validate().is_ok()
+        );
+        assert!(
+            CreateRefund { payment_id: id, amount: Some(dec!(25)), ..Default::default() }
+                .validate()
+                .is_ok()
+        );
     }
 }

@@ -1,5 +1,7 @@
 //! Product domain models
 
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -108,6 +110,25 @@ pub struct CreateProduct {
     pub variants: Option<Vec<CreateProductVariant>>,
 }
 
+impl Validate for CreateProduct {
+    /// Validate a product create request.
+    ///
+    /// Requires a non-empty product name and validates each supplied variant
+    /// (valid SKU, non-negative price/cost). A product may be created without
+    /// variants, which are commonly added afterward.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new().required("name", &self.name).build()?;
+
+        if let Some(variants) = &self.variants {
+            for variant in variants {
+                variant.validate()?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Input for creating a product variant
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateProductVariant {
@@ -137,6 +158,23 @@ impl Default for CreateProductVariant {
             options: None,
             is_default: None,
         }
+    }
+}
+
+impl Validate for CreateProductVariant {
+    /// Validate a product-variant create request.
+    ///
+    /// Requires a valid SKU and rejects negative monetary amounts (price, the
+    /// optional compare-at price, cost) and a negative weight. A zero price is
+    /// permitted (e.g. a free sample); only negative amounts are rejected.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .sku("sku", &self.sku)
+            .non_negative("price", self.price)
+            .non_negative("compare_at_price", self.compare_at_price.unwrap_or(Decimal::ZERO))
+            .non_negative("cost", self.cost.unwrap_or(Decimal::ZERO))
+            .non_negative("weight", self.weight.unwrap_or(Decimal::ZERO))
+            .build()
     }
 }
 
@@ -471,6 +509,97 @@ mod tests {
         assert_eq!(create.price, Decimal::ZERO);
         assert!(create.name.is_none());
         assert!(create.cost.is_none());
+    }
+
+    // ============================================================================
+    // Validation Tests
+    // ============================================================================
+
+    fn valid_create_variant() -> CreateProductVariant {
+        CreateProductVariant {
+            sku: "WIDGET-001".to_string(),
+            price: dec!(49.99),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn create_product_variant_rejects_negative_price() {
+        let variant = CreateProductVariant { price: dec!(-1.00), ..valid_create_variant() };
+        let err = variant.validate().expect_err("negative price must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "price")
+        );
+    }
+
+    #[test]
+    fn create_product_variant_accepts_zero_price() {
+        // A free sample ($0) is legitimate; only negatives are rejected.
+        let variant = CreateProductVariant { price: Decimal::ZERO, ..valid_create_variant() };
+        assert!(variant.validate().is_ok());
+    }
+
+    #[test]
+    fn create_product_variant_rejects_empty_sku() {
+        let variant = CreateProductVariant { sku: String::new(), ..valid_create_variant() };
+        let err = variant.validate().expect_err("empty sku must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "sku")
+        );
+    }
+
+    #[test]
+    fn create_product_variant_rejects_negative_cost_and_weight() {
+        assert!(
+            CreateProductVariant { cost: Some(dec!(-5)), ..valid_create_variant() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            CreateProductVariant { weight: Some(dec!(-0.5)), ..valid_create_variant() }
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn create_product_rejects_empty_name() {
+        let input = CreateProduct { name: "  ".to_string(), ..Default::default() };
+        let err = input.validate().expect_err("empty product name must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "name")
+        );
+    }
+
+    #[test]
+    fn create_product_rejects_variant_with_negative_price() {
+        let input = CreateProduct {
+            name: "Premium Widget".to_string(),
+            variants: Some(vec![CreateProductVariant {
+                sku: "WIDGET-001".to_string(),
+                price: dec!(-10),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn create_product_accepts_valid_input() {
+        // Bare product (no variants) is valid.
+        assert!(
+            CreateProduct { name: "Premium Widget".to_string(), ..Default::default() }
+                .validate()
+                .is_ok()
+        );
+        // Product with a valid variant is valid.
+        let with_variant = CreateProduct {
+            name: "Premium Widget".to_string(),
+            variants: Some(vec![valid_create_variant()]),
+            ..Default::default()
+        };
+        assert!(with_variant.validate().is_ok());
     }
 
     // ============================================================================

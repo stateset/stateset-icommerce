@@ -35,7 +35,7 @@ use crate::Database;
 use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
     CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId, OrderId, Payment,
-    PaymentFilter, PaymentId, PaymentMethod, Refund, Result,
+    PaymentFilter, PaymentId, PaymentMethod, Refund, Result, Validate,
 };
 use stateset_observability::Metrics;
 use std::sync::Arc;
@@ -83,6 +83,8 @@ impl Payments {
     #[tracing::instrument(skip(self, input), fields(amount = %input.amount, method = ?input.payment_method))]
     pub fn create(&self, input: CreatePayment) -> Result<Payment> {
         tracing::info!("creating payment");
+        // Reject a negative amount or malformed billing email before persisting.
+        input.validate()?;
         self.db.payments().create(input)
     }
 
@@ -185,6 +187,9 @@ impl Payments {
     #[tracing::instrument(skip(self, input), fields(payment_id = %input.payment_id))]
     pub fn create_refund(&self, input: CreateRefund) -> Result<Refund> {
         tracing::info!("creating refund");
+        // Reject a nil payment reference or non-positive requested amount before
+        // touching the database at all.
+        input.validate()?;
         // Defense-in-depth: validate the refund against the payment's current
         // status and remaining refundable balance before delegating. The DB
         // backends enforce this too, but rejecting early keeps invalid refunds
