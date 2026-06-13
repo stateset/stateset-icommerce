@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 use super::Address;
 use super::x402::{X402Asset, X402IntentStatus, X402Network};
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
 
 /// Cart/Checkout Session aggregate
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -467,9 +469,32 @@ impl Cart {
         self.items.iter().any(|i| i.requires_shipping)
     }
 
+    /// Check if the cart's lifecycle status permits it to be checked out into
+    /// an order.
+    ///
+    /// A cart in a terminal/non-checkoutable state ([`CartStatus::Cancelled`],
+    /// [`CartStatus::Abandoned`], or [`CartStatus::Expired`]) can never be
+    /// completed into a real order. [`CartStatus::Completed`] is excluded here
+    /// too — completion of an already-completed cart is handled separately as an
+    /// idempotent short-circuit, not via this readiness check.
+    #[must_use]
+    pub const fn is_checkoutable_status(&self) -> bool {
+        matches!(
+            self.status,
+            CartStatus::Active | CartStatus::ReadyForPayment | CartStatus::PaymentPending
+        )
+    }
+
     /// Check if cart is ready for checkout
     #[must_use]
     pub fn is_ready_for_checkout(&self) -> bool {
+        // A cancelled/abandoned/expired (or already-completed) cart must never be
+        // minted into a new order, regardless of whether its items/customer/address
+        // fields happen to be populated.
+        if !self.is_checkoutable_status() {
+            return false;
+        }
+
         if self.items.is_empty() {
             return false;
         }
@@ -553,6 +578,38 @@ impl CartItem {
             self.discount_amount,
             self.tax_amount,
         );
+    }
+}
+
+impl Validate for AddCartItem {
+    /// Validate an item being added to a cart.
+    ///
+    /// Rejects empty SKU/name, a non-positive quantity, and a negative unit
+    /// or original price. A zero unit price is allowed (e.g. a free/gift item),
+    /// but a negative price never is.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .required("sku", &self.sku)
+            .required("name", &self.name)
+            .positive_i32("quantity", self.quantity)
+            .non_negative("unit_price", self.unit_price)
+            .non_negative("original_price", self.original_price.unwrap_or(Decimal::ZERO))
+            .build()
+    }
+}
+
+impl Validate for CreateCart {
+    /// Validate a cart create request.
+    ///
+    /// Validates each provided line item; an empty/no-items cart is allowed at
+    /// create time since items are commonly added afterward.
+    fn validate(&self) -> Result<()> {
+        if let Some(items) = &self.items {
+            for item in items {
+                item.validate()?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -649,6 +706,172 @@ mod tests {
 
         // Now ready
         assert!(cart.is_ready_for_checkout());
+    }
+
+    /// Build a fully-populated cart that satisfies the item/customer/address
+    /// requirements of [`Cart::is_ready_for_checkout`], with the given status.
+    fn ready_cart_with_status(status: CartStatus) -> Cart {
+        Cart {
+            id: CartId::new(),
+            cart_number: "CART-READY".to_string(),
+            customer_id: Some(CustomerId::new()),
+            status,
+            currency: CurrencyCode::USD,
+            items: vec![CartItem {
+                id: Uuid::new_v4(),
+                cart_id: CartId::new(),
+                product_id: None,
+                variant_id: None,
+                sku: "SKU-001".to_string(),
+                name: "Test Item".to_string(),
+                description: None,
+                image_url: None,
+                quantity: 1,
+                unit_price: dec!(10.00),
+                original_price: None,
+                discount_amount: dec!(0),
+                tax_amount: dec!(0.80),
+                total: dec!(10.80),
+                weight: None,
+                requires_shipping: true,
+                metadata: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            }],
+            subtotal: dec!(10.00),
+            tax_amount: dec!(0.80),
+            shipping_amount: dec!(5.00),
+            discount_amount: dec!(0),
+            grand_total: dec!(15.80),
+            customer_email: None,
+            customer_phone: None,
+            customer_name: None,
+            shipping_address: Some(CartAddress {
+                first_name: "John".to_string(),
+                last_name: "Doe".to_string(),
+                company: None,
+                line1: "123 Main St".to_string(),
+                line2: None,
+                city: "Anytown".to_string(),
+                state: Some("CA".to_string()),
+                postal_code: "12345".to_string(),
+                country: "US".to_string(),
+                phone: None,
+                email: None,
+            }),
+            billing_address: None,
+            billing_same_as_shipping: true,
+            fulfillment_type: Some(FulfillmentType::Shipping),
+            shipping_method: None,
+            shipping_carrier: None,
+            estimated_delivery: None,
+            payment_method: None,
+            payment_token: None,
+            payment_status: CartPaymentStatus::None,
+            coupon_code: None,
+            discount_description: None,
+            order_id: None,
+            order_number: None,
+            notes: None,
+            metadata: None,
+            inventory_reserved: false,
+            reservation_expires_at: None,
+            x402_payment: None,
+            expires_at: None,
+            completed_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_is_checkoutable_status() {
+        // Active/in-flight statuses are checkoutable.
+        assert!(ready_cart_with_status(CartStatus::Active).is_checkoutable_status());
+        assert!(ready_cart_with_status(CartStatus::ReadyForPayment).is_checkoutable_status());
+        assert!(ready_cart_with_status(CartStatus::PaymentPending).is_checkoutable_status());
+
+        // Terminal/non-checkoutable statuses are not.
+        assert!(!ready_cart_with_status(CartStatus::Completed).is_checkoutable_status());
+        assert!(!ready_cart_with_status(CartStatus::Cancelled).is_checkoutable_status());
+        assert!(!ready_cart_with_status(CartStatus::Abandoned).is_checkoutable_status());
+        assert!(!ready_cart_with_status(CartStatus::Expired).is_checkoutable_status());
+    }
+
+    #[test]
+    fn test_ready_for_checkout_rejects_terminal_status() {
+        // A fully-populated Active cart is ready for checkout.
+        assert!(ready_cart_with_status(CartStatus::Active).is_ready_for_checkout());
+
+        // The same cart is NOT ready once it is cancelled/abandoned/expired,
+        // even though its items/customer/address are all still populated.
+        for status in [CartStatus::Cancelled, CartStatus::Abandoned, CartStatus::Expired] {
+            let cart = ready_cart_with_status(status);
+            assert!(
+                !cart.is_ready_for_checkout(),
+                "cart in status {status:?} must not be ready for checkout"
+            );
+        }
+    }
+
+    #[test]
+    fn test_add_cart_item_validate_rejects_negative_and_zero_quantity() {
+        // Negative unit price is rejected.
+        let mut item = AddCartItem { sku: "SKU".into(), name: "Item".into(), ..Default::default() };
+        item.unit_price = dec!(-1.00);
+        assert!(item.validate().is_err());
+
+        // Zero quantity is rejected (quantity must be positive).
+        let mut item = AddCartItem { sku: "SKU".into(), name: "Item".into(), ..Default::default() };
+        item.quantity = 0;
+        assert!(item.validate().is_err());
+
+        // Negative quantity is rejected.
+        let mut item = AddCartItem { sku: "SKU".into(), name: "Item".into(), ..Default::default() };
+        item.quantity = -3;
+        assert!(item.validate().is_err());
+
+        // A free item ($0 unit price) with positive quantity is valid.
+        let item = AddCartItem {
+            sku: "FREE".into(),
+            name: "Free Gift".into(),
+            quantity: 1,
+            unit_price: dec!(0),
+            ..Default::default()
+        };
+        assert!(item.validate().is_ok());
+    }
+
+    #[test]
+    fn test_create_cart_validate() {
+        // No-items cart is allowed at create time.
+        assert!(CreateCart::default().validate().is_ok());
+
+        // A cart carrying an invalid item is rejected.
+        let bad = CreateCart {
+            items: Some(vec![AddCartItem {
+                sku: "SKU".into(),
+                name: "Item".into(),
+                quantity: -1,
+                unit_price: dec!(5.00),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
+
+        // A cart carrying a valid item is accepted.
+        let good = CreateCart {
+            items: Some(vec![AddCartItem {
+                sku: "SKU".into(),
+                name: "Item".into(),
+                quantity: 2,
+                unit_price: dec!(5.00),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(good.validate().is_ok());
     }
 
     #[test]

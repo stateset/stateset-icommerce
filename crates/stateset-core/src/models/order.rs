@@ -7,6 +7,9 @@ use stateset_primitives::{CurrencyCode, CustomerId, OrderId, OrderItemId, Produc
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
+
 /// Order aggregate root
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Order {
@@ -258,6 +261,44 @@ impl OrderItem {
     ) -> Decimal {
         let subtotal = unit_price * Decimal::from(quantity);
         subtotal - discount + tax
+    }
+}
+
+impl Validate for CreateOrderItem {
+    /// Validate a single order line item.
+    ///
+    /// Rejects empty SKU/name, a non-positive quantity, a negative unit price,
+    /// and negative discount/tax amounts. A zero unit price is permitted (e.g.
+    /// free/gift items); only negative monetary amounts are rejected.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .required("sku", &self.sku)
+            .required("name", &self.name)
+            .positive_i32("quantity", self.quantity)
+            .non_negative("unit_price", self.unit_price)
+            .non_negative("discount", self.discount.unwrap_or(Decimal::ZERO))
+            .non_negative("tax_amount", self.tax_amount.unwrap_or(Decimal::ZERO))
+            .build()
+    }
+}
+
+impl Validate for CreateOrder {
+    /// Validate an order create request.
+    ///
+    /// Requires a non-nil customer, at least one line item, and validates each
+    /// item. Currency consistency is enforced at the item level where prices
+    /// share the order's single currency.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .uuid_not_nil("customer_id", self.customer_id.into_uuid())
+            .non_empty_list("items", &self.items)
+            .build()?;
+
+        for item in &self.items {
+            item.validate()?;
+        }
+
+        Ok(())
     }
 }
 
@@ -685,5 +726,81 @@ mod tests {
         assert_eq!(filter.customer_id, Some(customer_id));
         assert_eq!(filter.status, Some(OrderStatus::Pending));
         assert_eq!(filter.limit, Some(10));
+    }
+
+    fn valid_create_order_item() -> CreateOrderItem {
+        CreateOrderItem {
+            product_id: ProductId::new(),
+            sku: "SKU-1".to_string(),
+            name: "Item".to_string(),
+            quantity: 1,
+            unit_price: dec!(10.00),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_create_order_item_validate() {
+        // Valid item passes.
+        assert!(valid_create_order_item().validate().is_ok());
+
+        // Negative unit price is rejected.
+        let mut item = valid_create_order_item();
+        item.unit_price = dec!(-0.01);
+        assert!(item.validate().is_err());
+
+        // Non-positive quantity is rejected.
+        let mut item = valid_create_order_item();
+        item.quantity = 0;
+        assert!(item.validate().is_err());
+        item.quantity = -2;
+        assert!(item.validate().is_err());
+
+        // Negative discount / tax are rejected.
+        let mut item = valid_create_order_item();
+        item.discount = Some(dec!(-1));
+        assert!(item.validate().is_err());
+        let mut item = valid_create_order_item();
+        item.tax_amount = Some(dec!(-1));
+        assert!(item.validate().is_err());
+
+        // A free ($0) item with positive quantity is valid.
+        let mut item = valid_create_order_item();
+        item.unit_price = dec!(0);
+        assert!(item.validate().is_ok());
+    }
+
+    #[test]
+    fn test_create_order_validate() {
+        // Valid order with one item passes.
+        let order = CreateOrder {
+            customer_id: CustomerId::new(),
+            items: vec![valid_create_order_item()],
+            ..Default::default()
+        };
+        assert!(order.validate().is_ok());
+
+        // Nil customer is rejected.
+        let order = CreateOrder {
+            customer_id: CustomerId::nil(),
+            items: vec![valid_create_order_item()],
+            ..Default::default()
+        };
+        assert!(order.validate().is_err());
+
+        // Empty items list is rejected.
+        let order =
+            CreateOrder { customer_id: CustomerId::new(), items: vec![], ..Default::default() };
+        assert!(order.validate().is_err());
+
+        // An invalid line item is rejected.
+        let mut bad_item = valid_create_order_item();
+        bad_item.quantity = -1;
+        let order = CreateOrder {
+            customer_id: CustomerId::new(),
+            items: vec![bad_item],
+            ..Default::default()
+        };
+        assert!(order.validate().is_err());
     }
 }
