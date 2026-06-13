@@ -13,6 +13,9 @@ extend-exclude = [
     "**/test/**",
     "**/*_test.*",
     "**/*_tests.*",
+    # cargo-vet store: machine-generated crate names/versions (e.g. flate2)
+    # trip the spell-checker by construction.
+    "supply-chain/",
 ]
 
 [default.extend-words]

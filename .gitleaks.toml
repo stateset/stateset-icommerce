@@ -1,0 +1,69 @@
+# Gitleaks configuration for stateset-icommerce.
+#
+# Extends the default gitleaks ruleset. Every allowlist entry below is a
+# reviewed false positive from the full-history scan (345 commits, June
+# 2026): documentation placeholders, test fixtures, public on-chain
+# contract addresses, or code identifiers that pattern-match the generic
+# rules. Entries match the exact detected secret, not whole files or
+# directories, so a real credential pasted next to one of these would
+# still be caught.
+#
+# NEVER allowlist a real credential. If the scan finds one, rotate it and
+# rewrite history; do not add it here.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Placeholder credentials in docs and examples (sk-prod-abc123 style; reviewed, not real keys)"
+regexTarget = "secret"
+regexes = [
+  # docs/src/guides/permissions.md + versioned doc snapshots
+  '''^sk-prod-abc123$''',
+  '''^sk-read-xyz789$''',
+  # cli/.claude/CLAUDE.md curl example
+  '''^sk-admin-secret$''',
+  # examples/gateway-examples/3-http-gateway.js, examples/plugins/README.md
+  # (sequential-hex Stripe-shaped placeholders, too short to be real keys)
+  '''^sk_live_1234567890abcdef$''',
+  '''^sk_test_0987654321fedcba$''',
+  # examples/troubleshooting.md
+  '''^dev_admin_key$''',
+  '''^YOUR_API_KEY$''',
+]
+
+[[allowlists]]
+description = "Fake credentials in unit-test fixtures (named *test*/abc123 values, reviewed)"
+regexTarget = "secret"
+regexes = [
+  # cli/test/unit/stripe-signature.test.js
+  '''^whsec_test_secret_1234567890$''',
+  # cli/test/unit/telemetry-redaction.test.js (redaction-pipeline inputs)
+  '''^sk-proj-abc123def456ghi789$''',
+  '''^ed25519-secret-key-bytes$''',
+  # admin/tests/unit/lib/schemas-extended.test.ts
+  '''^verify-abc-123$''',
+  # cli/test/fixtures/woocommerce/order.json (order key, not a credential)
+  '''^wc_order_abc123def456$''',
+]
+
+[[allowlists]]
+description = "Public ERC-20 contract addresses in x402 examples (40-hex EVM addresses are public identifiers, not keys)"
+regexTarget = "line"
+regexes = [
+  '''token_address['"]?\s*[:=]\s*['"]0x[0-9a-fA-F]{40}['"]''',
+]
+
+[[allowlists]]
+description = "Code identifiers that pattern-match generic-api-key (field names and type names, not secret values)"
+regexTarget = "secret"
+regexes = [
+  # cli/src/sync/crypto.js: key-name string constants in redaction lists
+  '''^(ed25519|x25519)_private_key$''',
+  # cli/src/sync/{client,crypto}.js: VES protocol field-name references
+  '''^[a-z]+\.(ct|wrapped_key)_b64u$''',
+  # cli/src/cli-schema.js: config key name
+  '''^treasuryErc8004Db$''',
+  # crates/stateset-crypto/src/pqc_backend.rs: ML-KEM type import
+  '''^EncapsulationKey768$''',
+]

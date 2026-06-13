@@ -12,6 +12,18 @@ name: supply-chain
 #
 # To pay down exemptions, replace entries in `supply-chain/config.toml` with
 # audits in `supply-chain/audits.toml` (`cargo vet certify <crate> <version>`).
+#
+# First-party `stateset-*` crates carry `audit-as-crates-io = false` in
+# `supply-chain/config.toml`: they are path dependencies developed in this
+# repo, and the crates.io releases are published from this same tree, so
+# vetting our own source here would be circular — first-party review happens
+# in PRs. (This rationale lives here because `cargo vet fmt` strips comments
+# from the store files.)
+#
+# CI runs `cargo vet --locked` only, per the cargo-vet book's recommended CI
+# setup, so the gate is deterministic against the committed store. To pull
+# new audits from the trusted feeds, run `cargo vet` locally (which rewrites
+# `supply-chain/imports.lock`) and commit the result.
 
 on:
   push:
@@ -46,16 +58,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-vet
-        run: cargo install cargo-vet --version "^0.10" --locked
-
-      - name: Refresh imports
-        # Pull the latest audits from the configured trusted feeds. Failures
-        # here are non-fatal — a feed being temporarily unreachable shouldn't
-        # break PRs. The audit step below uses whatever is on disk.
-        continue-on-error: true
-        run: cargo vet --locked --no-suggest
+        # Exact version pin; the store files in supply-chain/ were generated
+        # and verified with this version. Bump deliberately.
+        run: cargo install cargo-vet --version "0.10.2" --locked
 
       - name: Audit (required)
         # Required gate. Fails if any dependency in the workspace is not
-        # covered by an audit, an imported audit, or an exemption.
+        # covered by an audit, an imported audit, or an exemption. `--locked`
+        # audits against the committed store without touching the network.
         run: cargo vet --locked
