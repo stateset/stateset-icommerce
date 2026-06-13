@@ -1,0 +1,86 @@
+name: Feature request
+description: Propose a new capability, API, binding, or improvement.
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement to StateSet iCommerce.
+
+        Please search [existing issues](https://github.com/stateset/stateset-icommerce/issues?q=is%3Aissue) and
+        [Discussions](https://github.com/stateset/stateset-icommerce/discussions) first — your idea may already be tracked.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched existing issues and discussions and this is not a duplicate.
+          required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      description: Which part of the monorepo would this change touch?
+      multiple: true
+      options:
+        - "Rust core (crates/stateset-core)"
+        - "Rust database layer (crates/stateset-db)"
+        - "Rust embedded API (crates/stateset-embedded)"
+        - "Rust HTTP gateway (crates/stateset-http)"
+        - "Rust crypto / signing (crates/stateset-crypto)"
+        - "ICP protocol (crates/stateset-icp-*, icp-spec/)"
+        - "Other Rust crate"
+        - "Node.js binding (bindings/node)"
+        - "WASM binding (bindings/wasm)"
+        - "Python binding (bindings/python)"
+        - "New language binding"
+        - "Other existing language binding"
+        - "CLI (cli/)"
+        - "MCP server / tools (cli/src/mcp*)"
+        - "AI agents / skills"
+        - "Admin dashboard (admin/)"
+        - "create-stateset-app / templates (packages/)"
+        - "Documentation"
+        - "Build / CI / tooling"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve? What is missing or painful today?
+      placeholder: "As an agent integrator, I cannot ... which forces me to ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the capability or API you would like. Sketch signatures, schemas, or flows if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you evaluated and why they fall short.
+    validations:
+      required: false
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Is this a breaking change?
+      options:
+        - "No — additive / backwards compatible"
+        - "Yes — would change existing behavior or public API"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, prior art, protocol references, or anything else that helps us evaluate the request.
+    validations:
+      required: false

@@ -2,7 +2,7 @@
   "name": "create-stateset-app",
   "version": "1.0.4",
   "description": "Create StateSet-powered commerce storefronts with one command",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/stateset/stateset-icommerce.git",

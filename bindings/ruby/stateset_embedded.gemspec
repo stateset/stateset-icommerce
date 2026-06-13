@@ -6,7 +6,7 @@ Gem::Specification.new do |s|
   s.authors     = ['StateSet']
   s.email       = 'hello@stateset.io'
   s.homepage    = 'https://github.com/stateset/stateset-icommerce'
-  s.license     = 'MIT'
+  s.licenses    = ['MIT', 'Apache-2.0']
 
   s.files       = Dir['lib/**/*.rb', 'ext/**/*', 'Cargo.toml', 'src/**/*.rs', 'extconf.rb']
   s.extensions  = ['ext/stateset_embedded/extconf.rb']

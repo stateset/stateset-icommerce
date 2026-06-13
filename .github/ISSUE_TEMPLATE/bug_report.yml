@@ -1,0 +1,114 @@
+name: Bug report
+description: Report a defect in a crate, binding, the CLI, the admin dashboard, or the ICP protocol surface.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        Before opening, please:
+        - Search [existing issues](https://github.com/stateset/stateset-icommerce/issues?q=is%3Aissue) to avoid duplicates.
+        - For **security vulnerabilities**, do **not** open a public issue — follow [SECURITY.md](https://github.com/stateset/stateset-icommerce/blob/master/SECURITY.md) instead.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go to security@stateset.io per SECURITY.md).
+          required: true
+        - label: I can reproduce this on the latest released version (or `master`).
+          required: false
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      description: Which part of the monorepo is affected? Pick the closest match.
+      multiple: true
+      options:
+        - "Rust core (crates/stateset-core)"
+        - "Rust database layer (crates/stateset-db — SQLite)"
+        - "Rust database layer (crates/stateset-db — PostgreSQL)"
+        - "Rust embedded API (crates/stateset-embedded)"
+        - "Rust HTTP gateway (crates/stateset-http)"
+        - "Rust crypto / signing (crates/stateset-crypto)"
+        - "ICP protocol (crates/stateset-icp-*, icp-spec/)"
+        - "Other Rust crate (a2a, authz, jobs, pricing, policy, sync, observability, ...)"
+        - "Node.js binding (bindings/node)"
+        - "WASM binding (bindings/wasm)"
+        - "Python binding (bindings/python)"
+        - "Other language binding (php, ruby, java, kotlin, go, dotnet, swift)"
+        - "CLI (cli/)"
+        - "MCP server / tools (cli/src/mcp*)"
+        - "Admin dashboard (admin/)"
+        - "create-stateset-app / templates (packages/)"
+        - "Documentation"
+        - "Build / CI / tooling"
+        - "Not sure"
+    validations:
+      required: true
+  - type: input
+    id: backend
+    attributes:
+      label: Storage backend
+      description: If relevant, which backend reproduces the issue?
+      placeholder: "SQLite (embedded) / PostgreSQL 15 / N/A"
+    validations:
+      required: false
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug, including the expected vs. actual behavior.
+      placeholder: |
+        Expected: order is created successfully.
+        Actual: returns error "column 'currency' does not exist".
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, deterministic steps. A code snippet or failing test is ideal.
+      placeholder: |
+        1. Initialize Commerce with the PostgreSQL backend.
+        2. Create a customer.
+        3. Attempt to create an order with currency USD.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / error output
+      description: Paste any error messages, stack traces, or panic output. This is automatically formatted as code.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: |
+        Include every version relevant to the affected surface. Helpful commands:
+        `rustc --version`, `cargo --version`, `node --version`, `stateset --version`, and the crate/binding/package version.
+      placeholder: |
+        - OS: Ubuntu 22.04 (x86_64)
+        - stateset-icommerce: 1.6.0
+        - rustc: 1.85.0
+        - Node.js: 20.20.0
+        - @stateset/cli: 1.6.0
+        - PostgreSQL: 15.0 (if applicable)
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that helps us reproduce or understand the issue (config, related issues, screenshots).
+    validations:
+      required: false

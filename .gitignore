@@ -108,3 +108,15 @@ comparison_doc.md
 target-local/
 target-codex/
 .codex
+
+# Coverage output directories (admin/ has its own .gitignore)
+# Anchored so the tracked cli/src/coverage/ source dir is never matched.
+/coverage/
+cli/coverage/
+bindings/*/coverage/
+bindings/*/coverage-output.txt
+tarpaulin-report.html
+lcov.info
+
+# Local performance-research harness state (points at out-of-tree tooling)
+.autoresearch/
