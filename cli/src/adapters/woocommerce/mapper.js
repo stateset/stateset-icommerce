@@ -16,16 +16,22 @@
  */
 export function stripHtml(html) {
   if (!html || typeof html !== 'string') return '';
-  return html
-    .replace(/<[^>]*>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    html
+      .replace(/<[^>]*>/g, '')
+      // Decode `&amp;` LAST so an already-escaped entity such as `&amp;lt;`
+      // resolves to the literal text `&lt;` rather than being double-unescaped
+      // to `<` (CodeQL js/double-escaping). Output is plain text for a product
+      // description (never rendered as raw HTML), so decoded `<`/`>` stay literal.
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 // ---------------------------------------------------------------------------

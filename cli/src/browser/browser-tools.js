@@ -536,7 +536,7 @@ export class BrowserTools {
     const coords = await this.evaluate(`
       (() => {
         const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) throw new Error('Element not found: ${selector.replace(/'/g, "\\'")}');
+        if (!el) throw new Error(${JSON.stringify(`Element not found: ${selector}`)});
         el.scrollIntoView({ block: 'center', inline: 'center' });
         const rect = el.getBoundingClientRect();
         return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
@@ -573,7 +573,7 @@ export class BrowserTools {
     await this.evaluate(`
       (() => {
         const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) throw new Error('Element not found: ${selector.replace(/'/g, "\\'")}');
+        if (!el) throw new Error(${JSON.stringify(`Element not found: ${selector}`)});
         el.focus();
       })()
     `);
@@ -954,17 +954,20 @@ export class BrowserTools {
     // We'll search by role and accessible name
     const { role, name } = ref;
 
-    // Build a selector strategy based on role and name
+    // Build a selector strategy based on role and name. Inject role/name as
+    // JSON-encoded string literals so the values can't break out of the
+    // evaluated JS (CodeQL js/incomplete-sanitization).
+    const roleSelector = JSON.stringify(`[role="${role}"], ${role}`);
+    const targetName = JSON.stringify(name);
     const selector = await this.evaluate(`
       (() => {
         // Try to find by aria-label or text content
-        const elements = document.querySelectorAll('[role="${role}"], ${role}');
+        const elements = document.querySelectorAll(${roleSelector});
+        const target = ${targetName};
         for (const el of elements) {
           const ariaLabel = el.getAttribute('aria-label') || '';
           const text = (el.innerText || el.value || '').trim();
-          if (ariaLabel === "${name.replace(/"/g, '\\"')}" ||
-              text === "${name.replace(/"/g, '\\"')}" ||
-              el.placeholder === "${name.replace(/"/g, '\\"')}") {
+          if (ariaLabel === target || text === target || el.placeholder === target) {
             // Generate a unique selector
             if (el.id) return '#' + el.id;
             if (el.name) return '[name="' + el.name + '"]';

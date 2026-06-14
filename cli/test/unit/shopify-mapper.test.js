@@ -41,16 +41,20 @@ describe('stripHtml', () => {
   });
 
   it('removes nested HTML tags', () => {
-    assert.equal(
-      stripHtml('<div><p>A <strong>bold</strong> move</p></div>'),
-      'A bold move',
-    );
+    assert.equal(stripHtml('<div><p>A <strong>bold</strong> move</p></div>'), 'A bold move');
   });
 
   it('decodes &amp; &lt; &gt; &quot; &#39; &nbsp;', () => {
     const input = '&amp; &lt; &gt; &quot; &#39; &nbsp;';
     // &nbsp; → space, then whitespace normalization + trim collapses trailing space
-    assert.equal(stripHtml(input), "& < > \" '");
+    assert.equal(stripHtml(input), '& < > " \'');
+  });
+
+  it('does not double-unescape &amp;lt; into <', () => {
+    // `&amp;lt;` is an escaped `&lt;`; it must decode to the literal text
+    // `&lt;`, not be double-unescaped to `<` (regression: decode &amp; last).
+    assert.equal(stripHtml('&amp;lt;'), '&lt;');
+    assert.equal(stripHtml('a &amp;amp; b'), 'a &amp; b');
   });
 
   it('normalizes whitespace', () => {
@@ -154,7 +158,7 @@ describe('mapFulfillmentStatus', () => {
 
 describe('mapCustomerToStateSet', () => {
   const alice = customerFixtures.customers[0]; // enabled, with phone
-  const bob = customerFixtures.customers[1];   // enabled, null phone
+  const bob = customerFixtures.customers[1]; // enabled, null phone
   const charlie = customerFixtures.customers[2]; // disabled
   const diana = customerFixtures.customers[3]; // invited
 
@@ -516,10 +520,7 @@ describe('mapToStateSet dispatch', () => {
   });
 
   it('throws for unknown entity type', () => {
-    assert.throws(
-      () => mapToStateSet('widgets', {}),
-      { message: 'Unknown entity type: widgets' },
-    );
+    assert.throws(() => mapToStateSet('widgets', {}), { message: 'Unknown entity type: widgets' });
   });
 });
 
@@ -529,7 +530,14 @@ describe('mapToStateSet dispatch', () => {
 
 describe('mapCustomerFromStateSet', () => {
   it('round-trips email, first_name, last_name', () => {
-    const ss = { email: 'alice@example.com', firstName: 'Alice', lastName: 'Johnson', phone: '+15551234567', status: 'active', acceptsMarketing: true };
+    const ss = {
+      email: 'alice@example.com',
+      firstName: 'Alice',
+      lastName: 'Johnson',
+      phone: '+15551234567',
+      status: 'active',
+      acceptsMarketing: true,
+    };
     const shopify = mapCustomerFromStateSet(ss);
     assert.equal(shopify.email, 'alice@example.com');
     assert.equal(shopify.first_name, 'Alice');
@@ -556,7 +564,13 @@ describe('mapCustomerFromStateSet', () => {
 
 describe('mapProductFromStateSet', () => {
   it('maps name to title and description to body_html', () => {
-    const ss = { name: 'Classic Widget', description: 'A premium widget.', slug: 'classic-widget', status: 'active', variants: [] };
+    const ss = {
+      name: 'Classic Widget',
+      description: 'A premium widget.',
+      slug: 'classic-widget',
+      status: 'active',
+      variants: [],
+    };
     const shopify = mapProductFromStateSet(ss);
     assert.equal(shopify.title, 'Classic Widget');
     assert.equal(shopify.body_html, 'A premium widget.');

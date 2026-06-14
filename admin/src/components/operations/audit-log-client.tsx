@@ -42,7 +42,12 @@ export function eventMatchesFilter(type: string, filter: string): boolean {
     return type === prefix || type.startsWith(`${prefix}.`) || type.startsWith(`${prefix}_`);
   }
   if (pat.includes('*')) {
-    const re = new RegExp(`^${pat.replace(/\./g, '\\.').replace(/\*/g, '.*')}$`);
+    // Escape every regex metacharacter (including backslash), then re-enable
+    // `*` as a glob wildcard. Escaping only `.` left other metacharacters
+    // (`\`, `(`, `[`, `+`, …) live, so a filter could inject a regex / ReDoS
+    // (CodeQL js/incomplete-sanitization).
+    const escaped = pat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`);
     return re.test(type);
   }
   return type === pat || type.includes(pat);

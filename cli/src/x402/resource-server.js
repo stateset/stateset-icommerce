@@ -88,8 +88,11 @@ function sendBody(res, status, body, headers = {}) {
  */
 function buildChallengeResponse(paymentRequired, error) {
   const challenge = /** @type {PaymentRequiredLike} */ (cloneJson(paymentRequired));
-  if (error) {
-    challenge.error = String(error);
+  // Only surface a controlled string reason code (e.g. `invalid_x402_version`).
+  // Never stringify an arbitrary value/Error here: `String(someError)` would
+  // leak internal exception details to the client (CodeQL js/stack-trace-exposure).
+  if (typeof error === 'string' && error) {
+    challenge.error = error;
   }
   return challenge;
 }
