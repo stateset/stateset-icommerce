@@ -39,6 +39,12 @@ describe('woocommerce mapper — stripHtml', () => {
     assert.equal(stripHtml('&amp; &lt; &gt; &quot; &#39;'), '& < > " \'');
   });
 
+  it('does not double-unescape &amp;lt; into <', () => {
+    // `&amp;lt;` must decode to the literal `&lt;`, not `<` (decode &amp; last).
+    assert.equal(stripHtml('&amp;lt;'), '&lt;');
+    assert.equal(stripHtml('a &amp;amp; b'), 'a &amp; b');
+  });
+
   it('returns empty string for null/undefined', () => {
     assert.equal(stripHtml(null), '');
     assert.equal(stripHtml(undefined), '');
