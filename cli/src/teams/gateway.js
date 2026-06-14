@@ -17,7 +17,55 @@ import http from 'node:http';
 import { createSessionManager, createMessageHandler, BOT_PREFIX } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
 import { richMessageToPlainText } from '../channels/rich-messages.js';
-import { isSafeDisplayUrl } from '../utils/url-validator.js';
+import { isSafeDisplayUrl, validateFetchUrl } from '../utils/url-validator.js';
+
+// ============================================================================
+// Bot Framework serviceUrl allowlist
+// ============================================================================
+
+// `serviceUrl` arrives on the inbound activity and decides where the outbound
+// reply — which carries the bot's bearer token — is POSTed. An unvalidated
+// value is a request-forgery / token-leak vector (CodeQL js/request-forgery):
+// a forged activity could point it at an attacker host or an internal address.
+// Restrict it to the documented Microsoft Bot Framework / Teams service hosts.
+const DEFAULT_BOT_SERVICE_HOSTS = [
+  'botframework.com', // *.botframework.com — Bot Connector
+  'smba.trafficmanager.net', // Teams serviceUrl
+  'botframework.azure.us', // US Gov cloud
+];
+
+/** Allowed serviceUrl host suffixes, extensible for custom/regional clouds. */
+function botServiceHostSuffixes() {
+  const extra = String(process.env.STATESET_TEAMS_SERVICEURL_ALLOWLIST || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  return [...DEFAULT_BOT_SERVICE_HOSTS, ...extra];
+}
+
+/**
+ * Whether `serviceUrl` is a safe Bot Framework endpoint to send the bot token
+ * to: HTTPS, not an internal/SSRF target, and on an allowed host suffix.
+ * @param {unknown} serviceUrl
+ * @returns {boolean}
+ */
+export function isAllowedBotServiceUrl(serviceUrl) {
+  if (typeof serviceUrl !== 'string' || !serviceUrl) return false;
+  let parsed;
+  try {
+    parsed = new URL(serviceUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:') return false;
+  try {
+    validateFetchUrl(serviceUrl); // rejects internal / private / loopback hosts
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  return botServiceHostSuffixes().some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
 
 // ============================================================================
 // Bot Framework REST helpers
@@ -80,6 +128,13 @@ async function getBotToken(appId, appPassword) {
  * @returns {Promise<Object>}
  */
 async function sendActivity(serviceUrl, conversationId, activityId, activity, appId, appPassword) {
+  // Validate the (externally-supplied) serviceUrl BEFORE minting/sending the
+  // bot token, so a forged activity cannot redirect the token to an attacker
+  // or internal host (CodeQL js/request-forgery).
+  if (!isAllowedBotServiceUrl(serviceUrl)) {
+    throw new Error(`Refusing to send to untrusted Bot Framework serviceUrl: ${serviceUrl}`);
+  }
+
   const token = await getBotToken(appId, appPassword);
 
   // Normalize serviceUrl (strip trailing slash)
