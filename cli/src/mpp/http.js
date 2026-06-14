@@ -257,7 +257,11 @@ export function buildHttpRouteDiscoveryDocument({
       serverUrl,
       transportType: 'http',
     });
-  const paths = {};
+  // Null-prototype: route paths/methods are external input, so a `__proto__`
+  // or `constructor` key must become a plain own property, never mutate
+  // Object.prototype (CodeQL js/prototype-polluting-assignment). Serializes
+  // to JSON identically to a plain object.
+  const paths = Object.create(null);
 
   for (const route of routes) {
     if (!route?.path || !route?.method) {
@@ -321,7 +325,7 @@ export function buildHttpRouteDiscoveryDocument({
     }
 
     if (!paths[openapiPath]) {
-      paths[openapiPath] = {};
+      paths[openapiPath] = Object.create(null);
     }
     paths[openapiPath][method] = operation;
   }

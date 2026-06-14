@@ -76,11 +76,16 @@ function safeJsonParse(raw, fallback) {
 }
 
 function slugify(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  return (
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      // The collapse above leaves no consecutive dashes, so trimming a single
+      // leading/trailing dash suffices — and avoids the polynomial backtracking
+      // of `-+$` on adversarial input (CodeQL js/polynomial-redos).
+      .replace(/^-|-$/g, '')
+  );
 }
 
 function sanitizeTemplateLine(value, fallback) {

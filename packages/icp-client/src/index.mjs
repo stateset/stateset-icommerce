@@ -378,7 +378,12 @@ export class ICPClient {
 
   /** @private */
   constructor(cfg) {
-    this.handlerUrl = cfg.handlerUrl.replace(/\/+$/, '');
+    // Strip trailing slashes by index rather than `/\/+$/` — the latter
+    // backtracks polynomially on inputs with many trailing slashes
+    // (CodeQL js/polynomial-redos). This is linear with a single slice.
+    let handlerEnd = cfg.handlerUrl.length;
+    while (handlerEnd > 0 && cfg.handlerUrl[handlerEnd - 1] === '/') handlerEnd -= 1;
+    this.handlerUrl = cfg.handlerUrl.slice(0, handlerEnd);
     this.principal = cfg.principal;
     this.identity = cfg.identity;
     this.verbs = cfg.verbs;
