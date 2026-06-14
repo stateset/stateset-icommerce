@@ -380,7 +380,10 @@ impl Carts {
     }
 }
 
-#[cfg(test)]
+// The test helpers build a `Commerce::in_memory()`, which only exists with the
+// `sqlite` feature — gate the module so `--all-targets` builds (e.g. the
+// postgres-only compatibility matrix) don't try to compile it without sqlite.
+#[cfg(all(test, feature = "sqlite"))]
 mod tests {
     use super::*;
     use crate::Commerce;
