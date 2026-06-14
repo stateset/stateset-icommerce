@@ -1,5 +1,7 @@
 //! Returns domain models
 
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -172,6 +174,38 @@ impl Default for CreateReturnItem {
     }
 }
 
+impl Validate for CreateReturnItem {
+    /// Validate a single return line item.
+    ///
+    /// Requires a non-nil order item reference and a positive return quantity:
+    /// you cannot return zero or a negative number of units.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .uuid_not_nil("order_item_id", self.order_item_id.into_uuid())
+            .positive_i32("quantity", self.quantity)
+            .build()
+    }
+}
+
+impl Validate for CreateReturn {
+    /// Validate a return create request.
+    ///
+    /// Requires a non-nil order reference, at least one return item, and
+    /// validates each item (non-positive quantities are rejected).
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .uuid_not_nil("order_id", self.order_id.into_uuid())
+            .non_empty_list("items", &self.items)
+            .build()?;
+
+        for item in &self.items {
+            item.validate()?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Input for updating a return
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateReturn {
@@ -291,5 +325,62 @@ mod tests {
         assert!(!ReturnStatus::InTransit.is_terminal());
         assert!(!ReturnStatus::Received.is_terminal());
         assert!(!ReturnStatus::Inspecting.is_terminal());
+    }
+
+    fn valid_return_item() -> CreateReturnItem {
+        CreateReturnItem {
+            order_item_id: OrderItemId::from_uuid(Uuid::new_v4()),
+            quantity: 1,
+            condition: None,
+        }
+    }
+
+    #[test]
+    fn create_return_item_rejects_non_positive_quantity() {
+        for qty in [0, -1] {
+            let item = CreateReturnItem { quantity: qty, ..valid_return_item() };
+            let err = item.validate().expect_err("non-positive quantity must be rejected");
+            assert!(
+                matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "quantity")
+            );
+        }
+    }
+
+    #[test]
+    fn create_return_item_accepts_positive_quantity() {
+        assert!(valid_return_item().validate().is_ok());
+    }
+
+    #[test]
+    fn create_return_rejects_empty_items() {
+        let input = CreateReturn {
+            order_id: OrderId::from_uuid(Uuid::new_v4()),
+            items: vec![],
+            ..Default::default()
+        };
+        let err = input.validate().expect_err("a return with no items must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "items")
+        );
+    }
+
+    #[test]
+    fn create_return_rejects_item_with_non_positive_quantity() {
+        let input = CreateReturn {
+            order_id: OrderId::from_uuid(Uuid::new_v4()),
+            items: vec![CreateReturnItem { quantity: 0, ..valid_return_item() }],
+            ..Default::default()
+        };
+        assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn create_return_accepts_valid_request() {
+        let input = CreateReturn {
+            order_id: OrderId::from_uuid(Uuid::new_v4()),
+            items: vec![valid_return_item()],
+            ..Default::default()
+        };
+        assert!(input.validate().is_ok());
     }
 }

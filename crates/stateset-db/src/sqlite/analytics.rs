@@ -123,8 +123,11 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             .prepare(
                 r"
                 SELECT
-                    CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
+                    decimal_sum(total_amount) as revenue,
                     COUNT(*) as order_count,
+                    -- avg_order is an average, so the float coercion in the
+                    -- built-in SUM/divide is immaterial here; only the exact
+                    -- reconciled totals use decimal_sum.
                     CAST(COALESCE(SUM(total_amount) / NULLIF(COUNT(*), 0), 0) AS TEXT) as avg_order,
                     COUNT(DISTINCT customer_id) as unique_customers
                 FROM orders
@@ -167,7 +170,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             .query_row(
                 r"
                 SELECT
-                    CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
+                    decimal_sum(total_amount) as revenue,
                     COUNT(*) as order_count
                 FROM orders
                 WHERE created_at >= ?1 AND created_at < ?2
@@ -239,7 +242,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 r"
                 SELECT
                     {period_expr} as period,
-                    CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
+                    decimal_sum(total_amount) as revenue,
                     COUNT(*) as order_count,
                     MIN(created_at) as period_start
                 FROM orders
@@ -293,7 +296,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                     oi.sku,
                     oi.name,
                     SUM(oi.quantity) as units_sold,
-                    CAST(COALESCE(SUM(oi.total), 0) AS TEXT) as revenue,
+                    decimal_sum(oi.total) as revenue,
                     COUNT(DISTINCT oi.order_id) as order_count,
                     CAST(COALESCE(AVG(oi.unit_price), 0) AS TEXT) as avg_price
                 FROM order_items oi
@@ -452,7 +455,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                     c.id,
                     c.email,
                     COALESCE(c.first_name || ' ' || c.last_name, c.email) as name,
-                    CAST(COALESCE(SUM(o.total_amount), 0) AS TEXT) as total_spent,
+                    decimal_sum(o.total_amount) as total_spent,
                     COUNT(o.id) as order_count,
                     CAST(COALESCE(AVG(o.total_amount), 0) AS TEXT) as avg_order,
                     MIN(o.created_at) as first_order,
@@ -791,7 +794,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Total refunded
         let total_refunded: String = conn
             .query_row(
-                "SELECT CAST(COALESCE(SUM(refund_amount), 0) AS TEXT) FROM returns WHERE created_at >= ?1 AND created_at <= ?2",
+                "SELECT decimal_sum(refund_amount) FROM returns WHERE created_at >= ?1 AND created_at <= ?2",
                 [&start_str, &end_str],
                 |row| row.get(0),
             )

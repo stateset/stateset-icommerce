@@ -21,6 +21,7 @@ mod customers;
 mod fraud;
 mod fulfillment;
 mod general_ledger;
+mod gift_cards;
 mod inventory;
 mod invoices;
 mod lots;
@@ -33,16 +34,19 @@ mod purchase_orders;
 mod quality;
 mod receiving;
 mod returns;
+mod reviews;
 mod rewards;
 mod search_configs;
 mod segments;
 mod serials;
 mod shipments;
 mod shipping_zones;
+mod store_credits;
 mod subscriptions;
 mod tax;
 mod warehouse;
 mod warranties;
+mod wishlists;
 mod work_orders;
 mod x402_credits;
 mod x402_payment_intents;
@@ -67,6 +71,7 @@ pub use customers::*;
 pub use fraud::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
+pub use gift_cards::*;
 pub use inventory::*;
 pub use invoices::*;
 pub use lots::*;
@@ -79,16 +84,19 @@ pub use purchase_orders::*;
 pub use quality::*;
 pub use receiving::*;
 pub use returns::*;
+pub use reviews::*;
 pub use rewards::*;
 pub use search_configs::*;
 pub use segments::*;
 pub use serials::*;
 pub use shipments::*;
 pub use shipping_zones::*;
+pub use store_credits::*;
 pub use subscriptions::*;
 pub use tax::*;
 pub use warehouse::*;
 pub use warranties::*;
+pub use wishlists::*;
 pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
@@ -134,8 +142,41 @@ impl PostgresDatabase {
         Ok(Self { pool })
     }
 
-    /// Run database migrations
+    /// Run database migrations, serialized across concurrent callers.
+    ///
+    /// Acquires a session-level Postgres advisory lock for the duration of the
+    /// run. Without it, two runners (multiple app instances booting against a
+    /// fresh database, or parallel integration tests) can each observe a
+    /// migration as unapplied and both execute its `CREATE TYPE`, which fails
+    /// with a duplicate-key error on `pg_type`. The second runner now blocks on
+    /// the lock, then finds every migration already applied and does nothing.
     async fn run_migrations(pool: &PgPool) -> Result<(), CommerceError> {
+        // Arbitrary fixed key identifying the migration lock for this app.
+        const MIGRATION_LOCK_KEY: i64 = 0x5354_4154_4553_4554;
+
+        let mut lock_conn =
+            pool.acquire().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(MIGRATION_LOCK_KEY)
+            .execute(&mut *lock_conn)
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        let result = Self::apply_migrations(pool).await;
+
+        // Release before the connection returns to the pool — a session-level
+        // advisory lock outlives the borrow on a pooled (not closed) connection.
+        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(MIGRATION_LOCK_KEY)
+            .execute(&mut *lock_conn)
+            .await;
+
+        result
+    }
+
+    /// Apply pending migrations. Callers must hold the migration advisory lock
+    /// (see [`Self::run_migrations`]).
+    async fn apply_migrations(pool: &PgPool) -> Result<(), CommerceError> {
         // Create migrations table if not exists
         sqlx::query(
             r#"
@@ -201,6 +242,10 @@ impl PostgresDatabase {
             "037_x402_nonce_integrity",
             include_str!("migrations/037_x402_nonce_integrity.sql"),
         ));
+        migrations.push(("038_gift_cards", include_str!("migrations/038_gift_cards.sql")));
+        migrations.push(("040_store_credits", include_str!("migrations/040_store_credits.sql")));
+        migrations.push(("041_reviews", include_str!("migrations/041_reviews.sql")));
+        migrations.push(("042_wishlists", include_str!("migrations/042_wishlists.sql")));
         migrations.push(("043_segments", include_str!("migrations/043_segments.sql")));
         migrations.push(("044_shipping_zones", include_str!("migrations/044_shipping_zones.sql")));
         migrations.push(("045_rewards", include_str!("migrations/045_rewards.sql")));

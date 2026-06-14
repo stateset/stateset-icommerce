@@ -161,5 +161,9 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         // segments, store credits, wishlists, loyalty. Their mounted REST
         // endpoints returned HTTP 500 'no such table' until provisioned here.
         ("037_commerce_entities", include_str!("../migrations/037_commerce_entities.sql")),
+        (
+            "038_fix_location_inventory_trigger",
+            include_str!("../migrations/038_fix_location_inventory_trigger.sql"),
+        ),
     ]
 }

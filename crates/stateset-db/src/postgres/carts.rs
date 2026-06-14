@@ -1215,6 +1215,14 @@ impl PgCartRepository {
             }
         }
 
+        // A cancelled/abandoned/expired cart must never be minted into an order.
+        if !cart.is_checkoutable_status() {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be checked out in status: {}",
+                cart.status
+            )));
+        }
+
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
                 "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
@@ -1400,6 +1408,15 @@ impl PgCartRepository {
                     currency: cart.currency,
                 });
             }
+        }
+
+        // A cancelled/abandoned/expired cart must never be minted into an order.
+        if !cart.is_checkoutable_status() {
+            tx.commit().await.map_err(map_db_error)?;
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be checked out in status: {}",
+                cart.status
+            )));
         }
 
         if !cart.is_ready_for_checkout() {

@@ -302,12 +302,18 @@ impl SqliteInventoryRepository {
         let new_available = balance.quantity_on_hand - new_allocated;
         let current_version = balance.version;
 
-        // Atomically check version AND sufficient available quantity in the WHERE clause.
-        // This prevents a race where concurrent transactions both pass the availability
-        // check but one over-reserves because the balance changed between check and update.
+        // Guard the write with the optimistic-lock version check. The Rust-side
+        // `balance.quantity_available < quantity` check above already rejected
+        // insufficient stock using exact `Decimal` arithmetic; matching `version`
+        // here proves the row has not changed since that read, so the balance is
+        // still current and the reservation cannot over-allocate. (An earlier
+        // `AND CAST(quantity_available AS REAL) >= CAST(? AS REAL)` clause was
+        // dropped: comparing TEXT money columns as IEEE-754 floats could both
+        // spuriously reject valid reservations and allow sub-cent oversells at
+        // the boundary — and it was redundant given the version guard.)
         let rows_affected = tx.execute(
             "UPDATE inventory_balances SET quantity_allocated = ?, quantity_available = ?, version = version + 1, updated_at = ?
-             WHERE item_id = ? AND location_id = ? AND version = ? AND CAST(quantity_available AS REAL) >= CAST(? AS REAL)",
+             WHERE item_id = ? AND location_id = ? AND version = ?",
             rusqlite::params![
                 new_allocated.to_string(),
                 new_available.to_string(),
@@ -315,7 +321,6 @@ impl SqliteInventoryRepository {
                 item.id,
                 location_id,
                 current_version,
-                quantity.to_string()
             ],
         )?;
 

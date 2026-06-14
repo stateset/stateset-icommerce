@@ -2,6 +2,8 @@
 //!
 //! Handles payment processing, refunds, and payment method management.
 
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -80,6 +82,18 @@ impl PaymentTransactionStatus {
     #[must_use]
     pub const fn is_in_progress(self) -> bool {
         matches!(self, Self::Pending | Self::Processing | Self::RequiresAction)
+    }
+
+    /// Returns true if a payment in this status may be refunded.
+    ///
+    /// Only successfully captured funds can be refunded: a `Completed`
+    /// payment, or one that is already `PartiallyRefunded` (so the remaining
+    /// balance can be returned). `Pending`, `Processing`, `RequiresAction`,
+    /// `Failed`, `Cancelled`, `Disputed`, and fully `Refunded` payments are
+    /// not refundable.
+    #[must_use]
+    pub const fn is_refundable(self) -> bool {
+        matches!(self, Self::Completed | Self::PartiallyRefunded)
     }
 }
 
@@ -341,6 +355,55 @@ pub struct Payment {
     pub updated_at: DateTime<Utc>,
 }
 
+impl Payment {
+    /// The amount of this payment that has not yet been refunded.
+    #[must_use]
+    pub fn refundable_remaining(&self) -> Decimal {
+        self.amount - self.amount_refunded
+    }
+
+    /// Validate and resolve a refund request against this payment.
+    ///
+    /// `requested` is the caller-supplied refund amount; when `None` the full
+    /// remaining refundable balance is used. Returns the resolved refund amount
+    /// on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::CommerceError::ValidationError`] when:
+    /// - the payment is not in a refundable status (only `Completed` /
+    ///   `PartiallyRefunded` payments can be refunded),
+    /// - the requested (or resolved) amount is zero or negative, or
+    /// - the requested amount exceeds the remaining refundable balance.
+    pub fn validate_refund(&self, requested: Option<Decimal>) -> crate::Result<Decimal> {
+        use crate::CommerceError;
+
+        if !self.status.is_refundable() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot refund a payment in status '{}'; only completed or partially refunded payments are refundable",
+                self.status
+            )));
+        }
+
+        let remaining = self.refundable_remaining();
+        let amount = requested.unwrap_or(remaining);
+
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Refund amount must be greater than zero".into(),
+            ));
+        }
+
+        if amount > remaining {
+            return Err(CommerceError::ValidationError(format!(
+                "Refund amount {amount} exceeds remaining refundable balance {remaining}"
+            )));
+        }
+
+        Ok(amount)
+    }
+}
+
 /// Input for creating a new payment
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreatePayment {
@@ -394,6 +457,20 @@ pub struct CreatePayment {
     pub description: Option<String>,
     /// Additional metadata
     pub metadata: Option<String>,
+}
+
+impl Validate for CreatePayment {
+    /// Validate a payment create request.
+    ///
+    /// Rejects a negative amount and a malformed billing email (when present).
+    /// A zero amount is permitted (e.g. a $0 authorization / free order); only
+    /// a negative amount is rejected.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .non_negative("amount", self.amount)
+            .email_if_present("billing_email", self.billing_email.as_deref())
+            .build()
+    }
 }
 
 /// Input for updating a payment
@@ -501,6 +578,19 @@ pub struct CreateRefund {
     pub idempotency_key: Option<String>,
     /// Additional notes
     pub notes: Option<String>,
+}
+
+impl Validate for CreateRefund {
+    /// Validate a refund create request.
+    ///
+    /// Requires a non-nil payment reference. The amount-specific rules
+    /// (positivity and not exceeding the remaining refundable balance) are
+    /// enforced against the live payment in [`Payment::validate_refund`], which
+    /// is where the refund's monetary semantics belong; this structural check
+    /// only guards the payment reference itself.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new().uuid_not_nil("payment_id", self.payment_id.into_uuid()).build()
+    }
 }
 
 /// A stored payment method for a customer
@@ -732,5 +822,194 @@ mod tests {
         assert!(Cancelled.is_terminal());
         assert!(!Pending.is_terminal());
         assert!(!Processing.is_terminal());
+    }
+
+    #[test]
+    fn payment_status_is_refundable() {
+        use PaymentTransactionStatus::*;
+        // Only successfully captured funds are refundable.
+        assert!(Completed.is_refundable());
+        assert!(PartiallyRefunded.is_refundable());
+        // Everything else is not.
+        assert!(!Pending.is_refundable());
+        assert!(!Processing.is_refundable());
+        assert!(!RequiresAction.is_refundable());
+        assert!(!Failed.is_refundable());
+        assert!(!Cancelled.is_refundable());
+        assert!(!Refunded.is_refundable());
+        assert!(!Disputed.is_refundable());
+    }
+
+    /// Build a minimal `Payment` for refund-validation tests.
+    fn payment_for_refund(
+        status: PaymentTransactionStatus,
+        amount: Decimal,
+        amount_refunded: Decimal,
+    ) -> Payment {
+        let now = Utc::now();
+        Payment {
+            id: PaymentId::new(),
+            payment_number: generate_payment_number(),
+            order_id: None,
+            invoice_id: None,
+            customer_id: None,
+            status,
+            payment_method: PaymentMethodType::CreditCard,
+            amount,
+            currency: CurrencyCode::default(),
+            amount_refunded,
+            external_id: None,
+            idempotency_key: None,
+            processor: None,
+            card_brand: None,
+            card_last4: None,
+            card_exp_month: None,
+            card_exp_year: None,
+            blockchain_network: None,
+            stablecoin_type: None,
+            from_wallet_address: None,
+            to_wallet_address: None,
+            tx_hash: None,
+            block_number: None,
+            confirmations: None,
+            token_address: None,
+            ves_intent_id: None,
+            billing_email: None,
+            billing_name: None,
+            billing_address: None,
+            description: None,
+            failure_reason: None,
+            failure_code: None,
+            metadata: None,
+            paid_at: None,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn validate_refund_resolves_full_remaining_when_amount_omitted() {
+        use rust_decimal_macros::dec;
+        let payment = payment_for_refund(PaymentTransactionStatus::Completed, dec!(100), dec!(40));
+        // Remaining refundable balance is 100 - 40 = 60.
+        assert_eq!(payment.validate_refund(None).expect("resolved"), dec!(60));
+    }
+
+    #[test]
+    fn validate_refund_rejects_non_refundable_status() {
+        use rust_decimal_macros::dec;
+        for status in [
+            PaymentTransactionStatus::Pending,
+            PaymentTransactionStatus::Processing,
+            PaymentTransactionStatus::RequiresAction,
+            PaymentTransactionStatus::Failed,
+            PaymentTransactionStatus::Cancelled,
+            PaymentTransactionStatus::Refunded,
+            PaymentTransactionStatus::Disputed,
+        ] {
+            let payment = payment_for_refund(status, dec!(100), dec!(0));
+            let err = payment
+                .validate_refund(Some(dec!(10)))
+                .expect_err("non-refundable status must be rejected");
+            assert!(matches!(err, crate::CommerceError::ValidationError(_)), "{status}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn validate_refund_rejects_non_positive_amount() {
+        use rust_decimal_macros::dec;
+        let payment = payment_for_refund(PaymentTransactionStatus::Completed, dec!(100), dec!(0));
+        assert!(payment.validate_refund(Some(dec!(0))).is_err());
+        assert!(payment.validate_refund(Some(dec!(-1))).is_err());
+    }
+
+    #[test]
+    fn validate_refund_rejects_amount_exceeding_remaining() {
+        use rust_decimal_macros::dec;
+        let payment =
+            payment_for_refund(PaymentTransactionStatus::PartiallyRefunded, dec!(100), dec!(70));
+        // Only 30 remains refundable; 31 must be rejected, 30 must pass.
+        assert!(payment.validate_refund(Some(dec!(31))).is_err());
+        assert_eq!(payment.validate_refund(Some(dec!(30))).expect("ok"), dec!(30));
+    }
+
+    #[test]
+    fn create_payment_rejects_negative_amount() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let input = CreatePayment { amount: dec!(-1), ..Default::default() };
+        let err = input.validate().expect_err("negative amount must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "amount")
+        );
+    }
+
+    #[test]
+    fn create_payment_accepts_zero_and_positive_amount() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        // A zero authorization is legitimate; only negatives are rejected.
+        assert!(CreatePayment { amount: dec!(0), ..Default::default() }.validate().is_ok());
+        assert!(CreatePayment { amount: dec!(99.99), ..Default::default() }.validate().is_ok());
+    }
+
+    #[test]
+    fn create_payment_rejects_malformed_billing_email() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let input = CreatePayment {
+            amount: dec!(10),
+            billing_email: Some("not-an-email".to_string()),
+            ..Default::default()
+        };
+        let err = input.validate().expect_err("malformed billing email must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "billing_email")
+        );
+    }
+
+    #[test]
+    fn create_payment_accepts_valid_billing_email() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let input = CreatePayment {
+            amount: dec!(10),
+            billing_email: Some("alice@example.com".to_string()),
+            ..Default::default()
+        };
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn create_refund_rejects_nil_payment_id() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let input = CreateRefund {
+            payment_id: PaymentId::from_uuid(Uuid::nil()),
+            amount: Some(dec!(5)),
+            ..Default::default()
+        };
+        let err = input.validate().expect_err("a nil payment reference must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::InvalidInput { ref field, .. } if field == "payment_id")
+        );
+    }
+
+    #[test]
+    fn create_refund_accepts_valid_payment_reference() {
+        use crate::Validate;
+        use rust_decimal_macros::dec;
+        let id = PaymentId::new();
+        // Structural validation passes regardless of amount; the amount's
+        // positivity/balance rules are enforced by `Payment::validate_refund`.
+        assert!(
+            CreateRefund { payment_id: id, amount: None, ..Default::default() }.validate().is_ok()
+        );
+        assert!(
+            CreateRefund { payment_id: id, amount: Some(dec!(25)), ..Default::default() }
+                .validate()
+                .is_ok()
+        );
     }
 }

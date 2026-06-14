@@ -83,6 +83,9 @@ fn test_refund_idempotency_key() {
         })
         .expect("Failed to create payment");
 
+    // A payment must be completed before it can be refunded.
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
+
     let refund = commerce
         .payments()
         .create_refund(CreateRefund {

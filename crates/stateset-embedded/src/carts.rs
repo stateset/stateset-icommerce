@@ -49,6 +49,7 @@ use rust_decimal::Decimal;
 use stateset_core::{
     AddCartItem, Cart, CartAddress, CartFilter, CartId, CartItem, CheckoutResult, CreateCart,
     CustomerId, Result, SetCartPayment, SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
+    Validate,
 };
 use stateset_observability::Metrics;
 use std::sync::Arc;
@@ -105,6 +106,9 @@ impl Carts {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateCart) -> Result<Cart> {
+        // Reject obviously-invalid input (negative prices, non-positive
+        // quantities) before persisting any line items.
+        input.validate()?;
         let cart = self.db.carts().create(input)?;
         self.metrics.record_cart_created(&cart.id.to_string());
         Ok(cart)
@@ -167,6 +171,8 @@ impl Carts {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
+        // Reject a negative price or non-positive quantity before persisting.
+        item.validate()?;
         self.db.carts().add_item(cart_id, item)
     }
 
@@ -371,5 +377,110 @@ impl Carts {
     /// Count carts matching a filter
     pub fn count(&self, filter: CartFilter) -> Result<u64> {
         self.db.carts().count(filter)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Commerce;
+    use rust_decimal_macros::dec;
+    use stateset_core::CommerceError;
+
+    fn carts() -> Carts {
+        Commerce::in_memory().expect("in-memory commerce").carts()
+    }
+
+    #[test]
+    fn create_accepts_valid_cart_with_items() {
+        let carts = carts();
+        let cart = carts
+            .create(CreateCart {
+                customer_email: Some("buyer@example.com".into()),
+                items: Some(vec![AddCartItem {
+                    sku: "SKU-OK".into(),
+                    name: "Widget".into(),
+                    quantity: 2,
+                    unit_price: dec!(9.99),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect("valid cart should be created");
+        assert!(!cart.cart_number.is_empty());
+    }
+
+    #[test]
+    fn create_rejects_negative_price_item() {
+        let carts = carts();
+        let err = carts
+            .create(CreateCart {
+                items: Some(vec![AddCartItem {
+                    sku: "SKU-NEG".into(),
+                    name: "Widget".into(),
+                    quantity: 1,
+                    unit_price: dec!(-1.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect_err("negative price must be rejected");
+        assert!(matches!(err, CommerceError::InvalidInput { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn create_rejects_non_positive_quantity_item() {
+        let carts = carts();
+        let err = carts
+            .create(CreateCart {
+                items: Some(vec![AddCartItem {
+                    sku: "SKU-ZERO".into(),
+                    name: "Widget".into(),
+                    quantity: 0,
+                    unit_price: dec!(5.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect_err("zero quantity must be rejected");
+        assert!(matches!(err, CommerceError::InvalidInput { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn add_item_rejects_negative_quantity() {
+        let carts = carts();
+        let cart = carts.create(CreateCart::default()).expect("create");
+        let err = carts
+            .add_item(
+                cart.id,
+                AddCartItem {
+                    sku: "SKU-NEG".into(),
+                    name: "Widget".into(),
+                    quantity: -1,
+                    unit_price: dec!(5.00),
+                    ..Default::default()
+                },
+            )
+            .expect_err("negative quantity must be rejected");
+        assert!(matches!(err, CommerceError::InvalidInput { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn add_item_accepts_free_item() {
+        let carts = carts();
+        let cart = carts.create(CreateCart::default()).expect("create");
+        let item = carts
+            .add_item(
+                cart.id,
+                AddCartItem {
+                    sku: "FREE".into(),
+                    name: "Free Gift".into(),
+                    quantity: 1,
+                    unit_price: dec!(0),
+                    ..Default::default()
+                },
+            )
+            .expect("free item should be accepted");
+        assert_eq!(item.unit_price, dec!(0));
     }
 }

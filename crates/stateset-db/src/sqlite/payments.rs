@@ -465,23 +465,81 @@ impl PaymentRepository for SqlitePaymentRepository {
             }
         }
 
-        // Get payment to determine refund amount
-        let payment = self.get(input.payment_id)?.ok_or(CommerceError::NotFound)?;
-        let refund_amount = input.amount.unwrap_or(payment.amount - payment.amount_refunded);
-
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let refund_number = generate_refund_number();
+        let payment_id = input.payment_id;
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        // The read of the payment, the over-refund validation, and the refund
+        // INSERT all run inside ONE `IMMEDIATE` transaction. IMMEDIATE acquires
+        // the database write lock up front, so a concurrent `create_refund` for
+        // the same payment is serialized rather than racing: each caller sees
+        // the other's freshly-inserted in-flight refund and cannot both pass the
+        // remaining-balance check. (Previously the read+validate happened on a
+        // separate, lock-free connection from the INSERT, so two callers could
+        // each validate against the same stale balance and together over-refund
+        // the payment once both were completed.)
+        //
+        // Domain failures (`NotFound`, `validate_refund`'s `ValidationError`)
+        // are smuggled out of the closure as `ToSqlConversionFailure(CommerceError)`
+        // and unwrapped back to their original variants by `map_db_error`.
+        with_immediate_transaction(&self.pool, |tx| {
+            let mut payment = tx
+                .query_row(
+                    "SELECT * FROM payments WHERE id = ?",
+                    [payment_id.to_string()],
+                    Self::row_to_payment,
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
+                    }
+                    other => other,
+                })?;
+
+            // Reserve against in-flight (non-terminal) refunds as well as the
+            // already-committed `amount_refunded`. A `Pending`/`Processing`
+            // refund has not yet folded its amount into `amount_refunded`, but
+            // it WILL once completed, so it must count against the remaining
+            // refundable balance to prevent concurrent over-refund. `Failed` /
+            // `Cancelled` refunds release their reservation and are excluded.
+            //
+            // `amount` is a TEXT column, so the amounts are read as text and
+            // summed with `rust_decimal::Decimal` in Rust. Doing `SUM(amount)`
+            // in SQL would coerce the TEXT values to IEEE-754 floats (the same
+            // money-precision defect avoided on the `complete_refund` write
+            // path).
+            let mut in_flight = rust_decimal::Decimal::ZERO;
+            {
+                let mut stmt = tx.prepare(
+                    "SELECT amount FROM refunds \
+                     WHERE payment_id = ? AND status IN ('pending', 'processing')",
+                )?;
+                let rows = stmt.query_map([payment_id.to_string()], |row| {
+                    let amount: String = row.get(0)?;
+                    parse_decimal_row(&amount, "refund", "amount")
+                })?;
+                for row in rows {
+                    in_flight += row?;
+                }
+            }
+
+            // Fold the in-flight reservation into the payment's refunded total so
+            // the unmodified `validate_refund` guard sees the true remaining
+            // balance. `validate_refund` still owns all of the rules (refundable
+            // status, positive amount, not exceeding remaining).
+            payment.amount_refunded += in_flight;
+            let refund_amount = payment
+                .validate_refund(input.amount)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+            tx.execute(
                 "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     id.to_string(),
                     refund_number,
-                    input.payment_id.to_string(),
+                    payment_id.to_string(),
                     RefundStatus::Pending.to_string(),
                     refund_amount.to_string(),
                     payment.currency,
@@ -492,8 +550,10 @@ impl PaymentRepository for SqlitePaymentRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            ).map_err(map_db_error)?;
-        }
+            )?;
+
+            Ok(())
+        })?;
 
         self.get_refund(id)?.ok_or(CommerceError::NotFound)
     }
@@ -539,14 +599,36 @@ impl PaymentRepository for SqlitePaymentRepository {
                 ],
             )?;
 
-            // Update payment amount_refunded
+            // Update payment amount_refunded.
+            //
+            // `amount`/`amount_refunded` are TEXT columns (migration 006), so
+            // doing the addition or comparison in SQL would coerce the values
+            // to IEEE-754 floats (e.g. '0.10' + '0.20' = 0.30000000000000004,
+            // and the `>= amount` status comparison would be wrong). Instead we
+            // read the current values, compute the new balance and status with
+            // `rust_decimal::Decimal` in Rust, and write the precomputed TEXT
+            // values back as bound parameters.
+            let (current_refunded, payment_amount): (String, String) = tx.query_row(
+                "SELECT amount_refunded, amount FROM payments WHERE id = ?",
+                params![refund.payment_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let current_refunded =
+                parse_decimal_row(&current_refunded, "payment", "amount_refunded")?;
+            let payment_amount = parse_decimal_row(&payment_amount, "payment", "amount")?;
+
+            let new_refunded = current_refunded + refund.amount;
+            let new_status = if new_refunded >= payment_amount {
+                PaymentTransactionStatus::Refunded
+            } else {
+                PaymentTransactionStatus::PartiallyRefunded
+            };
+
             tx.execute(
-                "UPDATE payments SET amount_refunded = amount_refunded + ?, status = CASE
-                 WHEN amount_refunded + ? >= amount THEN 'refunded' ELSE 'partially_refunded' END,
-                 updated_at = ? WHERE id = ?",
+                "UPDATE payments SET amount_refunded = ?, status = ?, updated_at = ? WHERE id = ?",
                 params![
-                    refund.amount.to_string(),
-                    refund.amount.to_string(),
+                    new_refunded.to_string(),
+                    new_status.to_string(),
                     now.to_rfc3339(),
                     refund.payment_id.to_string()
                 ],

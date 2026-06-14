@@ -57,8 +57,6 @@ pub mod postgres;
 pub mod saga;
 
 pub mod transactions;
-#[cfg(feature = "postgres")]
-mod unsupported_repositories;
 
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteDatabase;
@@ -80,11 +78,6 @@ use stateset_core::{
     StoreCreditRepository, SubscriptionRepository, TaxRepository, WarehouseRepository,
     WarrantyRepository, WishlistRepository, WorkOrderRepository, X402CreditRepository,
     X402PaymentIntentRepository, ZoneShippingMethodRepository,
-};
-#[cfg(feature = "postgres")]
-use unsupported_repositories::{
-    UnsupportedGiftCardRepository, UnsupportedReviewRepository, UnsupportedStoreCreditRepository,
-    UnsupportedWishlistRepository,
 };
 
 // ============================================================================
@@ -495,11 +488,11 @@ impl NewDomainRepositoryFactory for SqliteDatabase {
 #[cfg(feature = "postgres")]
 impl NewDomainRepositoryFactory for PostgresDatabase {
     fn gift_cards_repo(&self) -> Box<dyn GiftCardRepository + '_> {
-        Box::new(UnsupportedGiftCardRepository::new("postgres"))
+        Box::new(postgres::PgGiftCardRepository::new(self.pool().clone()))
     }
 
     fn store_credits_repo(&self) -> Box<dyn StoreCreditRepository + '_> {
-        Box::new(UnsupportedStoreCreditRepository::new("postgres"))
+        Box::new(postgres::PgStoreCreditRepository::new(self.pool().clone()))
     }
 
     fn segments_repo(&self) -> Box<dyn SegmentRepository + '_> {
@@ -515,11 +508,11 @@ impl NewDomainRepositoryFactory for PostgresDatabase {
     }
 
     fn reviews_repo(&self) -> Box<dyn ReviewRepository + '_> {
-        Box::new(UnsupportedReviewRepository::new("postgres"))
+        Box::new(postgres::PgReviewRepository::new(self.pool().clone()))
     }
 
     fn wishlists_repo(&self) -> Box<dyn WishlistRepository + '_> {
-        Box::new(UnsupportedWishlistRepository::new("postgres"))
+        Box::new(postgres::PgWishlistRepository::new(self.pool().clone()))
     }
 
     fn loyalty_programs_repo(&self) -> Box<dyn LoyaltyProgramRepository + '_> {

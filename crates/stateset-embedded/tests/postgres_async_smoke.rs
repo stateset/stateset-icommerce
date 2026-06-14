@@ -112,3 +112,99 @@ async fn postgres_async_commerce_smoke() {
         "expected reservations to be confirmed after shipping"
     );
 }
+
+/// Regression: the async order-create path must reach parity with the sync
+/// `Orders::create` by emitting a `CommerceEvent::OrderCreated` event. Prior to
+/// the parity fix the async facade silently dropped this event, so any
+/// async subscriber (webhooks, projections) never observed new orders.
+#[cfg(all(feature = "postgres", feature = "events"))]
+#[tokio::test]
+async fn postgres_async_order_create_emits_order_created_event() {
+    use stateset_core::CommerceEvent;
+
+    let url = match postgres_url() {
+        Some(url) => url,
+        None => {
+            eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping postgres async event test");
+            return;
+        }
+    };
+
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
+
+    // Subscribe before creating the order so we capture the emission.
+    let mut subscription = commerce.events().subscribe();
+
+    let unique = Uuid::new_v4().to_string();
+    let sku = format!("SKU-{}", unique.replace('-', ""));
+
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: format!("evt-{}@example.com", unique),
+            first_name: "Event".into(),
+            last_name: "User".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("create customer");
+
+    let product = commerce
+        .products()
+        .create(CreateProduct {
+            name: format!("Evt Widget {}", unique),
+            slug: Some(format!("evt-widget-{}", unique)),
+            description: Some("Event test product".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("create product");
+
+    commerce
+        .inventory()
+        .create_item(CreateInventoryItem {
+            sku: sku.clone(),
+            name: "Evt Widget".into(),
+            initial_quantity: Some(dec!(5)),
+            ..Default::default()
+        })
+        .await
+        .expect("create inventory item");
+
+    let order = commerce
+        .orders()
+        .create(CreateOrder {
+            customer_id: customer.id,
+            items: vec![CreateOrderItem {
+                product_id: product.id,
+                variant_id: None,
+                sku: sku.clone(),
+                name: "Evt Widget".into(),
+                quantity: 2,
+                unit_price: dec!(9.99),
+                discount: None,
+                tax_amount: None,
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("create order");
+
+    // The async create must have emitted an OrderCreated event for this order.
+    let mut saw_order_created = false;
+    while let Some(event) = subscription.try_recv() {
+        if let CommerceEvent::OrderCreated { order_id, customer_id, item_count, .. } = event {
+            if order_id == order.id {
+                assert_eq!(customer_id, order.customer_id, "event customer_id must match order");
+                assert_eq!(item_count, order.items.len(), "event item_count must match order");
+                saw_order_created = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        saw_order_created,
+        "async orders().create() must emit a CommerceEvent::OrderCreated (sync/async parity)"
+    );
+}

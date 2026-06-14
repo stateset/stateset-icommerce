@@ -79,24 +79,32 @@ impl Money {
         self.amount.is_sign_negative() && !self.amount.is_zero()
     }
 
-    /// Add two monetary values. Returns `None` if currencies don't match.
+    /// Add two monetary values.
+    ///
+    /// Returns `None` if the currencies don't match or if the underlying
+    /// [`Decimal`] addition overflows. This method never panics.
     #[inline]
     #[must_use]
     pub fn checked_add(self, other: Self) -> Option<Self> {
         if self.currency != other.currency {
             return None;
         }
-        Some(Self { amount: self.amount + other.amount, currency: self.currency })
+        let amount = self.amount.checked_add(other.amount)?;
+        Some(Self { amount, currency: self.currency })
     }
 
-    /// Subtract two monetary values. Returns `None` if currencies don't match.
+    /// Subtract two monetary values.
+    ///
+    /// Returns `None` if the currencies don't match or if the underlying
+    /// [`Decimal`] subtraction overflows. This method never panics.
     #[inline]
     #[must_use]
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         if self.currency != other.currency {
             return None;
         }
-        Some(Self { amount: self.amount - other.amount, currency: self.currency })
+        let amount = self.amount.checked_sub(other.amount)?;
+        Some(Self { amount, currency: self.currency })
     }
 
     /// Round to a given number of decimal places.
@@ -107,19 +115,27 @@ impl Money {
     }
 
     /// Multiply by a scalar factor (e.g., quantity or tax rate). Currency is preserved.
+    ///
+    /// Returns `None` if the underlying [`Decimal`] multiplication overflows.
+    /// This method never panics.
     #[inline]
     #[must_use = "returns a new Money with scaled amount"]
-    pub fn checked_mul_scalar(self, factor: Decimal) -> Self {
-        Self { amount: self.amount * factor, currency: self.currency }
+    pub fn checked_mul_scalar(self, factor: Decimal) -> Option<Self> {
+        let amount = self.amount.checked_mul(factor)?;
+        Some(Self { amount, currency: self.currency })
     }
 
-    /// Divide by a scalar. Returns `None` if divisor is zero.
+    /// Divide by a scalar.
+    ///
+    /// Returns `None` if the divisor is zero or if the underlying [`Decimal`]
+    /// division overflows. This method never panics.
     #[must_use]
     pub fn checked_div_scalar(self, divisor: Decimal) -> Option<Self> {
         if divisor.is_zero() {
             return None;
         }
-        Some(Self { amount: self.amount / divisor, currency: self.currency })
+        let amount = self.amount.checked_div(divisor)?;
+        Some(Self { amount, currency: self.currency })
     }
 
     /// Return the absolute value of this monetary amount.
@@ -490,7 +506,7 @@ mod tests {
     #[test]
     fn checked_mul_scalar() {
         let money = Money::new(dec!(10.00), CurrencyCode::USD);
-        let result = money.checked_mul_scalar(dec!(3));
+        let result = money.checked_mul_scalar(dec!(3)).unwrap();
         assert_eq!(result.amount(), dec!(30.00));
         assert_eq!(result.currency(), CurrencyCode::USD);
     }
@@ -498,7 +514,7 @@ mod tests {
     #[test]
     fn checked_mul_scalar_fractional() {
         let money = Money::new(dec!(100.00), CurrencyCode::USD);
-        let result = money.checked_mul_scalar(dec!(0.0825)); // 8.25% tax
+        let result = money.checked_mul_scalar(dec!(0.0825)).unwrap(); // 8.25% tax
         assert_eq!(result.amount(), dec!(8.2500));
     }
 
@@ -537,5 +553,87 @@ mod tests {
         assert_eq!(negated.amount(), dec!(-5.00));
         let restored = negated.negate();
         assert_eq!(restored.amount(), dec!(5.00));
+    }
+
+    // -----------------------------------------------------------------------
+    // Arithmetic-overflow guards: `checked_*` must return `None`, never panic.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn checked_add_returns_none_on_overflow() {
+        let max = Money::new(Decimal::MAX, CurrencyCode::USD);
+        let one = Money::new(Decimal::ONE, CurrencyCode::USD);
+        // Decimal::MAX + 1 overflows the Decimal representation.
+        assert!(max.checked_add(one).is_none());
+        assert!(max.checked_add(max).is_none());
+    }
+
+    #[test]
+    fn checked_sub_returns_none_on_overflow() {
+        let min = Money::new(Decimal::MIN, CurrencyCode::USD);
+        let one = Money::new(Decimal::ONE, CurrencyCode::USD);
+        // Decimal::MIN - 1 overflows the Decimal representation.
+        assert!(min.checked_sub(one).is_none());
+        let max = Money::new(Decimal::MAX, CurrencyCode::USD);
+        // Decimal::MIN - Decimal::MAX overflows.
+        assert!(min.checked_sub(max).is_none());
+    }
+
+    #[test]
+    fn checked_mul_scalar_returns_none_on_overflow() {
+        let max = Money::new(Decimal::MAX, CurrencyCode::USD);
+        // Decimal::MAX * 2 overflows the Decimal representation.
+        assert!(max.checked_mul_scalar(dec!(2)).is_none());
+        assert!(max.checked_mul_scalar(Decimal::MAX).is_none());
+    }
+
+    #[test]
+    fn checked_div_scalar_returns_none_on_overflow() {
+        let max = Money::new(Decimal::MAX, CurrencyCode::USD);
+        // Dividing the largest magnitude by a tiny fraction overflows.
+        assert!(max.checked_div_scalar(dec!(0.0000000000000000000000000001)).is_none());
+    }
+
+    proptest! {
+        /// `checked_*` arithmetic is total: it must never panic, even at the
+        /// extremes of the `Decimal` range. It either yields a value or `None`.
+        #[test]
+        fn checked_arithmetic_never_panics(
+            a_raw in any::<i64>(),
+            a_scale in 0u32..6,
+            b_raw in any::<i64>(),
+            b_scale in 0u32..6,
+            currency in arb_currency(),
+        ) {
+            let a = Money::new(Decimal::new(a_raw, a_scale), currency);
+            let b = Money::new(Decimal::new(b_raw, b_scale), currency);
+            // None of these may panic regardless of inputs.
+            let _ = a.checked_add(b);
+            let _ = a.checked_sub(b);
+            let _ = a.checked_mul_scalar(b.amount());
+            let _ = a.checked_div_scalar(b.amount());
+        }
+    }
+
+    proptest! {
+        /// Even when operands are pinned to the `Decimal` extremes, the
+        /// `checked_*` methods stay total (return `None`, never panic).
+        #[test]
+        fn checked_arithmetic_at_extremes_never_panics(
+            factor_raw in any::<i64>(),
+            factor_scale in 0u32..28,
+            currency in arb_currency(),
+        ) {
+            let max = Money::new(Decimal::MAX, currency);
+            let min = Money::new(Decimal::MIN, currency);
+            let factor = Decimal::new(factor_raw, factor_scale);
+            let _ = max.checked_add(max);
+            let _ = max.checked_add(min);
+            let _ = min.checked_sub(max);
+            let _ = max.checked_mul_scalar(factor);
+            let _ = min.checked_mul_scalar(factor);
+            let _ = max.checked_div_scalar(factor);
+            let _ = min.checked_div_scalar(factor);
+        }
     }
 }

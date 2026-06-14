@@ -10,7 +10,7 @@ Part of the [StateSet iCommerce](https://github.com/stateset/stateset-icommerce)
 - **State machines**: `OrderStatus`, `PaymentTransactionStatus`, `SubscriptionStatus` with exhaustive match enforcement
 - **Event sourcing**: `CommerceEvent` enum with 30+ variants for full audit trails
 - **Validation framework**: Composable `ValidationBuilder` with pre-built validators for email, SKU, phone, postal code, price, quantity
-- **Repository traits**: Generic `Repository` / `AsyncRepository` with `auto_impl` for `&T`, `Box<T>`, `Arc<T>`
+- **Repository traits**: Generic `Repository` with `auto_impl` for `&T`, `Box<T>`, `Arc<T>`
 - **Error taxonomy**: `CommerceError` with `is_not_found()`, `is_retryable()`, `suggested_status_code()` and domain-specific sub-errors
 - **Agent-to-agent commerce**: A2A quotes, purchases, subscriptions, split payments, escrow
 - **Crypto primitives**: x402 payment intents, ERC-8004 identity, Merkle proofs

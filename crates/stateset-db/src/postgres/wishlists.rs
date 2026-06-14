@@ -232,12 +232,11 @@ impl PgWishlistRepository {
         let now = Utc::now();
 
         // Verify wishlist exists
-        let exists: Option<Uuid> =
-            sqlx::query_scalar("SELECT id FROM wishlists WHERE id = $1")
-                .bind(wishlist_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+        let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM wishlists WHERE id = $1")
+            .bind(wishlist_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         if exists.is_none() {
             return Err(CommerceError::NotFound);

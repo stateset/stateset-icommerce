@@ -58,7 +58,7 @@ struct CachedResponse {
     status: StatusCode,
     content_type: Option<HeaderValue>,
     body: Vec<u8>,
-    request_body_hash: u64,
+    request_body_hash: [u8; 32],
     stored_at: Instant,
 }
 
@@ -134,14 +134,19 @@ impl Default for IdempotencyLayer {
     }
 }
 
-/// Non-cryptographic FNV-1a 64-bit hash for request-body comparison.
-fn hash_body(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0100_0000_01b3);
-    }
-    hash
+/// Collision-resistant SHA-256 digest of the request body, used to detect when
+/// an `Idempotency-Key` is replayed with a *different* body (a client conflict).
+///
+/// A non-cryptographic hash (e.g. FNV-1a) is unsuitable here: an attacker who
+/// reuses a victim's key could grind a body that collides with the original and
+/// thereby slip a different request past the "same key, different body" guard
+/// (or have a cached response replayed for a body it never matched). SHA-256
+/// makes such a collision computationally infeasible.
+fn hash_body(bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher.finalize().into()
 }
 
 /// Whether a path is a `POST` create endpoint that participates in idempotency.
@@ -332,11 +337,11 @@ mod tests {
     fn store_evicts_oldest_when_over_capacity() {
         let mut store = IdempotencyStore::new(DEFAULT_TTL, 2);
         let now = Instant::now();
-        let make = |hash| CachedResponse {
+        let make = |seed: u8| CachedResponse {
             status: StatusCode::CREATED,
             content_type: None,
             body: Vec::new(),
-            request_body_hash: hash,
+            request_body_hash: [seed; 32],
             stored_at: now,
         };
         store.insert(("t".into(), "a".into()), make(1));
@@ -358,7 +363,7 @@ mod tests {
                 status: StatusCode::CREATED,
                 content_type: None,
                 body: Vec::new(),
-                request_body_hash: 1,
+                request_body_hash: [1u8; 32],
                 stored_at,
             },
         );

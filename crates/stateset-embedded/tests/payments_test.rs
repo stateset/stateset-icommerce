@@ -5,10 +5,10 @@
 use rust_decimal_macros::dec;
 use stateset_core::CurrencyCode;
 use stateset_embedded::{
-    CardBrand, Commerce, CreateCustomer, CreateInvoice, CreateInvoiceItem, CreateOrder,
-    CreateOrderItem, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId, OrderId,
-    Payment, PaymentFilter, PaymentId, PaymentMethodType, PaymentTransactionStatus, RefundStatus,
-    UpdatePayment,
+    CardBrand, Commerce, CommerceError, CreateCustomer, CreateInvoice, CreateInvoiceItem,
+    CreateOrder, CreateOrderItem, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
+    OrderId, Payment, PaymentFilter, PaymentId, PaymentMethodType, PaymentTransactionStatus,
+    RefundStatus, UpdatePayment,
 };
 use uuid::Uuid;
 
@@ -556,6 +556,120 @@ fn test_fail_refund() {
 
     assert_eq!(failed_refund.status, RefundStatus::Failed);
     assert_eq!(failed_refund.failure_reason, Some("Refund processing error".into()));
+}
+
+#[test]
+fn test_refund_rejects_amount_exceeding_payment() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let payment = create_test_payment(&commerce, None, None); // amount = 99.99
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
+
+    let err = commerce
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(150.00)),
+            ..Default::default()
+        })
+        .expect_err("refund exceeding payment must be rejected");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+    // Nothing should have been persisted.
+    assert!(commerce.payments().get_refunds(payment.id).expect("list refunds").is_empty());
+}
+
+#[test]
+fn test_refund_rejects_non_positive_amount() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let payment = create_test_payment(&commerce, None, None);
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
+
+    for amount in [dec!(0.00), dec!(-1.00)] {
+        let err = commerce
+            .payments()
+            .create_refund(CreateRefund {
+                payment_id: payment.id,
+                amount: Some(amount),
+                ..Default::default()
+            })
+            .expect_err("non-positive refund must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "{amount}: {err:?}");
+    }
+}
+
+#[test]
+fn test_refund_rejects_pending_payment() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    // Payment left in the default `Pending` state (not captured).
+    let payment = create_test_payment(&commerce, None, None);
+
+    let err = commerce
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(10.00)),
+            ..Default::default()
+        })
+        .expect_err("refunding a pending payment must be rejected");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+}
+
+#[test]
+fn test_refund_rejects_failed_payment() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let payment = create_test_payment(&commerce, None, None);
+    commerce
+        .payments()
+        .mark_failed(payment.id, "declined", Some("declined"))
+        .expect("Failed to fail payment");
+
+    let err = commerce
+        .payments()
+        .create_refund(CreateRefund { payment_id: payment.id, amount: None, ..Default::default() })
+        .expect_err("refunding a failed payment must be rejected");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+}
+
+#[test]
+fn test_two_partial_refunds_sum_to_exact_decimal() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    // 0.10 + 0.20 == 0.30 exactly, but SQLite float math on TEXT columns would
+    // yield 0.30000000000000004. This guards the money-precision regression
+    // through the embedded accessor path.
+    let payment = commerce
+        .payments()
+        .create(CreatePayment {
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(0.30),
+            ..Default::default()
+        })
+        .expect("Failed to create payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
+
+    let r1 = commerce
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(0.10)),
+            ..Default::default()
+        })
+        .expect("first refund");
+    commerce.payments().complete_refund(r1.id).expect("complete first refund");
+
+    let r2 = commerce
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(0.20)),
+            ..Default::default()
+        })
+        .expect("second refund");
+    commerce.payments().complete_refund(r2.id).expect("complete second refund");
+
+    let reloaded = commerce.payments().get(payment.id).expect("get").expect("payment present");
+    assert_eq!(reloaded.amount_refunded, dec!(0.30));
+    assert_eq!(reloaded.amount_refunded.to_string(), "0.30");
+    assert_eq!(reloaded.status, PaymentTransactionStatus::Refunded);
 }
 
 #[test]

@@ -1011,6 +1011,14 @@ impl CartRepository for SqliteCartRepository {
             }
         }
 
+        // A cancelled/abandoned/expired cart must never be minted into an order.
+        if !cart.is_checkoutable_status() {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be checked out in status: {}",
+                cart.status
+            )));
+        }
+
         // Validate cart is ready for checkout
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
@@ -1842,6 +1850,16 @@ impl SqliteCartRepository {
             }
         }
 
+        // A cancelled/abandoned/expired cart must never be minted into an order.
+        if !cart.is_checkoutable_status() {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::Conflict(format!(
+                    "Cart cannot be checked out in status: {}",
+                    cart.status
+                )),
+            )));
+        }
+
         if !cart.is_ready_for_checkout() {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                 CommerceError::ValidationError(
@@ -2154,6 +2172,70 @@ mod tests {
         let cart = repo.create(CreateCart::default()).expect("create");
         let abandoned = repo.abandon(cart.id).expect("abandon");
         assert_eq!(abandoned.status, CartStatus::Abandoned);
+    }
+
+    /// Create a cart that satisfies every `is_ready_for_checkout` requirement
+    /// (item, customer email/name, shipping address) so that `complete()` will
+    /// mint an order unless the lifecycle guard rejects it.
+    fn checkoutable_cart(repo: &SqliteCartRepository) -> Cart {
+        let cart = repo
+            .create(CreateCart {
+                customer_email: Some("buyer@example.com".into()),
+                customer_name: Some("Ada Lovelace".into()),
+                items: Some(vec![add_item("SKU-CHK", 1, dec!(10))]),
+                shipping_address: Some(addr()),
+                ..Default::default()
+            })
+            .expect("create");
+        repo.set_shipping_address(cart.id, addr()).expect("ship addr");
+        repo.get(cart.id).expect("ok").expect("found")
+    }
+
+    #[test]
+    fn complete_checks_out_active_cart() {
+        let repo = fresh_repo();
+        let cart = checkoutable_cart(&repo);
+        assert_eq!(cart.status, CartStatus::Active);
+        let result = repo.complete(cart.id).expect("checkout should succeed");
+        assert!(result.order_number.starts_with("ORD-") || !result.order_number.is_empty());
+        let completed = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(completed.status, CartStatus::Completed);
+        assert!(completed.order_id.is_some());
+    }
+
+    #[test]
+    fn complete_rejects_cancelled_cart() {
+        let repo = fresh_repo();
+        let cart = checkoutable_cart(&repo);
+        repo.cancel(cart.id).expect("cancel");
+        let err = repo.complete(cart.id).expect_err("cancelled cart must not check out");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        // No order was minted.
+        let after = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(after.status, CartStatus::Cancelled);
+        assert!(after.order_id.is_none());
+    }
+
+    #[test]
+    fn complete_rejects_abandoned_cart() {
+        let repo = fresh_repo();
+        let cart = checkoutable_cart(&repo);
+        repo.abandon(cart.id).expect("abandon");
+        let err = repo.complete(cart.id).expect_err("abandoned cart must not check out");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        let after = repo.get(cart.id).expect("ok").expect("found");
+        assert!(after.order_id.is_none());
+    }
+
+    #[test]
+    fn complete_rejects_expired_cart() {
+        let repo = fresh_repo();
+        let cart = checkoutable_cart(&repo);
+        repo.expire(cart.id).expect("expire");
+        let err = repo.complete(cart.id).expect_err("expired cart must not check out");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        let after = repo.get(cart.id).expect("ok").expect("found");
+        assert!(after.order_id.is_none());
     }
 
     #[test]

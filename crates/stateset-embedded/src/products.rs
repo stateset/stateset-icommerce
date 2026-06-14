@@ -2,7 +2,7 @@
 
 use stateset_core::{
     CreateProduct, CreateProductVariant, Product, ProductFilter, ProductId, ProductStatus,
-    ProductVariant, Result, UpdateProduct,
+    ProductVariant, Result, UpdateProduct, Validate,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -93,6 +93,9 @@ impl Products {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateProduct) -> Result<Product> {
+        // Reject an empty product name or a variant with a bad SKU / negative
+        // price before persisting.
+        input.validate()?;
         let product = self.db.products().create(input)?;
         self.metrics.record_product_created(&product.id.to_string());
         #[cfg(feature = "events")]
@@ -174,6 +177,8 @@ impl Products {
         product_id: ProductId,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
+        // Reject a bad SKU or negative price/cost/weight before persisting.
+        variant.validate()?;
         let variant = self.db.products().add_variant(product_id, variant)?;
         #[cfg(feature = "events")]
         {
@@ -203,6 +208,8 @@ impl Products {
         id: Uuid,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
+        // Reject a bad SKU or negative price/cost/weight before persisting.
+        variant.validate()?;
         let variant = self.db.products().update_variant(id, variant)?;
         #[cfg(feature = "events")]
         {

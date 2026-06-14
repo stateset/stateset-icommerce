@@ -60,6 +60,8 @@ export default defineConfig({
         'src/components/orders/order-pipeline.tsx',
         'src/components/returns/returns-management.tsx',
         'src/components/shared/top-bar.tsx',
+        'src/components/shared/simulated-data-badge.tsx',
+        'src/components/mobile-nav.tsx',
       ],
       exclude: [
         'src/**/*.d.ts',

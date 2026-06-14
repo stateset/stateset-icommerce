@@ -2,7 +2,7 @@
 
 use stateset_core::{
     CreateReturn, CustomerId, OrderId, Result, Return, ReturnFilter, ReturnId, ReturnStatus,
-    UpdateReturn,
+    UpdateReturn, Validate,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -81,6 +81,9 @@ impl Returns {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateReturn) -> Result<Return> {
+        // Reject an empty/no-items return or a non-positive item quantity before
+        // persisting.
+        input.validate()?;
         let ret = self.db.returns().create(input)?;
         self.metrics.record_return_requested(&ret.id.to_string());
         #[cfg(feature = "events")]
