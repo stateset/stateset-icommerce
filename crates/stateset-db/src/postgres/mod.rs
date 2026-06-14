@@ -142,8 +142,41 @@ impl PostgresDatabase {
         Ok(Self { pool })
     }
 
-    /// Run database migrations
+    /// Run database migrations, serialized across concurrent callers.
+    ///
+    /// Acquires a session-level Postgres advisory lock for the duration of the
+    /// run. Without it, two runners (multiple app instances booting against a
+    /// fresh database, or parallel integration tests) can each observe a
+    /// migration as unapplied and both execute its `CREATE TYPE`, which fails
+    /// with a duplicate-key error on `pg_type`. The second runner now blocks on
+    /// the lock, then finds every migration already applied and does nothing.
     async fn run_migrations(pool: &PgPool) -> Result<(), CommerceError> {
+        // Arbitrary fixed key identifying the migration lock for this app.
+        const MIGRATION_LOCK_KEY: i64 = 0x5354_4154_4553_4554;
+
+        let mut lock_conn =
+            pool.acquire().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(MIGRATION_LOCK_KEY)
+            .execute(&mut *lock_conn)
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        let result = Self::apply_migrations(pool).await;
+
+        // Release before the connection returns to the pool — a session-level
+        // advisory lock outlives the borrow on a pooled (not closed) connection.
+        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(MIGRATION_LOCK_KEY)
+            .execute(&mut *lock_conn)
+            .await;
+
+        result
+    }
+
+    /// Apply pending migrations. Callers must hold the migration advisory lock
+    /// (see [`Self::run_migrations`]).
+    async fn apply_migrations(pool: &PgPool) -> Result<(), CommerceError> {
         // Create migrations table if not exists
         sqlx::query(
             r#"
