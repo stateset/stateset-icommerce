@@ -502,7 +502,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
             // columns (migration 017), so accumulating in SQL via
             // 'CAST(received_quantity AS REAL) + ?1' would coerce both operands to
             // IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004) — corrupting
-            // the stored quantity and mis-classifying the status at the
+            // the stored quantity and misclassifying the status at the
             // received/expected boundary. Read the current row, add with
             // `rust_decimal::Decimal`, and write exact precomputed strings back.
             let (cur_received, cur_rejected, expected, cur_status): (
