@@ -24,6 +24,7 @@ mod inventory;
 mod invoices;
 mod lots;
 mod loyalty;
+mod money_agg;
 mod orders;
 pub(crate) mod parse_helpers;
 mod payments;
@@ -250,6 +251,9 @@ impl SqliteDatabase {
                  PRAGMA mmap_size = 268435456;\
                  PRAGMA wal_autocheckpoint = 10000;",
             )?;
+            // Exact-decimal money aggregate (decimal_sum) for analytics totals;
+            // see money_agg for why SQL's float SUM() is unsafe on TEXT money.
+            money_agg::register(conn)?;
             Ok(())
         });
 
