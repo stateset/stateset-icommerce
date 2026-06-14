@@ -28,7 +28,9 @@ installShutdownHandlers('stateset-completion');
 const MAIN_BASH_FLAGS = MAIN_CLI_LONG_FLAGS.join(' ');
 
 function escapeSingleQuotes(value) {
-  return String(value).replace(/'/g, "\\'");
+  // Escape backslashes before single quotes so a value containing `\` can't
+  // alter the surrounding shell-completion quoting (CodeQL js/incomplete-sanitization).
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 function getZshValueSpec(option) {
