@@ -111,7 +111,44 @@ use crate::models::{
     X402CreditTransactionFilter, X402Network, X402PaymentIntent, X402PaymentIntentFilter, Zone,
     ZoneShippingMethod, ZoneShippingMethodFilter, ZoneShippingRate, ZoneShippingRateRequest,
 };
+// Newly-added B2B / ERP-ops entities (channels, companies, transfer orders,
+// units of measure, production batches).
+use crate::models::{
+    ActivityLogEntry, ActivityLogFilter, ApplyPrepayment, ApplyVendorCredit, BulkSupplierSkuItem,
+    CaptureStockSnapshot, CaptureTopologySnapshot, CreateEdiDocument, CreateInboundShipment,
+    CreateIntegrationFieldMapping, CreateIntegrationMapping, CreatePaymentObligation,
+    CreatePrepayment, CreatePriceLevel, CreatePriceSchedule, CreatePrintStation, CreateSupplierSku,
+    CreateVendorCredit, CreateVendorReturn, EdiAggregateSummary, EdiDocument, EdiDocumentFilter,
+    EdiStatus, EnqueuePrintJob, InboundShipment, InboundShipmentFilter, IngestOrder,
+    IntegrationFieldMapping, IntegrationFieldMappingFilter, IntegrationMapping,
+    IntegrationMappingFilter, MapPurgatoryLine, MappingLookup, PairStationResult,
+    PaymentObligation, PaymentObligationDashboard, PaymentObligationFilter,
+    PaymentObligationStatus, Prepayment, PrepaymentApplication, PrepaymentFilter, PriceLevel,
+    PriceLevelEntry, PriceLevelFilter, PriceSchedule, PriceScheduleEntry, PriceScheduleFilter,
+    PrintJob, PrintJobFilter, PrintStation, PurgatoryFilter, PurgatoryOrder, RecordActivity,
+    StockSnapshot, StockSnapshotFilter, SupplierSku, SupplierSkuFilter, TopologySnapshot,
+    TopologySnapshotFilter, UpdateIntegrationFieldMapping, UpdateIntegrationMapping,
+    UpdatePriceLevel, UpdatePriceSchedule, UpdateSupplierSku, VendorCredit,
+    VendorCreditApplication, VendorCreditFilter, VendorReturn, VendorReturnFilter,
+};
+use crate::models::{
+    Channel, ChannelFilter, ChannelProductMapping, ChannelProductSyncItem, Company, CompanyFilter,
+    CompanyPriceOverride, CompanyShippingAddress, Contact, CreateChannel, CreateCompany,
+    CreateContact, CreateProductionBatch, CreateTransferOrder, CreateUnitClass,
+    CreateUnitConversionRule, CreateUnitOfMeasure, ProductionBatch, ProductionBatchFilter,
+    TransferOrder, TransferOrderFilter, UnitClass, UnitConversionRule, UnitOfMeasure,
+    UpdateChannel, UpdateCompany, UpdateProductionBatch,
+};
 use chrono::{DateTime, Utc};
+use stateset_primitives::{
+    ActivityLogId, ChannelId, CompanyId, ContactId, EdiDocumentId, InboundShipmentId,
+    InboundShipmentItemId, IntegrationFieldMappingId, IntegrationMappingId, PaymentObligationId,
+    PrepaymentApplicationId, PrepaymentId, PriceLevelId, PriceScheduleId, PrintJobId,
+    PrintStationId, ProductionBatchId, PurgatoryLineItemId, PurgatoryOrderId, StockSnapshotId,
+    SupplierSkuId, TopologySnapshotId, TransferOrderId, TransferOrderItemId, UnitClassId,
+    UnitConversionRuleId, UnitOfMeasureId, VendorCreditApplicationId, VendorCreditId,
+    VendorReturnId,
+};
 use stateset_primitives::{
     CartId, CreditId, CustomerId, FraudRuleId, FulfillmentId, GiftCardId, InvoiceId,
     LoyaltyAccountId, LoyaltyProgramId, OrderId, OrderItemId, PaymentId, ProductId, PromotionId,
@@ -3850,4 +3887,613 @@ pub trait SearchConfigRepository: Send + Sync {
 
     /// Set a configuration as active (deactivating any current one)
     fn set_active(&self, id: SearchConfigId) -> Result<SearchConfig>;
+}
+
+/// Sales / fulfillment channel repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ChannelRepository: Send + Sync {
+    /// Create a new channel.
+    fn create(&self, input: CreateChannel) -> Result<Channel>;
+
+    /// Get a channel by ID.
+    fn get(&self, id: ChannelId) -> Result<Option<Channel>>;
+
+    /// Update a channel (PATCH/merge semantics).
+    fn update(&self, id: ChannelId, input: UpdateChannel) -> Result<Channel>;
+
+    /// List channels with filter.
+    fn list(&self, filter: ChannelFilter) -> Result<Vec<Channel>>;
+
+    /// Soft-delete a channel. Errors if the channel is API-locked.
+    fn delete(&self, id: ChannelId) -> Result<()>;
+
+    /// Set the channel's lock state, blocking/allowing external mutations.
+    fn set_lock(&self, id: ChannelId, locked: bool) -> Result<Channel>;
+
+    /// Bulk upsert/delete channel SKU mappings. Returns the affected count.
+    fn sync_products(&self, id: ChannelId, items: Vec<ChannelProductSyncItem>) -> Result<u64>;
+
+    /// List a channel's SKU mappings.
+    fn list_product_mappings(&self, id: ChannelId) -> Result<Vec<ChannelProductMapping>>;
+}
+
+/// B2B company (account) repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait CompanyRepository: Send + Sync {
+    /// Create a new company.
+    fn create(&self, input: CreateCompany) -> Result<Company>;
+
+    /// Get a company by ID.
+    fn get(&self, id: CompanyId) -> Result<Option<Company>>;
+
+    /// Update a company (partial).
+    fn update(&self, id: CompanyId, input: UpdateCompany) -> Result<Company>;
+
+    /// List companies with filter.
+    fn list(&self, filter: CompanyFilter) -> Result<Vec<Company>>;
+
+    /// Delete a company by ID.
+    fn delete(&self, id: CompanyId) -> Result<()>;
+
+    /// List the company's shipping addresses.
+    fn list_addresses(&self, id: CompanyId) -> Result<Vec<CompanyShippingAddress>>;
+
+    /// List the company's product price overrides.
+    fn list_price_overrides(&self, id: CompanyId) -> Result<Vec<CompanyPriceOverride>>;
+
+    /// Create a contact, linking it to one or more companies.
+    fn create_contact(&self, input: CreateContact) -> Result<Contact>;
+
+    /// Get a contact by ID.
+    fn get_contact(&self, id: ContactId) -> Result<Option<Contact>>;
+
+    /// List contacts for a company.
+    fn list_contacts(&self, company_id: CompanyId) -> Result<Vec<Contact>>;
+}
+
+/// Transfer order repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait TransferOrderRepository: Send + Sync {
+    /// Create a new transfer order.
+    fn create(&self, input: CreateTransferOrder) -> Result<TransferOrder>;
+
+    /// Get a transfer order by ID (with line items).
+    fn get(&self, id: TransferOrderId) -> Result<Option<TransferOrder>>;
+
+    /// List transfer orders with filter.
+    fn list(&self, filter: TransferOrderFilter) -> Result<Vec<TransferOrder>>;
+
+    /// Mark a transfer order as shipped from the source.
+    fn ship(&self, id: TransferOrderId) -> Result<TransferOrder>;
+
+    /// Receive quantities at the destination for a single line.
+    fn receive_line(
+        &self,
+        id: TransferOrderId,
+        item_id: TransferOrderItemId,
+        quantity: rust_decimal::Decimal,
+    ) -> Result<TransferOrder>;
+
+    /// Cancel a transfer order.
+    fn cancel(&self, id: TransferOrderId) -> Result<TransferOrder>;
+}
+
+/// Units of measure / unit class / conversion rule repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait UnitOfMeasureRepository: Send + Sync {
+    /// Create a unit class.
+    fn create_class(&self, input: CreateUnitClass) -> Result<UnitClass>;
+
+    /// List unit classes.
+    fn list_classes(&self) -> Result<Vec<UnitClass>>;
+
+    /// Delete a unit class (fails if still referenced).
+    fn delete_class(&self, id: UnitClassId) -> Result<()>;
+
+    /// Create a unit of measure under a class.
+    fn create_uom(&self, input: CreateUnitOfMeasure) -> Result<UnitOfMeasure>;
+
+    /// List units of measure, optionally scoped to a class.
+    fn list_uoms(&self, class_id: Option<UnitClassId>) -> Result<Vec<UnitOfMeasure>>;
+
+    /// Mark a UOM as the base unit for its class.
+    fn set_base_uom(&self, id: UnitOfMeasureId) -> Result<UnitOfMeasure>;
+
+    /// Delete a unit of measure (fails if still referenced).
+    fn delete_uom(&self, id: UnitOfMeasureId) -> Result<()>;
+
+    /// Create a conversion rule.
+    fn create_rule(&self, input: CreateUnitConversionRule) -> Result<UnitConversionRule>;
+
+    /// List conversion rules.
+    fn list_rules(&self) -> Result<Vec<UnitConversionRule>>;
+
+    /// Delete a conversion rule.
+    fn delete_rule(&self, id: UnitConversionRuleId) -> Result<()>;
+}
+
+/// Production batch repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ProductionBatchRepository: Send + Sync {
+    /// Create a new production batch.
+    fn create(&self, input: CreateProductionBatch) -> Result<ProductionBatch>;
+
+    /// Get a production batch by ID.
+    fn get(&self, id: ProductionBatchId) -> Result<Option<ProductionBatch>>;
+
+    /// Update a production batch (partial).
+    fn update(
+        &self,
+        id: ProductionBatchId,
+        input: UpdateProductionBatch,
+    ) -> Result<ProductionBatch>;
+
+    /// List production batches with filter.
+    fn list(&self, filter: ProductionBatchFilter) -> Result<Vec<ProductionBatch>>;
+
+    /// Delete a production batch.
+    fn delete(&self, id: ProductionBatchId) -> Result<()>;
+
+    /// Link work orders to a batch. Returns the updated batch.
+    fn add_work_orders(
+        &self,
+        id: ProductionBatchId,
+        work_order_ids: Vec<uuid::Uuid>,
+    ) -> Result<ProductionBatch>;
+
+    /// Remove a work order from a batch. Returns the updated batch.
+    fn remove_work_order(
+        &self,
+        id: ProductionBatchId,
+        work_order_id: uuid::Uuid,
+    ) -> Result<ProductionBatch>;
+}
+
+/// Supplier SKU repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait SupplierSkuRepository: Send + Sync {
+    /// Create a new supplier SKU.
+    fn create(&self, input: CreateSupplierSku) -> Result<SupplierSku>;
+
+    /// Get a supplier SKU by ID.
+    fn get(&self, id: SupplierSkuId) -> Result<Option<SupplierSku>>;
+
+    /// Update a supplier SKU (partial).
+    fn update(&self, id: SupplierSkuId, input: UpdateSupplierSku) -> Result<SupplierSku>;
+
+    /// List supplier SKUs with filter.
+    fn list(&self, filter: SupplierSkuFilter) -> Result<Vec<SupplierSku>>;
+
+    /// Delete a supplier SKU.
+    fn delete(&self, id: SupplierSkuId) -> Result<()>;
+
+    /// Bulk upsert supplier SKUs for a single supplier, keyed by internal
+    /// product. Returns the number of rows affected.
+    fn bulk_upsert(&self, supplier_id: uuid::Uuid, items: Vec<BulkSupplierSkuItem>) -> Result<u64>;
+}
+
+/// Vendor return (return-to-supplier) repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait VendorReturnRepository: Send + Sync {
+    /// Create a new vendor return.
+    fn create(&self, input: CreateVendorReturn) -> Result<VendorReturn>;
+
+    /// Get a vendor return by ID (with line items).
+    fn get(&self, id: VendorReturnId) -> Result<Option<VendorReturn>>;
+
+    /// List vendor returns with filter.
+    fn list(&self, filter: VendorReturnFilter) -> Result<Vec<VendorReturn>>;
+
+    /// Submit a draft vendor return to the supplier.
+    fn submit(&self, id: VendorReturnId) -> Result<VendorReturn>;
+
+    /// Process a vendor return: mark processed and optionally generate a credit.
+    fn process(&self, id: VendorReturnId, generate_credit: bool) -> Result<VendorReturn>;
+
+    /// Cancel a vendor return.
+    fn cancel(&self, id: VendorReturnId) -> Result<VendorReturn>;
+}
+
+/// Vendor credit repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait VendorCreditRepository: Send + Sync {
+    /// Create a new vendor credit.
+    fn create(&self, input: CreateVendorCredit) -> Result<VendorCredit>;
+
+    /// Get a vendor credit by ID.
+    fn get(&self, id: VendorCreditId) -> Result<Option<VendorCredit>>;
+
+    /// List vendor credits with filter.
+    fn list(&self, filter: VendorCreditFilter) -> Result<Vec<VendorCredit>>;
+
+    /// Apply a vendor credit against a bill or payment obligation. Decrements
+    /// the remaining balance and records an application.
+    fn apply(&self, id: VendorCreditId, input: ApplyVendorCredit) -> Result<VendorCredit>;
+
+    /// List applications for a vendor credit.
+    fn list_applications(&self, id: VendorCreditId) -> Result<Vec<VendorCreditApplication>>;
+
+    /// Reverse a previously-recorded application, restoring the balance.
+    fn reverse_application(
+        &self,
+        id: VendorCreditId,
+        application_id: VendorCreditApplicationId,
+    ) -> Result<VendorCredit>;
+
+    /// Cancel a vendor credit (only when it has no active applications).
+    fn cancel(&self, id: VendorCreditId) -> Result<VendorCredit>;
+}
+
+/// Payment obligation repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PaymentObligationRepository: Send + Sync {
+    /// Create a new payment obligation.
+    fn create(&self, input: CreatePaymentObligation) -> Result<PaymentObligation>;
+
+    /// Get a payment obligation by ID.
+    fn get(&self, id: PaymentObligationId) -> Result<Option<PaymentObligation>>;
+
+    /// List payment obligations with filter.
+    fn list(&self, filter: PaymentObligationFilter) -> Result<Vec<PaymentObligation>>;
+
+    /// Record a payment against an obligation, advancing its status.
+    fn record_payment(
+        &self,
+        id: PaymentObligationId,
+        amount: rust_decimal::Decimal,
+    ) -> Result<PaymentObligation>;
+
+    /// Set the obligation status explicitly (e.g. schedule or cancel).
+    fn set_status(
+        &self,
+        id: PaymentObligationId,
+        status: PaymentObligationStatus,
+    ) -> Result<PaymentObligation>;
+
+    /// Link an AP bill to an obligation (idempotent).
+    fn link_bill(&self, id: PaymentObligationId, bill_id: uuid::Uuid) -> Result<PaymentObligation>;
+
+    /// Aggregate dashboard summary as of the given date.
+    fn dashboard(&self, today: chrono::NaiveDate) -> Result<PaymentObligationDashboard>;
+}
+
+/// Price level (B2B pricing tier) repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PriceLevelRepository: Send + Sync {
+    /// Create a new price level.
+    fn create(&self, input: CreatePriceLevel) -> Result<PriceLevel>;
+
+    /// Get a price level by ID.
+    fn get(&self, id: PriceLevelId) -> Result<Option<PriceLevel>>;
+
+    /// Update a price level (partial).
+    fn update(&self, id: PriceLevelId, input: UpdatePriceLevel) -> Result<PriceLevel>;
+
+    /// List price levels with filter.
+    fn list(&self, filter: PriceLevelFilter) -> Result<Vec<PriceLevel>>;
+
+    /// Delete a price level (and its entries).
+    fn delete(&self, id: PriceLevelId) -> Result<()>;
+
+    /// Upsert a per-product fixed price entry within a level.
+    fn set_entry(
+        &self,
+        id: PriceLevelId,
+        product_id: ProductId,
+        price: rust_decimal::Decimal,
+    ) -> Result<PriceLevelEntry>;
+
+    /// Remove a per-product entry from a level.
+    fn delete_entry(&self, id: PriceLevelId, product_id: ProductId) -> Result<()>;
+
+    /// List the per-product entries for a level.
+    fn list_entries(&self, id: PriceLevelId) -> Result<Vec<PriceLevelEntry>>;
+}
+
+/// Prepayment repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PrepaymentRepository: Send + Sync {
+    /// Create a new prepayment.
+    fn create(&self, input: CreatePrepayment) -> Result<Prepayment>;
+
+    /// Get a prepayment by ID.
+    fn get(&self, id: PrepaymentId) -> Result<Option<Prepayment>>;
+
+    /// List prepayments with filter.
+    fn list(&self, filter: PrepaymentFilter) -> Result<Vec<Prepayment>>;
+
+    /// Apply a prepayment against a bill or payment obligation, drawing down
+    /// the remaining balance and recording an application.
+    fn apply(&self, id: PrepaymentId, input: ApplyPrepayment) -> Result<Prepayment>;
+
+    /// List applications for a prepayment.
+    fn list_applications(&self, id: PrepaymentId) -> Result<Vec<PrepaymentApplication>>;
+
+    /// Reverse a previously-recorded application, restoring the balance.
+    fn reverse_application(
+        &self,
+        id: PrepaymentId,
+        application_id: PrepaymentApplicationId,
+    ) -> Result<Prepayment>;
+
+    /// Refund the remaining balance, closing the prepayment.
+    fn refund(&self, id: PrepaymentId) -> Result<Prepayment>;
+}
+
+/// Price schedule (time-bounded pricing) repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PriceScheduleRepository: Send + Sync {
+    /// Create a new price schedule.
+    fn create(&self, input: CreatePriceSchedule) -> Result<PriceSchedule>;
+
+    /// Get a price schedule by ID.
+    fn get(&self, id: PriceScheduleId) -> Result<Option<PriceSchedule>>;
+
+    /// Update a price schedule (partial).
+    fn update(&self, id: PriceScheduleId, input: UpdatePriceSchedule) -> Result<PriceSchedule>;
+
+    /// List price schedules with filter.
+    fn list(&self, filter: PriceScheduleFilter) -> Result<Vec<PriceSchedule>>;
+
+    /// Delete a price schedule (and its entries).
+    fn delete(&self, id: PriceScheduleId) -> Result<()>;
+
+    /// Upsert a per-product scheduled price.
+    fn set_entry(
+        &self,
+        id: PriceScheduleId,
+        product_id: ProductId,
+        price: rust_decimal::Decimal,
+    ) -> Result<PriceScheduleEntry>;
+
+    /// Remove a per-product entry.
+    fn delete_entry(&self, id: PriceScheduleId, product_id: ProductId) -> Result<()>;
+
+    /// List per-product entries for a schedule.
+    fn list_entries(&self, id: PriceScheduleId) -> Result<Vec<PriceScheduleEntry>>;
+
+    /// Resolve the effective scheduled price for a product at an instant,
+    /// scanning active schedules (highest priority then latest start wins).
+    fn resolve_price(
+        &self,
+        product_id: ProductId,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<rust_decimal::Decimal>>;
+}
+
+/// Activity log (append-only subject history) repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ActivityLogRepository: Send + Sync {
+    /// Record a new activity log entry.
+    fn record(&self, input: RecordActivity) -> Result<ActivityLogEntry>;
+
+    /// Get an entry by ID.
+    fn get(&self, id: ActivityLogId) -> Result<Option<ActivityLogEntry>>;
+
+    /// List entries with filter (most recent first).
+    fn list(&self, filter: ActivityLogFilter) -> Result<Vec<ActivityLogEntry>>;
+
+    /// List the full (unpaginated) history for a single subject, most recent
+    /// first. Used for timelines and AI-over-history summaries.
+    fn history_for_subject(
+        &self,
+        subject_type: &str,
+        subject_id: uuid::Uuid,
+    ) -> Result<Vec<ActivityLogEntry>>;
+}
+
+/// Integration mapping repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait IntegrationMappingRepository: Send + Sync {
+    /// Create a new integration mapping.
+    fn create(&self, input: CreateIntegrationMapping) -> Result<IntegrationMapping>;
+
+    /// Get a mapping by ID.
+    fn get(&self, id: IntegrationMappingId) -> Result<Option<IntegrationMapping>>;
+
+    /// Update a mapping (partial).
+    fn update(
+        &self,
+        id: IntegrationMappingId,
+        input: UpdateIntegrationMapping,
+    ) -> Result<IntegrationMapping>;
+
+    /// List mappings with filter.
+    fn list(&self, filter: IntegrationMappingFilter) -> Result<Vec<IntegrationMapping>>;
+
+    /// Delete a mapping.
+    fn delete(&self, id: IntegrationMappingId) -> Result<()>;
+
+    /// Bulk upsert mappings. Returns the number of rows affected.
+    fn bulk_upsert(&self, items: Vec<CreateIntegrationMapping>) -> Result<u64>;
+
+    /// Resolve the internal value for an external value, or `None` if unmapped
+    /// (or the mapping is inactive).
+    fn resolve(&self, lookup: &MappingLookup) -> Result<Option<String>>;
+}
+
+/// Inbound shipment (ASN) repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait InboundShipmentRepository: Send + Sync {
+    /// Create a new inbound shipment.
+    fn create(&self, input: CreateInboundShipment) -> Result<InboundShipment>;
+
+    /// Get an inbound shipment by ID (with line items).
+    fn get(&self, id: InboundShipmentId) -> Result<Option<InboundShipment>>;
+
+    /// List inbound shipments with filter.
+    fn list(&self, filter: InboundShipmentFilter) -> Result<Vec<InboundShipment>>;
+
+    /// Mark a shipment as in transit.
+    fn mark_in_transit(&self, id: InboundShipmentId) -> Result<InboundShipment>;
+
+    /// Mark a shipment as arrived at the warehouse.
+    fn mark_arrived(&self, id: InboundShipmentId) -> Result<InboundShipment>;
+
+    /// Receive a quantity against a single line, advancing the shipment status.
+    fn receive_line(
+        &self,
+        id: InboundShipmentId,
+        item_id: InboundShipmentItemId,
+        quantity: rust_decimal::Decimal,
+    ) -> Result<InboundShipment>;
+
+    /// Cancel an inbound shipment.
+    fn cancel(&self, id: InboundShipmentId) -> Result<InboundShipment>;
+}
+
+/// Purgatory (order ingestion staging) repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PurgatoryRepository: Send + Sync {
+    /// Ingest an order into purgatory (non-posted).
+    fn ingest(&self, input: IngestOrder) -> Result<PurgatoryOrder>;
+
+    /// Get a purgatory order by ID (with line items).
+    fn get(&self, id: PurgatoryOrderId) -> Result<Option<PurgatoryOrder>>;
+
+    /// List purgatory orders with filter (defaults to non-posted).
+    fn list(&self, filter: PurgatoryFilter) -> Result<Vec<PurgatoryOrder>>;
+
+    /// Map a line to a product and/or toggle its ignore / non-physical flags.
+    fn map_line(
+        &self,
+        id: PurgatoryOrderId,
+        line_id: PurgatoryLineItemId,
+        input: MapPurgatoryLine,
+    ) -> Result<PurgatoryOrder>;
+
+    /// Post the order, committing it out of purgatory. Errors if any line is
+    /// still unresolved.
+    fn post(&self, id: PurgatoryOrderId) -> Result<PurgatoryOrder>;
+
+    /// Delete a purgatory order.
+    fn delete(&self, id: PurgatoryOrderId) -> Result<()>;
+}
+
+/// Print station / print job repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PrintStationRepository: Send + Sync {
+    /// Pair a new print station, returning the station and its one-time token.
+    fn pair(&self, input: CreatePrintStation) -> Result<PairStationResult>;
+
+    /// List paired stations (most recently paired first).
+    fn list_stations(&self) -> Result<Vec<PrintStation>>;
+
+    /// Get a station by ID.
+    fn get_station(&self, id: PrintStationId) -> Result<Option<PrintStation>>;
+
+    /// Revoke a station's token.
+    fn revoke_station(&self, id: PrintStationId) -> Result<PrintStation>;
+
+    /// Enqueue a print job to a station. Errors if the station is revoked.
+    fn enqueue_job(&self, station_id: PrintStationId, input: EnqueuePrintJob) -> Result<PrintJob>;
+
+    /// Pick up the next queued job for a station (agent long-poll), marking it
+    /// picked up and updating the station's last-seen time. Returns `None` when
+    /// the queue is empty.
+    fn next_job(&self, station_id: PrintStationId) -> Result<Option<PrintJob>>;
+
+    /// Mark a job printed (`success = true`) or failed.
+    fn complete_job(&self, job_id: PrintJobId, success: bool) -> Result<PrintJob>;
+
+    /// List jobs for a station.
+    fn list_jobs(
+        &self,
+        station_id: PrintStationId,
+        filter: PrintJobFilter,
+    ) -> Result<Vec<PrintJob>>;
+}
+
+/// EDI document repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait EdiDocumentRepository: Send + Sync {
+    /// Create / ingest an EDI document.
+    fn create(&self, input: CreateEdiDocument) -> Result<EdiDocument>;
+
+    /// Get a document by ID.
+    fn get(&self, id: EdiDocumentId) -> Result<Option<EdiDocument>>;
+
+    /// List documents with filter.
+    fn list(&self, filter: EdiDocumentFilter) -> Result<Vec<EdiDocument>>;
+
+    /// Update a document's status, optionally recording an error message.
+    fn set_status(
+        &self,
+        id: EdiDocumentId,
+        status: EdiStatus,
+        error_message: Option<String>,
+    ) -> Result<EdiDocument>;
+
+    /// Aggregate summary (counts by status and type) across all documents.
+    fn summary(&self) -> Result<EdiAggregateSummary>;
+}
+
+/// Integration field-mapping repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait IntegrationFieldMappingRepository: Send + Sync {
+    /// Create a new field mapping.
+    fn create(&self, input: CreateIntegrationFieldMapping) -> Result<IntegrationFieldMapping>;
+
+    /// Get a field mapping by ID.
+    fn get(&self, id: IntegrationFieldMappingId) -> Result<Option<IntegrationFieldMapping>>;
+
+    /// Update a field mapping (partial).
+    fn update(
+        &self,
+        id: IntegrationFieldMappingId,
+        input: UpdateIntegrationFieldMapping,
+    ) -> Result<IntegrationFieldMapping>;
+
+    /// List field mappings with filter.
+    fn list(&self, filter: IntegrationFieldMappingFilter) -> Result<Vec<IntegrationFieldMapping>>;
+
+    /// Delete a field mapping.
+    fn delete(&self, id: IntegrationFieldMappingId) -> Result<()>;
+
+    /// Bulk create field mappings. Returns the number created.
+    fn bulk_create(&self, items: Vec<CreateIntegrationFieldMapping>) -> Result<u64>;
+
+    /// Bulk delete field mappings by ID. Returns the number deleted.
+    fn bulk_delete(&self, ids: Vec<IntegrationFieldMappingId>) -> Result<u64>;
+
+    /// List the distinct mapping groups for an integration account.
+    fn distinct_groups(&self, integration_account: &str) -> Result<Vec<String>>;
+}
+
+/// Customer operational topology snapshot repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait TopologySnapshotRepository: Send + Sync {
+    /// Capture a new snapshot (health is derived from the metrics).
+    fn capture(&self, input: CaptureTopologySnapshot) -> Result<TopologySnapshot>;
+
+    /// Get a snapshot by ID.
+    fn get(&self, id: TopologySnapshotId) -> Result<Option<TopologySnapshot>>;
+
+    /// Get the most recent snapshot, if any.
+    fn latest(&self) -> Result<Option<TopologySnapshot>>;
+
+    /// List snapshots (most recent first).
+    fn list(&self, filter: TopologySnapshotFilter) -> Result<Vec<TopologySnapshot>>;
+
+    /// Delete a snapshot.
+    fn delete(&self, id: TopologySnapshotId) -> Result<()>;
+}
+
+/// Stock snapshot repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait StockSnapshotRepository: Send + Sync {
+    /// Capture a new stock snapshot (totals are computed from the lines).
+    fn capture(&self, input: CaptureStockSnapshot) -> Result<StockSnapshot>;
+
+    /// Get a snapshot by ID (with lines).
+    fn get(&self, id: StockSnapshotId) -> Result<Option<StockSnapshot>>;
+
+    /// Get the most recent snapshot, if any.
+    fn latest(&self) -> Result<Option<StockSnapshot>>;
+
+    /// List snapshots (header-level, most recent first).
+    fn list(&self, filter: StockSnapshotFilter) -> Result<Vec<StockSnapshot>>;
+
+    /// Delete a snapshot.
+    fn delete(&self, id: StockSnapshotId) -> Result<()>;
 }

@@ -3,6 +3,7 @@
 mod a2a;
 mod accounts_payable;
 mod accounts_receivable;
+mod activity_logs;
 mod agent_cards;
 mod agent_identities;
 mod agent_reputation;
@@ -11,15 +12,21 @@ mod analytics;
 mod backorder;
 mod bom;
 mod carts;
+mod channels;
+mod companies;
 mod cost_accounting;
 mod credit;
 mod currency;
 mod custom_objects;
 mod customers;
+mod edi_documents;
 mod fraud;
 mod fulfillment;
 mod general_ledger;
 mod gift_cards;
+mod inbound_shipments;
+mod integration_field_mappings;
+mod integration_mappings;
 mod inventory;
 mod invoices;
 mod lots;
@@ -27,10 +34,17 @@ mod loyalty;
 mod money_agg;
 mod orders;
 pub(crate) mod parse_helpers;
+mod payment_obligations;
 mod payments;
+mod prepayments;
+mod price_levels;
+mod price_schedules;
+mod print_stations;
+mod production_batches;
 mod products;
 mod promotions;
 mod purchase_orders;
+mod purgatory;
 mod quality;
 mod receiving;
 mod returns;
@@ -41,9 +55,16 @@ mod segments;
 mod serials;
 mod shipments;
 mod shipping_zones;
+mod stock_snapshots;
 mod store_credits;
 mod subscriptions;
+mod supplier_skus;
 mod tax;
+mod topology_snapshots;
+mod transfer_orders;
+mod units_of_measure;
+mod vendor_credits;
+mod vendor_returns;
 mod warehouse;
 mod warranties;
 mod wishlists;
@@ -58,6 +79,7 @@ mod vector;
 pub use a2a::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
+pub use activity_logs::*;
 pub use agent_cards::*;
 pub use agent_identities::*;
 pub use agent_reputation::*;
@@ -66,24 +88,37 @@ pub use analytics::*;
 pub use backorder::*;
 pub use bom::*;
 pub use carts::*;
+pub use channels::*;
+pub use companies::*;
 pub use cost_accounting::*;
 pub use credit::*;
 pub use currency::*;
 pub use custom_objects::*;
 pub use customers::*;
+pub use edi_documents::*;
 pub use fraud::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
 pub use gift_cards::*;
+pub use inbound_shipments::*;
+pub use integration_field_mappings::*;
+pub use integration_mappings::*;
 pub use inventory::*;
 pub use invoices::*;
 pub use lots::*;
 pub use loyalty::*;
 pub use orders::*;
+pub use payment_obligations::*;
 pub use payments::*;
+pub use prepayments::*;
+pub use price_levels::*;
+pub use price_schedules::*;
+pub use print_stations::*;
+pub use production_batches::*;
 pub use products::*;
 pub use promotions::*;
 pub use purchase_orders::*;
+pub use purgatory::*;
 pub use quality::*;
 pub use receiving::*;
 pub use returns::*;
@@ -94,11 +129,18 @@ pub use segments::*;
 pub use serials::*;
 pub use shipments::*;
 pub use shipping_zones::*;
+pub use stock_snapshots::*;
 pub use store_credits::*;
 pub use subscriptions::*;
+pub use supplier_skus::*;
 pub use tax::*;
+pub use topology_snapshots::*;
+pub use transfer_orders::*;
+pub use units_of_measure::*;
 #[cfg(feature = "vector")]
 pub use vector::*;
+pub use vendor_credits::*;
+pub use vendor_returns::*;
 pub use warehouse::*;
 pub use warranties::*;
 pub use wishlists::*;
@@ -589,6 +631,132 @@ impl SqliteDatabase {
     #[must_use]
     pub fn shipping_zones(&self) -> SqliteShippingZoneRepository {
         SqliteShippingZoneRepository::new(self.pool.clone())
+    }
+
+    /// Get channel repository
+    #[must_use]
+    pub fn channels(&self) -> SqliteChannelRepository {
+        SqliteChannelRepository::new(self.pool.clone())
+    }
+
+    /// Get company (B2B account) repository
+    #[must_use]
+    pub fn companies(&self) -> SqliteCompanyRepository {
+        SqliteCompanyRepository::new(self.pool.clone())
+    }
+
+    /// Get transfer order repository
+    #[must_use]
+    pub fn transfer_orders(&self) -> SqliteTransferOrderRepository {
+        SqliteTransferOrderRepository::new(self.pool.clone())
+    }
+
+    /// Get units-of-measure repository
+    #[must_use]
+    pub fn units_of_measure(&self) -> SqliteUnitOfMeasureRepository {
+        SqliteUnitOfMeasureRepository::new(self.pool.clone())
+    }
+
+    /// Get production batch repository
+    #[must_use]
+    pub fn production_batches(&self) -> SqliteProductionBatchRepository {
+        SqliteProductionBatchRepository::new(self.pool.clone())
+    }
+
+    /// Get supplier SKU repository
+    #[must_use]
+    pub fn supplier_skus(&self) -> SqliteSupplierSkuRepository {
+        SqliteSupplierSkuRepository::new(self.pool.clone())
+    }
+
+    /// Get vendor return repository
+    #[must_use]
+    pub fn vendor_returns(&self) -> SqliteVendorReturnRepository {
+        SqliteVendorReturnRepository::new(self.pool.clone())
+    }
+
+    /// Get vendor credit repository
+    #[must_use]
+    pub fn vendor_credits(&self) -> SqliteVendorCreditRepository {
+        SqliteVendorCreditRepository::new(self.pool.clone())
+    }
+
+    /// Get payment obligation repository
+    #[must_use]
+    pub fn payment_obligations(&self) -> SqlitePaymentObligationRepository {
+        SqlitePaymentObligationRepository::new(self.pool.clone())
+    }
+
+    /// Get price level repository
+    #[must_use]
+    pub fn price_levels(&self) -> SqlitePriceLevelRepository {
+        SqlitePriceLevelRepository::new(self.pool.clone())
+    }
+
+    /// Get prepayment repository
+    #[must_use]
+    pub fn prepayments(&self) -> SqlitePrepaymentRepository {
+        SqlitePrepaymentRepository::new(self.pool.clone())
+    }
+
+    /// Get price schedule repository
+    #[must_use]
+    pub fn price_schedules(&self) -> SqlitePriceScheduleRepository {
+        SqlitePriceScheduleRepository::new(self.pool.clone())
+    }
+
+    /// Get activity log repository
+    #[must_use]
+    pub fn activity_logs(&self) -> SqliteActivityLogRepository {
+        SqliteActivityLogRepository::new(self.pool.clone())
+    }
+
+    /// Get integration mapping repository
+    #[must_use]
+    pub fn integration_mappings(&self) -> SqliteIntegrationMappingRepository {
+        SqliteIntegrationMappingRepository::new(self.pool.clone())
+    }
+
+    /// Get inbound shipment repository
+    #[must_use]
+    pub fn inbound_shipments(&self) -> SqliteInboundShipmentRepository {
+        SqliteInboundShipmentRepository::new(self.pool.clone())
+    }
+
+    /// Get purgatory (order ingestion staging) repository
+    #[must_use]
+    pub fn purgatory(&self) -> SqlitePurgatoryRepository {
+        SqlitePurgatoryRepository::new(self.pool.clone())
+    }
+
+    /// Get print station repository
+    #[must_use]
+    pub fn print_stations(&self) -> SqlitePrintStationRepository {
+        SqlitePrintStationRepository::new(self.pool.clone())
+    }
+
+    /// Get EDI document repository
+    #[must_use]
+    pub fn edi_documents(&self) -> SqliteEdiDocumentRepository {
+        SqliteEdiDocumentRepository::new(self.pool.clone())
+    }
+
+    /// Get integration field-mapping repository
+    #[must_use]
+    pub fn integration_field_mappings(&self) -> SqliteIntegrationFieldMappingRepository {
+        SqliteIntegrationFieldMappingRepository::new(self.pool.clone())
+    }
+
+    /// Get topology snapshot repository
+    #[must_use]
+    pub fn topology_snapshots(&self) -> SqliteTopologySnapshotRepository {
+        SqliteTopologySnapshotRepository::new(self.pool.clone())
+    }
+
+    /// Get stock snapshot repository
+    #[must_use]
+    pub fn stock_snapshots(&self) -> SqliteStockSnapshotRepository {
+        SqliteStockSnapshotRepository::new(self.pool.clone())
     }
 
     /// Get zone shipping method repository

@@ -2,26 +2,48 @@
 
 pub mod a2a_credit;
 pub mod a2a_messaging;
+pub mod activity_logs;
+pub mod channels;
+pub mod companies;
 pub mod currency;
 pub mod customers;
+pub mod edi_documents;
 pub mod events;
 pub mod gift_cards;
 pub mod health;
+pub mod inbound_shipments;
+pub mod integration_field_mappings;
+pub mod integration_mappings;
 pub mod inventory;
 pub mod invoices;
 pub mod loyalty;
 pub mod negotiations;
 pub mod orders;
+pub mod payment_obligations;
 pub mod payments;
+pub mod prepayments;
+pub mod price_levels;
+pub mod price_schedules;
+pub mod print_stations;
+pub mod production_batches;
 pub mod products;
 pub mod promotions;
+pub mod purgatory;
+pub mod reports;
 pub mod returns;
 pub mod reviews;
 pub mod segments;
 pub mod shipments;
 pub mod shipping_zones;
+pub mod stock_snapshots;
 pub mod store_credits;
 pub mod subscriptions;
+pub mod supplier_skus;
+pub mod topology_snapshots;
+pub mod transfer_orders;
+pub mod units_of_measure;
+pub mod vendor_credits;
+pub mod vendor_returns;
 pub mod warranties;
 pub mod wishlists;
 
@@ -87,6 +109,28 @@ fn v1_router() -> Router<AppState> {
         .merge(segments::router())
         .merge(events::router())
         .merge(shipping_zones::router())
+        .merge(channels::router())
+        .merge(companies::router())
+        .merge(transfer_orders::router())
+        .merge(units_of_measure::router())
+        .merge(production_batches::router())
+        .merge(supplier_skus::router())
+        .merge(vendor_returns::router())
+        .merge(vendor_credits::router())
+        .merge(payment_obligations::router())
+        .merge(price_levels::router())
+        .merge(price_schedules::router())
+        .merge(activity_logs::router())
+        .merge(integration_mappings::router())
+        .merge(integration_field_mappings::router())
+        .merge(inbound_shipments::router())
+        .merge(purgatory::router())
+        .merge(print_stations::router())
+        .merge(edi_documents::router())
+        .merge(topology_snapshots::router())
+        .merge(stock_snapshots::router())
+        .merge(reports::router())
+        .merge(prepayments::router())
         .merge(crate::openapi::router())
 }
 

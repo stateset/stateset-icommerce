@@ -53,6 +53,9 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
+#[cfg(feature = "postgres")]
+mod unsupported_repositories;
+
 #[cfg(all(feature = "postgres", feature = "saga"))]
 pub mod saga;
 
@@ -66,18 +69,24 @@ pub use postgres::PostgresDatabase;
 
 use stateset_core::{
     A2ACommerceRepository, AccountsPayableRepository, AccountsReceivableRepository,
-    AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
+    ActivityLogRepository, AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
     AgentValidationRepository, AnalyticsRepository, BackorderRepository, BomRepository,
-    CartRepository, CommerceError, CostAccountingRepository, CreditRepository, CurrencyRepository,
-    CustomObjectRepository, CustomerRepository, FraudRepository, FulfillmentRepository,
-    GeneralLedgerRepository, GiftCardRepository, InventoryRepository, InvoiceRepository,
-    LotRepository, LoyaltyProgramRepository, OrderRepository, PaymentRepository, ProductRepository,
-    PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result,
-    ReturnRepository, ReviewRepository, RewardRepository, SearchConfigRepository,
-    SegmentRepository, SerialRepository, ShipmentRepository, ShippingZoneRepository,
-    StoreCreditRepository, SubscriptionRepository, TaxRepository, WarehouseRepository,
-    WarrantyRepository, WishlistRepository, WorkOrderRepository, X402CreditRepository,
-    X402PaymentIntentRepository, ZoneShippingMethodRepository,
+    CartRepository, ChannelRepository, CommerceError, CompanyRepository, CostAccountingRepository,
+    CreditRepository, CurrencyRepository, CustomObjectRepository, CustomerRepository,
+    EdiDocumentRepository, FraudRepository, FulfillmentRepository, GeneralLedgerRepository,
+    GiftCardRepository, InboundShipmentRepository, IntegrationFieldMappingRepository,
+    IntegrationMappingRepository, InventoryRepository, InvoiceRepository, LotRepository,
+    LoyaltyProgramRepository, OrderRepository, PaymentObligationRepository, PaymentRepository,
+    PrepaymentRepository, PriceLevelRepository, PriceScheduleRepository, PrintStationRepository,
+    ProductRepository, ProductionBatchRepository, PromotionRepository, PurchaseOrderRepository,
+    PurgatoryRepository, QualityRepository, ReceivingRepository, Result, ReturnRepository,
+    ReviewRepository, RewardRepository, SearchConfigRepository, SegmentRepository,
+    SerialRepository, ShipmentRepository, ShippingZoneRepository, StockSnapshotRepository,
+    StoreCreditRepository, SubscriptionRepository, SupplierSkuRepository, TaxRepository,
+    TopologySnapshotRepository, TransferOrderRepository, UnitOfMeasureRepository,
+    VendorCreditRepository, VendorReturnRepository, WarehouseRepository, WarrantyRepository,
+    WishlistRepository, WorkOrderRepository, X402CreditRepository, X402PaymentIntentRepository,
+    ZoneShippingMethodRepository,
 };
 
 // ============================================================================
@@ -172,6 +181,27 @@ pub enum DatabaseCapability {
     Rewards,
     Fraud,
     SearchConfigs,
+    Channels,
+    Companies,
+    TransferOrders,
+    UnitsOfMeasure,
+    ProductionBatches,
+    SupplierSkus,
+    VendorReturns,
+    VendorCredits,
+    PaymentObligations,
+    PriceLevels,
+    Prepayments,
+    PriceSchedules,
+    ActivityLogs,
+    IntegrationMappings,
+    InboundShipments,
+    Purgatory,
+    PrintStations,
+    EdiDocuments,
+    IntegrationFieldMappings,
+    TopologySnapshots,
+    StockSnapshots,
 }
 
 impl DatabaseCapability {
@@ -188,6 +218,27 @@ impl DatabaseCapability {
             Self::Rewards => "rewards",
             Self::Fraud => "fraud",
             Self::SearchConfigs => "search_configs",
+            Self::Channels => "channels",
+            Self::Companies => "companies",
+            Self::TransferOrders => "transfer_orders",
+            Self::UnitsOfMeasure => "units_of_measure",
+            Self::ProductionBatches => "production_batches",
+            Self::SupplierSkus => "supplier_skus",
+            Self::VendorReturns => "vendor_returns",
+            Self::VendorCredits => "vendor_credits",
+            Self::PaymentObligations => "payment_obligations",
+            Self::PriceLevels => "price_levels",
+            Self::Prepayments => "prepayments",
+            Self::PriceSchedules => "price_schedules",
+            Self::ActivityLogs => "activity_logs",
+            Self::IntegrationMappings => "integration_mappings",
+            Self::InboundShipments => "inbound_shipments",
+            Self::Purgatory => "purgatory",
+            Self::PrintStations => "print_stations",
+            Self::EdiDocuments => "edi_documents",
+            Self::IntegrationFieldMappings => "integration_field_mappings",
+            Self::TopologySnapshots => "topology_snapshots",
+            Self::StockSnapshots => "stock_snapshots",
         }
     }
 }
@@ -325,6 +376,48 @@ pub trait Database: Send + Sync {
     fn fraud(&self) -> Box<dyn FraudRepository + '_>;
     /// Get the search configuration repository
     fn search_configs(&self) -> Box<dyn SearchConfigRepository + '_>;
+    /// Get the sales/fulfillment channel repository
+    fn channels(&self) -> Box<dyn ChannelRepository + '_>;
+    /// Get the B2B company repository
+    fn companies(&self) -> Box<dyn CompanyRepository + '_>;
+    /// Get the transfer order repository
+    fn transfer_orders(&self) -> Box<dyn TransferOrderRepository + '_>;
+    /// Get the units-of-measure repository
+    fn units_of_measure(&self) -> Box<dyn UnitOfMeasureRepository + '_>;
+    /// Get the production batch repository
+    fn production_batches(&self) -> Box<dyn ProductionBatchRepository + '_>;
+    /// Get the supplier SKU repository
+    fn supplier_skus(&self) -> Box<dyn SupplierSkuRepository + '_>;
+    /// Get the vendor return repository
+    fn vendor_returns(&self) -> Box<dyn VendorReturnRepository + '_>;
+    /// Get the vendor credit repository
+    fn vendor_credits(&self) -> Box<dyn VendorCreditRepository + '_>;
+    /// Get the payment obligation repository
+    fn payment_obligations(&self) -> Box<dyn PaymentObligationRepository + '_>;
+    /// Get the price level repository
+    fn price_levels(&self) -> Box<dyn PriceLevelRepository + '_>;
+    /// Get the prepayment repository
+    fn prepayments(&self) -> Box<dyn PrepaymentRepository + '_>;
+    /// Get the price schedule repository
+    fn price_schedules(&self) -> Box<dyn PriceScheduleRepository + '_>;
+    /// Get the activity log repository
+    fn activity_logs(&self) -> Box<dyn ActivityLogRepository + '_>;
+    /// Get the integration mapping repository
+    fn integration_mappings(&self) -> Box<dyn IntegrationMappingRepository + '_>;
+    /// Get the inbound shipment repository
+    fn inbound_shipments(&self) -> Box<dyn InboundShipmentRepository + '_>;
+    /// Get the purgatory repository
+    fn purgatory(&self) -> Box<dyn PurgatoryRepository + '_>;
+    /// Get the print station repository
+    fn print_stations(&self) -> Box<dyn PrintStationRepository + '_>;
+    /// Get the EDI document repository
+    fn edi_documents(&self) -> Box<dyn EdiDocumentRepository + '_>;
+    /// Get the integration field-mapping repository
+    fn integration_field_mappings(&self) -> Box<dyn IntegrationFieldMappingRepository + '_>;
+    /// Get the topology snapshot repository
+    fn topology_snapshots(&self) -> Box<dyn TopologySnapshotRepository + '_>;
+    /// Get the stock snapshot repository
+    fn stock_snapshots(&self) -> Box<dyn StockSnapshotRepository + '_>;
 }
 
 /// Extension trait for database transaction support.
@@ -436,6 +529,27 @@ trait NewDomainRepositoryFactory {
     fn rewards_repo(&self) -> Box<dyn RewardRepository + '_>;
     fn fraud_repo(&self) -> Box<dyn FraudRepository + '_>;
     fn search_configs_repo(&self) -> Box<dyn SearchConfigRepository + '_>;
+    fn channels_repo(&self) -> Box<dyn ChannelRepository + '_>;
+    fn companies_repo(&self) -> Box<dyn CompanyRepository + '_>;
+    fn transfer_orders_repo(&self) -> Box<dyn TransferOrderRepository + '_>;
+    fn units_of_measure_repo(&self) -> Box<dyn UnitOfMeasureRepository + '_>;
+    fn production_batches_repo(&self) -> Box<dyn ProductionBatchRepository + '_>;
+    fn supplier_skus_repo(&self) -> Box<dyn SupplierSkuRepository + '_>;
+    fn vendor_returns_repo(&self) -> Box<dyn VendorReturnRepository + '_>;
+    fn vendor_credits_repo(&self) -> Box<dyn VendorCreditRepository + '_>;
+    fn payment_obligations_repo(&self) -> Box<dyn PaymentObligationRepository + '_>;
+    fn price_levels_repo(&self) -> Box<dyn PriceLevelRepository + '_>;
+    fn prepayments_repo(&self) -> Box<dyn PrepaymentRepository + '_>;
+    fn price_schedules_repo(&self) -> Box<dyn PriceScheduleRepository + '_>;
+    fn activity_logs_repo(&self) -> Box<dyn ActivityLogRepository + '_>;
+    fn integration_mappings_repo(&self) -> Box<dyn IntegrationMappingRepository + '_>;
+    fn inbound_shipments_repo(&self) -> Box<dyn InboundShipmentRepository + '_>;
+    fn purgatory_repo(&self) -> Box<dyn PurgatoryRepository + '_>;
+    fn print_stations_repo(&self) -> Box<dyn PrintStationRepository + '_>;
+    fn edi_documents_repo(&self) -> Box<dyn EdiDocumentRepository + '_>;
+    fn integration_field_mappings_repo(&self) -> Box<dyn IntegrationFieldMappingRepository + '_>;
+    fn topology_snapshots_repo(&self) -> Box<dyn TopologySnapshotRepository + '_>;
+    fn stock_snapshots_repo(&self) -> Box<dyn StockSnapshotRepository + '_>;
 }
 
 #[cfg(feature = "sqlite")]
@@ -483,6 +597,90 @@ impl NewDomainRepositoryFactory for SqliteDatabase {
     fn search_configs_repo(&self) -> Box<dyn SearchConfigRepository + '_> {
         Box::new(self.search_configs())
     }
+
+    fn channels_repo(&self) -> Box<dyn ChannelRepository + '_> {
+        Box::new(self.channels())
+    }
+
+    fn companies_repo(&self) -> Box<dyn CompanyRepository + '_> {
+        Box::new(self.companies())
+    }
+
+    fn transfer_orders_repo(&self) -> Box<dyn TransferOrderRepository + '_> {
+        Box::new(self.transfer_orders())
+    }
+
+    fn units_of_measure_repo(&self) -> Box<dyn UnitOfMeasureRepository + '_> {
+        Box::new(self.units_of_measure())
+    }
+
+    fn production_batches_repo(&self) -> Box<dyn ProductionBatchRepository + '_> {
+        Box::new(self.production_batches())
+    }
+
+    fn supplier_skus_repo(&self) -> Box<dyn SupplierSkuRepository + '_> {
+        Box::new(self.supplier_skus())
+    }
+
+    fn vendor_returns_repo(&self) -> Box<dyn VendorReturnRepository + '_> {
+        Box::new(self.vendor_returns())
+    }
+
+    fn vendor_credits_repo(&self) -> Box<dyn VendorCreditRepository + '_> {
+        Box::new(self.vendor_credits())
+    }
+
+    fn payment_obligations_repo(&self) -> Box<dyn PaymentObligationRepository + '_> {
+        Box::new(self.payment_obligations())
+    }
+
+    fn price_levels_repo(&self) -> Box<dyn PriceLevelRepository + '_> {
+        Box::new(self.price_levels())
+    }
+
+    fn prepayments_repo(&self) -> Box<dyn PrepaymentRepository + '_> {
+        Box::new(self.prepayments())
+    }
+
+    fn price_schedules_repo(&self) -> Box<dyn PriceScheduleRepository + '_> {
+        Box::new(self.price_schedules())
+    }
+
+    fn activity_logs_repo(&self) -> Box<dyn ActivityLogRepository + '_> {
+        Box::new(self.activity_logs())
+    }
+
+    fn integration_mappings_repo(&self) -> Box<dyn IntegrationMappingRepository + '_> {
+        Box::new(self.integration_mappings())
+    }
+
+    fn inbound_shipments_repo(&self) -> Box<dyn InboundShipmentRepository + '_> {
+        Box::new(self.inbound_shipments())
+    }
+
+    fn purgatory_repo(&self) -> Box<dyn PurgatoryRepository + '_> {
+        Box::new(self.purgatory())
+    }
+
+    fn print_stations_repo(&self) -> Box<dyn PrintStationRepository + '_> {
+        Box::new(self.print_stations())
+    }
+
+    fn edi_documents_repo(&self) -> Box<dyn EdiDocumentRepository + '_> {
+        Box::new(self.edi_documents())
+    }
+
+    fn integration_field_mappings_repo(&self) -> Box<dyn IntegrationFieldMappingRepository + '_> {
+        Box::new(self.integration_field_mappings())
+    }
+
+    fn topology_snapshots_repo(&self) -> Box<dyn TopologySnapshotRepository + '_> {
+        Box::new(self.topology_snapshots())
+    }
+
+    fn stock_snapshots_repo(&self) -> Box<dyn StockSnapshotRepository + '_> {
+        Box::new(self.stock_snapshots())
+    }
 }
 
 #[cfg(feature = "postgres")]
@@ -529,6 +727,90 @@ impl NewDomainRepositoryFactory for PostgresDatabase {
 
     fn search_configs_repo(&self) -> Box<dyn SearchConfigRepository + '_> {
         Box::new(self.search_configs())
+    }
+
+    fn channels_repo(&self) -> Box<dyn ChannelRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedChannelRepository)
+    }
+
+    fn companies_repo(&self) -> Box<dyn CompanyRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedCompanyRepository)
+    }
+
+    fn transfer_orders_repo(&self) -> Box<dyn TransferOrderRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedTransferOrderRepository)
+    }
+
+    fn units_of_measure_repo(&self) -> Box<dyn UnitOfMeasureRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedUnitOfMeasureRepository)
+    }
+
+    fn production_batches_repo(&self) -> Box<dyn ProductionBatchRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedProductionBatchRepository)
+    }
+
+    fn supplier_skus_repo(&self) -> Box<dyn SupplierSkuRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedSupplierSkuRepository)
+    }
+
+    fn vendor_returns_repo(&self) -> Box<dyn VendorReturnRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedVendorReturnRepository)
+    }
+
+    fn vendor_credits_repo(&self) -> Box<dyn VendorCreditRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedVendorCreditRepository)
+    }
+
+    fn payment_obligations_repo(&self) -> Box<dyn PaymentObligationRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedPaymentObligationRepository)
+    }
+
+    fn price_levels_repo(&self) -> Box<dyn PriceLevelRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedPriceLevelRepository)
+    }
+
+    fn prepayments_repo(&self) -> Box<dyn PrepaymentRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedPrepaymentRepository)
+    }
+
+    fn price_schedules_repo(&self) -> Box<dyn PriceScheduleRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedPriceScheduleRepository)
+    }
+
+    fn activity_logs_repo(&self) -> Box<dyn ActivityLogRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedActivityLogRepository)
+    }
+
+    fn integration_mappings_repo(&self) -> Box<dyn IntegrationMappingRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedIntegrationMappingRepository)
+    }
+
+    fn inbound_shipments_repo(&self) -> Box<dyn InboundShipmentRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedInboundShipmentRepository)
+    }
+
+    fn purgatory_repo(&self) -> Box<dyn PurgatoryRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedPurgatoryRepository)
+    }
+
+    fn print_stations_repo(&self) -> Box<dyn PrintStationRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedPrintStationRepository)
+    }
+
+    fn edi_documents_repo(&self) -> Box<dyn EdiDocumentRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedEdiDocumentRepository)
+    }
+
+    fn integration_field_mappings_repo(&self) -> Box<dyn IntegrationFieldMappingRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedIntegrationFieldMappingRepository)
+    }
+
+    fn topology_snapshots_repo(&self) -> Box<dyn TopologySnapshotRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedTopologySnapshotRepository)
+    }
+
+    fn stock_snapshots_repo(&self) -> Box<dyn StockSnapshotRepository + '_> {
+        Box::new(crate::unsupported_repositories::UnsupportedStockSnapshotRepository)
     }
 }
 
@@ -746,6 +1028,90 @@ macro_rules! impl_database_accessors {
             fn search_configs(&self) -> Box<dyn SearchConfigRepository + '_> {
                 crate::NewDomainRepositoryFactory::search_configs_repo(self)
             }
+
+            fn channels(&self) -> Box<dyn ChannelRepository + '_> {
+                crate::NewDomainRepositoryFactory::channels_repo(self)
+            }
+
+            fn companies(&self) -> Box<dyn CompanyRepository + '_> {
+                crate::NewDomainRepositoryFactory::companies_repo(self)
+            }
+
+            fn transfer_orders(&self) -> Box<dyn TransferOrderRepository + '_> {
+                crate::NewDomainRepositoryFactory::transfer_orders_repo(self)
+            }
+
+            fn units_of_measure(&self) -> Box<dyn UnitOfMeasureRepository + '_> {
+                crate::NewDomainRepositoryFactory::units_of_measure_repo(self)
+            }
+
+            fn production_batches(&self) -> Box<dyn ProductionBatchRepository + '_> {
+                crate::NewDomainRepositoryFactory::production_batches_repo(self)
+            }
+
+            fn supplier_skus(&self) -> Box<dyn SupplierSkuRepository + '_> {
+                crate::NewDomainRepositoryFactory::supplier_skus_repo(self)
+            }
+
+            fn vendor_returns(&self) -> Box<dyn VendorReturnRepository + '_> {
+                crate::NewDomainRepositoryFactory::vendor_returns_repo(self)
+            }
+
+            fn vendor_credits(&self) -> Box<dyn VendorCreditRepository + '_> {
+                crate::NewDomainRepositoryFactory::vendor_credits_repo(self)
+            }
+
+            fn payment_obligations(&self) -> Box<dyn PaymentObligationRepository + '_> {
+                crate::NewDomainRepositoryFactory::payment_obligations_repo(self)
+            }
+
+            fn price_levels(&self) -> Box<dyn PriceLevelRepository + '_> {
+                crate::NewDomainRepositoryFactory::price_levels_repo(self)
+            }
+
+            fn prepayments(&self) -> Box<dyn PrepaymentRepository + '_> {
+                crate::NewDomainRepositoryFactory::prepayments_repo(self)
+            }
+
+            fn price_schedules(&self) -> Box<dyn PriceScheduleRepository + '_> {
+                crate::NewDomainRepositoryFactory::price_schedules_repo(self)
+            }
+
+            fn activity_logs(&self) -> Box<dyn ActivityLogRepository + '_> {
+                crate::NewDomainRepositoryFactory::activity_logs_repo(self)
+            }
+
+            fn integration_mappings(&self) -> Box<dyn IntegrationMappingRepository + '_> {
+                crate::NewDomainRepositoryFactory::integration_mappings_repo(self)
+            }
+
+            fn inbound_shipments(&self) -> Box<dyn InboundShipmentRepository + '_> {
+                crate::NewDomainRepositoryFactory::inbound_shipments_repo(self)
+            }
+
+            fn purgatory(&self) -> Box<dyn PurgatoryRepository + '_> {
+                crate::NewDomainRepositoryFactory::purgatory_repo(self)
+            }
+
+            fn print_stations(&self) -> Box<dyn PrintStationRepository + '_> {
+                crate::NewDomainRepositoryFactory::print_stations_repo(self)
+            }
+
+            fn edi_documents(&self) -> Box<dyn EdiDocumentRepository + '_> {
+                crate::NewDomainRepositoryFactory::edi_documents_repo(self)
+            }
+
+            fn integration_field_mappings(&self) -> Box<dyn IntegrationFieldMappingRepository + '_> {
+                crate::NewDomainRepositoryFactory::integration_field_mappings_repo(self)
+            }
+
+            fn topology_snapshots(&self) -> Box<dyn TopologySnapshotRepository + '_> {
+                crate::NewDomainRepositoryFactory::topology_snapshots_repo(self)
+            }
+
+            fn stock_snapshots(&self) -> Box<dyn StockSnapshotRepository + '_> {
+                crate::NewDomainRepositoryFactory::stock_snapshots_repo(self)
+            }
         }
     };
     (@backend_name SqliteDatabase) => {
@@ -770,7 +1136,28 @@ macro_rules! impl_database_accessors {
             DatabaseCapability::GiftCards
             | DatabaseCapability::StoreCredits
             | DatabaseCapability::Reviews
-            | DatabaseCapability::Wishlists => false,
+            | DatabaseCapability::Wishlists
+            | DatabaseCapability::Channels
+            | DatabaseCapability::Companies
+            | DatabaseCapability::TransferOrders
+            | DatabaseCapability::UnitsOfMeasure
+            | DatabaseCapability::ProductionBatches
+            | DatabaseCapability::SupplierSkus
+            | DatabaseCapability::VendorReturns
+            | DatabaseCapability::VendorCredits
+            | DatabaseCapability::PaymentObligations
+            | DatabaseCapability::PriceLevels
+            | DatabaseCapability::Prepayments
+            | DatabaseCapability::PriceSchedules
+            | DatabaseCapability::ActivityLogs
+            | DatabaseCapability::IntegrationMappings
+            | DatabaseCapability::InboundShipments
+            | DatabaseCapability::Purgatory
+            | DatabaseCapability::PrintStations
+            | DatabaseCapability::EdiDocuments
+            | DatabaseCapability::IntegrationFieldMappings
+            | DatabaseCapability::TopologySnapshots
+            | DatabaseCapability::StockSnapshots => false,
         }
     }};
 }

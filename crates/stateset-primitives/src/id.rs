@@ -365,6 +365,171 @@ define_id! {
     LoyaltyAccountId
 }
 
+define_id! {
+    /// Strongly-typed sales/fulfillment channel identifier.
+    ChannelId
+}
+
+define_id! {
+    /// Strongly-typed B2B company (account) identifier.
+    CompanyId
+}
+
+define_id! {
+    /// Strongly-typed contact identifier.
+    ContactId
+}
+
+define_id! {
+    /// Strongly-typed company shipping address identifier.
+    CompanyAddressId
+}
+
+define_id! {
+    /// Strongly-typed transfer order identifier.
+    TransferOrderId
+}
+
+define_id! {
+    /// Strongly-typed transfer order line item identifier.
+    TransferOrderItemId
+}
+
+define_id! {
+    /// Strongly-typed unit class identifier (e.g. Length, Weight, Volume).
+    UnitClassId
+}
+
+define_id! {
+    /// Strongly-typed unit of measure identifier.
+    UnitOfMeasureId
+}
+
+define_id! {
+    /// Strongly-typed unit conversion rule identifier.
+    UnitConversionRuleId
+}
+
+define_id! {
+    /// Strongly-typed production batch identifier.
+    ProductionBatchId
+}
+
+define_id! {
+    /// Strongly-typed supplier SKU identifier.
+    SupplierSkuId
+}
+
+define_id! {
+    /// Strongly-typed vendor return identifier.
+    VendorReturnId
+}
+
+define_id! {
+    /// Strongly-typed vendor return line item identifier.
+    VendorReturnItemId
+}
+
+define_id! {
+    /// Strongly-typed vendor credit identifier.
+    VendorCreditId
+}
+
+define_id! {
+    /// Strongly-typed vendor credit application identifier.
+    VendorCreditApplicationId
+}
+
+define_id! {
+    /// Strongly-typed payment obligation identifier.
+    PaymentObligationId
+}
+
+define_id! {
+    /// Strongly-typed price level identifier.
+    PriceLevelId
+}
+
+define_id! {
+    /// Strongly-typed prepayment identifier.
+    PrepaymentId
+}
+
+define_id! {
+    /// Strongly-typed prepayment application identifier.
+    PrepaymentApplicationId
+}
+
+define_id! {
+    /// Strongly-typed price schedule identifier.
+    PriceScheduleId
+}
+
+define_id! {
+    /// Strongly-typed activity log entry identifier.
+    ActivityLogId
+}
+
+define_id! {
+    /// Strongly-typed integration field-mapping identifier.
+    IntegrationMappingId
+}
+
+define_id! {
+    /// Strongly-typed inbound shipment identifier.
+    InboundShipmentId
+}
+
+define_id! {
+    /// Strongly-typed inbound shipment line item identifier.
+    InboundShipmentItemId
+}
+
+define_id! {
+    /// Strongly-typed purgatory (non-posted) order identifier.
+    PurgatoryOrderId
+}
+
+define_id! {
+    /// Strongly-typed purgatory order line item identifier.
+    PurgatoryLineItemId
+}
+
+define_id! {
+    /// Strongly-typed print station identifier.
+    PrintStationId
+}
+
+define_id! {
+    /// Strongly-typed print job identifier.
+    PrintJobId
+}
+
+define_id! {
+    /// Strongly-typed EDI document identifier.
+    EdiDocumentId
+}
+
+define_id! {
+    /// Strongly-typed integration field-path mapping identifier.
+    IntegrationFieldMappingId
+}
+
+define_id! {
+    /// Strongly-typed operational topology snapshot identifier.
+    TopologySnapshotId
+}
+
+define_id! {
+    /// Strongly-typed stock snapshot identifier.
+    StockSnapshotId
+}
+
+define_id! {
+    /// Strongly-typed stock snapshot line identifier.
+    StockSnapshotLineId
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
