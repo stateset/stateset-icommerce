@@ -192,6 +192,14 @@ impl PaymentObligationRepository for SqlitePaymentObligationRepository {
                     CommerceError::Conflict("cannot pay a cancelled obligation".into()),
                 )));
             }
+            if amount > obligation.outstanding() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "payment {amount} exceeds outstanding balance {}",
+                        obligation.outstanding()
+                    )),
+                )));
+            }
             obligation.amount_paid += amount;
             let new_status = obligation.derive_status();
             tx.execute(
@@ -317,6 +325,21 @@ mod tests {
         let after = repo.record_payment(o.id, dec!(60)).expect("pay rest");
         assert_eq!(after.status, PaymentObligationStatus::Paid);
         assert_eq!(after.outstanding(), dec!(0));
+    }
+
+    #[test]
+    fn rejects_overpayment() {
+        let repo = test_repo();
+        let o = new_obl(&repo, dec!(100), day(2026, 7, 1));
+        // Cannot pay more than the full amount in one shot.
+        assert!(repo.record_payment(o.id, dec!(150)).is_err());
+        // Partial payment, then an overpayment of the remainder is rejected.
+        repo.record_payment(o.id, dec!(60)).expect("partial");
+        assert!(repo.record_payment(o.id, dec!(50)).is_err());
+        // Exact remaining balance still succeeds.
+        let done = repo.record_payment(o.id, dec!(40)).expect("pay rest");
+        assert_eq!(done.status, PaymentObligationStatus::Paid);
+        assert_eq!(done.outstanding(), dec!(0));
     }
 
     #[test]

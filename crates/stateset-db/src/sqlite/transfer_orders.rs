@@ -263,22 +263,33 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
         item_id: TransferOrderItemId,
         quantity: Decimal,
     ) -> Result<TransferOrder> {
+        if quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("receive quantity must be positive".into()));
+        }
         let id_str = id.to_string();
         let item_str = item_id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
-            let current: Option<String> = tx
+            let row: Option<(String, String)> = tx
                 .query_row(
-                    "SELECT quantity_received FROM transfer_order_items WHERE id = ? AND transfer_order_id = ?",
+                    "SELECT quantity, quantity_received FROM transfer_order_items WHERE id = ? AND transfer_order_id = ?",
                     rusqlite::params![&item_str, &id_str],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?;
-            let Some(current) = current else {
+            let Some((expected, current)) = row else {
                 return Err(rusqlite::Error::QueryReturnedNoRows);
             };
+            let expected: Decimal = expected.parse().unwrap_or(Decimal::ZERO);
             let current: Decimal = current.parse().unwrap_or(Decimal::ZERO);
             let new_received = current + quantity;
+            if new_received > expected {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "receiving {quantity} would exceed the {expected} expected on this line ({current} already received)"
+                    )),
+                )));
+            }
             tx.execute(
                 "UPDATE transfer_order_items SET quantity_received = ? WHERE id = ?",
                 rusqlite::params![new_received.to_string(), &item_str],
@@ -379,6 +390,24 @@ mod tests {
         let full = repo.receive_line(o.id, item_id, dec!(6)).expect("receive rest");
         assert_eq!(full.status, TransferOrderStatus::Received);
         assert!(full.received_at.is_some());
+    }
+
+    #[test]
+    fn receive_line_rejects_over_receipt() {
+        let repo = test_repo();
+        let o = new_order(&repo);
+        let shipped = repo.ship(o.id).expect("ship");
+        let item_id = shipped.items[0].id;
+        // Line expects 10; receiving 11 at once is rejected.
+        assert!(repo.receive_line(o.id, item_id, dec!(11)).is_err());
+        // Non-positive quantities are rejected.
+        assert!(repo.receive_line(o.id, item_id, dec!(0)).is_err());
+        // After receiving 7, receiving another 4 (total 11) is rejected.
+        repo.receive_line(o.id, item_id, dec!(7)).expect("receive 7");
+        assert!(repo.receive_line(o.id, item_id, dec!(4)).is_err());
+        // Exact remaining (3) still succeeds.
+        let full = repo.receive_line(o.id, item_id, dec!(3)).expect("receive rest");
+        assert_eq!(full.status, TransferOrderStatus::Received);
     }
 
     #[test]

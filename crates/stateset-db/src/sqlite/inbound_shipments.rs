@@ -262,18 +262,26 @@ impl stateset_core::InboundShipmentRepository for SqliteInboundShipmentRepositor
         let item_str = item_id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
-            let current: Option<String> = tx
+            let row: Option<(String, String)> = tx
                 .query_row(
-                    "SELECT quantity_received FROM inbound_shipment_items WHERE id = ? AND inbound_shipment_id = ?",
+                    "SELECT quantity_expected, quantity_received FROM inbound_shipment_items WHERE id = ? AND inbound_shipment_id = ?",
                     rusqlite::params![&item_str, &id_str],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?;
-            let Some(current) = current else {
+            let Some((expected, current)) = row else {
                 return Err(rusqlite::Error::QueryReturnedNoRows);
             };
+            let expected: Decimal = expected.parse().unwrap_or(Decimal::ZERO);
             let new_received: Decimal =
                 current.parse::<Decimal>().unwrap_or(Decimal::ZERO) + quantity;
+            if new_received > expected {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "receiving {quantity} would exceed the {expected} expected on this line"
+                    )),
+                )));
+            }
             tx.execute(
                 "UPDATE inbound_shipment_items SET quantity_received = ? WHERE id = ?",
                 rusqlite::params![new_received.to_string(), &item_str],
@@ -372,6 +380,21 @@ mod tests {
         let full = repo.receive_line(s.id, item, dec!(6)).expect("full");
         assert_eq!(full.status, InboundShipmentStatus::Received);
         assert!(full.received_at.is_some());
+    }
+
+    #[test]
+    fn receive_line_rejects_over_receipt() {
+        let repo = test_repo();
+        let s = new_shipment(&repo);
+        let item = s.items[0].id;
+        // Line expects 10; receiving 11 at once is rejected.
+        assert!(repo.receive_line(s.id, item, dec!(11)).is_err());
+        // After receiving 6, another 5 (total 11) is rejected.
+        repo.receive_line(s.id, item, dec!(6)).expect("receive 6");
+        assert!(repo.receive_line(s.id, item, dec!(5)).is_err());
+        // Exact remaining (4) still succeeds.
+        let full = repo.receive_line(s.id, item, dec!(4)).expect("receive rest");
+        assert_eq!(full.status, InboundShipmentStatus::Received);
     }
 
     #[test]
