@@ -165,5 +165,43 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "038_fix_location_inventory_trigger",
             include_str!("../migrations/038_fix_location_inventory_trigger.sql"),
         ),
+        // B2B / ERP-ops entities: channels, companies, transfer orders, units
+        // of measure, production batches.
+        ("039_b2b_erp_entities", include_str!("../migrations/039_b2b_erp_entities.sql")),
+        // Supplier SKUs: per-supplier SKU / unit-cost overrides.
+        ("040_supplier_skus", include_str!("../migrations/040_supplier_skus.sql")),
+        // Vendor returns (return-to-supplier).
+        ("041_vendor_returns", include_str!("../migrations/041_vendor_returns.sql")),
+        // Vendor credits + applications.
+        ("042_vendor_credits", include_str!("../migrations/042_vendor_credits.sql")),
+        // Payment obligations (scheduled AP payments).
+        ("043_payment_obligations", include_str!("../migrations/043_payment_obligations.sql")),
+        // Price levels (B2B pricing tiers) + per-product entries.
+        ("044_price_levels", include_str!("../migrations/044_price_levels.sql")),
+        // Prepayments + applications.
+        ("045_prepayments", include_str!("../migrations/045_prepayments.sql")),
+        // Price schedules (time-bounded pricing) + entries.
+        ("046_price_schedules", include_str!("../migrations/046_price_schedules.sql")),
+        // Activity logs (append-only subject history).
+        ("047_activity_logs", include_str!("../migrations/047_activity_logs.sql")),
+        // Integration mappings (external↔internal value translation).
+        ("048_integration_mappings", include_str!("../migrations/048_integration_mappings.sql")),
+        // Inbound shipments (ASNs) + line items.
+        ("049_inbound_shipments", include_str!("../migrations/049_inbound_shipments.sql")),
+        // Purgatory (order ingestion staging) + line items.
+        ("050_purgatory", include_str!("../migrations/050_purgatory.sql")),
+        // Print stations + print job queue.
+        ("051_print_stations", include_str!("../migrations/051_print_stations.sql")),
+        // EDI documents + aggregate reporting.
+        ("052_edi_documents", include_str!("../migrations/052_edi_documents.sql")),
+        // Integration field mappings (field-path mappings).
+        (
+            "053_integration_field_mappings",
+            include_str!("../migrations/053_integration_field_mappings.sql"),
+        ),
+        // Customer operational topology snapshots.
+        ("054_topology_snapshots", include_str!("../migrations/054_topology_snapshots.sql")),
+        // Stock snapshots (point-in-time inventory) + lines.
+        ("055_stock_snapshots", include_str!("../migrations/055_stock_snapshots.sql")),
     ]
 }

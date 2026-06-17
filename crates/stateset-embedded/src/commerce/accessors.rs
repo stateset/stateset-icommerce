@@ -1148,6 +1148,132 @@ impl Commerce {
         ShippingZones::new(self.db.clone())
     }
 
+    /// Access sales / fulfillment channel operations.
+    #[must_use]
+    pub fn channels(&self) -> crate::Channels {
+        crate::Channels::new(self.db.clone())
+    }
+
+    /// Access B2B company (account) operations.
+    #[must_use]
+    pub fn companies(&self) -> crate::Companies {
+        crate::Companies::new(self.db.clone())
+    }
+
+    /// Access transfer order operations (inter-warehouse stock movement).
+    #[must_use]
+    pub fn transfer_orders(&self) -> crate::TransferOrders {
+        crate::TransferOrders::new(self.db.clone())
+    }
+
+    /// Access units-of-measure operations (classes, UOMs, conversion rules).
+    #[must_use]
+    pub fn units_of_measure(&self) -> crate::UnitsOfMeasure {
+        crate::UnitsOfMeasure::new(self.db.clone())
+    }
+
+    /// Access production batch operations.
+    #[must_use]
+    pub fn production_batches(&self) -> crate::ProductionBatches {
+        crate::ProductionBatches::new(self.db.clone())
+    }
+
+    /// Access supplier SKU operations.
+    #[must_use]
+    pub fn supplier_skus(&self) -> crate::SupplierSkus {
+        crate::SupplierSkus::new(self.db.clone())
+    }
+
+    /// Access vendor return operations.
+    #[must_use]
+    pub fn vendor_returns(&self) -> crate::VendorReturns {
+        crate::VendorReturns::new(self.db.clone())
+    }
+
+    /// Access vendor credit operations.
+    #[must_use]
+    pub fn vendor_credits(&self) -> crate::VendorCredits {
+        crate::VendorCredits::new(self.db.clone())
+    }
+
+    /// Access payment obligation operations.
+    #[must_use]
+    pub fn payment_obligations(&self) -> crate::PaymentObligations {
+        crate::PaymentObligations::new(self.db.clone())
+    }
+
+    /// Access price level (B2B pricing tier) operations.
+    #[must_use]
+    pub fn price_levels(&self) -> crate::PriceLevels {
+        crate::PriceLevels::new(self.db.clone())
+    }
+
+    /// Access prepayment operations.
+    #[must_use]
+    pub fn prepayments(&self) -> crate::Prepayments {
+        crate::Prepayments::new(self.db.clone())
+    }
+
+    /// Access price schedule (time-bounded pricing) operations.
+    #[must_use]
+    pub fn price_schedules(&self) -> crate::PriceSchedules {
+        crate::PriceSchedules::new(self.db.clone())
+    }
+
+    /// Access activity log (subject history) operations.
+    #[must_use]
+    pub fn activity_logs(&self) -> crate::ActivityLogs {
+        crate::ActivityLogs::new(self.db.clone())
+    }
+
+    /// Access integration mapping operations.
+    #[must_use]
+    pub fn integration_mappings(&self) -> crate::IntegrationMappings {
+        crate::IntegrationMappings::new(self.db.clone())
+    }
+
+    /// Access inbound shipment (ASN) operations.
+    #[must_use]
+    pub fn inbound_shipments(&self) -> crate::InboundShipments {
+        crate::InboundShipments::new(self.db.clone())
+    }
+
+    /// Access purgatory (order ingestion staging) operations.
+    #[must_use]
+    pub fn purgatory(&self) -> crate::Purgatory {
+        crate::Purgatory::new(self.db.clone())
+    }
+
+    /// Access print station operations.
+    #[must_use]
+    pub fn print_stations(&self) -> crate::PrintStations {
+        crate::PrintStations::new(self.db.clone())
+    }
+
+    /// Access EDI document operations.
+    #[must_use]
+    pub fn edi_documents(&self) -> crate::EdiDocuments {
+        crate::EdiDocuments::new(self.db.clone())
+    }
+
+    /// Access integration field-mapping operations.
+    #[must_use]
+    pub fn integration_field_mappings(&self) -> crate::IntegrationFieldMappings {
+        crate::IntegrationFieldMappings::new(self.db.clone())
+    }
+
+    /// Access customer operational topology snapshot operations.
+    #[must_use]
+    pub fn topology_snapshots(&self) -> crate::TopologySnapshots {
+        crate::TopologySnapshots::new(self.db.clone())
+    }
+
+    /// Access stock snapshot (point-in-time inventory) operations.
+    #[must_use]
+    pub fn stock_snapshots(&self) -> crate::StockSnapshots {
+        crate::StockSnapshots::new(self.db.clone())
+    }
+
     /// Access product review operations.
     ///
     /// Provides review creation, moderation, summaries, and helpful/reported tracking.
