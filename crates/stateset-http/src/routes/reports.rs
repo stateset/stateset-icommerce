@@ -63,6 +63,7 @@ pub fn router() -> Router<AppState> {
         .route("/reports/sales-by-channel", post(sales_by_channel))
         .route("/reports/transaction-cogs", post(transaction_cogs))
         .route("/reports/close-the-books", post(close_the_books))
+        .route("/reports/consumption", post(consumption))
 }
 
 #[utoipa::path(post, path = "/api/v1/reports/inventory-aging", tag = "reports",
@@ -362,6 +363,86 @@ pub(crate) async fn close_the_books(
     ))
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct ConsumptionRecordRequest {
+    pub product_id: Option<String>,
+    pub sku: String,
+    pub quantity: String,
+    /// Date consumed (`YYYY-MM-DD`).
+    pub consumed_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct ConsumptionRequest {
+    pub from: String,
+    pub to: String,
+    pub records: Vec<ConsumptionRecordRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct ConsumptionRowResponse {
+    pub sku: String,
+    pub total_quantity: String,
+    pub event_count: u64,
+    pub avg_daily: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct ConsumptionResponse {
+    pub from: String,
+    pub to: String,
+    pub days: i64,
+    pub rows: Vec<ConsumptionRowResponse>,
+    pub total_quantity: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/reports/consumption", tag = "reports",
+    request_body = ConsumptionRequest,
+    responses((status = 200, body = ConsumptionResponse), (status = 400, body = ErrorBody)))]
+#[tracing::instrument(skip(req))]
+pub(crate) async fn consumption(
+    Json(req): Json<ConsumptionRequest>,
+) -> Result<(StatusCode, Json<ConsumptionResponse>), HttpError> {
+    let from = parse_date(&req.from)?;
+    let to = parse_date(&req.to)?;
+    if from > to {
+        return Err(HttpError::BadRequest("`from` must be on or before `to`".into()));
+    }
+    let mut records = Vec::with_capacity(req.records.len());
+    for r in req.records {
+        let product_id = match r.product_id.as_deref() {
+            Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
+            None => None,
+        };
+        records.push(stateset_core::ConsumptionRecord {
+            product_id,
+            sku: r.sku,
+            quantity: parse_decimal(&r.quantity, "quantity")?,
+            consumed_at: parse_date(&r.consumed_at)?,
+        });
+    }
+    let report = stateset_core::compute_consumption(&records, from, to);
+    Ok((
+        StatusCode::OK,
+        Json(ConsumptionResponse {
+            from: report.from.to_string(),
+            to: report.to.to_string(),
+            days: report.days,
+            rows: report
+                .rows
+                .iter()
+                .map(|r| ConsumptionRowResponse {
+                    sku: r.sku.clone(),
+                    total_quantity: r.total_quantity.to_string(),
+                    event_count: r.event_count,
+                    avg_daily: r.avg_daily.to_string(),
+                })
+                .collect(),
+            total_quantity: report.total_quantity.to_string(),
+        }),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +571,36 @@ mod tests {
         assert_eq!(json["is_ready"], false);
         assert_eq!(json["zero_cost_skus"][0], "b");
         assert_eq!(json["zero_valuation_items"][0]["sku"], "x");
+    }
+
+    #[tokio::test]
+    async fn consumption_rates() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        let body = serde_json::json!({
+            "from": "2026-06-01",
+            "to": "2026-06-10",
+            "records": [
+                {"sku":"a","quantity":"20","consumed_at":"2026-06-02"},
+                {"sku":"a","quantity":"30","consumed_at":"2026-06-05"},
+                {"sku":"b","quantity":"5","consumed_at":"2026-06-03"}
+            ]
+        });
+        let resp = app
+            .oneshot(
+                Request::post("/reports/consumption")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["days"], 10);
+        assert_eq!(json["total_quantity"], "55");
+        assert_eq!(json["rows"][0]["sku"], "a");
+        assert_eq!(json["rows"][0]["avg_daily"], "5");
     }
 }
