@@ -193,6 +193,158 @@ use crate::state::AppState;
         crate::routes::shipping_zones::delete_zone,
         // Events
         crate::routes::events::event_stream,
+        // --- B2B / ERP-ops domain objects + reports ---
+        // channels
+        crate::routes::channels::create,
+        crate::routes::channels::list,
+        crate::routes::channels::get_one,
+        crate::routes::channels::update,
+        crate::routes::channels::delete_one,
+        crate::routes::channels::set_lock,
+        // companies
+        crate::routes::companies::create,
+        crate::routes::companies::list,
+        crate::routes::companies::get_one,
+        crate::routes::companies::delete_one,
+        crate::routes::companies::create_contact,
+        crate::routes::companies::list_contacts,
+        // transfer_orders
+        crate::routes::transfer_orders::create,
+        crate::routes::transfer_orders::list,
+        crate::routes::transfer_orders::get_one,
+        crate::routes::transfer_orders::ship,
+        crate::routes::transfer_orders::receive,
+        crate::routes::transfer_orders::cancel,
+        // units_of_measure
+        crate::routes::units_of_measure::create_class,
+        crate::routes::units_of_measure::list_classes,
+        crate::routes::units_of_measure::create_uom,
+        crate::routes::units_of_measure::list_uoms,
+        crate::routes::units_of_measure::create_rule,
+        crate::routes::units_of_measure::list_rules,
+        // production_batches
+        crate::routes::production_batches::create,
+        crate::routes::production_batches::list,
+        crate::routes::production_batches::get_one,
+        crate::routes::production_batches::delete_one,
+        crate::routes::production_batches::add_work_orders,
+        // supplier_skus
+        crate::routes::supplier_skus::create,
+        crate::routes::supplier_skus::list,
+        crate::routes::supplier_skus::get_one,
+        crate::routes::supplier_skus::delete_one,
+        // vendor_returns
+        crate::routes::vendor_returns::create,
+        crate::routes::vendor_returns::list,
+        crate::routes::vendor_returns::get_one,
+        crate::routes::vendor_returns::submit,
+        crate::routes::vendor_returns::process,
+        crate::routes::vendor_returns::cancel,
+        // vendor_credits
+        crate::routes::vendor_credits::create,
+        crate::routes::vendor_credits::list,
+        crate::routes::vendor_credits::get_one,
+        crate::routes::vendor_credits::apply,
+        crate::routes::vendor_credits::cancel,
+        // payment_obligations
+        crate::routes::payment_obligations::create,
+        crate::routes::payment_obligations::list,
+        crate::routes::payment_obligations::dashboard,
+        crate::routes::payment_obligations::get_one,
+        crate::routes::payment_obligations::record_payment,
+        crate::routes::payment_obligations::set_status,
+        crate::routes::payment_obligations::link_bill,
+        // prepayments
+        crate::routes::prepayments::create,
+        crate::routes::prepayments::list,
+        crate::routes::prepayments::get_one,
+        crate::routes::prepayments::apply,
+        crate::routes::prepayments::refund,
+        // price_levels
+        crate::routes::price_levels::create,
+        crate::routes::price_levels::list,
+        crate::routes::price_levels::get_one,
+        crate::routes::price_levels::update,
+        crate::routes::price_levels::delete_one,
+        crate::routes::price_levels::set_entry,
+        crate::routes::price_levels::list_entries,
+        // price_schedules
+        crate::routes::price_schedules::create,
+        crate::routes::price_schedules::list,
+        crate::routes::price_schedules::resolve,
+        crate::routes::price_schedules::get_one,
+        crate::routes::price_schedules::delete_one,
+        crate::routes::price_schedules::set_entry,
+        crate::routes::price_schedules::list_entries,
+        // activity_logs
+        crate::routes::activity_logs::record,
+        crate::routes::activity_logs::list,
+        crate::routes::activity_logs::get_one,
+        crate::routes::activity_logs::history,
+        // integration_mappings
+        crate::routes::integration_mappings::create,
+        crate::routes::integration_mappings::bulk_create,
+        crate::routes::integration_mappings::list,
+        crate::routes::integration_mappings::resolve,
+        crate::routes::integration_mappings::get_one,
+        crate::routes::integration_mappings::update,
+        crate::routes::integration_mappings::delete_one,
+        // integration_field_mappings
+        crate::routes::integration_field_mappings::create,
+        crate::routes::integration_field_mappings::bulk_create,
+        crate::routes::integration_field_mappings::bulk_delete,
+        crate::routes::integration_field_mappings::list,
+        crate::routes::integration_field_mappings::groups,
+        crate::routes::integration_field_mappings::get_one,
+        crate::routes::integration_field_mappings::update,
+        crate::routes::integration_field_mappings::delete_one,
+        // inbound_shipments
+        crate::routes::inbound_shipments::create,
+        crate::routes::inbound_shipments::list,
+        crate::routes::inbound_shipments::get_one,
+        crate::routes::inbound_shipments::mark_in_transit,
+        crate::routes::inbound_shipments::mark_arrived,
+        crate::routes::inbound_shipments::receive,
+        crate::routes::inbound_shipments::cancel,
+        // purgatory
+        crate::routes::purgatory::ingest,
+        crate::routes::purgatory::list,
+        crate::routes::purgatory::get_one,
+        crate::routes::purgatory::post_order,
+        crate::routes::purgatory::map_line,
+        crate::routes::purgatory::delete_one,
+        // print_stations
+        crate::routes::print_stations::pair,
+        crate::routes::print_stations::list_stations,
+        crate::routes::print_stations::revoke,
+        crate::routes::print_stations::enqueue,
+        crate::routes::print_stations::next_job,
+        crate::routes::print_stations::list_jobs,
+        crate::routes::print_stations::complete_job,
+        // edi_documents
+        crate::routes::edi_documents::create,
+        crate::routes::edi_documents::list,
+        crate::routes::edi_documents::summary,
+        crate::routes::edi_documents::get_one,
+        crate::routes::edi_documents::set_status,
+        // topology_snapshots
+        crate::routes::topology_snapshots::capture,
+        crate::routes::topology_snapshots::list,
+        crate::routes::topology_snapshots::latest,
+        crate::routes::topology_snapshots::get_one,
+        crate::routes::topology_snapshots::delete_one,
+        // stock_snapshots
+        crate::routes::stock_snapshots::capture,
+        crate::routes::stock_snapshots::list,
+        crate::routes::stock_snapshots::latest,
+        crate::routes::stock_snapshots::get_one,
+        crate::routes::stock_snapshots::delete_one,
+        // reports
+        crate::routes::reports::inventory_aging,
+        crate::routes::reports::sales_by_channel,
+        crate::routes::reports::transaction_cogs,
+        crate::routes::reports::close_the_books,
+        crate::routes::reports::consumption,
     ),
     components(schemas(
         // Request DTOs
@@ -395,6 +547,35 @@ mod tests {
         assert!(paths.contains_key("/api/v1/payments/{id}"), "missing /api/v1/payments/{{id}}");
         assert!(paths.contains_key("/api/v1/invoices"), "missing /api/v1/invoices");
         assert!(paths.contains_key("/api/v1/invoices/{id}"), "missing /api/v1/invoices/{{id}}");
+
+        // B2B / ERP-ops domain objects + reports must also be in the spec.
+        for path in [
+            "/api/v1/channels",
+            "/api/v1/companies",
+            "/api/v1/transfer-orders",
+            "/api/v1/unit-classes",
+            "/api/v1/production-batches",
+            "/api/v1/supplier-skus",
+            "/api/v1/vendor-returns",
+            "/api/v1/vendor-credits",
+            "/api/v1/payment-obligations",
+            "/api/v1/prepayments",
+            "/api/v1/price-levels",
+            "/api/v1/price-schedules",
+            "/api/v1/activity-logs",
+            "/api/v1/integration-mappings",
+            "/api/v1/integration-field-mappings",
+            "/api/v1/inbound-shipments",
+            "/api/v1/purgatory/orders",
+            "/api/v1/print-stations",
+            "/api/v1/edi-documents",
+            "/api/v1/topology-snapshots",
+            "/api/v1/stock-snapshots",
+            "/api/v1/reports/inventory-aging",
+            "/api/v1/reports/consumption",
+        ] {
+            assert!(paths.contains_key(path), "missing {path}");
+        }
     }
 
     #[test]
