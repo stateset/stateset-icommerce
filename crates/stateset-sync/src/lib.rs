@@ -45,7 +45,7 @@ pub use commitment::{
     compute_commitment_manifest_hash, sign_commitment_manifest, verify_commitment_manifest,
     verify_commitment_manifest_against_state,
 };
-pub use config::{CommitmentTrustPolicy, SyncConfig};
+pub use config::{CommitmentTrustPolicy, SignerTrustMode, SyncConfig};
 pub use conflict::{ConflictResolver, ConflictStrategy, Resolution};
 pub use convergence::{CommandConvergence, CounterpartyCommitment, CounterpartyConvergenceStatus};
 pub use engine::{DeadLetter, KernelReceipt, KernelReceiptStatus, PushConfirmation, SyncEngine};

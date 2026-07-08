@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,7 @@ use crate::commitment::{
     CommitmentManifest, ManifestVerificationError, VerifiedCommitmentManifest,
     verify_commitment_manifest_against_state,
 };
-use crate::config::SyncConfig;
+use crate::config::{SignerTrustMode, SyncConfig};
 use crate::conflict::{ConflictResolver, ConflictStrategy, Resolution};
 use crate::convergence::CommandConvergence;
 use crate::error::SyncError;
@@ -262,6 +262,10 @@ struct SyncEngineSnapshot {
     attestations: Vec<CommandAttestation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     manifests: Vec<VerifiedCommitmentManifest>,
+    /// Signer keys pinned by trust-on-first-use, keyed by signer id
+    /// (normalized lowercase hex, no `0x` prefix).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    tofu_signer_pins: BTreeMap<String, String>,
 }
 
 /// The sync engine orchestrates synchronization between local state and
@@ -300,6 +304,7 @@ pub struct SyncEngine {
     confirmations: Vec<PushConfirmation>,
     attestations: Vec<CommandAttestation>,
     manifests: Vec<VerifiedCommitmentManifest>,
+    tofu_signer_pins: BTreeMap<String, String>,
     initialized: bool,
 }
 
@@ -367,6 +372,7 @@ impl SyncEngine {
             mut confirmations,
             mut attestations,
             mut manifests,
+            tofu_signer_pins,
         ) = if let Some(snapshot) = snapshot {
             (
                 snapshot.state,
@@ -375,9 +381,18 @@ impl SyncEngine {
                 snapshot.confirmations,
                 snapshot.attestations,
                 snapshot.manifests,
+                snapshot.tofu_signer_pins,
             )
         } else {
-            (SyncState::default(), None, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+            (
+                SyncState::default(),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                BTreeMap::new(),
+            )
         };
         state.local_head = state.local_head.max(outbox.next_sequence().saturating_sub(1));
         state.pending_count = outbox.count();
@@ -407,6 +422,7 @@ impl SyncEngine {
             confirmations,
             attestations,
             manifests,
+            tofu_signer_pins,
             initialized: true,
         })
     }
@@ -461,6 +477,7 @@ impl SyncEngine {
             confirmations: self.confirmations.clone(),
             attestations: self.attestations.clone(),
             manifests: self.manifests.clone(),
+            tofu_signer_pins: self.tofu_signer_pins.clone(),
         };
         let serialized = serde_json::to_string_pretty(&snapshot)?;
         if let Some(parent) = path.parent() {
@@ -794,8 +811,34 @@ impl SyncEngine {
         self.trim_manifests_to_capacity();
     }
 
+    /// Normalize a hex-encoded signer key for comparison: trimmed, lowercase,
+    /// without a `0x` prefix.
+    fn normalize_signer_key(key: &str) -> String {
+        let lowered = key.trim().to_ascii_lowercase();
+        lowered.strip_prefix("0x").map_or(lowered.clone(), ToOwned::to_owned)
+    }
+
+    /// Enforce the configured [`crate::CommitmentTrustPolicy`] against a
+    /// signature-verified manifest.
+    ///
+    /// Signature verification alone is self-certifying (the manifest supplies
+    /// its own public key), so this gate is what binds the manifest signer to
+    /// an operator trust decision:
+    ///
+    /// - the optional `trusted_signer_ids` allowlist is checked in all modes;
+    /// - [`SignerTrustMode::PinnedKeys`] (default) requires the signer key to
+    ///   be pinned in `trusted_signer_public_keys`; with no pinned keys the
+    ///   manifest is rejected (fail closed);
+    /// - [`SignerTrustMode::TrustOnFirstUse`] durably pins the first verified
+    ///   signer key (persisted with the sync-state snapshot) and rejects any
+    ///   other key thereafter;
+    /// - [`SignerTrustMode::AllowAnySigner`] skips the key check entirely and
+    ///   must be opted into explicitly.
+    ///
+    /// May record a new trust-on-first-use pin in memory; callers persist it
+    /// via `persist_runtime_state` and roll it back on persistence failure.
     fn enforce_commitment_trust_policy(
-        &self,
+        &mut self,
         verified: &VerifiedCommitmentManifest,
     ) -> Result<(), SyncError> {
         let trusted_signer_ids = &self.config.commitment_trust.trusted_signer_ids;
@@ -808,25 +851,70 @@ impl SyncEngine {
             )));
         }
 
-        let trusted_public_keys = &self.config.commitment_trust.trusted_signer_public_keys;
-        if !trusted_public_keys.is_empty()
-            && !trusted_public_keys.iter().any(|public_key| {
-                public_key.trim().trim_start_matches("0x").eq_ignore_ascii_case(
-                    verified.signer_public_key.trim().trim_start_matches("0x"),
-                )
-            })
-        {
-            return Err(SyncError::Trust(format!(
-                "commitment manifest `{}` public key is not in the trusted key allowlist",
-                verified.commitment_id
-            )));
-        }
+        let manifest_key = Self::normalize_signer_key(&verified.signer_public_key);
+        let has_pinned_keys = !self.config.commitment_trust.trusted_signer_public_keys.is_empty();
+        let key_is_pinned = self
+            .config
+            .commitment_trust
+            .trusted_signer_public_keys
+            .iter()
+            .any(|public_key| Self::normalize_signer_key(public_key) == manifest_key);
 
-        Ok(())
+        match self.config.commitment_trust.signer_trust {
+            SignerTrustMode::AllowAnySigner => Ok(()),
+            SignerTrustMode::PinnedKeys => {
+                if key_is_pinned {
+                    Ok(())
+                } else if has_pinned_keys {
+                    Err(SyncError::Trust(format!(
+                        "commitment manifest `{}` public key is not in the trusted key allowlist",
+                        verified.commitment_id
+                    )))
+                } else {
+                    Err(SyncError::Trust(format!(
+                        "commitment manifest `{}` rejected: no commitment signer keys are pinned, \
+                         and the default trust policy fails closed because the manifest supplies \
+                         its own public key; pin the sequencer key with \
+                         `SyncConfig::with_trusted_commitment_signer_public_key(..)`, or \
+                         explicitly opt into `with_commitment_trust_on_first_use()` or \
+                         `with_allow_any_commitment_signer()`",
+                        verified.commitment_id
+                    )))
+                }
+            }
+            SignerTrustMode::TrustOnFirstUse => {
+                if key_is_pinned {
+                    return Ok(());
+                }
+                if let Some(pinned_key) = self.tofu_signer_pins.get(&verified.signer_id) {
+                    if *pinned_key == manifest_key {
+                        return Ok(());
+                    }
+                    return Err(SyncError::Trust(format!(
+                        "commitment manifest `{}` signer `{}` presented a key that differs from \
+                         the key pinned on first use; refusing signer key rotation — pin the new \
+                         key explicitly with \
+                         `SyncConfig::with_trusted_commitment_signer_public_key(..)` if the \
+                         rotation is legitimate",
+                        verified.commitment_id, verified.signer_id
+                    )));
+                }
+                if self.tofu_signer_pins.is_empty() {
+                    self.tofu_signer_pins.insert(verified.signer_id.clone(), manifest_key);
+                    return Ok(());
+                }
+                Err(SyncError::Trust(format!(
+                    "commitment manifest `{}` signer `{}` is unknown and a first-use signer key \
+                     is already pinned; pin additional keys explicitly with \
+                     `SyncConfig::with_trusted_commitment_signer_public_key(..)`",
+                    verified.commitment_id, verified.signer_id
+                )))
+            }
+        }
     }
 
     fn verify_remote_manifest_against_state(
-        &self,
+        &mut self,
         manifest: &CommitmentManifest,
         state: &SyncState,
     ) -> Result<VerifiedCommitmentManifest, SyncError> {
@@ -996,8 +1084,11 @@ impl SyncEngine {
     /// # Errors
     ///
     /// Returns [`SyncError::Transport`] if the transport cannot fetch remote
-    /// head state, or [`SyncError::Storage`] if persisting the updated runtime
-    /// state fails.
+    /// head state, [`SyncError::Trust`] if an included commitment manifest
+    /// fails signature verification or the configured
+    /// [`crate::CommitmentTrustPolicy`] (by default, manifests are rejected
+    /// until signer keys are pinned), or [`SyncError::Storage`] if persisting
+    /// the updated runtime state fails.
     pub async fn refresh_remote_head(
         &mut self,
         transport: &dyn Transport,
@@ -1005,6 +1096,7 @@ impl SyncEngine {
         let observed = transport.fetch_head().await?;
         let previous_state = self.state.clone();
         let previous_manifests = self.manifests.clone();
+        let previous_tofu_signer_pins = self.tofu_signer_pins.clone();
         let mut next_state = self.state.clone();
 
         match observed.remote_head.cmp(&previous_state.remote_head) {
@@ -1036,11 +1128,28 @@ impl SyncEngine {
                     self.upsert_verified_commitment_manifest(verified);
                 }
                 None if self.config.commitment_trust.require_manifest => {
-                    return Err(SyncError::Trust(
-                        "remote head included commitment metadata without a signed manifest required by trust policy".into(),
-                    ));
+                    return Err(SyncError::Trust(format!(
+                        "remote head {} included commitment metadata (state_root / commitment id) \
+                         but no signed manifest; the default trust policy fails closed because an \
+                         unsigned state root has no authenticity. Configure the sequencer to \
+                         publish a signed manifest, or explicitly opt out with \
+                         `SyncConfig::with_unauthenticated_remote_head_allowed()` in a trusted \
+                         environment",
+                        observed.remote_head
+                    )));
                 }
-                None => {}
+                None => {
+                    // Opt-out is active: the operator accepted unauthenticated
+                    // remote metadata. Warn loudly on every refresh so this is
+                    // never silently forgotten in production.
+                    eprintln!(
+                        "WARN stateset_sync: recording UNAUTHENTICATED remote head {} \
+                         (state_root / commitment id with no signed manifest); commitment-signer \
+                         pinning is bypassed for this head because \
+                         `with_unauthenticated_remote_head_allowed()` is set",
+                        observed.remote_head
+                    );
+                }
             }
         }
 
@@ -1049,6 +1158,7 @@ impl SyncEngine {
         if let Err(error) = self.persist_runtime_state() {
             self.state = previous_state;
             self.manifests = previous_manifests;
+            self.tofu_signer_pins = previous_tofu_signer_pins;
             return Err(error);
         }
         Ok(head)
@@ -1213,15 +1323,27 @@ impl SyncEngine {
 
     /// Verify and retain a signed commitment manifest against the current remote state.
     ///
+    /// # Trust model
+    ///
+    /// The manifest signature is checked against the manifest's own embedded
+    /// signer key, which alone proves nothing about who produced it. The
+    /// signer key is therefore additionally checked against the configured
+    /// [`crate::CommitmentTrustPolicy`]. By default
+    /// ([`SignerTrustMode::PinnedKeys`] with no pinned keys) every manifest is
+    /// rejected with [`ManifestVerificationError::TrustPolicyViolation`] until
+    /// the operator pins signer keys or explicitly opts into
+    /// trust-on-first-use or allow-any-signer.
+    ///
     /// # Errors
     ///
-    /// Returns [`ManifestVerificationError`] if the manifest signature, state binding,
-    /// or durable persistence fails.
+    /// Returns [`ManifestVerificationError`] if the manifest signature, trust
+    /// policy, state binding, or durable persistence fails.
     pub fn verify_commitment_manifest(
         &mut self,
         manifest: CommitmentManifest,
     ) -> Result<VerifiedCommitmentManifest, ManifestVerificationError> {
         let verified = verify_commitment_manifest_against_state(&manifest, &self.state)?;
+        let previous_tofu_signer_pins = self.tofu_signer_pins.clone();
         if let Err(error) = self.enforce_commitment_trust_policy(&verified) {
             return Err(ManifestVerificationError::TrustPolicyViolation {
                 commitment_id: manifest.commitment_id,
@@ -1234,6 +1356,7 @@ impl SyncEngine {
 
         if let Err(error) = self.persist_runtime_state() {
             self.manifests = previous;
+            self.tofu_signer_pins = previous_tofu_signer_pins;
             return Err(ManifestVerificationError::PersistenceFailed {
                 commitment_id: manifest.commitment_id,
                 reason: error.to_string(),
@@ -1857,7 +1980,10 @@ mod tests {
             }
         }
 
-        let mut engine = SyncEngine::new(make_config()).unwrap();
+        // This test exercises bare (manifest-absent) metadata, which the
+        // default fail-closed policy rejects; opt out explicitly.
+        let mut engine =
+            SyncEngine::new(make_config().with_unauthenticated_remote_head_allowed()).unwrap();
         engine.record(make_event("a")).unwrap();
 
         let head = engine.refresh_remote_head(&HeadTransport).await.unwrap();
@@ -1939,7 +2065,10 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let state_path = dir.path().join("sync-state.json");
-        let config = make_config().with_state_path(state_path.to_string_lossy().into_owned());
+        // Bare metadata (no manifest): opt out of the fail-closed default.
+        let config = make_config()
+            .with_state_path(state_path.to_string_lossy().into_owned())
+            .with_unauthenticated_remote_head_allowed();
 
         {
             let mut engine = SyncEngine::new(config.clone()).unwrap();
@@ -2003,7 +2132,8 @@ mod tests {
         let mut engine = SyncEngine::new(
             make_config()
                 .with_require_commitment_manifest(true)
-                .with_trusted_commitment_signer("sequencer-a"),
+                .with_trusted_commitment_signer("sequencer-a")
+                .with_trusted_commitment_signer_public_key(hex::encode(public_key)),
         )
         .unwrap();
         let head =
@@ -2072,7 +2202,8 @@ mod tests {
         let mut engine = SyncEngine::new(
             make_config()
                 .with_require_commitment_manifest(true)
-                .with_trusted_commitment_signer("sequencer-b"),
+                .with_trusted_commitment_signer("sequencer-b")
+                .with_trusted_commitment_signer_public_key(hex::encode(public_key)),
         )
         .unwrap();
         let error =
@@ -2081,6 +2212,55 @@ mod tests {
         assert!(matches!(error, SyncError::Trust(_)));
         assert_eq!(engine.state().remote_head, 0);
         assert!(engine.verified_commitment_manifests().is_empty());
+    }
+
+    #[derive(Debug)]
+    struct BareMetadataTransport;
+
+    #[async_trait::async_trait]
+    impl Transport for BareMetadataTransport {
+        async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+            Ok(PushResult::accepted_only(events.len(), 0))
+        }
+
+        async fn pull_events(&self, _since: u64, _limit: usize) -> Result<PullResult, SyncError> {
+            Ok(PullResult { events: vec![], remote_head: 0, has_more: false })
+        }
+
+        async fn fetch_head(&self) -> Result<RemoteHead, SyncError> {
+            Ok(RemoteHead::new(40)
+                .with_state_root("40".repeat(32))
+                .with_last_commitment_id("BATCH-40"))
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_remote_head_rejects_unauthenticated_metadata_by_default() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+
+        let error = engine.refresh_remote_head(&BareMetadataTransport).await.unwrap_err();
+
+        assert!(
+            matches!(error, SyncError::Trust(_)),
+            "expected SyncError::Trust for unsigned remote metadata, got: {error:?}"
+        );
+        // Unauthenticated metadata must not leak into engine state.
+        assert_eq!(engine.state().remote_head, 0);
+        assert_eq!(engine.state().remote_state_root, None);
+        assert_eq!(engine.state().last_commitment_id, None);
+    }
+
+    #[tokio::test]
+    async fn refresh_remote_head_allows_unauthenticated_metadata_only_with_opt_out() {
+        let mut engine =
+            SyncEngine::new(make_config().with_unauthenticated_remote_head_allowed()).unwrap();
+
+        let head = engine.refresh_remote_head(&BareMetadataTransport).await.unwrap();
+
+        assert_eq!(head.remote_head, 40);
+        assert_eq!(head.state_root.as_deref(), Some(&*"40".repeat(32)));
+        assert_eq!(engine.state().remote_head, 40);
+        assert_eq!(engine.state().last_commitment_id.as_deref(), Some("BATCH-40"));
     }
 
     #[test]
@@ -2492,8 +2672,10 @@ mod tests {
     fn verify_commitment_manifest_persists_across_restart() {
         let dir = tempdir().unwrap();
         let state_path = dir.path().join("sync-state.json");
-        let config = make_config().with_state_path(state_path.to_string_lossy().into_owned());
         let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let config = make_config()
+            .with_state_path(state_path.to_string_lossy().into_owned())
+            .with_trusted_commitment_signer_public_key(hex::encode(public_key));
 
         {
             let mut engine = SyncEngine::new(config.clone()).unwrap();
@@ -2525,9 +2707,204 @@ mod tests {
     }
 
     #[test]
-    fn attest_command_uses_verified_manifest_signer_metadata() {
+    fn verify_commitment_manifest_rejects_unpinned_signer_by_default() {
         let mut engine = SyncEngine::new(make_config()).unwrap();
+        engine.state.remote_head = 12;
+        engine.state.remote_state_root = Some("33".repeat(32));
+        engine.state.last_commitment_id = Some("BATCH-12".into());
+
         let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let manifest = crate::commitment::sign_commitment_manifest(
+            crate::commitment::CommitmentManifest::new(
+                "BATCH-12",
+                "33".repeat(32),
+                12,
+                "sequencer-any",
+            ),
+            &private_key,
+            &public_key,
+        )
+        .unwrap();
+
+        let error = engine.verify_commitment_manifest(manifest).unwrap_err();
+        assert!(
+            matches!(error, ManifestVerificationError::TrustPolicyViolation { .. }),
+            "expected TrustPolicyViolation, got: {error:?}"
+        );
+        assert!(engine.verified_commitment_manifests().is_empty());
+    }
+
+    #[test]
+    fn verify_commitment_manifest_accepts_pinned_signer_key() {
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let mut engine = SyncEngine::new(
+            make_config().with_trusted_commitment_signer_public_key(hex::encode(public_key)),
+        )
+        .unwrap();
+
+        let manifest = crate::commitment::sign_commitment_manifest(
+            crate::commitment::CommitmentManifest::new(
+                "BATCH-13",
+                "34".repeat(32),
+                13,
+                "sequencer-pinned",
+            ),
+            &private_key,
+            &public_key,
+        )
+        .unwrap();
+
+        let verified = engine.verify_commitment_manifest(manifest).unwrap();
+        assert_eq!(verified.commitment_id, "BATCH-13");
+        assert_eq!(verified.signer_public_key, hex::encode(public_key));
+        assert_eq!(engine.verified_commitment_manifests().len(), 1);
+    }
+
+    #[test]
+    fn trust_on_first_use_pins_first_key_and_rejects_rotation() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("sync-state.json");
+        let config = make_config()
+            .with_state_path(state_path.to_string_lossy().into_owned())
+            .with_commitment_trust_on_first_use();
+        let (private_key_a, public_key_a) = stateset_crypto::sign::generate_keypair();
+        let (private_key_b, public_key_b) = stateset_crypto::sign::generate_keypair();
+
+        let sign = |commitment_id: &str, private_key: &[u8; 32], public_key: &[u8; 32]| {
+            crate::commitment::sign_commitment_manifest(
+                crate::commitment::CommitmentManifest::new(
+                    commitment_id,
+                    "35".repeat(32),
+                    0,
+                    "sequencer-tofu",
+                ),
+                private_key,
+                public_key,
+            )
+            .unwrap()
+        };
+
+        {
+            let mut engine = SyncEngine::new(config.clone()).unwrap();
+
+            // First-seen key is accepted and pinned.
+            let verified = engine
+                .verify_commitment_manifest(sign("BATCH-A", &private_key_a, &public_key_a))
+                .unwrap();
+            assert_eq!(verified.signer_public_key, hex::encode(public_key_a));
+
+            // A different key for the same signer id is rejected.
+            let error = engine
+                .verify_commitment_manifest(sign("BATCH-B", &private_key_b, &public_key_b))
+                .unwrap_err();
+            assert!(
+                matches!(error, ManifestVerificationError::TrustPolicyViolation { .. }),
+                "expected TrustPolicyViolation, got: {error:?}"
+            );
+
+            // The pinned key keeps working.
+            engine
+                .verify_commitment_manifest(sign("BATCH-C", &private_key_a, &public_key_a))
+                .unwrap();
+        }
+
+        // The first-use pin is durable: a different key is still rejected
+        // after a restart, and the pinned key is still accepted.
+        let mut restored = SyncEngine::new(config).unwrap();
+        let error = restored
+            .verify_commitment_manifest(sign("BATCH-D", &private_key_b, &public_key_b))
+            .unwrap_err();
+        assert!(
+            matches!(error, ManifestVerificationError::TrustPolicyViolation { .. }),
+            "expected TrustPolicyViolation after restart, got: {error:?}"
+        );
+        restored
+            .verify_commitment_manifest(sign("BATCH-E", &private_key_a, &public_key_a))
+            .unwrap();
+    }
+
+    #[test]
+    fn trust_on_first_use_rejects_new_signer_id_after_pin() {
+        let mut engine =
+            SyncEngine::new(make_config().with_commitment_trust_on_first_use()).unwrap();
+        let (private_key_a, public_key_a) = stateset_crypto::sign::generate_keypair();
+        let (private_key_b, public_key_b) = stateset_crypto::sign::generate_keypair();
+
+        engine
+            .verify_commitment_manifest(
+                crate::commitment::sign_commitment_manifest(
+                    crate::commitment::CommitmentManifest::new(
+                        "BATCH-A",
+                        "36".repeat(32),
+                        0,
+                        "sequencer-first",
+                    ),
+                    &private_key_a,
+                    &public_key_a,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        // Once a first-use key is pinned, a brand-new signer id with a fresh
+        // key must not silently establish a second trust anchor.
+        let error = engine
+            .verify_commitment_manifest(
+                crate::commitment::sign_commitment_manifest(
+                    crate::commitment::CommitmentManifest::new(
+                        "BATCH-B",
+                        "36".repeat(32),
+                        0,
+                        "sequencer-second",
+                    ),
+                    &private_key_b,
+                    &public_key_b,
+                )
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, ManifestVerificationError::TrustPolicyViolation { .. }),
+            "expected TrustPolicyViolation, got: {error:?}"
+        );
+    }
+
+    #[test]
+    fn allow_any_signer_requires_explicit_opt_in() {
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let sign = || {
+            crate::commitment::sign_commitment_manifest(
+                crate::commitment::CommitmentManifest::new(
+                    "BATCH-ANY",
+                    "37".repeat(32),
+                    0,
+                    "sequencer-any",
+                ),
+                &private_key,
+                &public_key,
+            )
+            .unwrap()
+        };
+
+        // Default policy: rejected.
+        let mut strict = SyncEngine::new(make_config()).unwrap();
+        let error = strict.verify_commitment_manifest(sign()).unwrap_err();
+        assert!(matches!(error, ManifestVerificationError::TrustPolicyViolation { .. }));
+
+        // Explicit opt-in: the same manifest is accepted.
+        let mut permissive =
+            SyncEngine::new(make_config().with_allow_any_commitment_signer()).unwrap();
+        let verified = permissive.verify_commitment_manifest(sign()).unwrap();
+        assert_eq!(verified.commitment_id, "BATCH-ANY");
+    }
+
+    #[test]
+    fn attest_command_uses_verified_manifest_signer_metadata() {
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let mut engine = SyncEngine::new(
+            make_config().with_trusted_commitment_signer_public_key(hex::encode(public_key)),
+        )
+        .unwrap();
         let event = SyncEvent::new("order.created", "order", "ORD-9", json!({}))
             .with_command_id("cmd-attest-signed");
         let event_id = event.id;

@@ -14,18 +14,107 @@ const fn default_confirmation_capacity() -> usize {
     DEFAULT_CONFIRMATION_CAPACITY
 }
 
-/// Policy controlling which remote commitment manifests are accepted automatically.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+/// How the engine decides whether a commitment-manifest signer key is trusted.
+///
+/// A [`crate::CommitmentManifest`] carries its own `signer_public_key`, so a
+/// valid signature only proves the manifest is internally consistent — it does
+/// **not** prove the manifest came from your sequencer. Anyone who can serve a
+/// manifest can sign it with a fresh key. Because the manifest signer is the
+/// light-client trust anchor for the remote state root, the signer key must be
+/// bound to an explicit operator decision. This enum is that decision.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SignerTrustMode {
+    /// Only signer public keys explicitly pinned in
+    /// [`CommitmentTrustPolicy::trusted_signer_public_keys`] are accepted.
+    ///
+    /// This is the default. When **no** keys are pinned, every signed manifest
+    /// is rejected with a trust-policy violation (fail closed): pin the
+    /// sequencer key with
+    /// [`crate::SyncConfig::with_trusted_commitment_signer_public_key`] or opt
+    /// into one of the explicit escape hatches below.
+    #[default]
+    PinnedKeys,
+    /// Trust-on-first-use: the first signer key this engine verifies is pinned
+    /// durably (in the sync-state snapshot when a `state_path` is configured);
+    /// thereafter any other key — including a different key for the same
+    /// signer id, or a new signer id — is rejected until keys are pinned
+    /// explicitly. The first observation itself is unauthenticated; use
+    /// [`SignerTrustMode::PinnedKeys`] when the sequencer key is known ahead
+    /// of time.
+    TrustOnFirstUse,
+    /// Accept any cryptographically valid signer key (the legacy
+    /// self-certifying behavior). This provides **no** authenticity for the
+    /// remote state root and must be an explicit opt-in via
+    /// [`crate::SyncConfig::with_allow_any_commitment_signer`]; it is never
+    /// the default.
+    AllowAnySigner,
+}
+
+/// Policy controlling which remote commitment manifests are accepted.
+///
+/// # Trust model
+///
+/// Manifest signature verification alone is self-certifying (the manifest
+/// supplies its own public key), so acceptance is additionally gated by:
+///
+/// 1. `trusted_signer_ids` — optional allowlist of logical signer ids
+///    (advisory only: signer ids are attacker-chosen strings and are **not**
+///    a substitute for key pinning);
+/// 2. `signer_trust` — the key trust anchor. The default,
+///    [`SignerTrustMode::PinnedKeys`] with an empty
+///    `trusted_signer_public_keys` list, rejects every manifest (fail
+///    closed) until the operator pins keys or explicitly opts into
+///    [`SignerTrustMode::TrustOnFirstUse`] or
+///    [`SignerTrustMode::AllowAnySigner`].
+/// 3. `require_manifest` — whether remote head metadata (state root /
+///    commitment id) is allowed **without** an accompanying signed manifest.
+///    Defaults to `true` (fail closed): a server that simply omits the
+///    manifest cannot get its unauthenticated state root recorded. Set it to
+///    `false` (via [`SyncConfig::with_unauthenticated_remote_head_allowed`])
+///    only in trusted/dev environments.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommitmentTrustPolicy {
     /// Whether remote commitment metadata must include a signed manifest.
-    #[serde(default)]
+    ///
+    /// Defaults to `true` — remote head metadata with no signed manifest is
+    /// rejected. This default is deliberately **not** the historical
+    /// fail-open behavior: a missing key in a deserialized config resolves to
+    /// `true` (see [`default_require_manifest`]), so upgrading fails closed.
+    #[serde(default = "default_require_manifest")]
     pub require_manifest: bool,
     /// Optional allowlist of signer ids that may publish trusted manifests.
+    /// Advisory: ids are self-claimed; always combine with key pinning.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trusted_signer_ids: Vec<String>,
-    /// Optional allowlist of signer public keys that may publish trusted manifests.
+    /// Pinned signer public keys (hex, with or without `0x` prefix) that may
+    /// publish trusted manifests. Under the default
+    /// [`SignerTrustMode::PinnedKeys`] this list is the entire trust anchor.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trusted_signer_public_keys: Vec<String>,
+    /// How signer public keys are trusted. Defaults to
+    /// [`SignerTrustMode::PinnedKeys`] (fail closed when no keys are pinned).
+    #[serde(default)]
+    pub signer_trust: SignerTrustMode,
+}
+
+/// Serde/default value for [`CommitmentTrustPolicy::require_manifest`]: `true`
+/// so that both `SyncConfig::default()`-style construction and configs that
+/// omit the field fail closed rather than silently accepting unsigned remote
+/// metadata.
+const fn default_require_manifest() -> bool {
+    true
+}
+
+impl Default for CommitmentTrustPolicy {
+    fn default() -> Self {
+        Self {
+            require_manifest: default_require_manifest(),
+            trusted_signer_ids: Vec::new(),
+            trusted_signer_public_keys: Vec::new(),
+            signer_trust: SignerTrustMode::default(),
+        }
+    }
 }
 
 /// Configuration for the sync engine.
@@ -132,10 +221,30 @@ impl SyncConfig {
         self
     }
 
-    /// Require remote heads with commitment metadata to include a signed manifest.
+    /// Set whether remote heads carrying commitment metadata must include a
+    /// signed manifest.
+    ///
+    /// Defaults to `true`. Passing `false` is equivalent to
+    /// [`Self::with_unauthenticated_remote_head_allowed`] and re-enables the
+    /// historical fail-open behavior — prefer the named opt-out for clarity.
     #[must_use]
     pub const fn with_require_commitment_manifest(mut self, require_manifest: bool) -> Self {
         self.commitment_trust.require_manifest = require_manifest;
+        self
+    }
+
+    /// Explicitly allow the engine to record remote head metadata (state root
+    /// and commitment id) that arrives **without** a signed commitment
+    /// manifest.
+    ///
+    /// This is the opt-out from the fail-closed default: with it, an untrusted
+    /// server can seed the local remote state root simply by omitting the
+    /// manifest, which nullifies commitment-signer pinning for that head. The
+    /// engine emits a loud warning on every refresh performed while this is
+    /// active. Use only in trusted or development environments.
+    #[must_use]
+    pub const fn with_unauthenticated_remote_head_allowed(mut self) -> Self {
+        self.commitment_trust.require_manifest = false;
         self
     }
 
@@ -146,13 +255,44 @@ impl SyncConfig {
         self
     }
 
-    /// Allow a specific signer public key to publish trusted commitment manifests.
+    /// Pin a signer public key that may publish trusted commitment manifests.
+    ///
+    /// Under the default [`SignerTrustMode::PinnedKeys`] mode, at least one
+    /// pinned key is required before any signed manifest is accepted.
     #[must_use]
     pub fn with_trusted_commitment_signer_public_key(
         mut self,
         signer_public_key: impl Into<String>,
     ) -> Self {
         self.commitment_trust.trusted_signer_public_keys.push(signer_public_key.into());
+        self
+    }
+
+    /// Set how commitment-manifest signer keys are trusted.
+    #[must_use]
+    pub const fn with_commitment_signer_trust_mode(mut self, mode: SignerTrustMode) -> Self {
+        self.commitment_trust.signer_trust = mode;
+        self
+    }
+
+    /// Opt into trust-on-first-use for commitment-manifest signer keys.
+    ///
+    /// The first verified signer key is pinned durably and any different key
+    /// is rejected thereafter. See [`SignerTrustMode::TrustOnFirstUse`].
+    #[must_use]
+    pub const fn with_commitment_trust_on_first_use(mut self) -> Self {
+        self.commitment_trust.signer_trust = SignerTrustMode::TrustOnFirstUse;
+        self
+    }
+
+    /// Explicitly opt into accepting any commitment-manifest signer key.
+    ///
+    /// This disables the signer-key trust anchor entirely (the manifest
+    /// becomes self-certifying) and should only be used in development or
+    /// closed test environments. See [`SignerTrustMode::AllowAnySigner`].
+    #[must_use]
+    pub const fn with_allow_any_commitment_signer(mut self) -> Self {
+        self.commitment_trust.signer_trust = SignerTrustMode::AllowAnySigner;
         self
     }
 
@@ -265,9 +405,63 @@ mod tests {
         assert_eq!(config.confirmation_capacity, DEFAULT_CONFIRMATION_CAPACITY);
         assert!(config.outbox_path.is_none());
         assert!(config.state_path.is_none());
-        assert!(!config.commitment_trust.require_manifest);
+        // Fail closed by default: metadata without a signed manifest is rejected.
+        assert!(config.commitment_trust.require_manifest);
         assert!(config.commitment_trust.trusted_signer_ids.is_empty());
         assert!(config.commitment_trust.trusted_signer_public_keys.is_empty());
+        assert_eq!(config.commitment_trust.signer_trust, SignerTrustMode::PinnedKeys);
+    }
+
+    #[test]
+    fn require_manifest_defaults_to_true_when_absent_from_json() {
+        // Intentional breaking default: an omitted field resolves to fail-closed,
+        // NOT the historical fail-open behavior.
+        let policy: CommitmentTrustPolicy = serde_json::from_str("{}").unwrap();
+        assert!(policy.require_manifest);
+
+        let policy: CommitmentTrustPolicy = CommitmentTrustPolicy::default();
+        assert!(policy.require_manifest);
+
+        // An explicit opt-out still deserializes as fail-open.
+        let policy: CommitmentTrustPolicy =
+            serde_json::from_str(r#"{"require_manifest":false}"#).unwrap();
+        assert!(!policy.require_manifest);
+    }
+
+    #[test]
+    fn unauthenticated_remote_head_opt_out_builder() {
+        let config = SyncConfig::new("a", "t", "s");
+        assert!(config.commitment_trust.require_manifest);
+
+        let config = config.with_unauthenticated_remote_head_allowed();
+        assert!(!config.commitment_trust.require_manifest);
+    }
+
+    #[test]
+    fn signer_trust_mode_defaults_to_pinned_keys_when_absent_from_json() {
+        let policy: CommitmentTrustPolicy = serde_json::from_str("{}").unwrap();
+        assert_eq!(policy.signer_trust, SignerTrustMode::PinnedKeys);
+
+        let policy: CommitmentTrustPolicy =
+            serde_json::from_str(r#"{"signer_trust":"allow_any_signer"}"#).unwrap();
+        assert_eq!(policy.signer_trust, SignerTrustMode::AllowAnySigner);
+
+        let policy: CommitmentTrustPolicy =
+            serde_json::from_str(r#"{"signer_trust":"trust_on_first_use"}"#).unwrap();
+        assert_eq!(policy.signer_trust, SignerTrustMode::TrustOnFirstUse);
+    }
+
+    #[test]
+    fn signer_trust_mode_builders() {
+        let config = SyncConfig::new("a", "t", "s").with_commitment_trust_on_first_use();
+        assert_eq!(config.commitment_trust.signer_trust, SignerTrustMode::TrustOnFirstUse);
+
+        let config = SyncConfig::new("a", "t", "s").with_allow_any_commitment_signer();
+        assert_eq!(config.commitment_trust.signer_trust, SignerTrustMode::AllowAnySigner);
+
+        let config = SyncConfig::new("a", "t", "s")
+            .with_commitment_signer_trust_mode(SignerTrustMode::PinnedKeys);
+        assert_eq!(config.commitment_trust.signer_trust, SignerTrustMode::PinnedKeys);
     }
 
     #[test]

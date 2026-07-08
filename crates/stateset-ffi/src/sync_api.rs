@@ -1918,7 +1918,11 @@ mod tests {
     fn runtime_config_json_for(base_url: &str) -> String {
         serde_json::to_string(&SyncRuntimeConfig::new(
             base_url,
-            stateset_sdk::sync::SyncConfig::new("agent-ffi", "tenant-ffi", "store-ffi"),
+            // The stub sequencer returns head metadata without a signed
+            // manifest; opt out of the fail-closed default so these transport
+            // round-trip tests can accept it.
+            stateset_sdk::sync::SyncConfig::new("agent-ffi", "tenant-ffi", "store-ffi")
+                .with_unauthenticated_remote_head_allowed(),
         ))
         .unwrap()
     }

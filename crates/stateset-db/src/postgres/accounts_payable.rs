@@ -923,6 +923,21 @@ impl PgAccountsPayableRepository {
     pub async fn void_payment_async(&self, id: Uuid) -> Result<BillPayment> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        // Guard first: only a not-yet-voided payment can be voided. The guarded
+        // UPDATE takes the row lock, so a concurrent void blocks then re-evaluates
+        // against the committed 'voided' status and matches 0 rows — preventing a
+        // double reversal.
+        let voided =
+            sqlx::query("UPDATE ap_payments SET status = $1 WHERE id = $2 AND status <> $1")
+                .bind(PaymentStatusAP::Voided.to_string())
+                .bind(id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if voided.rows_affected() == 0 {
+            return Err(CommerceError::Conflict("Payment not found or already voided".into()));
+        }
+
         let allocations = sqlx::query_as::<_, PaymentAllocationRow>(
             "SELECT * FROM ap_payment_allocations WHERE payment_id = $1",
         )
@@ -930,13 +945,6 @@ impl PgAccountsPayableRepository {
         .fetch_all(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        sqlx::query("UPDATE ap_payments SET status = $1 WHERE id = $2")
-            .bind(PaymentStatusAP::Voided.to_string())
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM ap_payment_allocations WHERE payment_id = $1")
             .bind(id)

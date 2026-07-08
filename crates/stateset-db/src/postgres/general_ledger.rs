@@ -932,8 +932,12 @@ impl PgGeneralLedgerRepository {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query(
-            "UPDATE gl_journal_entries SET status = 'posted', posted_at = $1, posted_by = $2 WHERE id = $3",
+        // The status guard takes the row lock; a concurrent poster blocks on
+        // it and then matches zero rows, so the balance updates below can
+        // only commit together with exactly one draft -> posted transition.
+        let updated = sqlx::query(
+            "UPDATE gl_journal_entries SET status = 'posted', posted_at = $1, posted_by = $2
+             WHERE id = $3 AND status = 'draft'",
         )
         .bind(now)
         .bind(posted_by)
@@ -941,6 +945,12 @@ impl PgGeneralLedgerRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Journal entry was modified concurrently".to_string(),
+            ));
+        }
 
         for line in &entry.lines {
             self.update_account_balance_tx(
@@ -968,6 +978,23 @@ impl PgGeneralLedgerRepository {
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        // The status guard takes the row lock; a concurrent voider blocks on
+        // it and then matches zero rows, so the balance reversal below can
+        // only commit together with exactly one posted -> voided transition.
+        let updated = sqlx::query(
+            "UPDATE gl_journal_entries SET status = 'voided' WHERE id = $1 AND status = 'posted'",
+        )
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Journal entry was modified concurrently".to_string(),
+            ));
+        }
+
         for line in &entry.lines {
             self.update_account_balance_tx(
                 &mut tx,
@@ -977,12 +1004,6 @@ impl PgGeneralLedgerRepository {
             )
             .await?;
         }
-
-        sqlx::query("UPDATE gl_journal_entries SET status = 'voided' WHERE id = $1")
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1002,6 +1023,23 @@ impl PgGeneralLedgerRepository {
             ));
         }
 
+        // Claim the entry (posted -> reversed) before creating the reversing
+        // entry, which commits its own transactions; the status guard ensures
+        // concurrent reversals cannot both create (and auto-post) a reversal.
+        let claimed = sqlx::query(
+            "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = $1 AND status = 'posted'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if claimed.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Journal entry was modified concurrently".to_string(),
+            ));
+        }
+
         let reversing_lines: Vec<CreateJournalEntryLine> = entry
             .lines
             .iter()
@@ -1015,7 +1053,7 @@ impl PgGeneralLedgerRepository {
             })
             .collect();
 
-        let reversing_entry = self
+        let reversing_entry = match self
             .create_journal_entry_async(CreateJournalEntry {
                 entry_date: reversal_date,
                 entry_type: Some(JournalEntryType::Reversing),
@@ -1025,16 +1063,28 @@ impl PgGeneralLedgerRepository {
                 source_document_id: Some(entry.id),
                 auto_post: Some(true),
             })
-            .await?;
+            .await
+        {
+            Ok(reversing_entry) => reversing_entry,
+            Err(e) => {
+                // Best-effort release of the claim so the entry is not left
+                // marked reversed without a reversing entry.
+                let _ = sqlx::query(
+                    "UPDATE gl_journal_entries SET status = 'posted' WHERE id = $1 AND status = 'reversed'",
+                )
+                .bind(id)
+                .execute(&self.pool)
+                .await;
+                return Err(e);
+            }
+        };
 
-        sqlx::query(
-            "UPDATE gl_journal_entries SET reversing_entry_id = $1, status = 'reversed' WHERE id = $2",
-        )
-        .bind(reversing_entry.id)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE gl_journal_entries SET reversing_entry_id = $1 WHERE id = $2")
+            .bind(reversing_entry.id)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         sqlx::query("UPDATE gl_journal_entries SET reversed_entry_id = $1 WHERE id = $2")
             .bind(id)

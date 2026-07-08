@@ -1145,8 +1145,11 @@ impl PgAccountsReceivableRepository {
             return Err(CommerceError::ValidationError("Amount exceeds unapplied balance".into()));
         }
 
+        // Lock the invoice row too: the memo FOR UPDATE above only serializes
+        // applications of the SAME memo. Two DIFFERENT memos applied to the same
+        // invoice would otherwise both read a stale balance and over-apply.
         let balance_due: Decimal =
-            sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1")
+            sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1 FOR UPDATE")
                 .bind(input.invoice_id)
                 .fetch_one(tx.as_mut())
                 .await
@@ -1271,8 +1274,12 @@ impl PgAccountsReceivableRepository {
                 expected_customer_id = Some(invoice_customer_id);
             }
 
+            // Lock the invoice row so concurrent payments serialize: without
+            // FOR UPDATE, two READ COMMITTED transactions both read the same
+            // balance and over-apply (the sibling apply_credit_memo_async and
+            // AP create_payment_async already lock their rows this way).
             let balance_due: Decimal =
-                sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1")
+                sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1 FOR UPDATE")
                     .bind(app.invoice_id)
                     .fetch_one(tx.as_mut())
                     .await

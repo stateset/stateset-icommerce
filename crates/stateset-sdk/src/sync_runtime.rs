@@ -10,8 +10,8 @@ use crate::sync::{
     AttestationError, CommandAttestation, CommandConvergence, CommandInclusionProof,
     CommitmentManifest, DeadLetter, KernelExecutionError, KernelReceipt, KernelTransaction,
     ManifestVerificationError, PullResult, PushConfirmation, PushResult, RemoteHead,
-    SequencerHttpTransport, SyncConfig, SyncEngine, SyncError, SyncEvent, SyncStatus,
-    VerifiedCommitmentManifest,
+    SequencerHttpTransport, SignerTrustMode, SyncConfig, SyncEngine, SyncError, SyncEvent,
+    SyncStatus, VerifiedCommitmentManifest,
 };
 use uuid::Uuid;
 
@@ -123,7 +123,10 @@ impl SyncRuntimeConfig {
     /// `STATESET_SYNC_BATCH_SIZE`, `STATESET_SYNC_OUTBOX_CAPACITY`,
     /// `STATESET_SYNC_OUTBOX_PATH`, `STATESET_SYNC_STATE_PATH`,
     /// `STATESET_SYNC_CONFIRMATION_CAPACITY`,
-    /// `STATESET_SYNC_REQUIRE_COMMITMENT_MANIFEST`,
+    /// `STATESET_SYNC_REQUIRE_COMMITMENT_MANIFEST` (defaults to `true` — set
+    /// to `false` to accept unsigned remote head metadata),
+    /// `STATESET_SYNC_COMMITMENT_SIGNER_TRUST_MODE`
+    /// (`pinned_keys` | `trust_on_first_use` | `allow_any_signer`),
     /// `STATESET_SYNC_TRUSTED_COMMITMENT_SIGNERS`, and
     /// `STATESET_SYNC_TRUSTED_COMMITMENT_PUBLIC_KEYS`.
     ///
@@ -732,6 +735,21 @@ fn load_runtime_config_from_env_map(
         for public_key in trusted_public_keys {
             engine = engine.with_trusted_commitment_signer_public_key(public_key);
         }
+    }
+    if let Some(trust_mode) = optional_env_string(vars, prefix, "COMMITMENT_SIGNER_TRUST_MODE")? {
+        let mode = match trust_mode.to_ascii_lowercase().replace('-', "_").as_str() {
+            "pinned_keys" => SignerTrustMode::PinnedKeys,
+            "trust_on_first_use" => SignerTrustMode::TrustOnFirstUse,
+            "allow_any_signer" => SignerTrustMode::AllowAnySigner,
+            other => {
+                let var_name = env_var_name(prefix, "COMMITMENT_SIGNER_TRUST_MODE");
+                return Err(SyncError::InvalidConfig(format!(
+                    "environment variable `{var_name}` has unsupported value `{other}`; expected \
+                     `pinned_keys`, `trust_on_first_use`, or `allow_any_signer`"
+                )));
+            }
+        };
+        engine = engine.with_commitment_signer_trust_mode(mode);
     }
 
     let api_key_var = env_var_name(prefix, "API_KEY");
@@ -1347,7 +1365,14 @@ mod tests {
             }
         }
 
-        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let mut engine = SyncEngine::new(
+            make_config()
+                .with_trusted_commitment_signer_public_key(hex_encode(public_key))
+                // The head refresh below carries bare metadata (no manifest);
+                // the signed manifest is verified separately afterwards.
+                .with_unauthenticated_remote_head_allowed(),
+        )
+        .unwrap();
         let event = SyncEvent::new("order.created", "order", "ORD-4", json!({"total": 44}))
             .with_command_id("cmd-attest-runtime");
         engine.record(event.clone()).unwrap();

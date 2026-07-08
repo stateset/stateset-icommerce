@@ -695,19 +695,23 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     fn delete_location(&self, id: i32) -> Result<()> {
         let conn = self.conn()?;
 
-        // Check if location has inventory
-        let inv_count: i32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM location_inventory WHERE location_id = ?1 AND CAST(quantity_on_hand AS REAL) > 0",
-                params![id],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
-
-        if inv_count > 0 {
-            return Err(CommerceError::ValidationError(
-                "Cannot delete location with inventory".into(),
-            ));
+        // Check if location has inventory. `quantity_on_hand` is a TEXT
+        // decimal, so compare the exact parsed `Decimal`s in Rust instead of a
+        // float-coercing CAST(... AS REAL) in SQL.
+        let quantities: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT quantity_on_hand FROM location_inventory WHERE location_id = ?1")
+                .map_err(map_db_error)?;
+            let rows = stmt.query_map(params![id], |row| row.get(0)).map_err(map_db_error)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)?
+        };
+        for qty in &quantities {
+            if parse_decimal_strict(qty, "location_inventory", "quantity_on_hand")? > Decimal::ZERO
+            {
+                return Err(CommerceError::ValidationError(
+                    "Cannot delete location with inventory".into(),
+                ));
+            }
         }
 
         conn.execute("DELETE FROM locations WHERE id = ?1", params![id]).map_err(map_db_error)?;
@@ -754,12 +758,18 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn get_pickable_locations(&self, warehouse_id: i32, sku: &str) -> Result<Vec<Location>> {
         let conn = self.conn()?;
+        // `quantity_on_hand` and `quantity_reserved` are TEXT decimals;
+        // comparing them in SQL with CAST(... AS REAL) coerces both operands to
+        // IEEE-754 floats and can misclassify locations right at the boundary,
+        // so the availability check happens on exact `Decimal`s in Rust.
         let mut stmt = conn
             .prepare(
-                "SELECT l.* FROM locations l
+                "SELECT l.*, li.quantity_on_hand AS li_on_hand,
+                        li.quantity_reserved AS li_reserved
+                 FROM locations l
                  JOIN location_inventory li ON l.id = li.location_id
                  WHERE l.warehouse_id = ?1 AND l.is_pickable = 1 AND l.is_active = 1
-                   AND li.sku = ?2 AND CAST(li.quantity_on_hand AS REAL) > CAST(li.quantity_reserved AS REAL)
+                   AND li.sku = ?2
                  ORDER BY l.code",
             )
             .map_err(map_db_error)?;
@@ -768,7 +778,14 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         let mut locations = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
-            locations.push(Self::row_to_location(row).map_err(map_db_error)?);
+            let on_hand: String = row.get("li_on_hand").map_err(map_db_error)?;
+            let reserved: String = row.get("li_reserved").map_err(map_db_error)?;
+            let on_hand = parse_decimal_strict(&on_hand, "location_inventory", "quantity_on_hand")?;
+            let reserved =
+                parse_decimal_strict(&reserved, "location_inventory", "quantity_reserved")?;
+            if on_hand > reserved {
+                locations.push(Self::row_to_location(row).map_err(map_db_error)?);
+            }
         }
 
         Ok(locations)
@@ -789,17 +806,21 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn get_location_inventory(&self, location_id: i32) -> Result<Vec<LocationInventory>> {
         let conn = self.conn()?;
+        // `quantity_on_hand` is a TEXT decimal; the positive-quantity filter
+        // happens on the exact parsed `Decimal` rather than a float-coercing
+        // CAST(... AS REAL) in SQL.
         let mut stmt = conn
-            .prepare(
-                "SELECT * FROM location_inventory WHERE location_id = ?1 AND CAST(quantity_on_hand AS REAL) > 0",
-            )
+            .prepare("SELECT * FROM location_inventory WHERE location_id = ?1")
             .map_err(map_db_error)?;
 
         let mut rows = stmt.query(params![location_id]).map_err(map_db_error)?;
 
         let mut inventory = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
-            inventory.push(Self::row_to_location_inventory(row).map_err(map_db_error)?);
+            let entry = Self::row_to_location_inventory(row).map_err(map_db_error)?;
+            if entry.quantity_on_hand > Decimal::ZERO {
+                inventory.push(entry);
+            }
         }
 
         Ok(inventory)
@@ -811,11 +832,14 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         sku: &str,
     ) -> Result<Vec<LocationInventory>> {
         let conn = self.conn()?;
+        // `quantity_on_hand` is a TEXT decimal; the positive-quantity filter
+        // happens on the exact parsed `Decimal` rather than a float-coercing
+        // CAST(... AS REAL) in SQL.
         let mut stmt = conn
             .prepare(
                 "SELECT li.* FROM location_inventory li
                  JOIN locations l ON li.location_id = l.id
-                 WHERE l.warehouse_id = ?1 AND li.sku = ?2 AND CAST(li.quantity_on_hand AS REAL) > 0
+                 WHERE l.warehouse_id = ?1 AND li.sku = ?2
                  ORDER BY l.code",
             )
             .map_err(map_db_error)?;
@@ -824,7 +848,10 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         let mut inventory = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
-            inventory.push(Self::row_to_location_inventory(row).map_err(map_db_error)?);
+            let entry = Self::row_to_location_inventory(row).map_err(map_db_error)?;
+            if entry.quantity_on_hand > Decimal::ZERO {
+                inventory.push(entry);
+            }
         }
 
         Ok(inventory)
@@ -1092,16 +1119,20 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             params_vec.push(Box::new(lot_id.to_string()));
         }
 
-        if filter.has_quantity == Some(true) {
-            sql.push_str(" AND CAST(li.quantity_on_hand AS REAL) > 0");
-        }
+        // `quantity_on_hand` is a TEXT decimal, so the has_quantity filter is
+        // applied below on the exact parsed `Decimal` (a SQL CAST(... AS REAL)
+        // comparison coerces to IEEE-754 floats). LIMIT/OFFSET then also move
+        // to Rust so pagination is applied after the filter, as before.
+        let has_quantity = filter.has_quantity == Some(true);
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
+        if !has_quantity {
+            if let Some(limit) = filter.limit {
+                sql.push_str(&format!(" LIMIT {limit}"));
+            }
 
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
+            if let Some(offset) = filter.offset {
+                sql.push_str(&format!(" OFFSET {offset}"));
+            }
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -1113,6 +1144,17 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let mut inventory = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
             inventory.push(Self::row_to_location_inventory(row).map_err(map_db_error)?);
+        }
+
+        if has_quantity {
+            inventory.retain(|entry| entry.quantity_on_hand > Decimal::ZERO);
+            if let Some(offset) = filter.offset {
+                let offset = (offset as usize).min(inventory.len());
+                inventory.drain(..offset);
+            }
+            if let Some(limit) = filter.limit {
+                inventory.truncate(limit as usize);
+            }
         }
 
         Ok(inventory)
@@ -1313,6 +1355,96 @@ mod tests {
             is_receivable: Some(true),
         })
         .expect("create location")
+    }
+
+    /// Seed a `location_inventory` row directly with an exact TEXT quantity.
+    fn seed_inventory(repo: &SqliteWarehouseRepository, location_id: i32, sku: &str, qty: &str) {
+        let conn = repo.conn().expect("conn");
+        conn.execute(
+            "INSERT INTO location_inventory
+                (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+             VALUES (?1, ?2, '', ?3, '0', datetime('now'))",
+            params![location_id, sku, qty],
+        )
+        .expect("seed inventory");
+    }
+
+    #[test]
+    fn pickable_locations_compare_on_hand_and_reserved_exactly() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-EXACT");
+        let loc = make_loc(&repo, wh.id, "L-EXACT");
+        // On hand exceeds reserved by 1e-18: both round to the same f64, so a
+        // CAST-AS-REAL comparison would wrongly report nothing pickable.
+        seed_inventory(&repo, loc.id, "PICK-X", "1.000000000000000001");
+        {
+            let conn = repo.conn().expect("conn");
+            conn.execute(
+                "UPDATE location_inventory SET quantity_reserved = '1'
+                 WHERE location_id = ?1 AND sku = 'PICK-X'",
+                params![loc.id],
+            )
+            .expect("reserve");
+        }
+
+        let pickable = repo.get_pickable_locations(wh.id, "PICK-X").expect("ok");
+        assert_eq!(pickable.len(), 1, "1.000000000000000001 > 1 exactly");
+        assert_eq!(pickable[0].id, loc.id);
+
+        // Fully reserved stock must not be pickable.
+        {
+            let conn = repo.conn().expect("conn");
+            conn.execute(
+                "UPDATE location_inventory SET quantity_reserved = quantity_on_hand
+                 WHERE location_id = ?1 AND sku = 'PICK-X'",
+                params![loc.id],
+            )
+            .expect("reserve all");
+        }
+        let none = repo.get_pickable_locations(wh.id, "PICK-X").expect("ok");
+        assert!(none.is_empty(), "fully reserved stock is not pickable");
+    }
+
+    #[test]
+    fn location_inventory_filters_zero_quantities_exactly() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-ZQ");
+        let loc = make_loc(&repo, wh.id, "L-ZQ");
+        seed_inventory(&repo, loc.id, "ZQ-POS", "0.005");
+        // A non-canonical zero, to make sure filtering is numeric.
+        seed_inventory(&repo, loc.id, "ZQ-ZERO", "0.00");
+
+        let inv = repo.get_location_inventory(loc.id).expect("ok");
+        assert_eq!(inv.len(), 1);
+        assert_eq!(inv[0].sku, "ZQ-POS");
+
+        let for_sku = repo.get_inventory_for_sku(wh.id, "ZQ-POS").expect("ok");
+        assert_eq!(for_sku.len(), 1);
+
+        let listed = repo
+            .list_location_inventory(LocationInventoryFilter {
+                location_id: Some(loc.id),
+                has_quantity: Some(true),
+                limit: Some(1),
+                ..Default::default()
+            })
+            .expect("ok");
+        assert_eq!(listed.len(), 1, "limit must apply after the quantity filter");
+        assert_eq!(listed[0].sku, "ZQ-POS");
+
+        // Location still holds stock, so it cannot be deleted...
+        assert!(repo.delete_location(loc.id).is_err());
+        // ...but once the last positive quantity is zeroed out it can be.
+        {
+            let conn = repo.conn().expect("conn");
+            conn.execute(
+                "UPDATE location_inventory SET quantity_on_hand = '0.000'
+                 WHERE location_id = ?1 AND sku = 'ZQ-POS'",
+                params![loc.id],
+            )
+            .expect("zero out");
+        }
+        repo.delete_location(loc.id).expect("deletable once empty");
     }
 
     #[test]
