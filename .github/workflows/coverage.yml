@@ -155,9 +155,10 @@ jobs:
       - name: Check coverage threshold
         working-directory: cli
         run: |
-          # Node's --experimental-test-coverage outputs a summary like:
-          #   line % | branch % | function %
-          LINE_COV=$(grep -oP 'line.*?(\d+\.\d+)%' coverage-output.txt | grep -oP '\d+\.\d+' | head -1)
+          # Node's --experimental-test-coverage summary row looks like:
+          #   # all files | 85.94 | 86.70 | 89.63 |
+          # (columns: line %, branch %, funcs %; no % signs in the cells).
+          LINE_COV=$(grep -E 'all files' coverage-output.txt | grep -oP '\d+\.\d+' | head -1)
           echo "Line coverage: ${LINE_COV:-unknown}%"
           if [ -z "$LINE_COV" ]; then
             echo "::error::Could not determine CLI line coverage"
@@ -174,7 +175,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: cli-coverage
-          path: cli/coverage
+          # Node's built-in coverage reporter writes to stdout only; the tee'd
+          # transcript is the artifact (there is no cli/coverage directory).
+          path: cli/coverage-output.txt
           if-no-files-found: error
 
   node-bindings-coverage:
