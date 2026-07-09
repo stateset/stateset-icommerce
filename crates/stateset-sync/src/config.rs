@@ -80,7 +80,8 @@ pub struct CommitmentTrustPolicy {
     /// Defaults to `true` — remote head metadata with no signed manifest is
     /// rejected. This default is deliberately **not** the historical
     /// fail-open behavior: a missing key in a deserialized config resolves to
-    /// `true` (see [`default_require_manifest`]), so upgrading fails closed.
+    /// `true` (see the private `default_require_manifest` helper), so
+    /// upgrading fails closed.
     #[serde(default = "default_require_manifest")]
     pub require_manifest: bool,
     /// Optional allowlist of signer ids that may publish trusted manifests.

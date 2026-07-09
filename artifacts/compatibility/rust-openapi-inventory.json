@@ -7,18 +7,18 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 75,
-  "totalOperations": 104,
-  "totalSchemas": 87,
-  "totalTags": 23,
+  "totalPaths": 161,
+  "totalOperations": 233,
+  "totalSchemas": 210,
+  "totalTags": 45,
   "methods": [
     {
       "name": "DELETE",
-      "count": 8
+      "count": 20
     },
     {
       "name": "GET",
-      "count": 47
+      "count": 101
     },
     {
       "name": "PATCH",
@@ -26,7 +26,11 @@
     },
     {
       "name": "POST",
-      "count": 39
+      "count": 98
+    },
+    {
+      "name": "PUT",
+      "count": 4
     }
   ],
   "tags": [
@@ -36,6 +40,21 @@
       "count": 8
     },
     {
+      "name": "activity_logs",
+      "description": "Record-level activity history",
+      "count": 4
+    },
+    {
+      "name": "channels",
+      "description": "Sales channel management",
+      "count": 6
+    },
+    {
+      "name": "companies",
+      "description": "B2B company account management",
+      "count": 6
+    },
+    {
       "name": "currency",
       "description": "Exchange rates and currency conversion",
       "count": 3
@@ -43,6 +62,11 @@
     {
       "name": "customers",
       "description": "Customer management",
+      "count": 5
+    },
+    {
+      "name": "edi_documents",
+      "description": "EDI document exchange",
       "count": 5
     },
     {
@@ -59,6 +83,21 @@
       "name": "health",
       "description": "Health check endpoints",
       "count": 5
+    },
+    {
+      "name": "inbound_shipments",
+      "description": "Inbound shipment receiving",
+      "count": 7
+    },
+    {
+      "name": "integration_field_mappings",
+      "description": "Integration field-level mappings",
+      "count": 8
+    },
+    {
+      "name": "integration_mappings",
+      "description": "External integration record mappings",
+      "count": 7
     },
     {
       "name": "inventory",
@@ -86,8 +125,38 @@
       "count": 5
     },
     {
+      "name": "payment_obligations",
+      "description": "Payment obligation tracking",
+      "count": 7
+    },
+    {
       "name": "payments",
       "description": "Payment transaction management",
+      "count": 5
+    },
+    {
+      "name": "prepayments",
+      "description": "Customer and vendor prepayments",
+      "count": 5
+    },
+    {
+      "name": "price_levels",
+      "description": "Customer price level management",
+      "count": 7
+    },
+    {
+      "name": "price_schedules",
+      "description": "Scheduled pricing management",
+      "count": 7
+    },
+    {
+      "name": "print_stations",
+      "description": "Warehouse print station management",
+      "count": 7
+    },
+    {
+      "name": "production_batches",
+      "description": "Production batch tracking",
       "count": 5
     },
     {
@@ -98,6 +167,16 @@
     {
       "name": "promotions",
       "description": "Promotion and discount management",
+      "count": 5
+    },
+    {
+      "name": "purgatory",
+      "description": "Quarantined record review",
+      "count": 6
+    },
+    {
+      "name": "reports",
+      "description": "Computed business reports",
       "count": 5
     },
     {
@@ -126,6 +205,11 @@
       "count": 4
     },
     {
+      "name": "stock_snapshots",
+      "description": "Point-in-time inventory snapshots",
+      "count": 5
+    },
+    {
       "name": "store_credits",
       "description": "Store credit management",
       "count": 4
@@ -133,6 +217,36 @@
     {
       "name": "subscriptions",
       "description": "Recurring subscription management",
+      "count": 6
+    },
+    {
+      "name": "supplier_skus",
+      "description": "Supplier SKU catalog",
+      "count": 4
+    },
+    {
+      "name": "topology_snapshots",
+      "description": "Network topology snapshots",
+      "count": 5
+    },
+    {
+      "name": "transfer_orders",
+      "description": "Inter-warehouse transfer orders",
+      "count": 6
+    },
+    {
+      "name": "units_of_measure",
+      "description": "Unit of measure definitions",
+      "count": 6
+    },
+    {
+      "name": "vendor_credits",
+      "description": "Vendor credit management",
+      "count": 5
+    },
+    {
+      "name": "vendor_returns",
+      "description": "Return-to-vendor processing",
       "count": 6
     },
     {
@@ -147,22 +261,65 @@
     }
   ],
   "schemas": [
+    "ActivityLogListResponse",
+    "ActivityLogResponse",
     "AddWishlistItemRequest",
     "AddressDto",
     "AdjustStoreCreditRequest",
+    "AgingBucketResponse",
+    "AgingLayerRequest",
+    "ApplyPrepaymentRequest",
+    "ApplyVendorCreditRequest",
+    "BulkCreateRequest",
+    "BulkDeleteRequest",
+    "BulkResultResponse",
+    "CaptureLineRequest",
+    "CaptureRequest",
+    "ChannelListResponse",
+    "ChannelResponse",
+    "ChannelSalesRowResponse",
+    "CloseBooksInventoryRequest",
+    "CloseBooksLineRequest",
+    "CloseBooksRequest",
+    "CloseBooksResponse",
+    "CogsLineRequest",
+    "CogsRowResponse",
+    "CompanyListResponse",
+    "CompanyResponse",
+    "CompleteJobRequest",
+    "ConsumptionRecordRequest",
+    "ConsumptionRequest",
+    "ConsumptionResponse",
+    "ConsumptionRowResponse",
+    "ContactResponse",
     "ConversionResponse",
+    "ConversionRuleResponse",
     "ConvertCurrencyRequest",
     "CounterOfferRequest",
+    "CreateChannelRequest",
+    "CreateCompanyRequest",
+    "CreateContactRequest",
+    "CreateConversionRuleRequest",
     "CreateCreditTermsRequest",
     "CreateCustomerRequest",
+    "CreateEdiDocumentRequest",
+    "CreateFieldMappingRequest",
     "CreateGiftCardRequest",
+    "CreateInboundShipmentItemRequest",
+    "CreateInboundShipmentRequest",
+    "CreateIntegrationMappingRequest",
     "CreateInvoiceRequest",
     "CreateLoyaltyProgramRequest",
     "CreateNegotiationRequest",
     "CreateOrderItemRequest",
     "CreateOrderRequest",
+    "CreatePaymentObligationRequest",
     "CreatePaymentRequest",
+    "CreatePrepaymentRequest",
+    "CreatePriceLevelRequest",
+    "CreatePriceScheduleRequest",
     "CreateProductRequest",
+    "CreateProductionBatchRequest",
     "CreatePromotionRequest",
     "CreateRefundRequest",
     "CreateReturnItemRequest",
@@ -173,67 +330,147 @@
     "CreateShippingZoneRequest",
     "CreateStoreCreditRequest",
     "CreateSubscriptionRequest",
+    "CreateSupplierSkuRequest",
+    "CreateTransferOrderItemRequest",
+    "CreateTransferOrderRequest",
+    "CreateUnitClassRequest",
+    "CreateUnitOfMeasureRequest",
+    "CreateVendorCreditRequest",
+    "CreateVendorReturnItemRequest",
+    "CreateVendorReturnRequest",
     "CreateWarrantyRequest",
     "CreateWishlistRequest",
     "CreditAmountRequest",
     "CreditTermsResponse",
     "CustomerListResponse",
     "CustomerResponse",
+    "DashboardResponse",
+    "EdiCountResponse",
+    "EdiDocumentListResponse",
+    "EdiDocumentResponse",
+    "EdiSummaryResponse",
+    "EnqueueJobRequest",
     "EnrollCustomerRequest",
     "ErrorBody",
     "ErrorDetail",
     "ExchangeRateListResponse",
     "ExchangeRateResponse",
+    "FieldMappingListResponse",
+    "FieldMappingResponse",
     "GiftCardListResponse",
     "GiftCardResponse",
     "HealthResponse",
+    "InboundShipmentItemResponse",
+    "InboundShipmentListResponse",
+    "InboundShipmentResponse",
+    "IngestLineRequest",
+    "IngestOrderRequest",
+    "IntegrationMappingListResponse",
+    "IntegrationMappingResponse",
     "InventoryAdjustRequest",
+    "InventoryAgingRequest",
+    "InventoryAgingResponse",
     "InventoryItemResponse",
     "InventoryListResponse",
     "InventoryResponse",
     "InvoiceListResponse",
     "InvoiceResponse",
+    "JobResponse",
+    "LinkBillRequest",
+    "LockChannelRequest",
     "LoyaltyAccountResponse",
     "LoyaltyProgramListResponse",
     "LoyaltyProgramResponse",
+    "MapLineRequest",
     "MessageResponse",
     "NegotiationResponse",
     "OrderItemResponse",
     "OrderListResponse",
     "OrderResponse",
+    "PairResponse",
+    "PairStationRequest",
     "PaymentListResponse",
+    "PaymentObligationListResponse",
+    "PaymentObligationResponse",
     "PaymentResponse",
+    "PrepaymentListResponse",
+    "PrepaymentResponse",
+    "PriceLevelEntryResponse",
+    "PriceLevelListResponse",
+    "PriceLevelResponse",
+    "PriceScheduleEntryResponse",
+    "PriceScheduleListResponse",
+    "PriceScheduleResponse",
+    "ProcessVendorReturnRequest",
     "ProductListResponse",
     "ProductResponse",
+    "ProductionBatchListResponse",
+    "ProductionBatchResponse",
     "PromotionListResponse",
     "PromotionResponse",
+    "PurgatoryLineResponse",
+    "PurgatoryListResponse",
+    "PurgatoryOrderResponse",
     "ReadyResponse",
+    "ReceiveLineRequest",
+    "RecordActivityRequest",
     "RecordInvoicePaymentRequest",
+    "RecordPaymentRequest",
+    "ResolveResponse",
     "ReturnListResponse",
     "ReturnResponse",
     "ReviewListResponse",
     "ReviewResponse",
+    "SalesByChannelRequest",
+    "SalesByChannelResponse",
+    "SalesRecordRequest",
     "SegmentListResponse",
     "SegmentResponse",
     "SendMessageRequest",
+    "SetEntryRequest",
     "SetExchangeRateRequest",
+    "SetStatusRequest",
     "ShipmentListResponse",
     "ShipmentResponse",
     "ShippingZoneListResponse",
     "ShippingZoneResponse",
+    "SnapshotLineResponse",
+    "SnapshotListResponse",
+    "SnapshotResponse",
+    "SnapshotSummary",
+    "StationResponse",
     "StoreCreditListResponse",
     "StoreCreditResponse",
     "SubscriptionListResponse",
     "SubscriptionResponse",
+    "SupplierSkuListResponse",
+    "SupplierSkuResponse",
     "TenantCacheResponse",
+    "TransactionCogsRequest",
+    "TransactionCogsResponse",
+    "TransferOrderItemResponse",
+    "TransferOrderListResponse",
+    "TransferOrderResponse",
+    "UnitClassResponse",
+    "UnitOfMeasureResponse",
+    "UpdateChannelRequest",
     "UpdateCustomerRequest",
+    "UpdateFieldMappingRequest",
+    "UpdateIntegrationMappingRequest",
+    "UpdatePriceLevelRequest",
     "UpdateProductRequest",
+    "VendorCreditListResponse",
+    "VendorCreditResponse",
+    "VendorReturnListResponse",
+    "VendorReturnResponse",
     "VersionResponse",
     "WarrantyListResponse",
     "WarrantyResponse",
     "WishlistItemResponse",
     "WishlistListResponse",
-    "WishlistResponse"
+    "WishlistResponse",
+    "WorkOrdersRequest",
+    "ZeroValuationItemResponse"
   ],
   "operations": [
     {
@@ -309,6 +546,150 @@
       "summary": "`POST /api/v1/a2a/messages/:id/acknowledge`"
     },
     {
+      "path": "/api/v1/activity-logs",
+      "method": "GET",
+      "operationId": "activity_logs_list",
+      "tags": [
+        "activity_logs"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/activity-logs",
+      "method": "POST",
+      "operationId": "activity_logs_record",
+      "tags": [
+        "activity_logs"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/activity-logs/{id}",
+      "method": "GET",
+      "operationId": "activity_logs_get_one",
+      "tags": [
+        "activity_logs"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/activity-logs/{subject_type}/{subject_id}",
+      "method": "GET",
+      "operationId": "activity_logs_history",
+      "tags": [
+        "activity_logs"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/channels",
+      "method": "GET",
+      "operationId": "channels_list",
+      "tags": [
+        "channels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/channels",
+      "method": "POST",
+      "operationId": "channels_create",
+      "tags": [
+        "channels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/channels/{id}",
+      "method": "DELETE",
+      "operationId": "channels_delete_one",
+      "tags": [
+        "channels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/channels/{id}",
+      "method": "GET",
+      "operationId": "channels_get_one",
+      "tags": [
+        "channels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/channels/{id}",
+      "method": "PUT",
+      "operationId": "channels_update",
+      "tags": [
+        "channels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/channels/{id}/lock",
+      "method": "POST",
+      "operationId": "channels_set_lock",
+      "tags": [
+        "channels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/companies",
+      "method": "GET",
+      "operationId": "companies_list",
+      "tags": [
+        "companies"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/companies",
+      "method": "POST",
+      "operationId": "companies_create",
+      "tags": [
+        "companies"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/companies/{id}",
+      "method": "DELETE",
+      "operationId": "companies_delete_one",
+      "tags": [
+        "companies"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/companies/{id}",
+      "method": "GET",
+      "operationId": "companies_get_one",
+      "tags": [
+        "companies"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/companies/{id}/contacts",
+      "method": "GET",
+      "operationId": "companies_list_contacts",
+      "tags": [
+        "companies"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/companies/{id}/contacts",
+      "method": "POST",
+      "operationId": "companies_create_contact",
+      "tags": [
+        "companies"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/currencies/convert",
       "method": "POST",
       "operationId": "convert_currency",
@@ -381,6 +762,51 @@
       "summary": "`PATCH /api/v1/customers/:id`"
     },
     {
+      "path": "/api/v1/edi-documents",
+      "method": "GET",
+      "operationId": "edi_documents_list",
+      "tags": [
+        "edi_documents"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/edi-documents",
+      "method": "POST",
+      "operationId": "edi_documents_create",
+      "tags": [
+        "edi_documents"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/edi-documents/{id}",
+      "method": "GET",
+      "operationId": "edi_documents_get_one",
+      "tags": [
+        "edi_documents"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/edi-documents/{id}/status",
+      "method": "POST",
+      "operationId": "edi_documents_set_status",
+      "tags": [
+        "edi_documents"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/edi-documents/summary",
+      "method": "GET",
+      "operationId": "edi_documents_summary",
+      "tags": [
+        "edi_documents"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/events/stream",
       "method": "GET",
       "operationId": "event_stream",
@@ -424,6 +850,204 @@
         "gift_cards"
       ],
       "summary": "`POST /api/v1/gift-cards/{id}/disable`"
+    },
+    {
+      "path": "/api/v1/inbound-shipments",
+      "method": "GET",
+      "operationId": "inbound_shipments_list",
+      "tags": [
+        "inbound_shipments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/inbound-shipments",
+      "method": "POST",
+      "operationId": "inbound_shipments_create",
+      "tags": [
+        "inbound_shipments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/inbound-shipments/{id}",
+      "method": "GET",
+      "operationId": "inbound_shipments_get_one",
+      "tags": [
+        "inbound_shipments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/inbound-shipments/{id}/arrived",
+      "method": "POST",
+      "operationId": "inbound_shipments_mark_arrived",
+      "tags": [
+        "inbound_shipments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/inbound-shipments/{id}/cancel",
+      "method": "POST",
+      "operationId": "inbound_shipments_cancel",
+      "tags": [
+        "inbound_shipments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/inbound-shipments/{id}/in-transit",
+      "method": "POST",
+      "operationId": "inbound_shipments_mark_in_transit",
+      "tags": [
+        "inbound_shipments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/inbound-shipments/{id}/receive",
+      "method": "POST",
+      "operationId": "inbound_shipments_receive",
+      "tags": [
+        "inbound_shipments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-field-mappings",
+      "method": "GET",
+      "operationId": "integration_field_mappings_list",
+      "tags": [
+        "integration_field_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-field-mappings",
+      "method": "POST",
+      "operationId": "integration_field_mappings_create",
+      "tags": [
+        "integration_field_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-field-mappings/{id}",
+      "method": "DELETE",
+      "operationId": "integration_field_mappings_delete_one",
+      "tags": [
+        "integration_field_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-field-mappings/{id}",
+      "method": "GET",
+      "operationId": "integration_field_mappings_get_one",
+      "tags": [
+        "integration_field_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-field-mappings/{id}",
+      "method": "PUT",
+      "operationId": "integration_field_mappings_update",
+      "tags": [
+        "integration_field_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-field-mappings/bulk",
+      "method": "DELETE",
+      "operationId": "integration_field_mappings_bulk_delete",
+      "tags": [
+        "integration_field_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-field-mappings/bulk",
+      "method": "POST",
+      "operationId": "integration_field_mappings_bulk_create",
+      "tags": [
+        "integration_field_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-field-mappings/groups",
+      "method": "GET",
+      "operationId": "integration_field_mappings_groups",
+      "tags": [
+        "integration_field_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-mappings",
+      "method": "GET",
+      "operationId": "integration_mappings_list",
+      "tags": [
+        "integration_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-mappings",
+      "method": "POST",
+      "operationId": "integration_mappings_create",
+      "tags": [
+        "integration_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-mappings/{id}",
+      "method": "DELETE",
+      "operationId": "integration_mappings_delete_one",
+      "tags": [
+        "integration_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-mappings/{id}",
+      "method": "GET",
+      "operationId": "integration_mappings_get_one",
+      "tags": [
+        "integration_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-mappings/{id}",
+      "method": "PUT",
+      "operationId": "integration_mappings_update",
+      "tags": [
+        "integration_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-mappings/bulk",
+      "method": "POST",
+      "operationId": "integration_mappings_bulk_create",
+      "tags": [
+        "integration_mappings"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/integration-mappings/resolve",
+      "method": "GET",
+      "operationId": "integration_mappings_resolve",
+      "tags": [
+        "integration_mappings"
+      ],
+      "summary": ""
     },
     {
       "path": "/api/v1/inventory",
@@ -624,6 +1248,69 @@
       "summary": "`PATCH /api/v1/orders/:id/ship`"
     },
     {
+      "path": "/api/v1/payment-obligations",
+      "method": "GET",
+      "operationId": "payment_obligations_list",
+      "tags": [
+        "payment_obligations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/payment-obligations",
+      "method": "POST",
+      "operationId": "payment_obligations_create",
+      "tags": [
+        "payment_obligations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/payment-obligations/{id}",
+      "method": "GET",
+      "operationId": "payment_obligations_get_one",
+      "tags": [
+        "payment_obligations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/payment-obligations/{id}/bills",
+      "method": "POST",
+      "operationId": "payment_obligations_link_bill",
+      "tags": [
+        "payment_obligations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/payment-obligations/{id}/payments",
+      "method": "POST",
+      "operationId": "payment_obligations_record_payment",
+      "tags": [
+        "payment_obligations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/payment-obligations/{id}/status",
+      "method": "POST",
+      "operationId": "payment_obligations_set_status",
+      "tags": [
+        "payment_obligations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/payment-obligations/dashboard",
+      "method": "GET",
+      "operationId": "payment_obligations_dashboard",
+      "tags": [
+        "payment_obligations"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/payments",
       "method": "GET",
       "operationId": "list_payments",
@@ -667,6 +1354,285 @@
         "payments"
       ],
       "summary": "`POST /api/v1/payments/:id/refund`"
+    },
+    {
+      "path": "/api/v1/prepayments",
+      "method": "GET",
+      "operationId": "prepayments_list",
+      "tags": [
+        "prepayments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/prepayments",
+      "method": "POST",
+      "operationId": "prepayments_create",
+      "tags": [
+        "prepayments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/prepayments/{id}",
+      "method": "GET",
+      "operationId": "prepayments_get_one",
+      "tags": [
+        "prepayments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/prepayments/{id}/apply",
+      "method": "POST",
+      "operationId": "prepayments_apply",
+      "tags": [
+        "prepayments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/prepayments/{id}/refund",
+      "method": "POST",
+      "operationId": "prepayments_refund",
+      "tags": [
+        "prepayments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-levels",
+      "method": "GET",
+      "operationId": "price_levels_list",
+      "tags": [
+        "price_levels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-levels",
+      "method": "POST",
+      "operationId": "price_levels_create",
+      "tags": [
+        "price_levels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-levels/{id}",
+      "method": "DELETE",
+      "operationId": "price_levels_delete_one",
+      "tags": [
+        "price_levels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-levels/{id}",
+      "method": "GET",
+      "operationId": "price_levels_get_one",
+      "tags": [
+        "price_levels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-levels/{id}",
+      "method": "PUT",
+      "operationId": "price_levels_update",
+      "tags": [
+        "price_levels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-levels/{id}/entries",
+      "method": "GET",
+      "operationId": "price_levels_list_entries",
+      "tags": [
+        "price_levels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-levels/{id}/entries",
+      "method": "POST",
+      "operationId": "price_levels_set_entry",
+      "tags": [
+        "price_levels"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-schedules",
+      "method": "GET",
+      "operationId": "price_schedules_list",
+      "tags": [
+        "price_schedules"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-schedules",
+      "method": "POST",
+      "operationId": "price_schedules_create",
+      "tags": [
+        "price_schedules"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-schedules/{id}",
+      "method": "DELETE",
+      "operationId": "price_schedules_delete_one",
+      "tags": [
+        "price_schedules"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-schedules/{id}",
+      "method": "GET",
+      "operationId": "price_schedules_get_one",
+      "tags": [
+        "price_schedules"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-schedules/{id}/entries",
+      "method": "GET",
+      "operationId": "price_schedules_list_entries",
+      "tags": [
+        "price_schedules"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-schedules/{id}/entries",
+      "method": "POST",
+      "operationId": "price_schedules_set_entry",
+      "tags": [
+        "price_schedules"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/price-schedules/resolve",
+      "method": "GET",
+      "operationId": "price_schedules_resolve",
+      "tags": [
+        "price_schedules"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/print-jobs/{job_id}/complete",
+      "method": "POST",
+      "operationId": "print_stations_complete_job",
+      "tags": [
+        "print_stations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/print-stations",
+      "method": "GET",
+      "operationId": "print_stations_list_stations",
+      "tags": [
+        "print_stations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/print-stations",
+      "method": "POST",
+      "operationId": "print_stations_pair",
+      "tags": [
+        "print_stations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/print-stations/{id}/jobs",
+      "method": "GET",
+      "operationId": "print_stations_list_jobs",
+      "tags": [
+        "print_stations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/print-stations/{id}/jobs",
+      "method": "POST",
+      "operationId": "print_stations_enqueue",
+      "tags": [
+        "print_stations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/print-stations/{id}/jobs/next",
+      "method": "POST",
+      "operationId": "print_stations_next_job",
+      "tags": [
+        "print_stations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/print-stations/{id}/revoke",
+      "method": "POST",
+      "operationId": "print_stations_revoke",
+      "tags": [
+        "print_stations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/production-batches",
+      "method": "GET",
+      "operationId": "production_batches_list",
+      "tags": [
+        "production_batches"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/production-batches",
+      "method": "POST",
+      "operationId": "production_batches_create",
+      "tags": [
+        "production_batches"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/production-batches/{id}",
+      "method": "DELETE",
+      "operationId": "production_batches_delete_one",
+      "tags": [
+        "production_batches"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/production-batches/{id}",
+      "method": "GET",
+      "operationId": "production_batches_get_one",
+      "tags": [
+        "production_batches"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/production-batches/{id}/work-orders",
+      "method": "POST",
+      "operationId": "production_batches_add_work_orders",
+      "tags": [
+        "production_batches"
+      ],
+      "summary": ""
     },
     {
       "path": "/api/v1/products",
@@ -755,6 +1721,105 @@
       "operationId": "deactivate_promotion",
       "tags": [
         "promotions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purgatory/orders",
+      "method": "GET",
+      "operationId": "purgatory_list",
+      "tags": [
+        "purgatory"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purgatory/orders",
+      "method": "POST",
+      "operationId": "purgatory_ingest",
+      "tags": [
+        "purgatory"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purgatory/orders/{id}",
+      "method": "DELETE",
+      "operationId": "purgatory_delete_one",
+      "tags": [
+        "purgatory"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purgatory/orders/{id}",
+      "method": "GET",
+      "operationId": "purgatory_get_one",
+      "tags": [
+        "purgatory"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purgatory/orders/{id}/lines/{line_id}",
+      "method": "POST",
+      "operationId": "purgatory_map_line",
+      "tags": [
+        "purgatory"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purgatory/orders/{id}/post",
+      "method": "POST",
+      "operationId": "purgatory_post_order",
+      "tags": [
+        "purgatory"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/reports/close-the-books",
+      "method": "POST",
+      "operationId": "reports_close_the_books",
+      "tags": [
+        "reports"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/reports/consumption",
+      "method": "POST",
+      "operationId": "reports_consumption",
+      "tags": [
+        "reports"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/reports/inventory-aging",
+      "method": "POST",
+      "operationId": "reports_inventory_aging",
+      "tags": [
+        "reports"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/reports/sales-by-channel",
+      "method": "POST",
+      "operationId": "reports_sales_by_channel",
+      "tags": [
+        "reports"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/reports/transaction-cogs",
+      "method": "POST",
+      "operationId": "reports_transaction_cogs",
+      "tags": [
+        "reports"
       ],
       "summary": ""
     },
@@ -957,6 +2022,51 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/stock-snapshots",
+      "method": "GET",
+      "operationId": "stock_snapshots_list",
+      "tags": [
+        "stock_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/stock-snapshots",
+      "method": "POST",
+      "operationId": "stock_snapshots_capture",
+      "tags": [
+        "stock_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/stock-snapshots/{id}",
+      "method": "DELETE",
+      "operationId": "stock_snapshots_delete_one",
+      "tags": [
+        "stock_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/stock-snapshots/{id}",
+      "method": "GET",
+      "operationId": "stock_snapshots_get_one",
+      "tags": [
+        "stock_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/stock-snapshots/latest",
+      "method": "GET",
+      "operationId": "stock_snapshots_latest",
+      "tags": [
+        "stock_snapshots"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/store-credits",
       "method": "GET",
       "operationId": "list_store_credits",
@@ -1043,6 +2153,294 @@
       "operationId": "resume_subscription",
       "tags": [
         "subscriptions"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/supplier-skus",
+      "method": "GET",
+      "operationId": "supplier_skus_list",
+      "tags": [
+        "supplier_skus"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/supplier-skus",
+      "method": "POST",
+      "operationId": "supplier_skus_create",
+      "tags": [
+        "supplier_skus"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/supplier-skus/{id}",
+      "method": "DELETE",
+      "operationId": "supplier_skus_delete_one",
+      "tags": [
+        "supplier_skus"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/supplier-skus/{id}",
+      "method": "GET",
+      "operationId": "supplier_skus_get_one",
+      "tags": [
+        "supplier_skus"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/topology-snapshots",
+      "method": "GET",
+      "operationId": "topology_snapshots_list",
+      "tags": [
+        "topology_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/topology-snapshots",
+      "method": "POST",
+      "operationId": "topology_snapshots_capture",
+      "tags": [
+        "topology_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/topology-snapshots/{id}",
+      "method": "DELETE",
+      "operationId": "topology_snapshots_delete_one",
+      "tags": [
+        "topology_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/topology-snapshots/{id}",
+      "method": "GET",
+      "operationId": "topology_snapshots_get_one",
+      "tags": [
+        "topology_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/topology-snapshots/latest",
+      "method": "GET",
+      "operationId": "topology_snapshots_latest",
+      "tags": [
+        "topology_snapshots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/transfer-orders",
+      "method": "GET",
+      "operationId": "transfer_orders_list",
+      "tags": [
+        "transfer_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/transfer-orders",
+      "method": "POST",
+      "operationId": "transfer_orders_create",
+      "tags": [
+        "transfer_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/transfer-orders/{id}",
+      "method": "GET",
+      "operationId": "transfer_orders_get_one",
+      "tags": [
+        "transfer_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/transfer-orders/{id}/cancel",
+      "method": "POST",
+      "operationId": "transfer_orders_cancel",
+      "tags": [
+        "transfer_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/transfer-orders/{id}/receive",
+      "method": "POST",
+      "operationId": "transfer_orders_receive",
+      "tags": [
+        "transfer_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/transfer-orders/{id}/ship",
+      "method": "POST",
+      "operationId": "transfer_orders_ship",
+      "tags": [
+        "transfer_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/unit-classes",
+      "method": "GET",
+      "operationId": "units_of_measure_list_classes",
+      "tags": [
+        "units_of_measure"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/unit-classes",
+      "method": "POST",
+      "operationId": "units_of_measure_create_class",
+      "tags": [
+        "units_of_measure"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/unit-conversion-rules",
+      "method": "GET",
+      "operationId": "units_of_measure_list_rules",
+      "tags": [
+        "units_of_measure"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/unit-conversion-rules",
+      "method": "POST",
+      "operationId": "units_of_measure_create_rule",
+      "tags": [
+        "units_of_measure"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/units-of-measure",
+      "method": "GET",
+      "operationId": "units_of_measure_list_uoms",
+      "tags": [
+        "units_of_measure"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/units-of-measure",
+      "method": "POST",
+      "operationId": "units_of_measure_create_uom",
+      "tags": [
+        "units_of_measure"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-credits",
+      "method": "GET",
+      "operationId": "vendor_credits_list",
+      "tags": [
+        "vendor_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-credits",
+      "method": "POST",
+      "operationId": "vendor_credits_create",
+      "tags": [
+        "vendor_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-credits/{id}",
+      "method": "GET",
+      "operationId": "vendor_credits_get_one",
+      "tags": [
+        "vendor_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-credits/{id}/apply",
+      "method": "POST",
+      "operationId": "vendor_credits_apply",
+      "tags": [
+        "vendor_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-credits/{id}/cancel",
+      "method": "POST",
+      "operationId": "vendor_credits_cancel",
+      "tags": [
+        "vendor_credits"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-returns",
+      "method": "GET",
+      "operationId": "vendor_returns_list",
+      "tags": [
+        "vendor_returns"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-returns",
+      "method": "POST",
+      "operationId": "vendor_returns_create",
+      "tags": [
+        "vendor_returns"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-returns/{id}",
+      "method": "GET",
+      "operationId": "vendor_returns_get_one",
+      "tags": [
+        "vendor_returns"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-returns/{id}/cancel",
+      "method": "POST",
+      "operationId": "vendor_returns_cancel",
+      "tags": [
+        "vendor_returns"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-returns/{id}/process",
+      "method": "POST",
+      "operationId": "vendor_returns_process",
+      "tags": [
+        "vendor_returns"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/vendor-returns/{id}/submit",
+      "method": "POST",
+      "operationId": "vendor_returns_submit",
+      "tags": [
+        "vendor_returns"
       ],
       "summary": ""
     },
