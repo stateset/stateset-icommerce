@@ -849,6 +849,24 @@ impl PgAccountsReceivableRepository {
 
         let approved_at = input.approved_by.as_ref().map(|_| now);
 
+        // Atomic + guarded: mark the invoice written-off and insert the write-off
+        // in one transaction. Was two autocommit statements on the pool — no
+        // atomicity (a failure between them left them inconsistent) and no guard
+        // against double write-off.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let updated = sqlx::query(
+            "UPDATE invoices SET status = 'written_off', collection_status = 'written_off'
+             WHERE id = $1 AND status <> 'written_off'",
+        )
+        .bind(input.invoice_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict("Invoice not found or already written off".into()));
+        }
+
         sqlx::query(
             "INSERT INTO ar_write_offs (id, write_off_number, invoice_id, customer_id, amount, reason,
                 notes, write_off_date, approved_by, approved_at, created_at)
@@ -865,17 +883,11 @@ impl PgAccountsReceivableRepository {
         .bind(input.approved_by.clone())
         .bind(approved_at)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        sqlx::query(
-            "UPDATE invoices SET status = 'written_off', collection_status = 'written_off' WHERE id = $1",
-        )
-        .bind(input.invoice_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(WriteOff {
             id,
@@ -960,20 +972,32 @@ impl PgAccountsReceivableRepository {
             return Err(CommerceError::ValidationError("Write-off already reversed".into()));
         }
 
-        sqlx::query("UPDATE ar_write_offs SET reversed_at = $1 WHERE id = $2")
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // Atomic + guarded: mark reversed and restore the invoice in one
+        // transaction; the reversed_at IS NULL guard makes a concurrent/duplicate
+        // reversal a no-op conflict instead of a double restore.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let updated = sqlx::query(
+            "UPDATE ar_write_offs SET reversed_at = $1 WHERE id = $2 AND reversed_at IS NULL",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict("Write-off not found or already reversed".into()));
+        }
 
         sqlx::query(
             "UPDATE invoices SET status = 'overdue', collection_status = 'none' WHERE id = $1",
         )
         .bind(write_off.invoice_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(WriteOff { reversed_at: Some(now), ..write_off })
     }
@@ -1211,19 +1235,37 @@ impl PgAccountsReceivableRepository {
     }
 
     pub async fn void_credit_memo_async(&self, id: Uuid) -> Result<CreditMemo> {
-        let cm = self.get_credit_memo_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Lock the memo row so a concurrent apply_credit_memo_async (which also
+        // locks it FOR UPDATE) serializes; re-read the applied amount under the
+        // lock instead of trusting a value read before the transaction.
+        let row = sqlx::query_as::<_, CreditMemoRow>(
+            "SELECT * FROM ar_credit_memos WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let cm = Self::row_to_credit_memo(row)?;
 
         if cm.applied_amount > Decimal::ZERO {
             return Err(CommerceError::ValidationError(
                 "Cannot void credit memo with applications".into(),
             ));
         }
+        if cm.status == CreditMemoStatus::Voided {
+            return Err(CommerceError::Conflict("Credit memo already voided".into()));
+        }
 
         sqlx::query("UPDATE ar_credit_memos SET status = 'voided' WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(CreditMemo { status: CreditMemoStatus::Voided, updated_at: Utc::now(), ..cm })
     }

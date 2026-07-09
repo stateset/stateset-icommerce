@@ -856,39 +856,57 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn create_write_off(&self, input: CreateWriteOff) -> Result<WriteOff> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
         let id = Uuid::new_v4();
         let now = Utc::now();
         let write_off_number = generate_write_off_number();
-        let customer_id = self.get_invoice_customer_id(input.invoice_id.into())?;
 
-        conn.execute(
-            "INSERT INTO ar_write_offs (id, write_off_number, invoice_id, customer_id, amount, reason, notes, write_off_date, approved_by, approved_at, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                id.to_string(),
-                write_off_number,
-                input.invoice_id.to_string(),
-                customer_id.to_string(),
-                input.amount.to_string(),
-                input.reason.to_string(),
-                input.notes,
-                now.to_rfc3339(),
-                input.approved_by,
-                input.approved_by.as_ref().map(|_| now.to_rfc3339()),
-                now.to_rfc3339()
-            ],
-        ).map_err(map_db_error)?;
+        // Atomic: mark the invoice written-off and insert the write-off row in one
+        // immediate transaction. Previously two autocommit statements — a crash
+        // between them left the write-off and the invoice status inconsistent. The
+        // guarded status flip also refuses to double-write-off an invoice.
+        let customer_id = with_immediate_transaction(&self.pool, |tx| {
+            let to_rusqlite = |e: stateset_core::CommerceError| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+            };
 
-        // Update invoice status
-        conn.execute(
-            "UPDATE invoices SET status = 'written_off', collection_status = 'written_off' WHERE id = ?1",
-            params![input.invoice_id.to_string()],
-        ).map_err(map_db_error)?;
+            let customer_str: String = tx.query_row(
+                "SELECT customer_id FROM invoices WHERE id = ?1",
+                params![input.invoice_id.to_string()],
+                |row| row.get(0),
+            )?;
+            let customer_id = parse_uuid_row(&customer_str, "invoice", "customer_id")?;
+
+            let rows = tx.execute(
+                "UPDATE invoices SET status = 'written_off', collection_status = 'written_off'
+                 WHERE id = ?1 AND status != 'written_off'",
+                params![input.invoice_id.to_string()],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(stateset_core::CommerceError::Conflict(
+                    "Invoice not found or already written off".into(),
+                )));
+            }
+
+            tx.execute(
+                "INSERT INTO ar_write_offs (id, write_off_number, invoice_id, customer_id, amount, reason, notes, write_off_date, approved_by, approved_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    id.to_string(),
+                    write_off_number,
+                    input.invoice_id.to_string(),
+                    customer_id.to_string(),
+                    input.amount.to_string(),
+                    input.reason.to_string(),
+                    &input.notes,
+                    now.to_rfc3339(),
+                    &input.approved_by,
+                    input.approved_by.as_ref().map(|_| now.to_rfc3339()),
+                    now.to_rfc3339()
+                ],
+            )?;
+
+            Ok(customer_id)
+        })?;
 
         Ok(WriteOff {
             id,
@@ -966,14 +984,9 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn reverse_write_off(&self, id: Uuid) -> Result<WriteOff> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
         let now = Utc::now();
 
-        // Get the write-off
+        // Get the write-off (cheap early-out; re-checked under the lock below).
         let wo = self.get_write_off(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if wo.reversed_at.is_some() {
@@ -982,19 +995,31 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             ));
         }
 
-        // Mark as reversed
-        conn.execute(
-            "UPDATE ar_write_offs SET reversed_at = ?1 WHERE id = ?2",
-            params![now.to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // Atomic + guarded: mark reversed and restore the invoice in one immediate
+        // transaction. The guard (reversed_at IS NULL) makes a concurrent/duplicate
+        // reversal a no-op conflict instead of a double restore.
+        with_immediate_transaction(&self.pool, |tx| {
+            let to_rusqlite = |e: stateset_core::CommerceError| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+            };
 
-        // Restore invoice status
-        conn.execute(
-            "UPDATE invoices SET status = 'overdue', collection_status = 'none' WHERE id = ?1",
-            params![wo.invoice_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            let rows = tx.execute(
+                "UPDATE ar_write_offs SET reversed_at = ?1 WHERE id = ?2 AND reversed_at IS NULL",
+                params![now.to_rfc3339(), id.to_string()],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(stateset_core::CommerceError::Conflict(
+                    "Write-off not found or already reversed".into(),
+                )));
+            }
+
+            tx.execute(
+                "UPDATE invoices SET status = 'overdue', collection_status = 'none' WHERE id = ?1",
+                params![wo.invoice_id.to_string()],
+            )?;
+
+            Ok(())
+        })?;
 
         Ok(WriteOff { reversed_at: Some(now), ..wo })
     }
@@ -1182,12 +1207,20 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                     rusqlite::Error::ToSqlConversionFailure(Box::new(e))
                 };
 
-                // Re-read the memo's current amounts under the write lock.
-                let (applied_str, unapplied_str): (String, String) = tx.query_row(
-                    "SELECT applied_amount, unapplied_amount FROM ar_credit_memos WHERE id = ?1",
-                    params![cm_id_str],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?;
+                // Re-read the memo's current amounts AND status under the write
+                // lock: a concurrent void_credit_memo (also an immediate txn) may
+                // have voided it since the pre-transaction can_apply() check.
+                let (applied_str, unapplied_str, status_str): (String, String, String) = tx
+                    .query_row(
+                        "SELECT applied_amount, unapplied_amount, status FROM ar_credit_memos WHERE id = ?1",
+                        params![cm_id_str],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )?;
+                if status_str == "voided" {
+                    return Err(to_rusqlite(stateset_core::CommerceError::Conflict(
+                        "Credit memo was voided concurrently".into(),
+                    )));
+                }
                 let cur_applied = parse_decimal_safe(&applied_str, "credit_memo", "applied_amount")
                     .map_err(to_rusqlite)?;
                 let cur_unapplied =
@@ -1271,24 +1304,41 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn void_credit_memo(&self, id: Uuid) -> Result<CreditMemo> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
         let cm = self.get_credit_memo(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
-        if cm.applied_amount > Decimal::ZERO {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Cannot void credit memo with applications".into(),
-            ));
-        }
+        // Atomic + guarded: re-read the applied amount under the write lock so a
+        // concurrent apply_credit_memo (also an immediate txn) cannot slip an
+        // application in between the check and the void; the status guard blocks a
+        // double void.
+        with_immediate_transaction(&self.pool, |tx| {
+            let to_rusqlite = |e: stateset_core::CommerceError| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+            };
 
-        conn.execute(
-            "UPDATE ar_credit_memos SET status = 'voided' WHERE id = ?1",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            let applied_str: String = tx.query_row(
+                "SELECT applied_amount FROM ar_credit_memos WHERE id = ?1",
+                params![id.to_string()],
+                |row| row.get(0),
+            )?;
+            let applied = parse_decimal_safe(&applied_str, "credit_memo", "applied_amount")
+                .map_err(to_rusqlite)?;
+            if applied > Decimal::ZERO {
+                return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
+                    "Cannot void credit memo with applications".into(),
+                )));
+            }
+
+            let rows = tx.execute(
+                "UPDATE ar_credit_memos SET status = 'voided' WHERE id = ?1 AND status != 'voided'",
+                params![id.to_string()],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(stateset_core::CommerceError::Conflict(
+                    "Credit memo not found or already voided".into(),
+                )));
+            }
+            Ok(())
+        })?;
 
         Ok(CreditMemo { status: CreditMemoStatus::Voided, updated_at: Utc::now(), ..cm })
     }
@@ -1895,6 +1945,38 @@ mod tests {
     }
 
     #[test]
+    fn void_credit_memo_rejects_when_applied_and_guards_double_void() {
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let invoice_id = insert_invoice_for(&repo, cust, "INV-VCM", "1000");
+
+        // A memo with an application cannot be voided.
+        let memo = make_memo(&repo, cust, dec!(100), CreditMemoReason::ReturnedGoods);
+        repo.apply_credit_memo(ApplyCreditMemo {
+            credit_memo_id: memo.id,
+            invoice_id,
+            amount: dec!(40),
+        })
+        .expect("apply");
+        assert!(repo.void_credit_memo(memo.id).is_err(), "cannot void a memo with applications");
+
+        // A fresh unapplied memo voids once; a second void is rejected, and
+        // applying a voided memo is rejected.
+        let memo2 = make_memo(&repo, cust, dec!(50), CreditMemoReason::ReturnedGoods);
+        repo.void_credit_memo(memo2.id).expect("first void");
+        assert!(repo.void_credit_memo(memo2.id).is_err(), "double void rejected");
+        assert!(
+            repo.apply_credit_memo(ApplyCreditMemo {
+                credit_memo_id: memo2.id,
+                invoice_id,
+                amount: dec!(10),
+            })
+            .is_err(),
+            "cannot apply a voided memo"
+        );
+    }
+
+    #[test]
     fn void_credit_memo_changes_status() {
         let repo = fresh_repo();
         let cust = Uuid::new_v4();
@@ -2057,6 +2139,57 @@ mod tests {
             successes, 1,
             "exactly one of {THREADS} concurrent full payments against a 100-balance invoice may succeed"
         );
+    }
+
+    #[test]
+    fn write_off_is_atomic_and_guards_double_write_off() {
+        use stateset_core::{CreateWriteOff, WriteOffReason};
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let invoice_id = insert_invoice_for(&repo, cust, "INV-WO", "100");
+
+        let wo = repo
+            .create_write_off(CreateWriteOff {
+                invoice_id,
+                amount: dec!(100),
+                reason: WriteOffReason::Uncollectible,
+                notes: None,
+                approved_by: None,
+            })
+            .expect("first write-off");
+        assert_eq!(wo.invoice_id, invoice_id);
+
+        // Writing off an already-written-off invoice must be rejected.
+        let second = repo.create_write_off(CreateWriteOff {
+            invoice_id,
+            amount: dec!(100),
+            reason: WriteOffReason::Uncollectible,
+            notes: None,
+            approved_by: None,
+        });
+        assert!(second.is_err(), "cannot write off an already-written-off invoice");
+    }
+
+    #[test]
+    fn reverse_write_off_guards_double_reverse() {
+        use stateset_core::{CreateWriteOff, WriteOffReason};
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let invoice_id = insert_invoice_for(&repo, cust, "INV-WO-REV", "100");
+
+        let wo = repo
+            .create_write_off(CreateWriteOff {
+                invoice_id,
+                amount: dec!(100),
+                reason: WriteOffReason::Uncollectible,
+                notes: None,
+                approved_by: None,
+            })
+            .expect("write-off");
+
+        repo.reverse_write_off(wo.id).expect("first reverse succeeds");
+        let second = repo.reverse_write_off(wo.id);
+        assert!(second.is_err(), "cannot reverse an already-reversed write-off");
     }
 
     #[test]
