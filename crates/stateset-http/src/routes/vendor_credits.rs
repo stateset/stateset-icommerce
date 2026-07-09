@@ -86,7 +86,7 @@ pub fn router() -> Router<AppState> {
         .route("/vendor-credits/{id}/cancel", post(cancel))
 }
 
-#[utoipa::path(post, path = "/api/v1/vendor-credits", tag = "vendor_credits",
+#[utoipa::path(post, operation_id = "vendor_credits_create", path = "/api/v1/vendor-credits", tag = "vendor_credits",
     request_body = CreateVendorCreditRequest,
     responses((status = 201, body = VendorCreditResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -112,7 +112,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&credit))))
 }
 
-#[utoipa::path(get, path = "/api/v1/vendor-credits", tag = "vendor_credits",
+#[utoipa::path(get, operation_id = "vendor_credits_list", path = "/api/v1/vendor-credits", tag = "vendor_credits",
     params(VendorCreditFilterParams),
     responses((status = 200, body = VendorCreditListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -148,7 +148,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/vendor-credits/{id}", tag = "vendor_credits",
+#[utoipa::path(get, operation_id = "vendor_credits_get_one", path = "/api/v1/vendor-credits/{id}", tag = "vendor_credits",
     params(("id" = String, Path, description = "Vendor credit ID")),
     responses((status = 200, body = VendorCreditResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -166,7 +166,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&credit)))
 }
 
-#[utoipa::path(post, path = "/api/v1/vendor-credits/{id}/apply", tag = "vendor_credits",
+#[utoipa::path(post, operation_id = "vendor_credits_apply", path = "/api/v1/vendor-credits/{id}/apply", tag = "vendor_credits",
     request_body = ApplyVendorCreditRequest,
     params(("id" = String, Path, description = "Vendor credit ID")),
     responses((status = 200, body = VendorCreditResponse), (status = 400, body = ErrorBody)))]
@@ -187,7 +187,7 @@ pub(crate) async fn apply(
     Ok(Json(to_resp(&c.vendor_credits().apply(id, input)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/vendor-credits/{id}/cancel", tag = "vendor_credits",
+#[utoipa::path(post, operation_id = "vendor_credits_cancel", path = "/api/v1/vendor-credits/{id}/cancel", tag = "vendor_credits",
     params(("id" = String, Path, description = "Vendor credit ID")),
     responses((status = 200, body = VendorCreditResponse), (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]

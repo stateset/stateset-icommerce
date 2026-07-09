@@ -87,7 +87,7 @@ pub fn router() -> Router<AppState> {
         .route("/prepayments/{id}/refund", post(refund))
 }
 
-#[utoipa::path(post, path = "/api/v1/prepayments", tag = "prepayments",
+#[utoipa::path(post, operation_id = "prepayments_create", path = "/api/v1/prepayments", tag = "prepayments",
     request_body = CreatePrepaymentRequest,
     responses((status = 201, body = PrepaymentResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -110,7 +110,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&p))))
 }
 
-#[utoipa::path(get, path = "/api/v1/prepayments", tag = "prepayments",
+#[utoipa::path(get, operation_id = "prepayments_list", path = "/api/v1/prepayments", tag = "prepayments",
     params(PrepaymentFilterParams),
     responses((status = 200, body = PrepaymentListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -146,7 +146,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/prepayments/{id}", tag = "prepayments",
+#[utoipa::path(get, operation_id = "prepayments_get_one", path = "/api/v1/prepayments/{id}", tag = "prepayments",
     params(("id" = String, Path, description = "Prepayment ID")),
     responses((status = 200, body = PrepaymentResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -164,7 +164,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&p)))
 }
 
-#[utoipa::path(post, path = "/api/v1/prepayments/{id}/apply", tag = "prepayments",
+#[utoipa::path(post, operation_id = "prepayments_apply", path = "/api/v1/prepayments/{id}/apply", tag = "prepayments",
     request_body = ApplyPrepaymentRequest,
     params(("id" = String, Path, description = "Prepayment ID")),
     responses((status = 200, body = PrepaymentResponse), (status = 400, body = ErrorBody)))]
@@ -185,7 +185,7 @@ pub(crate) async fn apply(
     Ok(Json(to_resp(&c.prepayments().apply(id, input)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/prepayments/{id}/refund", tag = "prepayments",
+#[utoipa::path(post, operation_id = "prepayments_refund", path = "/api/v1/prepayments/{id}/refund", tag = "prepayments",
     params(("id" = String, Path, description = "Prepayment ID")),
     responses((status = 200, body = PrepaymentResponse), (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]

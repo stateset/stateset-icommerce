@@ -23,6 +23,7 @@ pub(crate) struct RecordActivityRequest {
     pub actor_kind: Option<String>,
     pub actor: Option<String>,
     #[serde(default)]
+    #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
 }
 
@@ -45,6 +46,7 @@ pub(crate) struct ActivityLogResponse {
     pub summary: String,
     pub actor_kind: String,
     pub actor: Option<String>,
+    #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
     pub created_at: String,
 }
@@ -80,7 +82,7 @@ pub fn router() -> Router<AppState> {
         .route("/activity-logs/{subject_type}/{subject_id}", get(history))
 }
 
-#[utoipa::path(post, path = "/api/v1/activity-logs", tag = "activity_logs",
+#[utoipa::path(post, operation_id = "activity_logs_record", path = "/api/v1/activity-logs", tag = "activity_logs",
     request_body = RecordActivityRequest,
     responses((status = 201, body = ActivityLogResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -108,7 +110,7 @@ pub(crate) async fn record(
     Ok((StatusCode::CREATED, Json(to_resp(&e))))
 }
 
-#[utoipa::path(get, path = "/api/v1/activity-logs", tag = "activity_logs",
+#[utoipa::path(get, operation_id = "activity_logs_list", path = "/api/v1/activity-logs", tag = "activity_logs",
     params(ActivityLogFilterParams),
     responses((status = 200, body = ActivityLogListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -139,7 +141,7 @@ pub(crate) async fn list(
     Ok(Json(ActivityLogListResponse { entries: entries.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/activity-logs/{id}", tag = "activity_logs",
+#[utoipa::path(get, operation_id = "activity_logs_get_one", path = "/api/v1/activity-logs/{id}", tag = "activity_logs",
     params(("id" = String, Path, description = "Activity log entry ID")),
     responses((status = 200, body = ActivityLogResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -157,7 +159,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&e)))
 }
 
-#[utoipa::path(get, path = "/api/v1/activity-logs/{subject_type}/{subject_id}", tag = "activity_logs",
+#[utoipa::path(get, operation_id = "activity_logs_history", path = "/api/v1/activity-logs/{subject_type}/{subject_id}", tag = "activity_logs",
     params(
         ("subject_type" = String, Path, description = "Subject record type"),
         ("subject_id" = String, Path, description = "Subject record ID")

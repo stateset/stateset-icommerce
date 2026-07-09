@@ -93,7 +93,7 @@ pub fn router() -> Router<AppState> {
         .route("/companies/{id}/contacts", post(create_contact).get(list_contacts))
 }
 
-#[utoipa::path(post, path = "/api/v1/companies", tag = "companies",
+#[utoipa::path(post, operation_id = "companies_create", path = "/api/v1/companies", tag = "companies",
     request_body = CreateCompanyRequest,
     responses((status = 201, body = CompanyResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -118,7 +118,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&company))))
 }
 
-#[utoipa::path(get, path = "/api/v1/companies", tag = "companies",
+#[utoipa::path(get, operation_id = "companies_list", path = "/api/v1/companies", tag = "companies",
     params(CompanyFilterParams),
     responses((status = 200, body = CompanyListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -143,7 +143,7 @@ pub(crate) async fn list(
     Ok(Json(CompanyListResponse { companies: companies.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/companies/{id}", tag = "companies",
+#[utoipa::path(get, operation_id = "companies_get_one", path = "/api/v1/companies/{id}", tag = "companies",
     params(("id" = String, Path, description = "Company ID")),
     responses((status = 200, body = CompanyResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -161,7 +161,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&company)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/companies/{id}", tag = "companies",
+#[utoipa::path(delete, operation_id = "companies_delete_one", path = "/api/v1/companies/{id}", tag = "companies",
     params(("id" = String, Path, description = "Company ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]
@@ -176,7 +176,7 @@ pub(crate) async fn delete_one(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(post, path = "/api/v1/companies/{id}/contacts", tag = "companies",
+#[utoipa::path(post, operation_id = "companies_create_contact", path = "/api/v1/companies/{id}/contacts", tag = "companies",
     request_body = CreateContactRequest,
     params(("id" = String, Path, description = "Company ID")),
     responses((status = 201, body = ContactResponse)))]
@@ -201,7 +201,7 @@ pub(crate) async fn create_contact(
     Ok((StatusCode::CREATED, Json(contact_resp(&contact))))
 }
 
-#[utoipa::path(get, path = "/api/v1/companies/{id}/contacts", tag = "companies",
+#[utoipa::path(get, operation_id = "companies_list_contacts", path = "/api/v1/companies/{id}/contacts", tag = "companies",
     params(("id" = String, Path, description = "Company ID")),
     responses((status = 200, body = [ContactResponse])))]
 #[tracing::instrument(skip(state, headers))]

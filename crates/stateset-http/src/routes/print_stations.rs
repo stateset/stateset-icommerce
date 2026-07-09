@@ -103,7 +103,7 @@ pub fn router() -> Router<AppState> {
         .route("/print-jobs/{job_id}/complete", post(complete_job))
 }
 
-#[utoipa::path(post, path = "/api/v1/print-stations", tag = "print_stations",
+#[utoipa::path(post, operation_id = "print_stations_pair", path = "/api/v1/print-stations", tag = "print_stations",
     request_body = PairStationRequest,
     responses((status = 201, body = PairResponse)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -123,7 +123,7 @@ pub(crate) async fn pair(
     ))
 }
 
-#[utoipa::path(get, path = "/api/v1/print-stations", tag = "print_stations",
+#[utoipa::path(get, operation_id = "print_stations_list_stations", path = "/api/v1/print-stations", tag = "print_stations",
     responses((status = 200, body = [StationResponse])))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn list_stations(
@@ -136,7 +136,7 @@ pub(crate) async fn list_stations(
     Ok(Json(stations.iter().map(station_resp).collect()))
 }
 
-#[utoipa::path(post, path = "/api/v1/print-stations/{id}/revoke", tag = "print_stations",
+#[utoipa::path(post, operation_id = "print_stations_revoke", path = "/api/v1/print-stations/{id}/revoke", tag = "print_stations",
     params(("id" = String, Path, description = "Print station ID")),
     responses((status = 200, body = StationResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -150,7 +150,7 @@ pub(crate) async fn revoke(
     Ok(Json(station_resp(&c.print_stations().revoke_station(id)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/print-stations/{id}/jobs", tag = "print_stations",
+#[utoipa::path(post, operation_id = "print_stations_enqueue", path = "/api/v1/print-stations/{id}/jobs", tag = "print_stations",
     request_body = EnqueueJobRequest,
     params(("id" = String, Path, description = "Print station ID")),
     responses((status = 201, body = JobResponse), (status = 409, body = ErrorBody)))]
@@ -176,7 +176,7 @@ pub(crate) async fn enqueue(
     Ok((StatusCode::CREATED, Json(job_resp(&job))))
 }
 
-#[utoipa::path(post, path = "/api/v1/print-stations/{id}/jobs/next", tag = "print_stations",
+#[utoipa::path(post, operation_id = "print_stations_next_job", path = "/api/v1/print-stations/{id}/jobs/next", tag = "print_stations",
     params(("id" = String, Path, description = "Print station ID")),
     responses((status = 200, body = JobResponse), (status = 204, description = "Queue empty")))]
 #[tracing::instrument(skip(state, headers))]
@@ -194,7 +194,7 @@ pub(crate) async fn next_job(
     }
 }
 
-#[utoipa::path(get, path = "/api/v1/print-stations/{id}/jobs", tag = "print_stations",
+#[utoipa::path(get, operation_id = "print_stations_list_jobs", path = "/api/v1/print-stations/{id}/jobs", tag = "print_stations",
     params(("id" = String, Path, description = "Print station ID"), JobFilterParams),
     responses((status = 200, body = [JobResponse])))]
 #[tracing::instrument(skip(state, headers))]
@@ -219,7 +219,7 @@ pub(crate) async fn list_jobs(
     Ok(Json(jobs.iter().map(job_resp).collect()))
 }
 
-#[utoipa::path(post, path = "/api/v1/print-jobs/{job_id}/complete", tag = "print_stations",
+#[utoipa::path(post, operation_id = "print_stations_complete_job", path = "/api/v1/print-jobs/{job_id}/complete", tag = "print_stations",
     request_body = CompleteJobRequest,
     params(("job_id" = String, Path, description = "Print job ID")),
     responses((status = 200, body = JobResponse)))]

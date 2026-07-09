@@ -82,7 +82,7 @@ pub fn router() -> Router<AppState> {
         .route("/supplier-skus/{id}", axum::routing::get(get_one).delete(delete_one))
 }
 
-#[utoipa::path(post, path = "/api/v1/supplier-skus", tag = "supplier_skus",
+#[utoipa::path(post, operation_id = "supplier_skus_create", path = "/api/v1/supplier-skus", tag = "supplier_skus",
     request_body = CreateSupplierSkuRequest,
     responses((status = 201, body = SupplierSkuResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -106,7 +106,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&s))))
 }
 
-#[utoipa::path(get, path = "/api/v1/supplier-skus", tag = "supplier_skus",
+#[utoipa::path(get, operation_id = "supplier_skus_list", path = "/api/v1/supplier-skus", tag = "supplier_skus",
     params(SupplierSkuFilterParams),
     responses((status = 200, body = SupplierSkuListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -139,7 +139,7 @@ pub(crate) async fn list(
     Ok(Json(SupplierSkuListResponse { supplier_skus: skus.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/supplier-skus/{id}", tag = "supplier_skus",
+#[utoipa::path(get, operation_id = "supplier_skus_get_one", path = "/api/v1/supplier-skus/{id}", tag = "supplier_skus",
     params(("id" = String, Path, description = "Supplier SKU ID")),
     responses((status = 200, body = SupplierSkuResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -157,7 +157,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&s)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/supplier-skus/{id}", tag = "supplier_skus",
+#[utoipa::path(delete, operation_id = "supplier_skus_delete_one", path = "/api/v1/supplier-skus/{id}", tag = "supplier_skus",
     params(("id" = String, Path, description = "Supplier SKU ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]

@@ -80,7 +80,7 @@ pub fn router() -> Router<AppState> {
         .route("/topology-snapshots/{id}", get(get_one).delete(delete_one))
 }
 
-#[utoipa::path(post, path = "/api/v1/topology-snapshots", tag = "topology_snapshots",
+#[utoipa::path(post, operation_id = "topology_snapshots_capture", path = "/api/v1/topology-snapshots", tag = "topology_snapshots",
     request_body = CaptureRequest,
     responses((status = 201, body = SnapshotResponse)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -103,7 +103,7 @@ pub(crate) async fn capture(
     Ok((StatusCode::CREATED, Json(to_resp(&s))))
 }
 
-#[utoipa::path(get, path = "/api/v1/topology-snapshots", tag = "topology_snapshots",
+#[utoipa::path(get, operation_id = "topology_snapshots_list", path = "/api/v1/topology-snapshots", tag = "topology_snapshots",
     params(SnapshotFilterParams),
     responses((status = 200, body = SnapshotListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -131,7 +131,7 @@ pub(crate) async fn list(
     Ok(Json(SnapshotListResponse { snapshots: snapshots.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/topology-snapshots/latest", tag = "topology_snapshots",
+#[utoipa::path(get, operation_id = "topology_snapshots_latest", path = "/api/v1/topology-snapshots/latest", tag = "topology_snapshots",
     responses((status = 200, body = SnapshotResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn latest(
@@ -147,7 +147,7 @@ pub(crate) async fn latest(
     Ok(Json(to_resp(&s)))
 }
 
-#[utoipa::path(get, path = "/api/v1/topology-snapshots/{id}", tag = "topology_snapshots",
+#[utoipa::path(get, operation_id = "topology_snapshots_get_one", path = "/api/v1/topology-snapshots/{id}", tag = "topology_snapshots",
     params(("id" = String, Path, description = "Snapshot ID")),
     responses((status = 200, body = SnapshotResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -165,7 +165,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&s)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/topology-snapshots/{id}", tag = "topology_snapshots",
+#[utoipa::path(delete, operation_id = "topology_snapshots_delete_one", path = "/api/v1/topology-snapshots/{id}", tag = "topology_snapshots",
     params(("id" = String, Path, description = "Snapshot ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]

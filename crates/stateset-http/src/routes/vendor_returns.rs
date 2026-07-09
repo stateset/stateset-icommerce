@@ -95,7 +95,7 @@ pub fn router() -> Router<AppState> {
         .route("/vendor-returns/{id}/cancel", post(cancel))
 }
 
-#[utoipa::path(post, path = "/api/v1/vendor-returns", tag = "vendor_returns",
+#[utoipa::path(post, operation_id = "vendor_returns_create", path = "/api/v1/vendor-returns", tag = "vendor_returns",
     request_body = CreateVendorReturnRequest,
     responses((status = 201, body = VendorReturnResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -134,7 +134,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&r))))
 }
 
-#[utoipa::path(get, path = "/api/v1/vendor-returns", tag = "vendor_returns",
+#[utoipa::path(get, operation_id = "vendor_returns_list", path = "/api/v1/vendor-returns", tag = "vendor_returns",
     params(VendorReturnFilterParams),
     responses((status = 200, body = VendorReturnListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -170,7 +170,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/vendor-returns/{id}", tag = "vendor_returns",
+#[utoipa::path(get, operation_id = "vendor_returns_get_one", path = "/api/v1/vendor-returns/{id}", tag = "vendor_returns",
     params(("id" = String, Path, description = "Vendor return ID")),
     responses((status = 200, body = VendorReturnResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -188,7 +188,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&r)))
 }
 
-#[utoipa::path(post, path = "/api/v1/vendor-returns/{id}/submit", tag = "vendor_returns",
+#[utoipa::path(post, operation_id = "vendor_returns_submit", path = "/api/v1/vendor-returns/{id}/submit", tag = "vendor_returns",
     params(("id" = String, Path, description = "Vendor return ID")),
     responses((status = 200, body = VendorReturnResponse), (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -202,7 +202,7 @@ pub(crate) async fn submit(
     Ok(Json(to_resp(&c.vendor_returns().submit(id)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/vendor-returns/{id}/process", tag = "vendor_returns",
+#[utoipa::path(post, operation_id = "vendor_returns_process", path = "/api/v1/vendor-returns/{id}/process", tag = "vendor_returns",
     request_body = ProcessVendorReturnRequest,
     params(("id" = String, Path, description = "Vendor return ID")),
     responses((status = 200, body = VendorReturnResponse), (status = 409, body = ErrorBody)))]
@@ -218,7 +218,7 @@ pub(crate) async fn process(
     Ok(Json(to_resp(&c.vendor_returns().process(id, req.generate_credit)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/vendor-returns/{id}/cancel", tag = "vendor_returns",
+#[utoipa::path(post, operation_id = "vendor_returns_cancel", path = "/api/v1/vendor-returns/{id}/cancel", tag = "vendor_returns",
     params(("id" = String, Path, description = "Vendor return ID")),
     responses((status = 200, body = VendorReturnResponse), (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
