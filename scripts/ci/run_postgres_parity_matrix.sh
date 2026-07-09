@@ -33,6 +33,10 @@ run_db_postgres() {
     postgres_order_versioning
     postgres_crud
     postgres_agent_cards
+    postgres_guard
+    postgres_inventory_oversell
+    postgres_refund_correctness
+    postgres_money_guards
     postgres_x402_credits
     postgres_x402_payment_intents
   )
