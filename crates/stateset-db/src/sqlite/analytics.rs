@@ -533,11 +533,12 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .unwrap_or((0, 0, 0));
 
-        // Total inventory value (rough estimate)
+        // Total inventory value, accumulated exactly (quantity x unit cost on
+        // TEXT money columns would drift through IEEE-754 with built-in SUM).
         let total_value: String = conn
             .query_row(
                 r"
-                SELECT CAST(COALESCE(SUM(ib.on_hand * COALESCE(pv.cost_price, pv.price, 0)), 0) AS TEXT)
+                SELECT decimal_sum_product(ib.on_hand, COALESCE(pv.cost_price, pv.price, 0))
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
                 LEFT JOIN product_variants pv ON ii.sku = pv.sku
