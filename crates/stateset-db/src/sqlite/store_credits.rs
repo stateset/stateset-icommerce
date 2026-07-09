@@ -497,6 +497,37 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_applies_cannot_overspend() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(test_db());
+        let repo = SqliteStoreCreditRepository::new(db.pool().clone());
+        let sc = create_credit(&repo, dec!(50.00));
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let credit_id = sc.id;
+            handles.push(thread::spawn(move || {
+                let repo = SqliteStoreCreditRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.apply(credit_id, dec!(30.00), None)
+            }));
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly one concurrent apply should succeed: {results:?}");
+
+        let fetched = repo.get(sc.id).expect("get").expect("found");
+        assert_eq!(fetched.current_balance, dec!(20.00), "balance overspent under concurrency");
+    }
+
+    #[test]
     fn apply_rejects_nonpositive_amount() {
         let repo = test_repo();
         let sc = create_credit(&repo, dec!(50.00));

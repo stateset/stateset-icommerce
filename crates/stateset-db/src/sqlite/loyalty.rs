@@ -555,6 +555,61 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_redemptions_cannot_overdraw() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("db"));
+        let repo = SqliteLoyaltyProgramRepository::new(db.pool().clone());
+        let program = repo
+            .create(CreateLoyaltyProgram {
+                name: "Race Program".into(),
+                description: None,
+                points_per_dollar: 1,
+                tiers: vec![],
+            })
+            .expect("create program");
+        let account = repo
+            .enroll(EnrollCustomer { customer_id: CustomerId::new(), program_id: program.id })
+            .expect("enroll");
+        repo.adjust_points(AdjustPoints {
+            account_id: account.id,
+            points: 50,
+            transaction_type: LoyaltyTransactionType::Earn,
+            reference_id: None,
+            description: None,
+        })
+        .expect("earn");
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let account_id = account.id;
+            handles.push(thread::spawn(move || {
+                let repo = SqliteLoyaltyProgramRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.adjust_points(AdjustPoints {
+                    account_id,
+                    points: -30,
+                    transaction_type: LoyaltyTransactionType::Redeem,
+                    reference_id: None,
+                    description: None,
+                })
+            }));
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly one concurrent redemption should succeed: {results:?}");
+
+        let fetched = repo.get_account(account.id).expect("get").expect("found");
+        assert_eq!(fetched.points_balance, 20, "points overdrawn under concurrency");
+    }
+
+    #[test]
     fn adjust_points_rejects_unknown_account() {
         let repo = test_repo();
         let ghost = LoyaltyAccountId::new();

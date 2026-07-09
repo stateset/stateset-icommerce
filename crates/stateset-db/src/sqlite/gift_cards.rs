@@ -589,6 +589,38 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_charges_cannot_overspend() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::new(&DatabaseConfig::in_memory()).unwrap());
+        let repo = SqliteGiftCardRepository::new(db.pool().clone());
+        let gc = create_card(&repo, "CHARGE-RACE", dec!(50.00));
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let card_id = gc.id;
+            handles.push(thread::spawn(move || {
+                let repo = SqliteGiftCardRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.charge(card_id, dec!(30.00), None)
+            }));
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly one concurrent charge should succeed: {results:?}");
+
+        let fetched = repo.get(gc.id).unwrap().unwrap();
+        assert_eq!(fetched.current_balance, dec!(20.00), "balance overspent under concurrency");
+        assert_eq!(repo.get_transactions(gc.id).unwrap().len(), 1);
+    }
+
+    #[test]
     fn charge_then_refund_roundtrip() {
         let repo = test_repo();
         let gc = create_card(&repo, "CHARGE-REFUND-RT", dec!(50.00));
