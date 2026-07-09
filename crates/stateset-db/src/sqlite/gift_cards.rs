@@ -230,23 +230,41 @@ impl GiftCardRepository for SqliteGiftCardRepository {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<GiftCardTransaction> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Charge amount must be positive".to_string(),
+            ));
+        }
+
         let id_str = id.to_string();
         let txn_id = GiftCardTransactionId::new();
         let txn_id_str = txn_id.to_string();
-        let now_str = Utc::now().to_rfc3339();
+        let now = Utc::now();
+        let now_str = now.to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
             // Fetch current card inside the transaction
-            let (current_balance_str, status_str): (String, String) = tx.query_row(
-                "SELECT current_balance, status FROM gift_cards WHERE id = ?",
+            let (current_balance_str, status_str, expires_at_raw): (
+                String,
+                String,
+                Option<String>,
+            ) = tx.query_row(
+                "SELECT current_balance, status, expires_at FROM gift_cards WHERE id = ?",
                 [&id_str],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
 
             let status: GiftCardStatus = parse_enum_row(&status_str, "gift_card", "status")?;
             if status != GiftCardStatus::Active {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::ValidationError("Gift card is not active".to_string()),
+                )));
+            }
+
+            let expires_at = parse_datetime_opt_row(expires_at_raw, "gift_card", "expires_at")?;
+            if expires_at.is_some_and(|exp| exp < now) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Gift card has expired".to_string()),
                 )));
             }
 
@@ -303,25 +321,51 @@ impl GiftCardRepository for SqliteGiftCardRepository {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<GiftCardTransaction> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Refund amount must be positive".to_string(),
+            ));
+        }
+
         let id_str = id.to_string();
         let txn_id = GiftCardTransactionId::new();
         let txn_id_str = txn_id.to_string();
         let now_str = Utc::now().to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
-            let current_balance_str: String = tx.query_row(
-                "SELECT current_balance FROM gift_cards WHERE id = ?",
+            let (current_balance_str, status_str): (String, String) = tx.query_row(
+                "SELECT current_balance, status FROM gift_cards WHERE id = ?",
                 [&id_str],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+
+            let status: GiftCardStatus = parse_enum_row(&status_str, "gift_card", "status")?;
+            if status == GiftCardStatus::Disabled {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(
+                        "Cannot refund to a disabled gift card".to_string(),
+                    ),
+                )));
+            }
 
             let current_balance =
                 parse_decimal_row(&current_balance_str, "gift_card", "current_balance")?;
             let new_balance = current_balance + amount;
+            // Restore the balance without resurrecting an expired card.
+            let new_status = if status == GiftCardStatus::Expired {
+                GiftCardStatus::Expired
+            } else {
+                GiftCardStatus::Active
+            };
 
             tx.execute(
-                "UPDATE gift_cards SET current_balance = ?, status = 'active', updated_at = ? WHERE id = ?",
-                rusqlite::params![new_balance.to_string(), &now_str, &id_str],
+                "UPDATE gift_cards SET current_balance = ?, status = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![
+                    new_balance.to_string(),
+                    new_status.to_string(),
+                    &now_str,
+                    &id_str
+                ],
             )?;
 
             tx.execute(
@@ -468,6 +512,97 @@ mod tests {
 
         let missing = repo.get_by_code("NO-SUCH-CODE").unwrap();
         assert!(missing.is_none());
+    }
+
+    fn create_card(repo: &SqliteGiftCardRepository, code: &str, balance: Decimal) -> GiftCard {
+        repo.create(CreateGiftCard {
+            code: Some(code.into()),
+            initial_balance: balance,
+            currency: CurrencyCode::USD,
+            recipient_email: None,
+            sender_name: None,
+            message: None,
+            expires_at: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn charge_rejects_nonpositive_amount() {
+        let repo = test_repo();
+        let gc = create_card(&repo, "CHARGE-NONPOS", dec!(50.00));
+
+        assert!(repo.charge(gc.id, Decimal::ZERO, None).is_err());
+        assert!(repo.charge(gc.id, dec!(-10.00), None).is_err());
+
+        let fetched = repo.get(gc.id).unwrap().unwrap();
+        assert_eq!(fetched.current_balance, dec!(50.00));
+        assert!(repo.get_transactions(gc.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn charge_rejects_date_expired_card() {
+        let repo = test_repo();
+        let gc = repo
+            .create(CreateGiftCard {
+                code: Some("CHARGE-EXPIRED".into()),
+                initial_balance: dec!(50.00),
+                currency: CurrencyCode::USD,
+                recipient_email: None,
+                sender_name: None,
+                message: None,
+                expires_at: Some(Utc::now() - chrono::Duration::days(1)),
+            })
+            .unwrap();
+
+        // Status is still 'active' — only the expiry date has passed.
+        assert_eq!(gc.status, GiftCardStatus::Active);
+        assert!(repo.charge(gc.id, dec!(10.00), None).is_err());
+
+        let fetched = repo.get(gc.id).unwrap().unwrap();
+        assert_eq!(fetched.current_balance, dec!(50.00));
+    }
+
+    #[test]
+    fn refund_rejects_nonpositive_amount() {
+        let repo = test_repo();
+        let gc = create_card(&repo, "REFUND-NONPOS", dec!(50.00));
+
+        assert!(repo.refund(gc.id, Decimal::ZERO, None).is_err());
+        assert!(repo.refund(gc.id, dec!(-10.00), None).is_err());
+
+        let fetched = repo.get(gc.id).unwrap().unwrap();
+        assert_eq!(fetched.current_balance, dec!(50.00));
+    }
+
+    #[test]
+    fn refund_rejects_disabled_card() {
+        let repo = test_repo();
+        let gc = create_card(&repo, "REFUND-DISABLED", dec!(50.00));
+        repo.disable(gc.id).unwrap();
+
+        assert!(repo.refund(gc.id, dec!(10.00), None).is_err());
+
+        let fetched = repo.get(gc.id).unwrap().unwrap();
+        assert_eq!(fetched.status, GiftCardStatus::Disabled);
+        assert_eq!(fetched.current_balance, dec!(50.00));
+    }
+
+    #[test]
+    fn charge_then_refund_roundtrip() {
+        let repo = test_repo();
+        let gc = create_card(&repo, "CHARGE-REFUND-RT", dec!(50.00));
+
+        let charge = repo.charge(gc.id, dec!(50.00), Some("ORD-1".into())).unwrap();
+        assert_eq!(charge.balance_after, Decimal::ZERO);
+        assert_eq!(repo.get(gc.id).unwrap().unwrap().status, GiftCardStatus::Depleted);
+
+        // Refund reactivates a depleted card.
+        let refund = repo.refund(gc.id, dec!(20.00), Some("ORD-1".into())).unwrap();
+        assert_eq!(refund.balance_after, dec!(20.00));
+        let fetched = repo.get(gc.id).unwrap().unwrap();
+        assert_eq!(fetched.status, GiftCardStatus::Active);
+        assert_eq!(fetched.current_balance, dec!(20.00));
     }
 
     #[test]

@@ -289,6 +289,12 @@ impl PgGiftCardRepository {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<GiftCardTransaction> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Charge amount must be positive".to_string(),
+            ));
+        }
+
         let txn_id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -310,6 +316,9 @@ impl PgGiftCardRepository {
 
         if card.status != GiftCardStatus::Active {
             return Err(CommerceError::ValidationError("Gift card is not active".to_string()));
+        }
+        if card.is_expired() {
+            return Err(CommerceError::ValidationError("Gift card has expired".to_string()));
         }
         if card.current_balance < amount {
             return Err(CommerceError::ValidationError(
@@ -368,6 +377,12 @@ impl PgGiftCardRepository {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<GiftCardTransaction> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Refund amount must be positive".to_string(),
+            ));
+        }
+
         let txn_id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -386,13 +401,25 @@ impl PgGiftCardRepository {
         .ok_or(CommerceError::NotFound)?;
 
         let card = Self::row_to_gift_card(row)?;
+        if card.status == GiftCardStatus::Disabled {
+            return Err(CommerceError::ValidationError(
+                "Cannot refund to a disabled gift card".to_string(),
+            ));
+        }
+
         let new_balance = card.current_balance + amount;
+        // Restore the balance without resurrecting an expired card.
+        let new_status = if card.status == GiftCardStatus::Expired {
+            GiftCardStatus::Expired
+        } else {
+            GiftCardStatus::Active
+        };
 
         sqlx::query(
             "UPDATE gift_cards SET current_balance = $1, status = $2, updated_at = $3 WHERE id = $4",
         )
         .bind(new_balance)
-        .bind(GiftCardStatus::Active.to_string())
+        .bind(new_status.to_string())
         .bind(now)
         .bind(id.into_uuid())
         .execute(tx.as_mut())
