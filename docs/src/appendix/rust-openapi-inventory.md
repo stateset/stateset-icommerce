@@ -16,9 +16,9 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 161 |
-| Operations | 233 |
-| Schemas | 210 |
+| Paths | 164 |
+| Operations | 236 |
+| Schemas | 214 |
 | Tags | 45 |
 
 ## Method Counts
@@ -28,7 +28,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | DELETE | 20 |
 | GET | 101 |
 | PATCH | 10 |
-| POST | 98 |
+| POST | 101 |
 | PUT | 4 |
 
 ## Tag Counts
@@ -43,7 +43,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `customers` | 5 | Customer management |
 | `edi_documents` | 5 | EDI document exchange |
 | `events` | 1 | Real-time event streaming |
-| `gift_cards` | 4 | Gift card management |
+| `gift_cards` | 6 | Gift card management |
 | `health` | 5 | Health check endpoints |
 | `inbound_shipments` | 7 | Inbound shipment receiving |
 | `integration_field_mappings` | 8 | Integration field-level mappings |
@@ -70,7 +70,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `shipments` | 4 | Shipment tracking and management |
 | `shipping` | 4 | Shipping zone management |
 | `stock_snapshots` | 5 | Point-in-time inventory snapshots |
-| `store_credits` | 4 | Store credit management |
+| `store_credits` | 5 | Store credit management |
 | `subscriptions` | 6 | Recurring subscription management |
 | `supplier_skus` | 4 | Supplier SKU catalog |
 | `topology_snapshots` | 5 | Network topology snapshots |
@@ -126,7 +126,9 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/gift-cards` | `gift_cards` | `list_gift_cards` | `GET /api/v1/gift-cards` |
 | `POST` | `/api/v1/gift-cards` | `gift_cards` | `create_gift_card` | `POST /api/v1/gift-cards` |
 | `GET` | `/api/v1/gift-cards/{id}` | `gift_cards` | `get_gift_card` | `GET /api/v1/gift-cards/{id}` |
+| `POST` | `/api/v1/gift-cards/{id}/charge` | `gift_cards` | `charge_gift_card` | `POST /api/v1/gift-cards/{id}/charge` |
 | `POST` | `/api/v1/gift-cards/{id}/disable` | `gift_cards` | `disable_gift_card` | `POST /api/v1/gift-cards/{id}/disable` |
+| `POST` | `/api/v1/gift-cards/{id}/refund` | `gift_cards` | `refund_gift_card` | `POST /api/v1/gift-cards/{id}/refund` |
 | `GET` | `/api/v1/inbound-shipments` | `inbound_shipments` | `inbound_shipments_list` | — |
 | `POST` | `/api/v1/inbound-shipments` | `inbound_shipments` | `inbound_shipments_create` | — |
 | `GET` | `/api/v1/inbound-shipments/{id}` | `inbound_shipments` | `inbound_shipments_get_one` | — |
@@ -266,6 +268,9 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `POST` | `/api/v1/store-credits` | `store_credits` | `create_store_credit` | — |
 | `GET` | `/api/v1/store-credits/{id}` | `store_credits` | `get_store_credit` | — |
 | `POST` | `/api/v1/store-credits/{id}/adjust` | `store_credits` | `adjust_store_credit` | — |
+| `POST` | `/api/v1/store-credits/{id}/apply` | `store_credits` | `apply_store_credit` | `POST /api/v1/store-credits/{id}/apply` — debit a store credit (e.g.
+against an order). Rejected for non-positive amounts, non-active or
+expired credits, and insufficient balance. |
 | `GET` | `/api/v1/subscriptions` | `subscriptions` | `list_subscriptions` | — |
 | `POST` | `/api/v1/subscriptions` | `subscriptions` | `create_subscription` | — |
 | `GET` | `/api/v1/subscriptions/{id}` | `subscriptions` | `get_subscription` | — |

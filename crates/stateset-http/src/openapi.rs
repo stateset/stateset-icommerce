@@ -131,6 +131,8 @@ use crate::state::AppState;
         crate::routes::gift_cards::create_gift_card,
         crate::routes::gift_cards::get_gift_card,
         crate::routes::gift_cards::list_gift_cards,
+        crate::routes::gift_cards::charge_gift_card,
+        crate::routes::gift_cards::refund_gift_card,
         crate::routes::gift_cards::disable_gift_card,
         // Loyalty
         crate::routes::loyalty::create_program,
@@ -165,6 +167,7 @@ use crate::state::AppState;
         crate::routes::store_credits::list_store_credits,
         crate::routes::store_credits::get_store_credit,
         crate::routes::store_credits::adjust_store_credit,
+        crate::routes::store_credits::apply_store_credit,
         // Promotions
         crate::routes::promotions::create_promotion,
         crate::routes::promotions::list_promotions,

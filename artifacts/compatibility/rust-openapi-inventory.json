@@ -7,9 +7,9 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 161,
-  "totalOperations": 233,
-  "totalSchemas": 210,
+  "totalPaths": 164,
+  "totalOperations": 236,
+  "totalSchemas": 214,
   "totalTags": 45,
   "methods": [
     {
@@ -26,7 +26,7 @@
     },
     {
       "name": "POST",
-      "count": 98
+      "count": 101
     },
     {
       "name": "PUT",
@@ -77,7 +77,7 @@
     {
       "name": "gift_cards",
       "description": "Gift card management",
-      "count": 4
+      "count": 6
     },
     {
       "name": "health",
@@ -212,7 +212,7 @@
     {
       "name": "store_credits",
       "description": "Store credit management",
-      "count": 4
+      "count": 5
     },
     {
       "name": "subscriptions",
@@ -269,6 +269,7 @@
     "AgingBucketResponse",
     "AgingLayerRequest",
     "ApplyPrepaymentRequest",
+    "ApplyStoreCreditRequest",
     "ApplyVendorCreditRequest",
     "BulkCreateRequest",
     "BulkDeleteRequest",
@@ -357,8 +358,10 @@
     "ExchangeRateResponse",
     "FieldMappingListResponse",
     "FieldMappingResponse",
+    "GiftCardAmountRequest",
     "GiftCardListResponse",
     "GiftCardResponse",
+    "GiftCardTransactionResponse",
     "HealthResponse",
     "InboundShipmentItemResponse",
     "InboundShipmentListResponse",
@@ -441,6 +444,7 @@
     "StationResponse",
     "StoreCreditListResponse",
     "StoreCreditResponse",
+    "StoreCreditTransactionResponse",
     "SubscriptionListResponse",
     "SubscriptionResponse",
     "SupplierSkuListResponse",
@@ -843,6 +847,15 @@
       "summary": "`GET /api/v1/gift-cards/{id}`"
     },
     {
+      "path": "/api/v1/gift-cards/{id}/charge",
+      "method": "POST",
+      "operationId": "charge_gift_card",
+      "tags": [
+        "gift_cards"
+      ],
+      "summary": "`POST /api/v1/gift-cards/{id}/charge`"
+    },
+    {
       "path": "/api/v1/gift-cards/{id}/disable",
       "method": "POST",
       "operationId": "disable_gift_card",
@@ -850,6 +863,15 @@
         "gift_cards"
       ],
       "summary": "`POST /api/v1/gift-cards/{id}/disable`"
+    },
+    {
+      "path": "/api/v1/gift-cards/{id}/refund",
+      "method": "POST",
+      "operationId": "refund_gift_card",
+      "tags": [
+        "gift_cards"
+      ],
+      "summary": "`POST /api/v1/gift-cards/{id}/refund`"
     },
     {
       "path": "/api/v1/inbound-shipments",
@@ -2101,6 +2123,15 @@
         "store_credits"
       ],
       "summary": ""
+    },
+    {
+      "path": "/api/v1/store-credits/{id}/apply",
+      "method": "POST",
+      "operationId": "apply_store_credit",
+      "tags": [
+        "store_credits"
+      ],
+      "summary": "`POST /api/v1/store-credits/{id}/apply` — debit a store credit (e.g.\nagainst an order). Rejected for non-positive amounts, non-active or\nexpired credits, and insufficient balance."
     },
     {
       "path": "/api/v1/subscriptions",

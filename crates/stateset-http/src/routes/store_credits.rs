@@ -62,6 +62,30 @@ pub(crate) struct AdjustStoreCreditRequest {
     pub note: Option<String>,
 }
 
+/// Request body for `POST /api/v1/store-credits/{id}/apply`.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct ApplyStoreCreditRequest {
+    /// Amount to debit from the credit. Must be positive.
+    #[schema(value_type = String)]
+    pub amount: Decimal,
+    /// Optional reference (e.g. order ID) recorded on the transaction.
+    pub reference_id: Option<String>,
+}
+
+/// A store credit ledger transaction.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct StoreCreditTransactionResponse {
+    pub id: String,
+    pub store_credit_id: String,
+    #[schema(value_type = String)]
+    pub amount: Decimal,
+    #[schema(value_type = String)]
+    pub balance_after: Decimal,
+    pub transaction_type: String,
+    pub reference_id: Option<String>,
+    pub created_at: String,
+}
+
 fn sc_to_response(sc: &stateset_core::StoreCredit) -> StoreCreditResponse {
     StoreCreditResponse {
         id: sc.id.to_string(),
@@ -80,6 +104,7 @@ pub fn router() -> Router<AppState> {
         .route("/store-credits", post(create_store_credit).get(list_store_credits))
         .route("/store-credits/{id}", get(get_store_credit))
         .route("/store-credits/{id}/adjust", post(adjust_store_credit))
+        .route("/store-credits/{id}/apply", post(apply_store_credit))
 }
 
 #[utoipa::path(post, path = "/api/v1/store-credits", tag = "store_credits",
@@ -171,4 +196,112 @@ pub(crate) async fn adjust_store_credit(
         stateset_core::AdjustStoreCredit { amount: req.amount, note: req.note, reference_id: None };
     let sc = commerce.store_credits().adjust(id, input)?;
     Ok(Json(sc_to_response(&sc)))
+}
+
+/// `POST /api/v1/store-credits/{id}/apply` — debit a store credit (e.g.
+/// against an order). Rejected for non-positive amounts, non-active or
+/// expired credits, and insufficient balance.
+#[utoipa::path(post, path = "/api/v1/store-credits/{id}/apply", tag = "store_credits",
+    params(("id" = String, Path, description = "Store credit ID (UUID)")),
+    request_body = ApplyStoreCreditRequest,
+    responses(
+        (status = 200, body = StoreCreditTransactionResponse),
+        (status = 422, body = ErrorBody),
+        (status = 404, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn apply_store_credit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<StoreCreditId>,
+    Json(req): Json<ApplyStoreCreditRequest>,
+) -> Result<Json<StoreCreditTransactionResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let txn = commerce.store_credits().apply(id, req.amount, req.reference_id)?;
+    Ok(Json(StoreCreditTransactionResponse {
+        id: txn.id.to_string(),
+        store_credit_id: txn.store_credit_id.to_string(),
+        amount: txn.amount,
+        balance_after: txn.balance_after,
+        transaction_type: txn.transaction_type.to_string(),
+        reference_id: txn.reference_id,
+        created_at: txn.created_at.to_rfc3339(),
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use stateset_embedded::Commerce;
+    use tower::ServiceExt;
+
+    fn app() -> Router {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        router().with_state(state)
+    }
+
+    async fn post_json(
+        app: &Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
+    }
+
+    #[tokio::test]
+    async fn apply_debits_and_guards() {
+        let app = app();
+        let (status, sc) = post_json(
+            &app,
+            "/store-credits",
+            serde_json::json!({
+                "customer_id": uuid::Uuid::new_v4().to_string(),
+                "amount": "50.00"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let id = sc["id"].as_str().unwrap().to_string();
+
+        let (status, txn) = post_json(
+            &app,
+            &format!("/store-credits/{id}/apply"),
+            serde_json::json!({"amount": "30.00", "reference_id": "ORD-9"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(txn["balance_after"], "20.00");
+        assert_eq!(txn["amount"], "-30.00");
+
+        // Non-positive and overdraft applies are rejected.
+        let (status, _) = post_json(
+            &app,
+            &format!("/store-credits/{id}/apply"),
+            serde_json::json!({"amount": "-1.00"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        let (status, _) = post_json(
+            &app,
+            &format!("/store-credits/{id}/apply"),
+            serde_json::json!({"amount": "99.00"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
 }
