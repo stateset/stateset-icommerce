@@ -651,6 +651,19 @@ impl SqlitePromotionRepository {
         let mut has_exclusive = false;
 
         for (promo, coupon_code) in all_promotions {
+            // The promotion itself must be active and inside its validity
+            // window — coupon-linked promotions bypass the is_active list
+            // filter, so a coupon on a draft/expired promotion lands here.
+            if !promo.is_active() {
+                result.rejected_promotions.push(RejectedPromotion {
+                    promotion_id: Some(promo.id),
+                    coupon_code: coupon_code.clone(),
+                    reason: "Promotion is not active".into(),
+                    reason_code: RejectionReason::Expired,
+                });
+                continue;
+            }
+
             // Check if already applied exclusive promotion
             if has_exclusive && promo.stacking == StackingBehavior::Exclusive {
                 result.rejected_promotions.push(RejectedPromotion {
@@ -1512,6 +1525,41 @@ mod tests {
             currency: CurrencyCode::USD,
             is_first_order: false,
         }
+    }
+
+    #[test]
+    fn apply_promotions_rejects_coupon_on_inactive_promotion() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        // make_pct_promo leaves the promotion in 'draft' — a coupon on it must
+        // not discount before the promotion is activated.
+        let promo = make_pct_promo(&repo, "DRAFT-PROMO", dec!(0.10));
+        let coupon = repo
+            .create_coupon(CreateCouponCode {
+                promotion_id: promo.id,
+                code: "EARLY-BIRD".into(),
+                usage_limit: None,
+                per_customer_limit: None,
+                starts_at: None,
+                ends_at: None,
+                metadata: None,
+            })
+            .expect("create coupon");
+
+        let result = repo.apply_promotions(eval_request(&coupon.code, None)).expect("eval");
+        assert!(
+            result.applied_promotions.is_empty(),
+            "a draft promotion must not apply via its coupon: {result:?}"
+        );
+        assert!(
+            result.rejected_promotions.iter().any(|r| r.promotion_id == Some(promo.id)),
+            "the inactive promotion must be reported as rejected: {result:?}"
+        );
+
+        // Once activated, the same coupon applies.
+        repo.activate(promo.id).expect("activate");
+        let result = repo.apply_promotions(eval_request(&coupon.code, None)).expect("eval");
+        assert_eq!(result.applied_promotions.len(), 1, "activated promo applies: {result:?}");
     }
 
     #[test]

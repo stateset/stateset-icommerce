@@ -871,6 +871,19 @@ impl PgPromotionRepository {
         let mut has_exclusive = false;
 
         for (promo, coupon_code) in all_promotions {
+            // The promotion itself must be active and inside its validity
+            // window — coupon-linked promotions bypass the is_active list
+            // filter, so a coupon on a draft/expired promotion lands here.
+            if !promo.is_active() {
+                result.rejected_promotions.push(RejectedPromotion {
+                    promotion_id: Some(promo.id),
+                    coupon_code: coupon_code.clone(),
+                    reason: "Promotion is not active".into(),
+                    reason_code: RejectionReason::Expired,
+                });
+                continue;
+            }
+
             if has_exclusive && promo.stacking == StackingBehavior::Exclusive {
                 result.rejected_promotions.push(RejectedPromotion {
                     promotion_id: Some(promo.id),
