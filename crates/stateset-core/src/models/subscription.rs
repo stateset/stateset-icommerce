@@ -908,3 +908,79 @@ impl BillingCycle {
         self.status == BillingCycleStatus::Failed
     }
 }
+
+// ============================================================================
+// Validation
+// ============================================================================
+
+use crate::validation::{Validate, ValidationBuilder};
+
+/// Shared pricing checks: money fields non-negative, `discount_percent` a
+/// fraction in `[0, 1]` (the billing computation multiplies it directly by
+/// the subtotal, so `10` would mean 1000%).
+fn pricing_checks(
+    builder: ValidationBuilder,
+    price: Option<Decimal>,
+    setup_fee: Option<Decimal>,
+    discount_percent: Option<Decimal>,
+    discount_amount: Option<Decimal>,
+) -> ValidationBuilder {
+    builder
+        .check("price", price.is_none_or(|p| p >= Decimal::ZERO), "cannot be negative")
+        .check("setup_fee", setup_fee.is_none_or(|f| f >= Decimal::ZERO), "cannot be negative")
+        .check(
+            "discount_percent",
+            discount_percent.is_none_or(|p| p >= Decimal::ZERO && p <= Decimal::ONE),
+            "must be a fraction between 0 and 1",
+        )
+        .check(
+            "discount_amount",
+            discount_amount.is_none_or(|a| a >= Decimal::ZERO),
+            "cannot be negative",
+        )
+}
+
+impl Validate for CreateSubscriptionPlan {
+    fn validate(&self) -> crate::Result<()> {
+        pricing_checks(
+            ValidationBuilder::new(),
+            Some(self.price),
+            self.setup_fee,
+            self.discount_percent,
+            self.discount_amount,
+        )
+        .build()
+    }
+}
+
+impl Validate for UpdateSubscriptionPlan {
+    fn validate(&self) -> crate::Result<()> {
+        pricing_checks(
+            ValidationBuilder::new(),
+            self.price,
+            self.setup_fee,
+            self.discount_percent,
+            self.discount_amount,
+        )
+        .build()
+    }
+}
+
+impl Validate for CreateSubscription {
+    fn validate(&self) -> crate::Result<()> {
+        pricing_checks(ValidationBuilder::new(), self.price, None, None, None).build()
+    }
+}
+
+impl Validate for UpdateSubscription {
+    fn validate(&self) -> crate::Result<()> {
+        pricing_checks(
+            ValidationBuilder::new(),
+            self.price,
+            None,
+            self.discount_percent,
+            self.discount_amount,
+        )
+        .build()
+    }
+}
