@@ -664,6 +664,22 @@ impl SqlitePromotionRepository {
                 continue;
             }
 
+            // Customer targeting: when the promotion lists eligible
+            // customers (and no groups, which the request cannot resolve),
+            // only those customers — identified, not anonymous — may use it.
+            if !promo.eligible_customer_ids.is_empty()
+                && promo.eligible_customer_groups.is_empty()
+                && !request.customer_id.is_some_and(|c| promo.eligible_customer_ids.contains(&c))
+            {
+                result.rejected_promotions.push(RejectedPromotion {
+                    promotion_id: Some(promo.id),
+                    coupon_code: coupon_code.clone(),
+                    reason: "Customer is not eligible for this promotion".into(),
+                    reason_code: RejectionReason::CustomerNotEligible,
+                });
+                continue;
+            }
+
             // Check if already applied exclusive promotion
             if has_exclusive && promo.stacking == StackingBehavior::Exclusive {
                 result.rejected_promotions.push(RejectedPromotion {
@@ -1524,6 +1540,59 @@ mod tests {
             shipping_state: None,
             currency: CurrencyCode::USD,
             is_first_order: false,
+        }
+    }
+
+    #[test]
+    fn apply_promotions_enforces_customer_eligibility_list() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let alice = CustomerId::new();
+        let bob = CustomerId::new();
+
+        let promo = repo
+            .create(CreatePromotion {
+                code: Some("VIP-ONLY".into()),
+                name: "VIP only".into(),
+                promotion_type: PromotionType::PercentageOff,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                percentage_off: Some(dec!(0.10)),
+                eligible_customer_ids: Some(vec![alice]),
+                ..Default::default()
+            })
+            .expect("create promo");
+        repo.activate(promo.id).expect("activate");
+        repo.create_coupon(CreateCouponCode {
+            promotion_id: promo.id,
+            code: "VIP-CODE".into(),
+            usage_limit: None,
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .expect("create coupon");
+
+        // The listed customer gets the discount.
+        let result = repo.apply_promotions(eval_request("VIP-CODE", Some(alice))).expect("eval");
+        assert_eq!(result.applied_promotions.len(), 1, "alice is eligible: {result:?}");
+
+        // Everyone else — including anonymous carts — is rejected.
+        for customer in [Some(bob), None] {
+            let result = repo.apply_promotions(eval_request("VIP-CODE", customer)).expect("eval");
+            assert!(
+                result.applied_promotions.is_empty(),
+                "non-listed customer must not get a targeted promotion: {result:?}"
+            );
+            assert!(
+                result
+                    .rejected_promotions
+                    .iter()
+                    .any(|r| r.reason_code == RejectionReason::CustomerNotEligible),
+                "rejection must cite CustomerNotEligible: {result:?}"
+            );
         }
     }
 

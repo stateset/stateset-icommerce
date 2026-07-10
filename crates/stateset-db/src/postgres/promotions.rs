@@ -884,6 +884,22 @@ impl PgPromotionRepository {
                 continue;
             }
 
+            // Customer targeting: when the promotion lists eligible
+            // customers (and no groups, which the request cannot resolve),
+            // only those customers — identified, not anonymous — may use it.
+            if !promo.eligible_customer_ids.is_empty()
+                && promo.eligible_customer_groups.is_empty()
+                && !request.customer_id.is_some_and(|c| promo.eligible_customer_ids.contains(&c))
+            {
+                result.rejected_promotions.push(RejectedPromotion {
+                    promotion_id: Some(promo.id),
+                    coupon_code: coupon_code.clone(),
+                    reason: "Customer is not eligible for this promotion".into(),
+                    reason_code: RejectionReason::CustomerNotEligible,
+                });
+                continue;
+            }
+
             if has_exclusive && promo.stacking == StackingBehavior::Exclusive {
                 result.rejected_promotions.push(RejectedPromotion {
                     promotion_id: Some(promo.id),
