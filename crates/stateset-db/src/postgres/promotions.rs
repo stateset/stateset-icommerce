@@ -862,6 +862,22 @@ impl PgPromotionRepository {
                 }
             }
 
+            // Check per-customer usage limit (record_usage re-checks this
+            // transactionally; here it produces a friendly rejection).
+            if let (Some(limit), Some(customer_id)) =
+                (promo.per_customer_limit, request.customer_id)
+            {
+                if self.customer_usage_count(promo.id, customer_id).await? >= i64::from(limit) {
+                    result.rejected_promotions.push(RejectedPromotion {
+                        promotion_id: Some(promo.id),
+                        coupon_code: coupon_code.clone(),
+                        reason: "Per-customer usage limit reached".into(),
+                        reason_code: RejectionReason::UsageLimitReached,
+                    });
+                    continue;
+                }
+            }
+
             let discount = self.calculate_discount(&promo, &request, total_discount)?;
 
             if discount > Decimal::ZERO {
@@ -905,6 +921,22 @@ impl PgPromotionRepository {
         Ok(result)
     }
 
+    /// Times a customer has used a promotion (from the usage ledger).
+    async fn customer_usage_count(
+        &self,
+        promotion_id: PromotionId,
+        customer_id: CustomerId,
+    ) -> Result<i64> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = $1 AND customer_id = $2",
+        )
+        .bind(promotion_id.into_uuid())
+        .bind(customer_id.into_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn record_usage_async(
         &self,
@@ -924,6 +956,59 @@ impl PgPromotionRepository {
         // would race past the limits otherwise, and a rejected limit must not
         // leave an orphaned usage row.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Per-customer limits (promotion and coupon), enforced against the
+        // usage ledger inside the same transaction. Anonymous usage (no
+        // customer_id) cannot be attributed and is not limited here.
+        if let Some(customer_id) = customer_id {
+            let limit: Option<i32> =
+                sqlx::query_scalar("SELECT per_customer_limit FROM promotions WHERE id = $1")
+                    .bind(promotion_id.into_uuid())
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .flatten();
+            if let Some(limit) = limit {
+                let used: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = $1 AND customer_id = $2",
+                )
+                .bind(promotion_id.into_uuid())
+                .bind(customer_id.into_uuid())
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+                if used >= i64::from(limit) {
+                    return Err(CommerceError::ValidationError(
+                        "Per-customer promotion usage limit reached".to_string(),
+                    ));
+                }
+            }
+
+            if let Some(coupon_id) = coupon_id {
+                let limit: Option<i32> =
+                    sqlx::query_scalar("SELECT per_customer_limit FROM coupon_codes WHERE id = $1")
+                        .bind(coupon_id)
+                        .fetch_optional(tx.as_mut())
+                        .await
+                        .map_err(map_db_error)?
+                        .flatten();
+                if let Some(limit) = limit {
+                    let used: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM promotion_usage WHERE coupon_id = $1 AND customer_id = $2",
+                    )
+                    .bind(coupon_id)
+                    .bind(customer_id.into_uuid())
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+                    if used >= i64::from(limit) {
+                        return Err(CommerceError::ValidationError(
+                            "Per-customer coupon usage limit reached".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
 
         let rows = sqlx::query(
             "UPDATE promotions SET usage_count = usage_count + 1

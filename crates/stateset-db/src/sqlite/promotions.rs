@@ -645,6 +645,22 @@ impl SqlitePromotionRepository {
                 }
             }
 
+            // Check per-customer usage limit (record_usage re-checks this
+            // transactionally; here it produces a friendly rejection).
+            if let (Some(limit), Some(customer_id)) =
+                (promo.per_customer_limit, request.customer_id)
+            {
+                if self.customer_usage_count(promo.id, customer_id)? >= i64::from(limit) {
+                    result.rejected_promotions.push(RejectedPromotion {
+                        promotion_id: Some(promo.id),
+                        coupon_code: coupon_code.clone(),
+                        reason: "Per-customer usage limit reached".into(),
+                        reason_code: RejectionReason::UsageLimitReached,
+                    });
+                    continue;
+                }
+            }
+
             // Calculate discount
             let discount = self.calculate_discount(&promo, &request, total_discount)?;
 
@@ -923,6 +939,23 @@ impl SqlitePromotionRepository {
     // Usage Tracking
     // ========================================================================
 
+    /// Times a customer has used a promotion (from the usage ledger).
+    fn customer_usage_count(
+        &self,
+        promotion_id: PromotionId,
+        customer_id: CustomerId,
+    ) -> Result<i64> {
+        let conn = self.pool.get().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
+        })?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = ?1 AND customer_id = ?2",
+            [promotion_id.to_string(), customer_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Query error: {e}")))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn record_usage(
         &self,
@@ -941,6 +974,53 @@ impl SqlitePromotionRepository {
         // usage row, and concurrent redemptions serialize (with retry) instead
         // of failing with SQLITE_BUSY.
         with_immediate_transaction(&self.pool, |tx| {
+            // Per-customer limits (promotion and coupon), enforced against the
+            // usage ledger inside the same transaction. Anonymous usage
+            // (no customer_id) cannot be attributed and is not limited here.
+            if let Some(customer_id) = customer_id {
+                let limit: Option<i64> = tx.query_row(
+                    "SELECT per_customer_limit FROM promotions WHERE id = ?1",
+                    [promotion_id.to_string()],
+                    |row| row.get(0),
+                )?;
+                if let Some(limit) = limit {
+                    let used: i64 = tx.query_row(
+                        "SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = ?1 AND customer_id = ?2",
+                        [promotion_id.to_string(), customer_id.to_string()],
+                        |row| row.get(0),
+                    )?;
+                    if used >= limit {
+                        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            stateset_core::CommerceError::ValidationError(
+                                "Per-customer promotion usage limit reached".to_string(),
+                            ),
+                        )));
+                    }
+                }
+
+                if let Some(coupon_id) = coupon_id {
+                    let limit: Option<i64> = tx.query_row(
+                        "SELECT per_customer_limit FROM coupon_codes WHERE id = ?1",
+                        [coupon_id.to_string()],
+                        |row| row.get(0),
+                    )?;
+                    if let Some(limit) = limit {
+                        let used: i64 = tx.query_row(
+                            "SELECT COUNT(*) FROM promotion_usage WHERE coupon_id = ?1 AND customer_id = ?2",
+                            [coupon_id.to_string(), customer_id.to_string()],
+                            |row| row.get(0),
+                        )?;
+                        if used >= limit {
+                            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                                stateset_core::CommerceError::ValidationError(
+                                    "Per-customer coupon usage limit reached".to_string(),
+                                ),
+                            )));
+                        }
+                    }
+                }
+            }
+
             // Increment usage count on promotion. The limit is enforced here
             // in the UPDATE itself — the evaluation-time check reads a
             // snapshot, so concurrent redemptions would race past it
@@ -1317,6 +1397,78 @@ mod tests {
 
         let fetched = repo.get(promo.id).expect("ok").expect("found");
         assert_eq!(fetched.usage_count, 1);
+    }
+
+    fn make_customer(db: &SqliteDatabase) -> CustomerId {
+        use stateset_core::CustomerRepository;
+        db.customers()
+            .create(stateset_core::CreateCustomer {
+                email: format!("promo-{}@example.com", Uuid::new_v4()),
+                first_name: "Promo".into(),
+                last_name: "Tester".into(),
+                phone: None,
+                accepts_marketing: Some(false),
+                tags: None,
+                metadata: None,
+            })
+            .expect("create customer")
+            .id
+    }
+
+    #[test]
+    fn record_usage_enforces_per_customer_limit() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let promo = make_pct_promo(&repo, "PER-CUST", dec!(0.10));
+        repo.update(
+            promo.id,
+            UpdatePromotion { per_customer_limit: Some(1), ..Default::default() },
+        )
+        .expect("set per-customer limit");
+
+        let alice = make_customer(&db);
+        let bob = make_customer(&db);
+
+        repo.record_usage(promo.id, None, Some(alice), None, None, dec!(5.00), "USD")
+            .expect("alice first use");
+
+        // per_customer_limit was previously stored but never enforced anywhere.
+        let err = repo
+            .record_usage(promo.id, None, Some(alice), None, None, dec!(5.00), "USD")
+            .expect_err("alice second use must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        // Other customers and anonymous usage are unaffected.
+        repo.record_usage(promo.id, None, Some(bob), None, None, dec!(5.00), "USD")
+            .expect("bob first use");
+        repo.record_usage(promo.id, None, None, None, None, dec!(5.00), "USD")
+            .expect("anonymous use");
+    }
+
+    #[test]
+    fn record_usage_enforces_coupon_per_customer_limit() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let promo = make_pct_promo(&repo, "CP-PER-CUST", dec!(0.10));
+        let coupon = repo
+            .create_coupon(CreateCouponCode {
+                promotion_id: promo.id,
+                code: "ONE-EACH".into(),
+                usage_limit: None,
+                per_customer_limit: Some(1),
+                starts_at: None,
+                ends_at: None,
+                metadata: None,
+            })
+            .expect("create coupon");
+
+        let alice = make_customer(&db);
+        repo.record_usage(promo.id, Some(coupon.id), Some(alice), None, None, dec!(5.00), "USD")
+            .expect("alice first coupon use");
+        let err = repo
+            .record_usage(promo.id, Some(coupon.id), Some(alice), None, None, dec!(5.00), "USD")
+            .expect_err("alice second coupon use must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
     }
 
     #[test]

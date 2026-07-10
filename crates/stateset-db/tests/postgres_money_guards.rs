@@ -338,3 +338,42 @@ async fn postgres_loyalty_adjust_guards() {
     let fetched = repo.get_account_async(account.id).await.expect("get account").expect("found");
     assert_eq!(fetched.points_balance, 50);
 }
+
+#[tokio::test]
+async fn postgres_promotion_per_customer_limit_guards() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let repo = stateset_db::postgres::PgPromotionRepository::new(db.pool().clone());
+    let promo = repo
+        .create_async(stateset_core::CreatePromotion {
+            code: Some(format!("PER-CUST-{}", uuid::Uuid::new_v4())),
+            name: "Per customer".into(),
+            promotion_type: stateset_core::PromotionType::PercentageOff,
+            trigger: stateset_core::PromotionTrigger::CouponCode,
+            target: stateset_core::PromotionTarget::Order,
+            stacking: stateset_core::StackingBehavior::Stackable,
+            percentage_off: Some(dec!(0.10)),
+            per_customer_limit: Some(1),
+            ..Default::default()
+        })
+        .await
+        .expect("create promotion");
+
+    let alice = create_customer(&db).await;
+    repo.record_usage_async(promo.id, None, Some(alice), None, None, dec!(5.00), "USD")
+        .await
+        .expect("first use");
+    assert_validation(
+        repo.record_usage_async(promo.id, None, Some(alice), None, None, dec!(5.00), "USD")
+            .await
+            .unwrap_err(),
+    );
+
+    // A different customer is unaffected.
+    let bob = create_customer(&db).await;
+    repo.record_usage_async(promo.id, None, Some(bob), None, None, dec!(5.00), "USD")
+        .await
+        .expect("bob first use");
+}
