@@ -919,6 +919,44 @@ impl PgPromotionRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        // One transaction, limit-guarded increments first — the
+        // evaluation-time check reads a snapshot, so concurrent redemptions
+        // would race past the limits otherwise, and a rejected limit must not
+        // leave an orphaned usage row.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let rows = sqlx::query(
+            "UPDATE promotions SET usage_count = usage_count + 1
+             WHERE id = $1 AND (total_usage_limit IS NULL OR usage_count < total_usage_limit)",
+        )
+        .bind(promotion_id.into_uuid())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::ValidationError(
+                "Promotion not found or usage limit reached".to_string(),
+            ));
+        }
+
+        if let Some(coupon_id) = coupon_id {
+            let rows = sqlx::query(
+                "UPDATE coupon_codes SET usage_count = usage_count + 1
+                 WHERE id = $1 AND (usage_limit IS NULL OR usage_count < usage_limit)",
+            )
+            .bind(coupon_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .rows_affected();
+            if rows == 0 {
+                return Err(CommerceError::ValidationError(
+                    "Coupon not found or usage limit reached".to_string(),
+                ));
+            }
+        }
+
         sqlx::query(
             "INSERT INTO promotion_usage (id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount, currency, used_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
@@ -932,23 +970,11 @@ impl PgPromotionRepository {
         .bind(discount_amount)
         .bind(currency)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        sqlx::query("UPDATE promotions SET usage_count = usage_count + 1 WHERE id = $1")
-            .bind(promotion_id.into_uuid())
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        if let Some(coupon_id) = coupon_id {
-            sqlx::query("UPDATE coupon_codes SET usage_count = usage_count + 1 WHERE id = $1")
-                .bind(coupon_id)
-                .execute(&self.pool)
-                .await
-                .map_err(map_db_error)?;
-        }
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(PromotionUsage {
             id,

@@ -934,14 +934,55 @@ impl SqlitePromotionRepository {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
-        let conn = self.pool.get().map_err(|e| {
+        let mut conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        conn.execute(
+        // One transaction so a rejected limit leaves no orphaned usage row.
+        let tx = conn.transaction().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Transaction error: {e}"))
+        })?;
+
+        // Increment usage count on promotion. The limit is enforced here in
+        // the UPDATE itself — the evaluation-time check reads a snapshot, so
+        // concurrent redemptions would race past it otherwise.
+        let rows = tx
+            .execute(
+                "UPDATE promotions SET usage_count = usage_count + 1
+                 WHERE id = ?1 AND (total_usage_limit IS NULL OR usage_count < total_usage_limit)",
+                [promotion_id.to_string()],
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
+            })?;
+        if rows == 0 {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Promotion not found or usage limit reached".to_string(),
+            ));
+        }
+
+        // Increment coupon usage if applicable, with the same limit guard.
+        if let Some(coupon_id) = coupon_id {
+            let rows = tx
+                .execute(
+                    "UPDATE coupon_codes SET usage_count = usage_count + 1
+                     WHERE id = ?1 AND (usage_limit IS NULL OR usage_count < usage_limit)",
+                    [coupon_id.to_string()],
+                )
+                .map_err(|e| {
+                    stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
+                })?;
+            if rows == 0 {
+                return Err(stateset_core::CommerceError::ValidationError(
+                    "Coupon not found or usage limit reached".to_string(),
+                ));
+            }
+        }
+
+        tx.execute(
             "INSERT INTO promotion_usage (id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount, currency, used_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
@@ -957,23 +998,9 @@ impl SqlitePromotionRepository {
             ],
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
 
-        // Increment usage count on promotion
-        conn.execute(
-            "UPDATE promotions SET usage_count = usage_count + 1 WHERE id = ?1",
-            [promotion_id.to_string()],
-        )
-        .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {e}")))?;
-
-        // Increment coupon usage if applicable
-        if let Some(coupon_id) = coupon_id {
-            conn.execute(
-                "UPDATE coupon_codes SET usage_count = usage_count + 1 WHERE id = ?1",
-                [coupon_id.to_string()],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        }
+        tx.commit().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Commit error: {e}"))
+        })?;
 
         Ok(PromotionUsage {
             id,
@@ -1277,6 +1304,28 @@ mod tests {
             metadata: None,
         })
         .expect("create promo")
+    }
+
+    #[test]
+    fn record_usage_enforces_total_usage_limit() {
+        let repo = fresh_repo();
+        let mut promo = make_pct_promo(&repo, "ONCE-ONLY", dec!(0.10));
+        promo = repo
+            .update(promo.id, UpdatePromotion { total_usage_limit: Some(1), ..Default::default() })
+            .expect("set limit");
+        assert_eq!(promo.total_usage_limit, Some(1));
+
+        repo.record_usage(promo.id, None, None, None, None, dec!(5.00), "USD").expect("first use");
+
+        // The limit is enforced at record time, not just at evaluation time —
+        // otherwise concurrent redemptions race past it.
+        let err = repo
+            .record_usage(promo.id, None, None, None, None, dec!(5.00), "USD")
+            .expect_err("second use must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        let fetched = repo.get(promo.id).expect("ok").expect("found");
+        assert_eq!(fetched.usage_count, 1);
     }
 
     #[test]

@@ -675,6 +675,25 @@ impl PgWarrantyRepository {
         let now = Utc::now();
         let claim_number = generate_claim_number();
 
+        // One transaction, limit-guarded increment first — the is_valid()
+        // pre-check above reads a snapshot, so concurrent claims would race
+        // past max_claims otherwise.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let rows = sqlx::query(
+            "UPDATE warranties SET claims_used = claims_used + 1, updated_at = $1
+             WHERE id = $2 AND (max_claims IS NULL OR claims_used < max_claims)",
+        )
+        .bind(now)
+        .bind(input.warranty_id.into_uuid())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::ValidationError("Warranty claim limit reached".to_string()));
+        }
+
         sqlx::query(
             "INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, status,
              resolution, issue_description, issue_category, issue_date, contact_phone, contact_email,
@@ -697,19 +716,11 @@ impl PgWarrantyRepository {
         .bind(now)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        // Increment claims_used
-        sqlx::query(
-            "UPDATE warranties SET claims_used = claims_used + 1, updated_at = $1 WHERE id = $2",
-        )
-        .bind(now)
-        .bind(input.warranty_id.into_uuid())
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
     }

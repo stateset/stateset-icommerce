@@ -634,8 +634,27 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let claim_number = generate_claim_number();
 
         {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = conn.transaction().map_err(map_db_error)?;
+
+            // Enforce max_claims in the increment itself — the is_valid()
+            // pre-check above reads a snapshot, so concurrent claims would
+            // race past the limit otherwise.
+            let rows = tx
+                .execute(
+                    "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ?
+                     WHERE id = ? AND (max_claims IS NULL OR claims_used < max_claims)",
+                    params![now.to_rfc3339(), input.warranty_id.to_string()],
+                )
+                .map_err(map_db_error)?;
+            if rows == 0 {
+                return Err(CommerceError::ValidationError(
+                    "Warranty claim limit reached".to_string(),
+                ));
+            }
+
+            tx.execute(
                 "INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, status,
                  resolution, issue_description, issue_category, issue_date, contact_phone, contact_email,
                  shipping_address, customer_notes, submitted_at, created_at, updated_at)
@@ -660,12 +679,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
                 ],
             ).map_err(map_db_error)?;
 
-            // Increment claims_used on warranty
-            conn.execute(
-                "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ? WHERE id = ?",
-                params![now.to_rfc3339(), input.warranty_id.to_string()],
-            )
-            .map_err(map_db_error)?;
+            tx.commit().map_err(map_db_error)?;
         }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
@@ -1247,6 +1261,37 @@ mod tests {
             notes: None,
         })
         .expect("create warranty")
+    }
+
+    fn claim_input(warranty_id: stateset_core::WarrantyId) -> CreateWarrantyClaim {
+        CreateWarrantyClaim {
+            warranty_id,
+            issue_description: "It broke".into(),
+            issue_category: None,
+            issue_date: None,
+            contact_phone: None,
+            contact_email: None,
+            shipping_address: None,
+            customer_notes: None,
+        }
+    }
+
+    #[test]
+    fn create_claim_enforces_max_claims_at_record_time() {
+        let repo = fresh_repo();
+        let w = make_warranty(&repo, CustomerId::new());
+        assert_eq!(w.max_claims, Some(2));
+
+        repo.create_claim(claim_input(w.id)).expect("claim 1");
+        repo.create_claim(claim_input(w.id)).expect("claim 2");
+
+        // The limit must hold at the DB increment, not just in the pre-check —
+        // otherwise concurrent claims race past max_claims.
+        let err = repo.create_claim(claim_input(w.id)).expect_err("third claim rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        let fetched = repo.get(w.id).expect("ok").expect("found");
+        assert_eq!(fetched.claims_used, 2);
     }
 
     #[test]
