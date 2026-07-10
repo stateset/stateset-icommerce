@@ -179,6 +179,50 @@ async fn postgres_store_credit_apply_guards() {
 }
 
 #[tokio::test]
+async fn postgres_credit_reserve_and_charge_guards() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let repo = stateset_db::postgres::PgCreditRepository::new(db.pool().clone());
+    let customer_id = create_customer(&db).await;
+    repo.create_credit_account_async(stateset_core::CreateCreditAccount {
+        customer_id,
+        credit_limit: dec!(100.00),
+        currency: None,
+        payment_terms: Some("NET30".into()),
+        risk_rating: None,
+        notes: None,
+    })
+    .await
+    .expect("create credit account");
+    let cust = customer_id.into_uuid();
+
+    // Non-positive and over-line reservations rejected.
+    assert_validation(
+        repo.reserve_credit_async(cust, uuid::Uuid::new_v4(), dec!(-10)).await.unwrap_err(),
+    );
+    assert_validation(
+        repo.reserve_credit_async(cust, uuid::Uuid::new_v4(), dec!(150)).await.unwrap_err(),
+    );
+
+    // Reservations respect existing holds.
+    let order = uuid::Uuid::new_v4();
+    repo.reserve_credit_async(cust, order, dec!(60)).await.expect("reserve 60");
+    assert_validation(
+        repo.reserve_credit_async(cust, uuid::Uuid::new_v4(), dec!(50)).await.unwrap_err(),
+    );
+
+    // Charges respect the limit; a rejected charge keeps its reservation.
+    repo.charge_credit_async(cust, order, dec!(60)).await.expect("charge 60");
+    assert_validation(
+        repo.charge_credit_async(cust, uuid::Uuid::new_v4(), dec!(50)).await.unwrap_err(),
+    );
+    let acct = repo.get_credit_account_by_customer_async(cust).await.expect("get").expect("found");
+    assert_eq!(acct.current_balance, dec!(60.00));
+}
+
+#[tokio::test]
 async fn postgres_lot_transfer_guards() {
     let Some(db) = connect().await else {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");

@@ -550,9 +550,34 @@ impl CreditRepository for SqliteCreditRepository {
         order_id: OrderId,
         amount: Decimal,
     ) -> Result<CreditAccount> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Credit reservation amount must be positive".to_string(),
+            ));
+        }
+
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
         let id = Uuid::new_v4();
+
+        // The reservation must fit within the customer's remaining credit
+        // (limit minus balance minus existing holds) — otherwise a hold can
+        // extend credit past the agreed line.
+        let (limit_str, balance_str, hold_str): (String, String, String) = conn
+            .query_row(
+                "SELECT credit_limit, current_balance, hold_amount FROM credit_accounts WHERE customer_id = ?",
+                [customer_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(map_db_error)?;
+        let available = parse_decimal_strict(&limit_str, "credit_account", "credit_limit")?
+            - parse_decimal_strict(&balance_str, "credit_account", "current_balance")?
+            - parse_decimal_strict(&hold_str, "credit_account", "hold_amount")?;
+        if amount > available {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient available credit: requested {amount}, available {available}"
+            )));
+        }
 
         // Create reservation
         conn.execute(
@@ -657,26 +682,40 @@ impl CreditRepository for SqliteCreditRepository {
         order_id: OrderId,
         amount: Decimal,
     ) -> Result<CreditAccount> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Credit charge amount must be positive".to_string(),
+            ));
+        }
+
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        // Release the reservation first
-        self.release_credit_reservation(customer_id, order_id)?;
-
-        // Add to balance.
-        //
-        // `current_balance` is a TEXT column (migration 021), so adding in SQL
-        // would coerce to IEEE-754 floats. Read the current value, add with
-        // `rust_decimal::Decimal`, and write the exact string back as a bound
-        // parameter.
-        let current_balance: String = conn
+        // Check the limit before releasing the reservation, so a rejected
+        // charge does not destroy the hold. The check involves only
+        // current_balance and credit_limit, which the release does not touch.
+        let (current_balance, limit_str): (String, String) = conn
             .query_row(
-                "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
+                "SELECT current_balance, credit_limit FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(map_db_error)?;
         let new_balance =
             parse_decimal_strict(&current_balance, "credit_account", "current_balance")? + amount;
+        let credit_limit = parse_decimal_strict(&limit_str, "credit_account", "credit_limit")?;
+        if new_balance > credit_limit {
+            return Err(CommerceError::ValidationError(format!(
+                "Charge would exceed credit limit: new balance {new_balance}, limit {credit_limit}"
+            )));
+        }
+
+        // Release the reservation, then add to balance.
+        //
+        // `current_balance` is a TEXT column (migration 021), so adding in SQL
+        // would coerce to IEEE-754 floats; `new_balance` was computed with
+        // `rust_decimal::Decimal` above and is written back as an exact bound
+        // parameter.
+        self.release_credit_reservation(customer_id, order_id)?;
         conn.execute(
             "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
             [&new_balance.to_string(), &customer_id.to_string()],
@@ -1294,6 +1333,70 @@ mod tests {
     }
 
     #[test]
+    fn reserve_credit_rejects_nonpositive_amount() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100));
+
+        assert!(repo.reserve_credit(cust, stateset_core::OrderId::new(), Decimal::ZERO).is_err());
+        assert!(repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(-10)).is_err());
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("ok").expect("found");
+        assert_eq!(acct.hold_amount, Decimal::ZERO);
+    }
+
+    #[test]
+    fn reserve_credit_rejects_exceeding_available() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100));
+
+        // A reservation larger than the whole line is rejected outright.
+        assert!(repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(150)).is_err());
+
+        // Reservations must respect what earlier holds already consumed.
+        repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(60)).expect("reserve 60");
+        assert!(repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(50)).is_err());
+        let acct =
+            repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(40)).expect("reserve 40");
+        assert_eq!(acct.hold_amount, dec!(100));
+        assert_eq!(acct.available_credit, Decimal::ZERO);
+    }
+
+    #[test]
+    fn charge_credit_rejects_nonpositive_amount() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100));
+
+        assert!(repo.charge_credit(cust, stateset_core::OrderId::new(), Decimal::ZERO).is_err());
+        assert!(repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(-10)).is_err());
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("ok").expect("found");
+        assert_eq!(acct.current_balance, Decimal::ZERO);
+    }
+
+    #[test]
+    fn charge_credit_rejects_exceeding_limit() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100));
+
+        let order = stateset_core::OrderId::new();
+        repo.reserve_credit(cust, order, dec!(60)).expect("reserve");
+        repo.charge_credit(cust, order, dec!(60)).expect("charge reserved amount");
+
+        // A further charge that would push the balance past the limit fails.
+        assert!(repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(50)).is_err());
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("ok").expect("found");
+        assert_eq!(acct.current_balance, dec!(60));
+
+        // Charging the exact remaining headroom still works.
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(40)).expect("charge 40");
+    }
+
+    #[test]
     fn two_reservations_keep_hold_amount_exact() {
         // Regression: hold_amount is a TEXT column and was mutated via
         // 'CAST(hold_amount AS REAL) + ?', so 0.10 + 0.20 stored as
@@ -1430,9 +1533,17 @@ mod tests {
         make_account(&repo, at_limit, dec!(100.00));
         repo.charge_credit(at_limit, stateset_core::OrderId::new(), dec!(100.00)).expect("charge");
 
+        // charge_credit now rejects charges past the limit, so create the
+        // over-limit state the way it legitimately arises: charge within a
+        // larger limit, then reduce the limit below the balance.
         let over = CustomerId::new();
-        make_account(&repo, over, dec!(100.00));
-        repo.charge_credit(over, stateset_core::OrderId::new(), dec!(100.01)).expect("charge over");
+        let over_acct = make_account(&repo, over, dec!(200.00));
+        repo.charge_credit(over, stateset_core::OrderId::new(), dec!(100.01)).expect("charge");
+        repo.update_credit_account(
+            over_acct.id,
+            UpdateCreditAccount { credit_limit: Some(dec!(100.00)), ..Default::default() },
+        )
+        .expect("reduce limit");
 
         let flagged = repo.get_over_limit_customers().expect("over limit");
         assert!(

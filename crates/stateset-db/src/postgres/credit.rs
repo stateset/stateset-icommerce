@@ -570,8 +570,37 @@ impl PgCreditRepository {
         order_id: Uuid,
         amount: Decimal,
     ) -> Result<CreditAccount> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Credit reservation amount must be positive".to_string(),
+            ));
+        }
+
         let now = Utc::now();
         let id = Uuid::new_v4();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // The reservation must fit within the customer's remaining credit
+        // (limit minus balance minus existing holds) — otherwise a hold can
+        // extend credit past the agreed line. Lock the account row so
+        // concurrent reservations serialize against the same headroom.
+        let (credit_limit, current_balance, hold_amount): (Decimal, Decimal, Decimal) =
+            sqlx::query_as(
+                "SELECT credit_limit, current_balance, hold_amount FROM credit_accounts
+                 WHERE customer_id = $1 FOR UPDATE",
+            )
+            .bind(customer_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let available = credit_limit - current_balance - hold_amount;
+        if amount > available {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient available credit: requested {amount}, available {available}"
+            )));
+        }
 
         sqlx::query(
             "INSERT INTO credit_reservations (id, customer_id, order_id, amount, status, created_at)
@@ -582,7 +611,7 @@ impl PgCreditRepository {
         .bind(order_id)
         .bind(amount)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -591,9 +620,11 @@ impl PgCreditRepository {
         )
         .bind(amount)
         .bind(customer_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.recalculate_available_credit_async(customer_id).await?;
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
@@ -647,6 +678,30 @@ impl PgCreditRepository {
         order_id: Uuid,
         amount: Decimal,
     ) -> Result<CreditAccount> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Credit charge amount must be positive".to_string(),
+            ));
+        }
+
+        // Check the limit before releasing the reservation, so a rejected
+        // charge does not destroy the hold. The check involves only
+        // current_balance and credit_limit, which the release does not touch.
+        let (credit_limit, current_balance): (Decimal, Decimal) = sqlx::query_as(
+            "SELECT credit_limit, current_balance FROM credit_accounts WHERE customer_id = $1",
+        )
+        .bind(customer_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        if current_balance + amount > credit_limit {
+            return Err(CommerceError::ValidationError(format!(
+                "Charge would exceed credit limit: new balance {}, limit {credit_limit}",
+                current_balance + amount
+            )));
+        }
+
         self.release_credit_reservation_async(customer_id, order_id).await?;
 
         sqlx::query(
