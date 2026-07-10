@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use super::{
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_enum_row,
-    parse_json_opt_row, parse_uuid_row,
+    parse_json_opt_row, parse_uuid_row, with_immediate_transaction,
 };
 
 #[derive(Debug)]
@@ -934,72 +934,63 @@ impl SqlitePromotionRepository {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
-        let mut conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-        })?;
-
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        // One transaction so a rejected limit leaves no orphaned usage row.
-        let tx = conn.transaction().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Transaction error: {e}"))
-        })?;
-
-        // Increment usage count on promotion. The limit is enforced here in
-        // the UPDATE itself — the evaluation-time check reads a snapshot, so
-        // concurrent redemptions would race past it otherwise.
-        let rows = tx
-            .execute(
+        // One IMMEDIATE transaction so a rejected limit leaves no orphaned
+        // usage row, and concurrent redemptions serialize (with retry) instead
+        // of failing with SQLITE_BUSY.
+        with_immediate_transaction(&self.pool, |tx| {
+            // Increment usage count on promotion. The limit is enforced here
+            // in the UPDATE itself — the evaluation-time check reads a
+            // snapshot, so concurrent redemptions would race past it
+            // otherwise.
+            let rows = tx.execute(
                 "UPDATE promotions SET usage_count = usage_count + 1
                  WHERE id = ?1 AND (total_usage_limit IS NULL OR usage_count < total_usage_limit)",
                 [promotion_id.to_string()],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        if rows == 0 {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Promotion not found or usage limit reached".to_string(),
-            ));
-        }
+            )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    stateset_core::CommerceError::ValidationError(
+                        "Promotion not found or usage limit reached".to_string(),
+                    ),
+                )));
+            }
 
-        // Increment coupon usage if applicable, with the same limit guard.
-        if let Some(coupon_id) = coupon_id {
-            let rows = tx
-                .execute(
+            // Increment coupon usage if applicable, with the same limit guard.
+            if let Some(coupon_id) = coupon_id {
+                let rows = tx.execute(
                     "UPDATE coupon_codes SET usage_count = usage_count + 1
                      WHERE id = ?1 AND (usage_limit IS NULL OR usage_count < usage_limit)",
                     [coupon_id.to_string()],
-                )
-                .map_err(|e| {
-                    stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-                })?;
-            if rows == 0 {
-                return Err(stateset_core::CommerceError::ValidationError(
-                    "Coupon not found or usage limit reached".to_string(),
-                ));
+                )?;
+                if rows == 0 {
+                    return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        stateset_core::CommerceError::ValidationError(
+                            "Coupon not found or usage limit reached".to_string(),
+                        ),
+                    )));
+                }
             }
-        }
 
-        tx.execute(
-            "INSERT INTO promotion_usage (id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount, currency, used_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            rusqlite::params![
-                id.to_string(),
-                promotion_id.to_string(),
-                coupon_id.map(|i| i.to_string()),
-                customer_id.map(|i| i.to_string()),
-                order_id.map(|i| i.to_string()),
-                cart_id.map(|i| i.to_string()),
-                discount_amount.to_string(),
-                currency,
-                now.to_rfc3339(),
-            ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
+            tx.execute(
+                "INSERT INTO promotion_usage (id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount, currency, used_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    id.to_string(),
+                    promotion_id.to_string(),
+                    coupon_id.map(|i| i.to_string()),
+                    customer_id.map(|i| i.to_string()),
+                    order_id.map(|i| i.to_string()),
+                    cart_id.map(|i| i.to_string()),
+                    discount_amount.to_string(),
+                    currency,
+                    now.to_rfc3339(),
+                ],
+            )?;
 
-        tx.commit().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Commit error: {e}"))
+            Ok(())
         })?;
 
         Ok(PromotionUsage {
@@ -1326,6 +1317,39 @@ mod tests {
 
         let fetched = repo.get(promo.id).expect("ok").expect("found");
         assert_eq!(fetched.usage_count, 1);
+    }
+
+    #[test]
+    fn concurrent_redemptions_cannot_exceed_usage_limit() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let repo = db.promotions();
+        let promo = make_pct_promo(&repo, "RACE-LIMIT", dec!(0.10));
+        repo.update(promo.id, UpdatePromotion { total_usage_limit: Some(5), ..Default::default() })
+            .expect("set limit");
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let promo_id = promo.id;
+            handles.push(thread::spawn(move || {
+                let repo = db.promotions();
+                barrier.wait();
+                repo.record_usage(promo_id, None, None, None, None, dec!(5.00), "USD")
+            }));
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 5, "exactly the limit may succeed: {results:?}");
+
+        let fetched = repo.get(promo.id).expect("ok").expect("found");
+        assert_eq!(fetched.usage_count, 5, "usage_count raced past the limit");
     }
 
     #[test]

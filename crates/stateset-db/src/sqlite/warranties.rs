@@ -3,6 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    with_immediate_transaction,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -633,25 +634,21 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let now = chrono::Utc::now();
         let claim_number = generate_claim_number();
 
-        {
-            let mut conn =
-                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let tx = conn.transaction().map_err(map_db_error)?;
-
+        // One IMMEDIATE transaction so concurrent claims serialize (with
+        // retry) instead of failing with SQLITE_BUSY.
+        with_immediate_transaction(&self.pool, |tx| {
             // Enforce max_claims in the increment itself — the is_valid()
             // pre-check above reads a snapshot, so concurrent claims would
             // race past the limit otherwise.
-            let rows = tx
-                .execute(
-                    "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ?
+            let rows = tx.execute(
+                "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ?
                      WHERE id = ? AND (max_claims IS NULL OR claims_used < max_claims)",
-                    params![now.to_rfc3339(), input.warranty_id.to_string()],
-                )
-                .map_err(map_db_error)?;
+                params![now.to_rfc3339(), input.warranty_id.to_string()],
+            )?;
             if rows == 0 {
-                return Err(CommerceError::ValidationError(
-                    "Warranty claim limit reached".to_string(),
-                ));
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Warranty claim limit reached".to_string()),
+                )));
             }
 
             tx.execute(
@@ -677,10 +674,10 @@ impl WarrantyRepository for SqliteWarrantyRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            ).map_err(map_db_error)?;
+            )?;
 
-            tx.commit().map_err(map_db_error)?;
-        }
+            Ok(())
+        })?;
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
