@@ -208,3 +208,123 @@ async fn postgres_async_order_create_emits_order_created_event() {
         "async orders().create() must emit a CommerceEvent::OrderCreated (sync/async parity)"
     );
 }
+
+/// The async facade must expose gift cards, store credits, and loyalty with
+/// the DB-layer money guards intact (sync/async parity).
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_async_gift_card_store_credit_loyalty_smoke() {
+    let url = match postgres_url() {
+        Some(url) => url,
+        None => {
+            eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+            return;
+        }
+    };
+
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
+    let unique = Uuid::new_v4().to_string();
+
+    // Gift cards: create, charge, guard, refund.
+    let card = commerce
+        .gift_cards()
+        .create(stateset_core::CreateGiftCard {
+            code: None,
+            initial_balance: dec!(50.00),
+            currency: stateset_core::CurrencyCode::USD,
+            recipient_email: None,
+            sender_name: None,
+            message: None,
+            expires_at: None,
+        })
+        .await
+        .expect("create gift card");
+    let txn = commerce.gift_cards().charge(card.id, dec!(30.00), None).await.expect("charge 30");
+    assert_eq!(txn.balance_after, dec!(20.00));
+    assert!(
+        commerce.gift_cards().charge(card.id, dec!(-1.00), None).await.is_err(),
+        "negative charge must be rejected through the async facade"
+    );
+    commerce.gift_cards().refund(card.id, dec!(5.00), None).await.expect("refund 5");
+
+    // Store credits: issue against a real customer, apply, guard.
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: format!("async-sc-{unique}@example.com"),
+            first_name: "Async".into(),
+            last_name: "Smoke".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("create customer");
+    let credit = commerce
+        .store_credits()
+        .create(stateset_core::CreateStoreCredit {
+            customer_id: customer.id,
+            amount: dec!(40.00),
+            currency: stateset_core::CurrencyCode::USD,
+            reason: stateset_core::StoreCreditReason::Return,
+            reference_id: None,
+            note: None,
+            expires_at: None,
+        })
+        .await
+        .expect("create store credit");
+    let txn = commerce
+        .store_credits()
+        .apply(credit.id.into_uuid(), dec!(15.00), None)
+        .await
+        .expect("apply 15");
+    assert_eq!(txn.balance_after, dec!(25.00));
+    assert!(
+        commerce.store_credits().apply(credit.id.into_uuid(), dec!(99.00), None).await.is_err(),
+        "overdraft apply must be rejected through the async facade"
+    );
+
+    // Loyalty: program, enrollment, earn, overdraft guard.
+    let program = commerce
+        .loyalty()
+        .create_program(stateset_core::CreateLoyaltyProgram {
+            name: format!("Async Program {unique}"),
+            description: None,
+            points_per_dollar: 1,
+            tiers: vec![],
+        })
+        .await
+        .expect("create program");
+    let account = commerce
+        .loyalty()
+        .enroll(stateset_core::EnrollCustomer { customer_id: customer.id, program_id: program.id })
+        .await
+        .expect("enroll");
+    commerce
+        .loyalty()
+        .adjust_points(stateset_core::AdjustPoints {
+            account_id: account.id,
+            points: 100,
+            transaction_type: stateset_core::LoyaltyTransactionType::Earn,
+            reference_id: None,
+            description: None,
+        })
+        .await
+        .expect("earn 100");
+    assert!(
+        commerce
+            .loyalty()
+            .adjust_points(stateset_core::AdjustPoints {
+                account_id: account.id,
+                points: -500,
+                transaction_type: stateset_core::LoyaltyTransactionType::Redeem,
+                reference_id: None,
+                description: None,
+            })
+            .await
+            .is_err(),
+        "overdraft redemption must be rejected through the async facade"
+    );
+    let fetched =
+        commerce.loyalty().get_account(account.id).await.expect("get account").expect("found");
+    assert_eq!(fetched.points_balance, 100);
+}

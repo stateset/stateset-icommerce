@@ -525,6 +525,16 @@ impl PostgresDatabase {
         PgLoyaltyProgramRepository::new(self.pool.clone())
     }
 
+    /// Get gift card repository
+    pub fn gift_cards(&self) -> PgGiftCardRepository {
+        PgGiftCardRepository::new(self.pool.clone())
+    }
+
+    /// Get store credit repository
+    pub fn store_credits(&self) -> PgStoreCreditRepository {
+        PgStoreCreditRepository::new(self.pool.clone())
+    }
+
     /// Get reward repository
     pub fn rewards(&self) -> PgRewardRepository {
         PgRewardRepository::new(self.pool.clone())

@@ -617,6 +617,21 @@ impl AsyncCommerce {
         AsyncWarranties::new(self.db.clone())
     }
 
+    /// Access async gift card operations.
+    pub fn gift_cards(&self) -> AsyncGiftCards {
+        AsyncGiftCards::new(self.db.clone())
+    }
+
+    /// Access async store credit operations.
+    pub fn store_credits(&self) -> AsyncStoreCredits {
+        AsyncStoreCredits::new(self.db.clone())
+    }
+
+    /// Access async loyalty operations.
+    pub fn loyalty(&self) -> AsyncLoyalty {
+        AsyncLoyalty::new(self.db.clone())
+    }
+
     /// Access async BOM operations.
     pub fn bom(&self) -> AsyncBom {
         AsyncBom::new(self.db.clone())
@@ -5375,8 +5390,180 @@ impl AsyncX402 {
     }
 }
 
+use stateset_core::{
+    AdjustPoints, AdjustStoreCredit, CreateGiftCard, CreateLoyaltyProgram, CreateStoreCredit,
+    CustomerId, EnrollCustomer, GiftCard, GiftCardFilter, GiftCardId, GiftCardTransaction,
+    LoyaltyAccount, LoyaltyAccountFilter, LoyaltyAccountId, LoyaltyProgram, LoyaltyProgramId,
+    LoyaltyTransaction, StoreCredit, StoreCreditFilter, StoreCreditTransaction, UpdateGiftCard,
+};
+
+/// Async gift card operations (create, spend, refund, disable).
+pub struct AsyncGiftCards {
+    db: Arc<PostgresDatabase>,
+}
+
+impl AsyncGiftCards {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
+        Self { db }
+    }
+
+    pub async fn create(&self, input: CreateGiftCard) -> Result<GiftCard> {
+        self.db.gift_cards().create_async(input).await
+    }
+
+    pub async fn get(&self, id: GiftCardId) -> Result<Option<GiftCard>> {
+        self.db.gift_cards().get_async(id).await
+    }
+
+    pub async fn get_by_code(&self, code: &str) -> Result<Option<GiftCard>> {
+        self.db.gift_cards().get_by_code_async(code).await
+    }
+
+    pub async fn update(&self, id: GiftCardId, input: UpdateGiftCard) -> Result<GiftCard> {
+        self.db.gift_cards().update_async(id, input).await
+    }
+
+    pub async fn list(&self, filter: GiftCardFilter) -> Result<Vec<GiftCard>> {
+        self.db.gift_cards().list_async(filter).await
+    }
+
+    /// Charge (debit) a gift card. Rejected for non-positive amounts,
+    /// inactive or expired cards, and insufficient balance.
+    pub async fn charge(
+        &self,
+        id: GiftCardId,
+        amount: Decimal,
+        reference_id: Option<String>,
+    ) -> Result<GiftCardTransaction> {
+        self.db.gift_cards().charge_async(id, amount, reference_id).await
+    }
+
+    /// Refund (credit) to a gift card. Rejected for non-positive amounts and
+    /// disabled cards.
+    pub async fn refund(
+        &self,
+        id: GiftCardId,
+        amount: Decimal,
+        reference_id: Option<String>,
+    ) -> Result<GiftCardTransaction> {
+        self.db.gift_cards().refund_async(id, amount, reference_id).await
+    }
+
+    pub async fn disable(&self, id: GiftCardId) -> Result<GiftCard> {
+        self.db.gift_cards().disable_async(id).await
+    }
+
+    pub async fn get_transactions(&self, id: GiftCardId) -> Result<Vec<GiftCardTransaction>> {
+        self.db.gift_cards().get_transactions_async(id).await
+    }
+}
+
+/// Async store credit operations (issue, adjust, apply).
+pub struct AsyncStoreCredits {
+    db: Arc<PostgresDatabase>,
+}
+
+impl AsyncStoreCredits {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
+        Self { db }
+    }
+
+    pub async fn create(&self, input: CreateStoreCredit) -> Result<StoreCredit> {
+        self.db.store_credits().create_async(input).await
+    }
+
+    pub async fn get(&self, id: Uuid) -> Result<Option<StoreCredit>> {
+        self.db.store_credits().get_async(id).await
+    }
+
+    pub async fn list(&self, filter: StoreCreditFilter) -> Result<Vec<StoreCredit>> {
+        self.db.store_credits().list_async(filter).await
+    }
+
+    /// Adjust a store credit balance. Rejected for voided or expired credits.
+    pub async fn adjust(&self, id: Uuid, input: AdjustStoreCredit) -> Result<StoreCredit> {
+        self.db.store_credits().adjust_async(id, input).await
+    }
+
+    /// Apply (debit) store credit, e.g. against an order. Rejected for
+    /// non-positive amounts, non-active or expired credits, and insufficient
+    /// balance.
+    pub async fn apply(
+        &self,
+        id: Uuid,
+        amount: Decimal,
+        reference_id: Option<String>,
+    ) -> Result<StoreCreditTransaction> {
+        self.db.store_credits().apply_async(id, amount, reference_id).await
+    }
+
+    pub async fn get_transactions(&self, id: Uuid) -> Result<Vec<StoreCreditTransaction>> {
+        self.db.store_credits().get_transactions_async(id).await
+    }
+}
+
+/// Async loyalty program operations (programs, accounts, points).
+pub struct AsyncLoyalty {
+    db: Arc<PostgresDatabase>,
+}
+
+impl AsyncLoyalty {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
+        Self { db }
+    }
+
+    pub async fn create_program(&self, input: CreateLoyaltyProgram) -> Result<LoyaltyProgram> {
+        self.db.loyalty().create_async(input).await
+    }
+
+    pub async fn get_program(&self, id: LoyaltyProgramId) -> Result<Option<LoyaltyProgram>> {
+        self.db.loyalty().get_async(id).await
+    }
+
+    pub async fn list_programs(&self) -> Result<Vec<LoyaltyProgram>> {
+        self.db.loyalty().list_async().await
+    }
+
+    pub async fn enroll(&self, input: EnrollCustomer) -> Result<LoyaltyAccount> {
+        self.db.loyalty().enroll_async(input).await
+    }
+
+    pub async fn get_account(&self, id: LoyaltyAccountId) -> Result<Option<LoyaltyAccount>> {
+        self.db.loyalty().get_account_async(id).await
+    }
+
+    pub async fn get_account_by_customer(
+        &self,
+        customer_id: CustomerId,
+        program_id: LoyaltyProgramId,
+    ) -> Result<Option<LoyaltyAccount>> {
+        self.db.loyalty().get_account_by_customer_async(customer_id, program_id).await
+    }
+
+    pub async fn list_accounts(&self, filter: LoyaltyAccountFilter) -> Result<Vec<LoyaltyAccount>> {
+        self.db.loyalty().list_accounts_async(filter).await
+    }
+
+    /// Adjust points on an account (earn, redeem, expire, ...). Redemptions
+    /// cannot overdraw the balance; unknown accounts error.
+    pub async fn adjust_points(&self, input: AdjustPoints) -> Result<LoyaltyTransaction> {
+        self.db.loyalty().adjust_points_async(input).await
+    }
+
+    pub async fn get_transactions(
+        &self,
+        account_id: LoyaltyAccountId,
+        limit: Option<u32>,
+    ) -> Result<Vec<LoyaltyTransaction>> {
+        self.db.loyalty().get_transactions_async(account_id, limit).await
+    }
+}
+
 impl_opaque_debug!(
     AsyncCommerce,
+    AsyncGiftCards,
+    AsyncStoreCredits,
+    AsyncLoyalty,
     AsyncOrders,
     AsyncInventory,
     AsyncCustomers,
