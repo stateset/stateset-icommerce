@@ -377,3 +377,105 @@ async fn postgres_promotion_per_customer_limit_guards() {
         .await
         .expect("bob first use");
 }
+
+/// End-to-end evaluation gates on the Postgres promotions path: inactive
+/// promotions, coupon limits, customer eligibility, and product scoping.
+#[tokio::test]
+async fn postgres_promotion_evaluation_gates() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let repo = stateset_db::postgres::PgPromotionRepository::new(db.pool().clone());
+    let alice = create_customer(&db).await;
+    let bob = create_customer(&db).await;
+
+    let request =
+        |code: &str, customer: Option<CustomerId>| stateset_core::ApplyPromotionsRequest {
+            cart_id: None,
+            customer_id: customer,
+            coupon_codes: vec![code.to_string()],
+            line_items: vec![
+                stateset_core::PromotionLineItem {
+                    id: "w".into(),
+                    product_id: None,
+                    variant_id: None,
+                    sku: Some("WIDGET".into()),
+                    category_ids: vec![],
+                    quantity: 1,
+                    unit_price: dec!(40.00),
+                    line_total: dec!(40.00),
+                },
+                stateset_core::PromotionLineItem {
+                    id: "g".into(),
+                    product_id: None,
+                    variant_id: None,
+                    sku: Some("GADGET".into()),
+                    category_ids: vec![],
+                    quantity: 1,
+                    unit_price: dec!(60.00),
+                    line_total: dec!(60.00),
+                },
+            ],
+            subtotal: dec!(100.00),
+            shipping_amount: dec!(10.00),
+            shipping_country: None,
+            shipping_state: None,
+            currency: CurrencyCode::USD,
+            is_first_order: false,
+        };
+
+    // A draft promotion must not apply via its coupon; activation with
+    // eligibility + product scoping then behaves exactly like SQLite.
+    let code = format!("PG-EVAL-{}", uuid::Uuid::new_v4());
+    let promo = repo
+        .create_async(stateset_core::CreatePromotion {
+            code: Some(code.clone()),
+            name: "PG eval gates".into(),
+            promotion_type: stateset_core::PromotionType::PercentageOff,
+            trigger: stateset_core::PromotionTrigger::CouponCode,
+            target: stateset_core::PromotionTarget::Order,
+            stacking: stateset_core::StackingBehavior::Stackable,
+            percentage_off: Some(dec!(0.10)),
+            applicable_skus: Some(vec!["WIDGET".into()]),
+            eligible_customer_ids: Some(vec![alice]),
+            ..Default::default()
+        })
+        .await
+        .expect("create promotion");
+    let coupon_code = format!("CP-{}", uuid::Uuid::new_v4());
+    repo.create_coupon_async(stateset_core::CreateCouponCode {
+        promotion_id: promo.id,
+        code: coupon_code.clone(),
+        usage_limit: None,
+        per_customer_limit: None,
+        starts_at: None,
+        ends_at: None,
+        metadata: None,
+    })
+    .await
+    .expect("create coupon");
+
+    // Draft: rejected.
+    let result =
+        repo.apply_promotions_async(request(&coupon_code, Some(alice))).await.expect("eval");
+    assert!(result.applied_promotions.is_empty(), "draft promo must not apply: {result:?}");
+
+    repo.activate_async(promo.id.into_uuid()).await.expect("activate");
+
+    // Ineligible customer: rejected with CustomerNotEligible.
+    let result = repo.apply_promotions_async(request(&coupon_code, Some(bob))).await.expect("eval");
+    assert!(
+        result
+            .rejected_promotions
+            .iter()
+            .any(|r| r.reason_code == stateset_core::RejectionReason::CustomerNotEligible),
+        "bob must be rejected: {result:?}"
+    );
+
+    // Eligible customer: discount scoped to the WIDGET line (10% of 40.00).
+    let result =
+        repo.apply_promotions_async(request(&coupon_code, Some(alice))).await.expect("eval");
+    assert_eq!(result.applied_promotions.len(), 1, "{result:?}");
+    assert_eq!(result.total_discount, dec!(4.00), "scoped to widgets: {result:?}");
+}
