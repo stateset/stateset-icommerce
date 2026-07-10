@@ -723,10 +723,15 @@ impl LotRepository for SqliteLotRepository {
         )
         .map_err(map_db_error)?;
 
-        // Update lot reserved quantity
+        // Update lot reserved quantity, computed in Decimal and floored at
+        // zero (the aggregate must never go negative even if it has drifted).
+        let lot: Lot = tx
+            .query_row("SELECT * FROM lots WHERE id = ?", [lot_id.to_string()], Self::row_to_lot)
+            .map_err(map_db_error)?;
+        let new_reserved = (lot.quantity_reserved - quantity).max(Decimal::ZERO);
         tx.execute(
-            "UPDATE lots SET quantity_reserved = quantity_reserved - ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![quantity.to_string(), now.to_rfc3339(), lot_id.to_string()],
+            "UPDATE lots SET quantity_reserved = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![new_reserved.to_string(), now.to_rfc3339(), lot_id.to_string()],
         )
         .map_err(map_db_error)?;
 
@@ -774,10 +779,23 @@ impl LotRepository for SqliteLotRepository {
         )
         .map_err(map_db_error)?;
 
-        // Update lot: reduce both reserved and remaining
+        // Update lot: reduce both reserved and remaining, computed in Decimal.
+        // Confirming consumes stock, so the remaining quantity must cover it.
+        let lot: Lot = tx
+            .query_row("SELECT * FROM lots WHERE id = ?", [lot_id.to_string()], Self::row_to_lot)
+            .map_err(map_db_error)?;
+        if lot.quantity_remaining < quantity {
+            return Err(CommerceError::InsufficientStock {
+                sku: lot.sku.clone(),
+                requested: quantity.to_string(),
+                available: lot.quantity_remaining.to_string(),
+            });
+        }
+        let new_reserved = (lot.quantity_reserved - quantity).max(Decimal::ZERO);
+        let new_remaining = lot.quantity_remaining - quantity;
         tx.execute(
-            "UPDATE lots SET quantity_reserved = quantity_reserved - ?, quantity_remaining = quantity_remaining - ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![quantity.to_string(), quantity.to_string(), now.to_rfc3339(), lot_id.to_string()],
+            "UPDATE lots SET quantity_reserved = ?, quantity_remaining = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![new_reserved.to_string(), new_remaining.to_string(), now.to_rfc3339(), lot_id.to_string()],
         )
         .map_err(map_db_error)?;
 
@@ -801,15 +819,47 @@ impl LotRepository for SqliteLotRepository {
     }
 
     fn transfer(&self, input: TransferLot) -> Result<LotTransaction> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Transfer quantity must be positive".to_string(),
+            ));
+        }
+
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
 
-        // Update from location
+        // The source location must exist and cover the transfer — a blind
+        // decrement would silently mint quantity at the destination when the
+        // source row is missing, or drive it negative when short.
+        let from_qty_str: String = tx
+            .query_row(
+                "SELECT quantity FROM lot_locations WHERE lot_id = ? AND location_id = ?",
+                rusqlite::params![input.lot_id.to_string(), input.from_location_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::ValidationError(format!(
+                    "Lot {} has no quantity at source location {}",
+                    input.lot_id, input.from_location_id
+                )),
+                e => map_db_error(e),
+            })?;
+        let from_qty = parse_decimal_strict(&from_qty_str, "lot_location", "quantity")?;
+        if from_qty < input.quantity {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient quantity at source location {}: requested {}, available {}",
+                input.from_location_id, input.quantity, from_qty
+            )));
+        }
+
+        // Compute both sides in Decimal (TEXT-column SQL arithmetic coerces
+        // through IEEE-754 floats).
+        let new_from_qty = from_qty - input.quantity;
         tx.execute(
-            "UPDATE lot_locations SET quantity = quantity - ?, updated_at = ? WHERE lot_id = ? AND location_id = ?",
+            "UPDATE lot_locations SET quantity = ?, updated_at = ? WHERE lot_id = ? AND location_id = ?",
             rusqlite::params![
-                input.quantity.to_string(),
+                new_from_qty.to_string(),
                 now.to_rfc3339(),
                 input.lot_id.to_string(),
                 input.from_location_id,
@@ -817,16 +867,30 @@ impl LotRepository for SqliteLotRepository {
         )
         .map_err(map_db_error)?;
 
-        // Update or insert to location
+        let existing_dest: Option<String> = tx
+            .query_row(
+                "SELECT quantity FROM lot_locations WHERE lot_id = ? AND location_id = ?",
+                rusqlite::params![input.lot_id.to_string(), input.to_location_id],
+                |row| row.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(map_db_error(e)),
+            })?;
+        let new_dest_qty = match existing_dest {
+            Some(q) => parse_decimal_strict(&q, "lot_location", "quantity")? + input.quantity,
+            None => input.quantity,
+        };
         tx.execute(
             "INSERT INTO lot_locations (lot_id, location_id, quantity, updated_at)
              VALUES (?, ?, ?, ?)
              ON CONFLICT(lot_id, location_id) DO UPDATE SET
-             quantity = quantity + excluded.quantity, updated_at = excluded.updated_at",
+             quantity = excluded.quantity, updated_at = excluded.updated_at",
             rusqlite::params![
                 input.lot_id.to_string(),
                 input.to_location_id,
-                input.quantity.to_string(),
+                new_dest_qty.to_string(),
                 now.to_rfc3339(),
             ],
         )
@@ -1492,6 +1556,122 @@ mod tests {
             ..Default::default()
         })
         .expect("create lot")
+    }
+
+    #[test]
+    fn transfer_rejects_missing_source_location() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-XFER-MISS", dec!(100));
+
+        // Location 99 holds nothing for this lot; the transfer must not
+        // silently mint quantity at the destination.
+        let err = repo
+            .transfer(TransferLot {
+                lot_id: lot.id,
+                from_location_id: 99,
+                to_location_id: 2,
+                quantity: dec!(10),
+                reason: None,
+                performed_by: None,
+            })
+            .expect_err("transfer from empty location must fail");
+        assert!(
+            matches!(
+                err,
+                CommerceError::ValidationError(_) | CommerceError::InsufficientStock { .. }
+            ),
+            "got {err:?}"
+        );
+
+        let locations = repo.get_lot_locations(lot.id).expect("locations");
+        assert!(
+            locations.iter().all(|l| l.location_id != 2),
+            "destination must not gain quantity: {locations:?}"
+        );
+    }
+
+    #[test]
+    fn transfer_rejects_insufficient_source_quantity() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-XFER-SHORT", dec!(5));
+
+        let err = repo
+            .transfer(TransferLot {
+                lot_id: lot.id,
+                from_location_id: 1,
+                to_location_id: 2,
+                quantity: dec!(10),
+                reason: None,
+                performed_by: None,
+            })
+            .expect_err("transfer exceeding source quantity must fail");
+        assert!(
+            matches!(
+                err,
+                CommerceError::ValidationError(_) | CommerceError::InsufficientStock { .. }
+            ),
+            "got {err:?}"
+        );
+
+        // Source keeps its full quantity; destination gains nothing.
+        let locations = repo.get_lot_locations(lot.id).expect("locations");
+        let source = locations.iter().find(|l| l.location_id == 1).expect("source");
+        assert_eq!(source.quantity, dec!(5));
+        assert!(locations.iter().all(|l| l.location_id != 2));
+    }
+
+    #[test]
+    fn release_reservation_keeps_reserved_exact() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-EXACT", dec!(1));
+
+        // Two fractional reservations; releasing the first must leave the
+        // aggregate exactly 0.2 (TEXT-column SQL arithmetic would drift
+        // through IEEE-754: 0.5 - 0.3 = 0.19999999999999998).
+        let first = repo
+            .reserve(ReserveLot {
+                lot_id: lot.id,
+                quantity: dec!(0.3),
+                reference_type: "order".into(),
+                reference_id: Uuid::new_v4(),
+                expires_in_seconds: None,
+            })
+            .expect("reserve 0.3");
+        repo.reserve(ReserveLot {
+            lot_id: lot.id,
+            quantity: dec!(0.2),
+            reference_type: "order".into(),
+            reference_id: Uuid::new_v4(),
+            expires_in_seconds: None,
+        })
+        .expect("reserve 0.2");
+
+        repo.release_reservation(first).expect("release");
+
+        let fetched = repo.get(lot.id).expect("get").expect("found");
+        assert_eq!(fetched.quantity_reserved, dec!(0.2), "reserved drifted");
+    }
+
+    #[test]
+    fn confirm_reservation_consumes_exact() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-CONFIRM", dec!(1));
+
+        let reservation = repo
+            .reserve(ReserveLot {
+                lot_id: lot.id,
+                quantity: dec!(0.3),
+                reference_type: "order".into(),
+                reference_id: Uuid::new_v4(),
+                expires_in_seconds: None,
+            })
+            .expect("reserve 0.3");
+
+        repo.confirm_reservation(reservation).expect("confirm");
+
+        let fetched = repo.get(lot.id).expect("get").expect("found");
+        assert_eq!(fetched.quantity_reserved, dec!(0));
+        assert_eq!(fetched.quantity_remaining, dec!(0.7), "remaining drifted");
     }
 
     #[test]

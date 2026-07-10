@@ -649,8 +649,10 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?;
 
+        // Floor the aggregate at zero — it must never go negative even if it
+        // has drifted relative to the reservation rows.
         sqlx::query(
-            "UPDATE lots SET quantity_reserved = quantity_reserved - $1, updated_at = $2 WHERE id = $3",
+            "UPDATE lots SET quantity_reserved = GREATEST(quantity_reserved - $1, 0), updated_at = $2 WHERE id = $3",
         )
         .bind(row.quantity)
         .bind(now)
@@ -701,8 +703,24 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?;
 
+        // Confirming consumes stock: lock the lot row, require the remaining
+        // quantity to cover the reservation, and floor the reserved aggregate.
+        let (sku, quantity_remaining): (String, rust_decimal::Decimal) =
+            sqlx::query_as("SELECT sku, quantity_remaining FROM lots WHERE id = $1 FOR UPDATE")
+                .bind(row.lot_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if quantity_remaining < row.quantity {
+            return Err(CommerceError::InsufficientStock {
+                sku,
+                requested: row.quantity.to_string(),
+                available: quantity_remaining.to_string(),
+            });
+        }
+
         sqlx::query(
-            "UPDATE lots SET quantity_reserved = quantity_reserved - $1, quantity_remaining = quantity_remaining - $1, updated_at = $2 WHERE id = $3",
+            "UPDATE lots SET quantity_reserved = GREATEST(quantity_reserved - $1, 0), quantity_remaining = quantity_remaining - $1, updated_at = $2 WHERE id = $3",
         )
         .bind(row.quantity)
         .bind(now)
@@ -732,8 +750,38 @@ impl PgLotRepository {
     }
 
     pub async fn transfer_async(&self, input: TransferLot) -> Result<LotTransaction> {
+        if input.quantity <= rust_decimal::Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Transfer quantity must be positive".to_string(),
+            ));
+        }
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
+
+        // The source location must exist and cover the transfer — a blind
+        // decrement would silently mint quantity at the destination when the
+        // source row is missing, or drive it negative when short.
+        let from_qty: rust_decimal::Decimal = sqlx::query_scalar(
+            "SELECT quantity FROM lot_locations WHERE lot_id = $1 AND location_id = $2 FOR UPDATE",
+        )
+        .bind(input.lot_id)
+        .bind(input.from_location_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or_else(|| {
+            CommerceError::ValidationError(format!(
+                "Lot {} has no quantity at source location {}",
+                input.lot_id, input.from_location_id
+            ))
+        })?;
+        if from_qty < input.quantity {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient quantity at source location {}: requested {}, available {}",
+                input.from_location_id, input.quantity, from_qty
+            )));
+        }
 
         sqlx::query(
             "UPDATE lot_locations SET quantity = quantity - $1, updated_at = $2 WHERE lot_id = $3 AND location_id = $4",

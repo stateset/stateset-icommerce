@@ -179,6 +179,62 @@ async fn postgres_store_credit_apply_guards() {
 }
 
 #[tokio::test]
+async fn postgres_lot_transfer_guards() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let repo = stateset_db::postgres::PgLotRepository::new(db.pool().clone());
+    let lot = repo
+        .create_async(stateset_core::CreateLot {
+            sku: format!("XFER-{}", uuid::Uuid::new_v4()),
+            quantity: dec!(5),
+            initial_location_id: Some(1),
+            ..Default::default()
+        })
+        .await
+        .expect("create lot");
+
+    let base = stateset_core::TransferLot {
+        lot_id: lot.id,
+        quantity: dec!(10),
+        from_location_id: 99,
+        to_location_id: 2,
+        reason: None,
+        performed_by: None,
+    };
+
+    // Missing source location must not mint quantity at the destination.
+    assert_validation(
+        repo.transfer_async(stateset_core::TransferLot { ..base.clone() }).await.unwrap_err(),
+    );
+    // Short source rejected; non-positive quantity rejected.
+    assert_validation(
+        repo.transfer_async(stateset_core::TransferLot { from_location_id: 1, ..base.clone() })
+            .await
+            .unwrap_err(),
+    );
+    assert_validation(
+        repo.transfer_async(stateset_core::TransferLot {
+            from_location_id: 1,
+            quantity: dec!(-1),
+            ..base.clone()
+        })
+        .await
+        .unwrap_err(),
+    );
+
+    // A covered transfer still works.
+    repo.transfer_async(stateset_core::TransferLot {
+        from_location_id: 1,
+        quantity: dec!(3),
+        ..base
+    })
+    .await
+    .expect("valid transfer");
+}
+
+#[tokio::test]
 async fn postgres_loyalty_adjust_guards() {
     let Some(db) = connect().await else {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
