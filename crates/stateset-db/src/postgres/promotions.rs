@@ -805,6 +805,47 @@ impl PgPromotionRepository {
                         continue;
                     }
 
+                    // Validity window (status alone may lag wall-clock expiry).
+                    let now = Utc::now();
+                    if coupon.starts_at.is_some_and(|s| s > now)
+                        || coupon.ends_at.is_some_and(|e| e < now)
+                    {
+                        result.rejected_promotions.push(RejectedPromotion {
+                            promotion_id: None,
+                            coupon_code: Some(code.clone()),
+                            reason: "Coupon is outside its validity window".into(),
+                            reason_code: RejectionReason::Expired,
+                        });
+                        continue;
+                    }
+
+                    // Coupon usage limits (record_usage re-checks these
+                    // transactionally; here they produce friendly rejections).
+                    if coupon.usage_limit.is_some_and(|l| coupon.usage_count >= l) {
+                        result.rejected_promotions.push(RejectedPromotion {
+                            promotion_id: None,
+                            coupon_code: Some(code.clone()),
+                            reason: "Coupon usage limit reached".into(),
+                            reason_code: RejectionReason::UsageLimitReached,
+                        });
+                        continue;
+                    }
+                    if let (Some(limit), Some(customer_id)) =
+                        (coupon.per_customer_limit, request.customer_id)
+                    {
+                        if self.coupon_customer_usage_count(coupon.id, customer_id).await?
+                            >= i64::from(limit)
+                        {
+                            result.rejected_promotions.push(RejectedPromotion {
+                                promotion_id: None,
+                                coupon_code: Some(code.clone()),
+                                reason: "Per-customer coupon usage limit reached".into(),
+                                reason_code: RejectionReason::UsageLimitReached,
+                            });
+                            continue;
+                        }
+                    }
+
                     if let Some(promo) = self.get_async(coupon.promotion_id).await? {
                         coupon_promotions.push((promo, Some(code.clone())));
                     }
@@ -919,6 +960,22 @@ impl PgPromotionRepository {
         result.grand_total = result.discounted_subtotal + result.final_shipping;
 
         Ok(result)
+    }
+
+    /// Times a customer has used a specific coupon (from the usage ledger).
+    async fn coupon_customer_usage_count(
+        &self,
+        coupon_id: Uuid,
+        customer_id: CustomerId,
+    ) -> Result<i64> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM promotion_usage WHERE coupon_id = $1 AND customer_id = $2",
+        )
+        .bind(coupon_id)
+        .bind(customer_id.into_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)
     }
 
     /// Times a customer has used a promotion (from the usage ledger).

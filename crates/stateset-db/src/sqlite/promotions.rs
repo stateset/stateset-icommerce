@@ -584,6 +584,47 @@ impl SqlitePromotionRepository {
                         continue;
                     }
 
+                    // Validity window (status alone may lag wall-clock expiry).
+                    let now = Utc::now();
+                    if coupon.starts_at.is_some_and(|s| s > now)
+                        || coupon.ends_at.is_some_and(|e| e < now)
+                    {
+                        result.rejected_promotions.push(RejectedPromotion {
+                            promotion_id: None,
+                            coupon_code: Some(code.clone()),
+                            reason: "Coupon is outside its validity window".into(),
+                            reason_code: RejectionReason::Expired,
+                        });
+                        continue;
+                    }
+
+                    // Coupon usage limits (record_usage re-checks these
+                    // transactionally; here they produce friendly rejections).
+                    if coupon.usage_limit.is_some_and(|l| coupon.usage_count >= l) {
+                        result.rejected_promotions.push(RejectedPromotion {
+                            promotion_id: None,
+                            coupon_code: Some(code.clone()),
+                            reason: "Coupon usage limit reached".into(),
+                            reason_code: RejectionReason::UsageLimitReached,
+                        });
+                        continue;
+                    }
+                    if let (Some(limit), Some(customer_id)) =
+                        (coupon.per_customer_limit, request.customer_id)
+                    {
+                        if self.coupon_customer_usage_count(coupon.id, customer_id)?
+                            >= i64::from(limit)
+                        {
+                            result.rejected_promotions.push(RejectedPromotion {
+                                promotion_id: None,
+                                coupon_code: Some(code.clone()),
+                                reason: "Per-customer coupon usage limit reached".into(),
+                                reason_code: RejectionReason::UsageLimitReached,
+                            });
+                            continue;
+                        }
+                    }
+
                     if let Some(promo) = self.get(coupon.promotion_id)? {
                         coupon_promotions.push((promo, Some(code.clone())));
                     }
@@ -938,6 +979,19 @@ impl SqlitePromotionRepository {
     // ========================================================================
     // Usage Tracking
     // ========================================================================
+
+    /// Times a customer has used a specific coupon (from the usage ledger).
+    fn coupon_customer_usage_count(&self, coupon_id: Uuid, customer_id: CustomerId) -> Result<i64> {
+        let conn = self.pool.get().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
+        })?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM promotion_usage WHERE coupon_id = ?1 AND customer_id = ?2",
+            [coupon_id.to_string(), customer_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Query error: {e}")))
+    }
 
     /// Times a customer has used a promotion (from the usage ledger).
     fn customer_usage_count(
@@ -1443,6 +1497,93 @@ mod tests {
             .expect("bob first use");
         repo.record_usage(promo.id, None, None, None, None, dec!(5.00), "USD")
             .expect("anonymous use");
+    }
+
+    fn eval_request(code: &str, customer_id: Option<CustomerId>) -> ApplyPromotionsRequest {
+        ApplyPromotionsRequest {
+            cart_id: None,
+            customer_id,
+            coupon_codes: vec![code.to_string()],
+            line_items: vec![],
+            subtotal: dec!(100.00),
+            shipping_amount: dec!(10.00),
+            shipping_country: None,
+            shipping_state: None,
+            currency: CurrencyCode::USD,
+            is_first_order: false,
+        }
+    }
+
+    #[test]
+    fn apply_promotions_rejects_exhausted_and_expired_coupons() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let promo = make_pct_promo(&repo, "EVAL-CP", dec!(0.10));
+
+        // Coupon whose total usage limit is already exhausted.
+        let exhausted = repo
+            .create_coupon(CreateCouponCode {
+                promotion_id: promo.id,
+                code: "EXHAUSTED".into(),
+                usage_limit: Some(0),
+                per_customer_limit: None,
+                starts_at: None,
+                ends_at: None,
+                metadata: None,
+            })
+            .expect("create coupon");
+        let result = repo.apply_promotions(eval_request(&exhausted.code, None)).expect("eval");
+        assert!(
+            result
+                .rejected_promotions
+                .iter()
+                .any(|r| r.reason_code == RejectionReason::UsageLimitReached),
+            "exhausted coupon must be rejected at evaluation: {result:?}"
+        );
+        assert!(result.applied_promotions.is_empty());
+
+        // Coupon whose validity window has passed (status still Active).
+        let expired = repo
+            .create_coupon(CreateCouponCode {
+                promotion_id: promo.id,
+                code: "EXPIRED-WINDOW".into(),
+                usage_limit: None,
+                per_customer_limit: None,
+                starts_at: None,
+                ends_at: Some(Utc::now() - chrono::Duration::days(1)),
+                metadata: None,
+            })
+            .expect("create coupon");
+        let result = repo.apply_promotions(eval_request(&expired.code, None)).expect("eval");
+        assert!(
+            result.rejected_promotions.iter().any(|r| r.reason_code == RejectionReason::Expired),
+            "date-expired coupon must be rejected at evaluation: {result:?}"
+        );
+
+        // Per-customer limit already consumed by this customer.
+        let alice = make_customer(&db);
+        let per_cust = repo
+            .create_coupon(CreateCouponCode {
+                promotion_id: promo.id,
+                code: "ONE-PER".into(),
+                usage_limit: None,
+                per_customer_limit: Some(1),
+                starts_at: None,
+                ends_at: None,
+                metadata: None,
+            })
+            .expect("create coupon");
+        repo.record_usage(promo.id, Some(per_cust.id), Some(alice), None, None, dec!(5.00), "USD")
+            .expect("first use");
+        let result =
+            repo.apply_promotions(eval_request(&per_cust.code, Some(alice))).expect("eval");
+        assert!(
+            result
+                .rejected_promotions
+                .iter()
+                .any(|r| r.reason_code == RejectionReason::UsageLimitReached),
+            "per-customer-exhausted coupon must be rejected at evaluation: {result:?}"
+        );
     }
 
     #[test]
