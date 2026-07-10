@@ -771,6 +771,30 @@ impl PgWarrantyRepository {
         let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
+        // Payout guards: amounts must be non-negative, and the combined
+        // refund + repair payout must fit the warranty's coverage limit.
+        if input.refund_amount.is_some() || input.repair_cost.is_some() {
+            let new_refund = input.refund_amount.or(claim.refund_amount);
+            let new_repair = input.repair_cost.or(claim.repair_cost);
+            if new_refund.is_some_and(|a| a < Decimal::ZERO)
+                || new_repair.is_some_and(|a| a < Decimal::ZERO)
+            {
+                return Err(CommerceError::ValidationError(
+                    "Claim payout amounts must be non-negative".to_string(),
+                ));
+            }
+            let warranty =
+                self.get_async(claim.warranty_id).await?.ok_or(CommerceError::NotFound)?;
+            if let Some(max) = warranty.max_coverage_amount {
+                let total = new_refund.unwrap_or_default() + new_repair.unwrap_or_default();
+                if total > max {
+                    return Err(CommerceError::ValidationError(format!(
+                        "Claim payout {total} exceeds warranty coverage limit {max}"
+                    )));
+                }
+            }
+        }
+
         let status = input.status.unwrap_or(claim.status);
         if status != claim.status {
             Self::ensure_claim_transition(claim.status, status)?;
