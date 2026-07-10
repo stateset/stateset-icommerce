@@ -694,6 +694,47 @@ pub fn generate_coupon_code(prefix: Option<&str>) -> String {
 }
 
 impl Promotion {
+    /// Whether this promotion restricts which products it applies to
+    /// (any applicability or exclusion list is non-empty).
+    #[must_use]
+    pub fn has_product_scoping(&self) -> bool {
+        !self.applicable_product_ids.is_empty()
+            || !self.applicable_category_ids.is_empty()
+            || !self.applicable_skus.is_empty()
+            || !self.excluded_product_ids.is_empty()
+            || !self.excluded_category_ids.is_empty()
+    }
+
+    /// Whether a line item is in scope for this promotion's product lists.
+    ///
+    /// Exclusions win over applicability. When any applicability list is set,
+    /// the item must match at least one of them; otherwise every
+    /// non-excluded item is in scope.
+    #[must_use]
+    pub fn item_in_scope(&self, item: &PromotionLineItem) -> bool {
+        if item.product_id.is_some_and(|p| self.excluded_product_ids.contains(&p)) {
+            return false;
+        }
+        if item.category_ids.iter().any(|c| self.excluded_category_ids.contains(c)) {
+            return false;
+        }
+
+        let has_applicability = !self.applicable_product_ids.is_empty()
+            || !self.applicable_category_ids.is_empty()
+            || !self.applicable_skus.is_empty();
+        if has_applicability {
+            let by_product =
+                item.product_id.is_some_and(|p| self.applicable_product_ids.contains(&p));
+            let by_category =
+                item.category_ids.iter().any(|c| self.applicable_category_ids.contains(c));
+            let by_sku =
+                item.sku.as_deref().is_some_and(|s| self.applicable_skus.iter().any(|a| a == s));
+            return by_product || by_category || by_sku;
+        }
+
+        true
+    }
+
     /// Check if promotion is currently active
     #[must_use]
     pub fn is_active(&self) -> bool {

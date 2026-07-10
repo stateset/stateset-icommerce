@@ -919,7 +919,24 @@ impl SqlitePromotionRepository {
         request: &ApplyPromotionsRequest,
         already_discounted: Decimal,
     ) -> Result<Decimal> {
-        let applicable_amount = request.subtotal - already_discounted;
+        // When the promotion scopes to specific products, the discount base is
+        // the eligible line items' worth, not the whole subtotal. A scoped
+        // promotion with no line-item data cannot verify eligibility and
+        // fails closed (zero base).
+        let scoped = promo.has_product_scoping();
+        let (eligible_subtotal, eligible_qty) = if scoped {
+            request
+                .line_items
+                .iter()
+                .filter(|item| promo.item_in_scope(item))
+                .fold((Decimal::ZERO, 0i32), |(total, qty), item| {
+                    (total + item.line_total, qty + item.quantity)
+                })
+        } else {
+            (request.subtotal, request.line_items.iter().map(|i| i.quantity).sum())
+        };
+        let applicable_amount =
+            (eligible_subtotal.min(request.subtotal - already_discounted)).max(Decimal::ZERO);
 
         let discount = match promo.promotion_type {
             PromotionType::PercentageOff | PromotionType::FirstOrderDiscount => {
@@ -929,7 +946,12 @@ impl SqlitePromotionRepository {
                     Decimal::ZERO
                 }
             }
-            PromotionType::FixedAmountOff => promo.fixed_amount_off.unwrap_or(Decimal::ZERO),
+            PromotionType::FixedAmountOff => {
+                let fixed = promo.fixed_amount_off.unwrap_or(Decimal::ZERO);
+                // A scoped fixed discount cannot exceed the eligible items'
+                // worth; unscoped keeps its historical whole-order semantics.
+                if scoped { fixed.min(applicable_amount) } else { fixed }
+            }
             PromotionType::FreeShipping => request.shipping_amount,
             PromotionType::TieredDiscount => {
                 if let Some(tiers) = &promo.tiers {
@@ -939,19 +961,15 @@ impl SqlitePromotionRepository {
                 }
             }
             PromotionType::BuyXGetY => {
-                // Simplified BOGO calculation
+                // Simplified BOGO calculation over in-scope quantities
                 if let (Some(buy), Some(get), Some(discount_pct)) =
                     (promo.buy_quantity, promo.get_quantity, promo.get_discount_percent)
                 {
-                    let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
+                    let total_qty: i32 = eligible_qty;
                     let sets = total_qty / (buy + get);
-                    if sets > 0 {
-                        // Find average item price for simplicity
-                        let avg_price = if request.line_items.is_empty() {
-                            Decimal::ZERO
-                        } else {
-                            request.subtotal / Decimal::from(total_qty)
-                        };
+                    if sets > 0 && total_qty > 0 {
+                        // Find average in-scope item price for simplicity
+                        let avg_price = eligible_subtotal / Decimal::from(total_qty);
                         avg_price * Decimal::from(sets * get) * discount_pct
                     } else {
                         Decimal::ZERO
@@ -1541,6 +1559,151 @@ mod tests {
             currency: CurrencyCode::USD,
             is_first_order: false,
         }
+    }
+
+    fn line_item(
+        sku: &str,
+        product_id: Option<stateset_core::ProductId>,
+        line_total: Decimal,
+    ) -> stateset_core::PromotionLineItem {
+        stateset_core::PromotionLineItem {
+            id: sku.to_string(),
+            product_id,
+            variant_id: None,
+            sku: Some(sku.to_string()),
+            category_ids: vec![],
+            quantity: 1,
+            unit_price: line_total,
+            line_total,
+        }
+    }
+
+    fn scoped_promo_with_coupon(
+        repo: &SqlitePromotionRepository,
+        code: &str,
+        input: CreatePromotion,
+    ) -> Promotion {
+        let promo = repo.create(input).expect("create promo");
+        repo.activate(promo.id).expect("activate");
+        repo.create_coupon(CreateCouponCode {
+            promotion_id: promo.id,
+            code: code.into(),
+            usage_limit: None,
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .expect("create coupon");
+        promo
+    }
+
+    #[test]
+    fn apply_promotions_scopes_discount_to_applicable_items() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        scoped_promo_with_coupon(
+            &repo,
+            "WIDGETS-ONLY",
+            CreatePromotion {
+                code: Some("WIDGET-10".into()),
+                name: "10% off widgets".into(),
+                promotion_type: PromotionType::PercentageOff,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                percentage_off: Some(dec!(0.10)),
+                applicable_skus: Some(vec!["WIDGET".into()]),
+                ..Default::default()
+            },
+        );
+
+        let mut request = eval_request("WIDGETS-ONLY", None);
+        request.line_items =
+            vec![line_item("WIDGET", None, dec!(40.00)), line_item("GADGET", None, dec!(60.00))];
+
+        let result = repo.apply_promotions(request).expect("eval");
+        assert_eq!(result.applied_promotions.len(), 1, "{result:?}");
+        assert_eq!(
+            result.total_discount,
+            dec!(4.00),
+            "10% must apply to the 40.00 of eligible items, not the 100.00 subtotal: {result:?}"
+        );
+    }
+
+    #[test]
+    fn apply_promotions_respects_product_exclusions() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let excluded_product = stateset_core::ProductId::new();
+        scoped_promo_with_coupon(
+            &repo,
+            "NO-GIFTCARDS",
+            CreatePromotion {
+                code: Some("SITEWIDE-10".into()),
+                name: "10% off except gift cards".into(),
+                promotion_type: PromotionType::PercentageOff,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                percentage_off: Some(dec!(0.10)),
+                excluded_product_ids: Some(vec![excluded_product]),
+                ..Default::default()
+            },
+        );
+
+        let mut request = eval_request("NO-GIFTCARDS", None);
+        request.line_items = vec![
+            line_item("GIFTCARD", Some(excluded_product), dec!(60.00)),
+            line_item("MUG", Some(stateset_core::ProductId::new()), dec!(40.00)),
+        ];
+
+        let result = repo.apply_promotions(request).expect("eval");
+        assert_eq!(
+            result.total_discount,
+            dec!(4.00),
+            "excluded products must not contribute to the discount base: {result:?}"
+        );
+    }
+
+    #[test]
+    fn apply_promotions_caps_scoped_fixed_discount_and_fails_closed() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        scoped_promo_with_coupon(
+            &repo,
+            "WIDGET-20-OFF",
+            CreatePromotion {
+                code: Some("W20".into()),
+                name: "20 off widgets".into(),
+                promotion_type: PromotionType::FixedAmountOff,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                fixed_amount_off: Some(dec!(20.00)),
+                applicable_skus: Some(vec!["WIDGET".into()]),
+                ..Default::default()
+            },
+        );
+
+        // Eligible items are worth less than the fixed discount.
+        let mut request = eval_request("WIDGET-20-OFF", None);
+        request.line_items =
+            vec![line_item("WIDGET", None, dec!(15.00)), line_item("GADGET", None, dec!(85.00))];
+        let result = repo.apply_promotions(request).expect("eval");
+        assert_eq!(
+            result.total_discount,
+            dec!(15.00),
+            "a scoped fixed discount must not exceed the eligible items' worth: {result:?}"
+        );
+
+        // A scoped promotion with no line-item data cannot verify eligibility
+        // and must fail closed (no discount).
+        let result = repo.apply_promotions(eval_request("WIDGET-20-OFF", None)).expect("eval");
+        assert!(
+            result.applied_promotions.is_empty(),
+            "scoped promo without line items must not discount: {result:?}"
+        );
     }
 
     #[test]

@@ -1300,7 +1300,24 @@ impl PgPromotionRepository {
         request: &ApplyPromotionsRequest,
         already_discounted: Decimal,
     ) -> Result<Decimal> {
-        let applicable_amount = request.subtotal - already_discounted;
+        // When the promotion scopes to specific products, the discount base is
+        // the eligible line items' worth, not the whole subtotal. A scoped
+        // promotion with no line-item data cannot verify eligibility and
+        // fails closed (zero base).
+        let scoped = promo.has_product_scoping();
+        let (eligible_subtotal, eligible_qty) = if scoped {
+            request
+                .line_items
+                .iter()
+                .filter(|item| promo.item_in_scope(item))
+                .fold((Decimal::ZERO, 0i32), |(total, qty), item| {
+                    (total + item.line_total, qty + item.quantity)
+                })
+        } else {
+            (request.subtotal, request.line_items.iter().map(|i| i.quantity).sum())
+        };
+        let applicable_amount =
+            (eligible_subtotal.min(request.subtotal - already_discounted)).max(Decimal::ZERO);
 
         let discount = match promo.promotion_type {
             PromotionType::PercentageOff | PromotionType::FirstOrderDiscount => {
@@ -1310,7 +1327,12 @@ impl PgPromotionRepository {
                     Decimal::ZERO
                 }
             }
-            PromotionType::FixedAmountOff => promo.fixed_amount_off.unwrap_or(Decimal::ZERO),
+            PromotionType::FixedAmountOff => {
+                let fixed = promo.fixed_amount_off.unwrap_or(Decimal::ZERO);
+                // A scoped fixed discount cannot exceed the eligible items'
+                // worth; unscoped keeps its historical whole-order semantics.
+                if scoped { fixed.min(applicable_amount) } else { fixed }
+            }
             PromotionType::FreeShipping => request.shipping_amount,
             PromotionType::TieredDiscount => {
                 if let Some(tiers) = &promo.tiers {
@@ -1323,14 +1345,10 @@ impl PgPromotionRepository {
                 if let (Some(buy), Some(get), Some(discount_pct)) =
                     (promo.buy_quantity, promo.get_quantity, promo.get_discount_percent)
                 {
-                    let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
+                    let total_qty: i32 = eligible_qty;
                     let sets = total_qty / (buy + get);
-                    if sets > 0 {
-                        let avg_price = if !request.line_items.is_empty() {
-                            request.subtotal / Decimal::from(total_qty)
-                        } else {
-                            Decimal::ZERO
-                        };
+                    if sets > 0 && total_qty > 0 {
+                        let avg_price = eligible_subtotal / Decimal::from(total_qty);
                         avg_price * Decimal::from(get * sets) * discount_pct
                     } else {
                         Decimal::ZERO
