@@ -11,13 +11,13 @@ interface ProgressBarProps {
 }
 
 const colorClasses: Record<string, string> = {
-  emerald: 'bg-emerald-500',
-  amber: 'bg-amber-500',
-  red: 'bg-red-500',
-  blue: 'bg-blue-500',
-  indigo: 'bg-indigo-500',
-  purple: 'bg-purple-500',
-  gray: 'bg-gray-500',
+  emerald: 'bg-ds-status-ok',
+  amber: 'bg-ds-status-warn',
+  red: 'bg-ds-status-fail',
+  blue: 'bg-ds-status-run',
+  indigo: 'bg-ds-primary',
+  purple: 'bg-ds-primary',
+  gray: 'bg-ds-muted-foreground',
 };
 
 const sizeClasses: Record<string, string> = {
@@ -39,13 +39,13 @@ export function ProgressBar({
   return (
     <div className={cn('w-full', className)}>
       {showLabel && (
-        <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
+        <div className="flex justify-between text-xs text-ds-muted-foreground mb-1">
           <span>{percentage.toFixed(0)}%</span>
         </div>
       )}
       <div
         className={cn(
-          'w-full rounded-full bg-gray-200 dark:bg-gray-700',
+          'w-full rounded-full bg-ds-muted',
           sizeClasses[size]
         )}
       >

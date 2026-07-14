@@ -77,13 +77,13 @@ export class ErrorBoundary extends React.Component<
       return (
         <div
           role="alert"
-          className="flex flex-col items-center justify-center min-h-[200px] p-6 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800"
+          className="flex flex-col items-center justify-center min-h-[200px] p-6 rounded-lg border border-ds-status-fail/25 bg-ds-status-fail/10"
         >
-          <ExclamationTriangleIcon className="w-12 h-12 text-red-500 mb-4" />
-          <h3 className="text-lg font-semibold text-red-800 dark:text-red-200 mb-2">
+          <ExclamationTriangleIcon className="w-12 h-12 text-ds-status-fail mb-4" />
+          <h3 className="text-lg font-semibold text-ds-status-fail mb-2">
             Something went wrong
           </h3>
-          <p className="text-sm text-red-600 dark:text-red-300 mb-4 text-center max-w-md">
+          <p className="text-sm text-ds-status-fail/90 mb-4 text-center max-w-md">
             {this.state.error?.message || 'An unexpected error occurred'}
           </p>
           <Button
@@ -111,13 +111,13 @@ export function ErrorDisplay({ error, onRetry }: ErrorDisplayProps) {
   return (
     <div
       role="alert"
-      className="flex flex-col items-center justify-center min-h-[200px] p-6 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800"
+      className="flex flex-col items-center justify-center min-h-[200px] p-6 rounded-lg border border-ds-status-fail/25 bg-ds-status-fail/10"
     >
-      <ExclamationTriangleIcon className="w-12 h-12 text-red-500 mb-4" />
-      <h3 className="text-lg font-semibold text-red-800 dark:text-red-200 mb-2">
+      <ExclamationTriangleIcon className="w-12 h-12 text-ds-status-fail mb-4" />
+      <h3 className="text-lg font-semibold text-ds-status-fail mb-2">
         Error
       </h3>
-      <p className="text-sm text-red-600 dark:text-red-300 mb-4 text-center max-w-md">
+      <p className="text-sm text-ds-status-fail/90 mb-4 text-center max-w-md">
         {message}
       </p>
       {onRetry && (

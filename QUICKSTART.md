@@ -128,10 +128,15 @@ npm install -g @stateset/cli
 ### 2. Initialize with demo data
 
 ```bash
-stateset init --demo
+stateset-init --demo
 ```
 
+(`stateset-init --quickstart` does a zero-prompt standalone setup; `--db <path>` picks a custom database location, `--force` overwrites an existing one.)
+
 ### 3. Start selling
+
+The `stateset` command is a natural-language agent over the embedded engine.
+Reads run freely; writes are previewed unless you pass `--apply`:
 
 ```bash
 # List customers
@@ -151,13 +156,41 @@ stateset "what is my revenue this month?"
 stateset "who are my top customers?"
 ```
 
-### 4. Start the HTTP API
+Domain-specific CLIs are installed alongside it: `stateset-orders`,
+`stateset-inventory`, `stateset-checkout`, `stateset-payments`,
+`stateset-returns`, `stateset-analytics`, and more. For the MCP server
+(Claude Desktop / Cursor / Windsurf), see the
+[MCP Server section in the README](./README.md#mcp-server-claude-desktop--cursor--windsurf).
 
-```bash
-stateset serve --port 3000
+### 4. Serve the REST API
+
+The REST API is an embeddable layer (`stateset-http`), started from your Rust
+application:
+
+```rust
+use stateset_embedded::Commerce;
+use stateset_http::ServerBuilder;
+use std::net::SocketAddr;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let commerce = Commerce::new("store.db")?;
+    let addr: SocketAddr = "127.0.0.1:3000".parse()?;
+
+    ServerBuilder::new_from_env(commerce)?
+        .bind(addr)
+        .with_cors()
+        .with_request_id()
+        .with_bearer_auth("replace-me-with-a-secret")
+        .serve()
+        .await?;
+    Ok(())
+}
 ```
 
-Now you have a full REST API at `http://localhost:3000/api/v1/` with OpenAPI docs at `/api/v1/docs`.
+Now you have a full REST API at `http://localhost:3000/api/v1/` with the
+OpenAPI spec at `/api/v1/openapi.json`. (If you skip `with_bearer_auth`, the
+server generates a token and prints it at startup — auth is on by default.)
 
 ---
 
@@ -168,26 +201,28 @@ pip install stateset-embedded
 ```
 
 ```python
-from stateset_embedded import Commerce
+from stateset_embedded import Commerce, CreateOrderItemInput
 
 commerce = Commerce(":memory:")
 
-# Create a customer
-customer = commerce.customers().create(
+# Create a customer (APIs are properties: commerce.customers, not commerce.customers())
+customer = commerce.customers.create(
     email="alice@example.com",
     first_name="Alice",
-    last_name="Smith"
+    last_name="Smith",
 )
 
 # Create an order
-order = commerce.orders().create(
+order = commerce.orders.create(
     customer_id=customer.id,
-    items=[{
-        "sku": "WIDGET-001",
-        "name": "Widget",
-        "quantity": 3,
-        "unit_price": "29.99"
-    }]
+    items=[
+        CreateOrderItemInput(
+            sku="WIDGET-001",
+            name="Widget",
+            quantity=3,
+            unit_price=29.99,
+        )
+    ],
 )
 print(f"Order {order.order_number}: ${order.total_amount}")
 ```
@@ -196,41 +231,50 @@ print(f"Order {order.order_number}: ${order.total_amount}")
 
 ## With Policy Checks
 
-```rust
-use stateset_sdk::prelude::*;
-use stateset_sdk::policy;
+Requires the `policy` feature (included in `--features full`).
 
-// Load a policy from YAML
-let engine = policy::PolicyEngine::from_yaml(r#"
-  rules:
-    - name: "max_order_value"
-      condition: "order.total > 10000"
-      effect: deny
-      message: "Orders over $10,000 require manager approval"
-    - name: "blocked_countries"
-      condition: "customer.country in ['XX', 'YY']"
-      effect: deny
-      message: "Shipping to this country is not available"
-"#)?;
+```rust
+use stateset_sdk::policy::{
+    Condition, ConditionGroup, ConditionNode, Logic, Operator,
+    PolicyAction, PolicyEngine, PolicyRule, PolicySet,
+};
+use serde_json::json;
+
+let mut engine = PolicyEngine::new();
+
+// Deny orders over $10,000 (deny-overrides precedence, explainable denials)
+let rule = PolicyRule::new("high-value-review", "Require review for high-value orders")
+    .with_priority(10)
+    .with_conditions(ConditionGroup::new(Logic::And, vec![
+        ConditionNode::Leaf(Condition::new("order.total", Operator::Gt, json!(10000))),
+    ]))
+    .with_action(PolicyAction::deny(
+        "Order exceeds $10,000 limit",
+        "Request manager approval",
+    ));
+
+engine.register_policy_set(PolicySet::new("order-limits", "orders").with_rule(rule));
 
 // Check before processing
-let context = policy::Context::new()
-    .set("order.total", 15000)
-    .set("customer.country", "US");
+let context = json!({ "order": { "total": 15000 } });
+let result = engine.evaluate("orders", &context);
 
-match engine.evaluate(&context) {
-    policy::Decision::Allow => println!("Order approved"),
-    policy::Decision::Deny(reasons) => {
-        for reason in reasons {
-            println!("Blocked: {}", reason.message);
-        }
+if result.should_deny {
+    for explanation in &result.explanations {
+        println!("Blocked: {}", explanation.reason);
     }
 }
 ```
 
+Policies can also be loaded from files: `policy::load_policy_set_from_yaml(...)`
+parses a YAML `PolicySet`, and `engine.load_from_dir(...)` loads every
+`.yaml`/`.yml`/`.json` policy in a directory.
+
 ---
 
 ## With Event Sourcing
+
+Requires the `events` feature (on by default in `stateset-embedded`).
 
 ```rust
 use stateset_sdk::prelude::*;
@@ -238,11 +282,11 @@ use stateset_sdk::prelude::*;
 let commerce = Commerce::new("store.db")?;
 
 // Subscribe to commerce events
-let mut subscription = commerce.subscribe();
+let mut subscription = commerce.subscribe_events();
 
-// In another thread/task, process events
+// In another task, process events as they stream in
 tokio::spawn(async move {
-    while let Some(event) = subscription.recv().await {
+    while let Some(event) = subscription.next().await {
         match event {
             CommerceEvent::OrderCreated { order_id, total_amount, .. } => {
                 println!("New order: {} for ${}", order_id, total_amount);
@@ -263,30 +307,38 @@ tokio::spawn(async move {
 
 ## With Agent-to-Agent Commerce
 
+Agent cards live on the x402 API surface (`commerce.x402()`):
+
 ```rust
 use stateset_sdk::prelude::*;
+use stateset_sdk::core::{
+    A2ASkill, AgentCardFilter, CreateAgentCard, TrustLevel, X402Asset, X402Network,
+};
 
 let commerce = Commerce::new("agent-store.db")?;
 
 // Register this agent for commerce
-commerce.agent_cards().register(RegisterAgent {
+let card = commerce.x402().register_agent(CreateAgentCard {
     name: "Widget Supplier Bot".into(),
-    wallet: "0x1234...5678".into(),
-    skills: vec!["sell", "quote", "fulfill"],
-    networks: vec!["set_chain"],
-    assets: vec!["USDC"],
+    wallet_address: "0x1234...5678".into(),
+    public_key: "base64_ed25519_pubkey".into(),
+    supported_networks: Some(vec![X402Network::SetChain]),
+    supported_assets: Some(vec![X402Asset::Usdc]),
+    a2a_skills: Some(vec![A2ASkill::Sell, A2ASkill::Quote]),
+    endpoint_url: Some("https://api.example.com/a2a".into()),
+    ..Default::default()
+})?;
+println!("Registered agent card {}", card.id);
+
+// Discover partner agents that can buy, at standard trust or better
+let buyers = commerce.x402().list_agents(AgentCardFilter {
+    min_trust_level: Some(TrustLevel::Standard),
     ..Default::default()
 })?;
 
-// Discover buyer agents
-let buyers = commerce.agent_cards().discover(DiscoverAgents {
-    skill: Some("buy"),
-    min_trust_tier: Some("standard"),
-    ..Default::default()
-})?;
-
-// Negotiate a price autonomously
-// (See /api/v1/negotiations endpoints for REST-based negotiation)
+// Quotes, purchases, and payment intents live on the same surface:
+// commerce.x402().create_quote(...) / create_intent(...)
+// (REST-based negotiation: see the /api/v1/negotiations endpoints)
 ```
 
 ---

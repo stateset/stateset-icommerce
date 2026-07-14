@@ -22,8 +22,8 @@ The plan is **substantially complete**: 11 of 13 phases closed
 | New CLI MCP-extraction tests | **+246** across 13 extracted modules |
 | New admin component + helper tests | **+171** (62 UI primitives + 80 Phase 4.2 helpers + 23 Phase 4.1 components + 6 Phase 4.4 build-info) |
 | Production bugs found and fixed | **9 critical** |
-| `cli/src/mcp-server.js` reduction | **5,309 → 4,065 lines (-23.4%)** |
-| `README.md` reduction | **1,770 → 1,439 lines (-18.7%)** + scannable TOC + capability matrix |
+| `cli/src/mcp-server.js` reduction | **5,309 → 3,214 lines (-39.5%)** |
+| `README.md` reduction | **1,770 → 1,481 lines (-16.3%)** + scannable TOC + capability matrix |
 | Cross-binding parity tests | **44 tests across 11 implementations** (Rust + Node + Python + Go + WASM + Java + Kotlin + .NET + Swift + Ruby + PHP) |
 | Postgres parity tests | **13 dedicated test files** in 3-way CI matrix on `postgres:16` |
 | Fuzz targets (nightly) | **6** (3 crypto, 3 protocol) |
@@ -104,7 +104,7 @@ schema-drift, race-condition, or filter-completeness bug.
 | 1.3 Property tests | ✓ closed | 30 properties × ~256 cases across `stateset-policy` + `stateset-sync` |
 | 1.4 Sync outbox/verifyInclusion | ✓ closed | Two known sync bugs documented + regression-tested |
 | 2 Security & supply chain | ✓ closed | gitleaks, CodeQL Rust, fuzz-nightly, supply-chain audit, signed releases workflow |
-| 3.1 Orchestrator decomposition | ⏳ in flight | 13 modules extracted, mcp-server.js -23.4% (5,309 → 4,065 lines), 246 tests |
+| 3.1 Orchestrator decomposition | ⏳ in flight | 13 modules extracted, mcp-server.js -39.5% (5,309 → 3,214 lines), 246 tests |
 | 4.1 Admin component testing | ✓ closed | 6/6 UI primitives + 4 client components under coverage gate |
 | 4.2 Operational workflows | ⏳ 5/6 | Audit log, RMA inbox, bulk orders, CSV export, multi-org switcher closed; webhook UI blocked on backend |
 | 4.3 Multi-org switcher | ✓ closed (frontend) | TopBar + listOrganizations + layout integration; engine endpoint pending |

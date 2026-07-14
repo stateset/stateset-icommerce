@@ -81,25 +81,33 @@ impl Inventory {
         }
     }
 
+    /// Best-effort: called after the reservation write has committed, so a
+    /// transient read failure here must not surface as an error for a
+    /// mutation that already succeeded (callers could otherwise retry the
+    /// committed write and corrupt allocation accounting).
     #[cfg(feature = "events")]
     fn emit_reservation_event(
         &self,
         reservation_id: Uuid,
         event: fn(InventoryReservation, String) -> CommerceEvent,
-    ) -> Result<()> {
-        let reservation = self
-            .db
-            .inventory()
-            .get_reservation(reservation_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
-        let sku = self
-            .db
-            .inventory()
-            .get_item(reservation.item_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?
-            .sku;
+    ) {
+        let reservation = match self.db.inventory().get_reservation(reservation_id) {
+            Ok(Some(reservation)) => reservation,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(error = %e, %reservation_id, "reservation event lookup failed after commit");
+                return;
+            }
+        };
+        let sku = match self.db.inventory().get_item(reservation.item_id) {
+            Ok(Some(item)) => item.sku,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(error = %e, %reservation_id, "reservation event item lookup failed after commit");
+                return;
+            }
+        };
         self.emit(event(reservation, sku));
-        Ok(())
     }
 
     /// Create a new inventory item (SKU).
@@ -275,19 +283,27 @@ impl Inventory {
                 timestamp: reservation.created_at,
             });
 
-            if let Some(balance) =
-                self.db.inventory().get_balance(reservation.item_id, reservation.location_id)?
-            {
-                if let Some(reorder_point) = balance.reorder_point {
-                    if balance.quantity_available < reorder_point {
-                        self.emit(CommerceEvent::LowStockAlert {
-                            sku: sku.to_string(),
-                            location_id: reservation.location_id,
-                            current_quantity: balance.quantity_available,
-                            reorder_point,
-                            timestamp: reservation.created_at,
-                        });
+            // The reservation is already committed; this balance read only feeds
+            // the best-effort low-stock alert. A transient read failure here must
+            // not surface as a reservation error (the caller would see Err for a
+            // reservation that is durably allocated).
+            match self.db.inventory().get_balance(reservation.item_id, reservation.location_id) {
+                Ok(Some(balance)) => {
+                    if let Some(reorder_point) = balance.reorder_point {
+                        if balance.quantity_available < reorder_point {
+                            self.emit(CommerceEvent::LowStockAlert {
+                                sku: sku.to_string(),
+                                location_id: reservation.location_id,
+                                current_quantity: balance.quantity_available,
+                                reorder_point,
+                                timestamp: reservation.created_at,
+                            });
+                        }
                     }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, sku, "low-stock check failed after reservation commit");
                 }
             }
         }
@@ -306,7 +322,7 @@ impl Inventory {
                     quantity: reservation.quantity,
                     timestamp: Utc::now(),
                 }
-            })?;
+            });
         }
         Ok(())
     }
@@ -323,7 +339,7 @@ impl Inventory {
                     quantity: reservation.quantity,
                     timestamp: Utc::now(),
                 }
-            })?;
+            });
         }
         Ok(())
     }

@@ -3,8 +3,7 @@
 import { useCallback, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Badge, Button } from '@stateset/design';
 import { clearActiveOrg, setActiveOrg } from '@/app/actions/active-org';
 
 interface OrgOption {
@@ -63,9 +62,9 @@ export function OrgSwitcher({ options, activeOrgId }: OrgSwitcherProps) {
 
   return (
     <div className="flex items-center gap-2">
-      <Badge color="indigo">org</Badge>
+      <Badge variant="primary">org</Badge>
       <select
-        className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm"
+        className="ds-focus-ring rounded-md border border-ds-input bg-ds-background px-3 py-1.5 text-sm text-ds-foreground"
         value={activeOrgId ?? '__clear__'}
         onChange={(e) => onSelect(e.target.value)}
         disabled={pending}
@@ -78,7 +77,7 @@ export function OrgSwitcher({ options, activeOrgId }: OrgSwitcherProps) {
           </option>
         ))}
       </select>
-      {pending && <span className="text-xs text-gray-500">switching…</span>}
+      {pending && <span className="text-xs text-ds-muted-foreground">switching…</span>}
       {!pending && activeOrgId && (
         <Button
           size="sm"
@@ -91,7 +90,7 @@ export function OrgSwitcher({ options, activeOrgId }: OrgSwitcherProps) {
         </Button>
       )}
       {error && (
-        <span className="text-xs text-red-600" role="alert">
+        <span className="text-xs text-ds-destructive" role="alert">
           {error}
         </span>
       )}

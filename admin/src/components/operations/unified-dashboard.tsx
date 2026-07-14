@@ -1,24 +1,45 @@
 'use client';
 
-import { Card, Title, Text, Badge, Grid, Col, Metric, AreaChart, ProgressBar } from '@tremor/react';
-import { ChartPieIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon, SparklesIcon, ExclamationTriangleIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
-import { motion } from 'framer-motion';
+import { AreaChart } from '@tremor/react';
+import {
+  CurrencyDollarIcon,
+  ShoppingCartIcon,
+  ReceiptPercentIcon,
+  ArrowTrendingUpIcon,
+  UsersIcon,
+  CubeIcon,
+  SparklesIcon,
+} from '@heroicons/react/24/outline';
 import { useState, useEffect, memo } from 'react';
+import {
+  DashboardSectionHeader,
+  MetricCard,
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  StatusPill,
+  EmptyState,
+  Reveal,
+  type MetricTone,
+  type StatusTone,
+} from '@stateset/design';
 import { ErrorBoundary } from '../ui/error-boundary';
 import LoadingSkeleton from '../ui/loading-skeleton';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getDashboardMetrics, getHourlyActivity, getSystemHealth } from '@/app/actions/commerce';
 import type { DashboardMetrics, HourlyActivity, SystemHealth } from '@/lib/types';
-import { formatCurrency, formatCompactNumber, formatPercentage, formatRelativeTime, getTrendColor } from '@/lib/utils';
+import { formatCurrency, formatCompactNumber, formatPercentage, formatRelativeTime } from '@/lib/utils';
 
-// Types
+// ─── Types ──────────────────────────────────────────────────────────────────
 interface KPI {
   name: string;
   value: number;
   change: number;
-  trend: 'up' | 'down' | 'stable';
-  unit?: string;
+  unit?: '$' | '%';
   target?: number;
+  icon: React.ComponentType<{ className?: string }>;
 }
 
 interface Alert {
@@ -41,23 +62,37 @@ interface DataCoverage {
   coverage: number;
 }
 
-// Animation variants
-const containerVariants = {
-  exit: { opacity: 0, transition: { duration: 0.5, ease: [0.175, 0.85, 0.42, 0.96] } },
-  enter: {
-    opacity: 1,
-    transition: { delay: 0.1, duration: 0.5, ease: [0.175, 0.85, 0.42, 0.96] }
-  }
-};
-
-const getTrendIcon = (trend: string) => {
-  return trend === 'up' ? ArrowTrendingUpIcon : trend === 'down' ? ArrowTrendingDownIcon : null;
-};
-
-const formatValue = (value: number, unit?: string): string => {
+// ─── Formatting / mapping helpers ─────────────────────────────────────────────
+function formatValue(value: number, unit?: '$' | '%'): string {
   if (unit === '$') return formatCurrency(value);
   if (unit === '%') return formatPercentage(value);
   return formatCompactNumber(value);
+}
+
+/** A signed change becomes a brand tone + an arrowed trend caption. */
+function changeTone(change: number): MetricTone {
+  if (change > 0) return 'success';
+  if (change < 0) return 'danger';
+  return 'primary';
+}
+
+function trendCaption(change: number): string {
+  if (change === 0) return 'Flat vs. yesterday';
+  const arrow = change > 0 ? '▲' : '▼';
+  return `${arrow} ${Math.abs(change)}% vs. yesterday`;
+}
+
+const SEVERITY_STATUS: Record<Alert['severity'], StatusTone> = {
+  critical: 'fail',
+  high: 'fail',
+  medium: 'warn',
+  low: 'review',
+};
+
+const IMPACT_STATUS: Record<AIInsight['impact'], StatusTone> = {
+  positive: 'ok',
+  negative: 'fail',
+  warning: 'warn',
 };
 
 function buildDataCoverage(
@@ -191,35 +226,43 @@ function buildOperationalInsights(
   return insights;
 }
 
+// ─── Small presentational helpers ─────────────────────────────────────────────
+function CoverageBar({ value, ok }: { value: number; ok: boolean }) {
+  return (
+    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ds-muted">
+      <div
+        className={ok ? 'h-full rounded-full bg-ds-primary' : 'h-full rounded-full bg-ds-status-warn'}
+        style={{ width: `${value}%` }}
+      />
+    </div>
+  );
+}
+
 function UnifiedDashboardInner() {
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(new Date());
 
-  // Fetch real-time data from embedded backend
-  const { data: metrics } = useEmbeddedData<DashboardMetrics>(
-    () => getDashboardMetrics(),
-    { refreshInterval: 30000 }
-  );
+  // Real-time data from the embedded backend.
+  const { data: metrics } = useEmbeddedData<DashboardMetrics>(() => getDashboardMetrics(), {
+    refreshInterval: 30000,
+  });
+  const { data: hourlyActivity } = useEmbeddedData<HourlyActivity[]>(() => getHourlyActivity(), {
+    refreshInterval: 60000,
+  });
+  const { data: systemHealth } = useEmbeddedData<SystemHealth>(() => getSystemHealth(), {
+    refreshInterval: 10000,
+  });
 
-  const { data: hourlyActivity } = useEmbeddedData<HourlyActivity[]>(
-    () => getHourlyActivity(),
-    { refreshInterval: 60000 }
-  );
-
-  const { data: systemHealth } = useEmbeddedData<SystemHealth>(
-    () => getSystemHealth(),
-    { refreshInterval: 10000 }
-  );
-
-  // Convert metrics to KPIs for display
-  const keyMetrics: KPI[] = metrics ? [
-    { name: 'GMV Today', value: metrics.gmvToday, change: metrics.gmvChange, trend: metrics.gmvChange >= 0 ? 'up' : 'down', unit: '$' },
-    { name: 'Orders Processed', value: metrics.ordersToday, change: metrics.ordersChange, trend: metrics.ordersChange >= 0 ? 'up' : 'down' },
-    { name: 'Avg Order Value', value: metrics.averageOrderValue, change: metrics.aovChange, trend: metrics.aovChange >= 0 ? 'up' : 'down', unit: '$' },
-    { name: 'Conversion Rate', value: metrics.conversionRate, change: metrics.conversionChange, trend: metrics.conversionChange >= 0 ? 'up' : 'down', unit: '%', target: 3.5 },
-    { name: 'Active Customers', value: metrics.activeCustomers, change: 0, trend: 'stable' },
-    { name: 'Inventory Health', value: metrics.inventoryHealth, change: 0, trend: 'stable', unit: '%' }
-  ] : [];
+  const keyMetrics: KPI[] = metrics
+    ? [
+        { name: 'GMV Today', value: metrics.gmvToday, change: metrics.gmvChange, unit: '$', icon: CurrencyDollarIcon },
+        { name: 'Orders Processed', value: metrics.ordersToday, change: metrics.ordersChange, icon: ShoppingCartIcon },
+        { name: 'Avg Order Value', value: metrics.averageOrderValue, change: metrics.aovChange, unit: '$', icon: ReceiptPercentIcon },
+        { name: 'Conversion Rate', value: metrics.conversionRate, change: metrics.conversionChange, unit: '%', target: 3.5, icon: ArrowTrendingUpIcon },
+        { name: 'Active Customers', value: metrics.activeCustomers, change: 0, icon: UsersIcon },
+        { name: 'Inventory Health', value: metrics.inventoryHealth, change: 0, unit: '%', icon: CubeIcon },
+      ]
+    : [];
 
   const dataCoverage = buildDataCoverage(metrics || null, hourlyActivity || null, systemHealth || null);
   const criticalAlerts = buildOperationalAlerts(metrics || null, systemHealth || null);
@@ -230,11 +273,8 @@ function UnifiedDashboardInner() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Update timestamp on data refresh
   useEffect(() => {
-    if (metrics) {
-      setLastUpdated(new Date());
-    }
+    if (metrics) setLastUpdated(new Date());
   }, [metrics]);
 
   const totalRevenue = hourlyActivity?.reduce((sum, hour) => sum + hour.revenue, 0) || 0;
@@ -246,69 +286,50 @@ function UnifiedDashboardInner() {
 
   return (
     <ErrorBoundary>
-      <motion.div initial="exit" animate="enter" exit="exit" variants={containerVariants}>
-        <div className="mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center space-x-2 mb-2">
-                <ChartPieIcon className="w-8 h-8 text-indigo-600" />
-                <Title className="text-2xl">Executive Operations Dashboard</Title>
-              </div>
-              <Text className="text-gray-600">
-                Real-time unified view powered by embedded commerce engine
-              </Text>
-            </div>
+      <div className="space-y-6">
+        <DashboardSectionHeader
+          eyebrow="Intelligent Commerce"
+          title="Executive Operations"
+          description="Real-time unified view powered by the embedded commerce engine."
+          actions={
             <div className="text-right">
-              <Text className="text-sm text-gray-500">Last updated</Text>
-              <Text className="font-medium">{formatRelativeTime(lastUpdated)}</Text>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ds-muted-foreground">
+                Last updated
+              </p>
+              <p className="ds-instrument-number mt-1 text-sm text-ds-foreground">
+                {formatRelativeTime(lastUpdated)}
+              </p>
             </div>
-          </div>
-        </div>
+          }
+        />
 
-        {/* Key Metrics Grid */}
-        <Grid numItems={2} numItemsSm={3} numItemsLg={6} className="gap-4 mb-6">
-          {keyMetrics.map((metric) => {
-            const TrendIcon = metric.trend ? getTrendIcon(metric.trend) : null;
-            const isPositiveMetric = metric.name !== 'Avg Order Value' || metric.trend === 'up';
+        {/* Key metrics */}
+        <Reveal className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+          {keyMetrics.map((metric) => (
+            <MetricCard
+              key={metric.name}
+              label={metric.name}
+              value={formatValue(metric.value, metric.unit)}
+              icon={metric.icon}
+              tone={changeTone(metric.change)}
+              trend={metric.change !== 0 ? trendCaption(metric.change) : ''}
+              subtitle={
+                metric.target
+                  ? `Target ${formatValue(metric.target, metric.unit)} · ${((metric.value / metric.target) * 100).toFixed(0)}% attained`
+                  : ''
+              }
+            />
+          ))}
+        </Reveal>
 
-            return (
-              <Card key={metric.name} decoration="top" decorationColor="indigo">
-                <Text>{metric.name}</Text>
-                <div className="flex items-baseline space-x-2">
-                  <Metric>
-                    {formatValue(metric.value, metric.unit)}
-                  </Metric>
-                  {TrendIcon && metric.trend && metric.change !== undefined && (
-                    <div className={`flex items-center space-x-1 text-sm ${getTrendColor(metric.trend, isPositiveMetric)}`}>
-                      <TrendIcon className="w-4 h-4" />
-                      <span>{Math.abs(metric.change)}%</span>
-                    </div>
-                  )}
-                </div>
-                {metric.target && typeof metric.value === 'number' && (
-                  <div className="mt-2">
-                    <div className="flex justify-between text-xs mb-1">
-                      <Text>Target: {formatValue(metric.target, metric.unit)}</Text>
-                      <Text>{((metric.value / metric.target) * 100).toFixed(1)}%</Text>
-                    </div>
-                    <ProgressBar
-                      value={(metric.value / metric.target) * 100}
-                      color={(metric.value >= metric.target) ? 'emerald' : 'amber'}
-                    />
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </Grid>
-
-        <Grid numItems={1} numItemsLg={3} className="gap-6 mb-6">
-          {/* Hourly Performance */}
-          <Col numColSpan={1} numColSpanLg={2}>
-            <Card>
-              <Title>Today's Performance</Title>
-              <Text className="text-gray-500 mb-4">Orders and revenue by hour</Text>
-
+        {/* Performance + live coverage */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Today&apos;s Performance</CardTitle>
+              <CardDescription>Orders and revenue by hour</CardDescription>
+            </CardHeader>
+            <CardContent>
               {hourlyActivity && hourlyActivity.length > 0 ? (
                 <>
                   <AreaChart
@@ -317,204 +338,195 @@ function UnifiedDashboardInner() {
                     index="hour"
                     categories={['orders', 'revenue']}
                     colors={['indigo', 'emerald']}
-                    valueFormatter={(value) => {
-                      if (value > 1000) return `$${(value / 1000).toFixed(0)}k`;
-                      return value.toString();
-                    }}
-                    showAnimation={true}
+                    valueFormatter={(value) => (value > 1000 ? `$${(value / 1000).toFixed(0)}k` : value.toString())}
+                    showAnimation
                   />
-
-                  <div className="mt-4 grid grid-cols-3 gap-4 text-center">
+                  <div className="mt-4 grid grid-cols-3 gap-4 border-t border-ds-enterprise-line/70 pt-4 text-center">
                     <div>
-                      <Text className="text-sm text-gray-500">Total Orders</Text>
-                      <Text className="font-medium text-lg">{totalOrders}</Text>
+                      <p className="text-xs text-ds-muted-foreground">Total Orders</p>
+                      <p className="ds-instrument-number mt-1 text-lg text-ds-foreground">{totalOrders}</p>
                     </div>
                     <div>
-                      <Text className="text-sm text-gray-500">Total Revenue</Text>
-                      <Text className="font-medium text-lg">${(totalRevenue / 1000).toFixed(1)}k</Text>
+                      <p className="text-xs text-ds-muted-foreground">Total Revenue</p>
+                      <p className="ds-instrument-number mt-1 text-lg text-ds-foreground">
+                        ${(totalRevenue / 1000).toFixed(1)}k
+                      </p>
                     </div>
                     <div>
-                      <Text className="text-sm text-gray-500">Avg Order Value</Text>
-                      <Text className="font-medium text-lg">${totalOrders > 0 ? (totalRevenue / totalOrders).toFixed(2) : '0.00'}</Text>
+                      <p className="text-xs text-ds-muted-foreground">Avg Order Value</p>
+                      <p className="ds-instrument-number mt-1 text-lg text-ds-foreground">
+                        ${totalOrders > 0 ? (totalRevenue / totalOrders).toFixed(2) : '0.00'}
+                      </p>
                     </div>
                   </div>
                 </>
               ) : (
-                <div className="h-72 flex items-center justify-center">
-                  <Text className="text-gray-400">No data available</Text>
+                <div className="flex h-72 items-center justify-center">
+                  <p className="text-sm text-ds-muted-foreground">No data available</p>
                 </div>
               )}
-            </Card>
-          </Col>
+            </CardContent>
+          </Card>
 
-          {/* Live Data Coverage */}
           <Card>
-            <Title>Live Data Coverage</Title>
-            <Text className="text-gray-500 mb-4">Current telemetry available to the dashboard</Text>
-            <div className="space-y-3">
-              {dataCoverage.map((feed) => (
-                <div key={feed.name}>
-                  <div className="flex justify-between items-center mb-1">
-                    <Text className="text-sm font-medium">{feed.name}</Text>
-                    <div className="flex items-center space-x-2">
-                      <Badge color={feed.status === 'connected' ? 'emerald' : 'amber'} size="xs">
-                        {feed.status}
-                      </Badge>
-                      <Text className="text-sm">{feed.coverage}%</Text>
+            <CardHeader>
+              <CardTitle>Live Data Coverage</CardTitle>
+              <CardDescription>Current telemetry available to the dashboard</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {dataCoverage.map((feed) => {
+                const ok = feed.status === 'connected';
+                return (
+                  <div key={feed.name}>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-ds-foreground">{feed.name}</p>
+                      <StatusPill status={ok ? 'ok' : 'warn'}>{ok ? 'Connected' : 'Unavailable'}</StatusPill>
                     </div>
+                    <p className="text-xs text-ds-muted-foreground">{feed.detail}</p>
+                    <CoverageBar value={feed.coverage} ok={ok} />
                   </div>
-                  <Text className="text-xs text-gray-500 mb-2">{feed.detail}</Text>
-                  <ProgressBar
-                    value={feed.coverage}
-                    color={feed.status === 'connected' ? 'emerald' : 'amber'}
-                  />
+                );
+              })}
+
+              <div className="ds-agent-panel rounded-lg border border-ds-brand-200 bg-ds-brand-50 p-3 dark:border-ds-brand-700 dark:bg-ds-brand-950/30">
+                <div className="flex items-center gap-2">
+                  <SparklesIcon className="h-5 w-5 text-ds-primary" />
+                  <p className="text-sm font-medium text-ds-foreground">Embedded Engine Active</p>
                 </div>
-              ))}
-            </div>
-
-            <div className="mt-4 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded">
-              <div className="flex items-center space-x-2">
-                <SparklesIcon className="w-5 h-5 text-indigo-600" />
-                <Text className="text-sm font-medium">Embedded Engine Active</Text>
+                <p className="mt-1 text-xs text-ds-muted-foreground">
+                  All operations running on the local embedded database.
+                </p>
               </div>
-              <Text className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                All operations running on local embedded database
-              </Text>
-            </div>
+            </CardContent>
           </Card>
-        </Grid>
+        </div>
 
-        <Grid numItems={1} numItemsLg={2} className="gap-6 mb-6">
-          {/* Critical Alerts */}
+        {/* Alerts + insights */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Card>
-            <div className="flex items-center justify-between mb-4">
-              <Title>Critical Alerts</Title>
-              <Badge color="red" icon={ExclamationTriangleIcon}>
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle>Critical Alerts</CardTitle>
+              <StatusPill status={criticalAlerts.length > 0 ? 'fail' : 'ok'} pulse={criticalAlerts.length > 0}>
                 {criticalAlerts.length} active
-              </Badge>
-            </div>
-
-            {criticalAlerts.length > 0 ? (
-              <div className="space-y-2">
-                {criticalAlerts.map((alert) => (
-                  <motion.div
-                    key={alert.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="flex items-start justify-between p-3 border rounded-lg dark:border-gray-700"
-                  >
-                    <div className="flex items-start space-x-3">
-                      <div className={`w-2 h-2 rounded-full mt-1.5 ${
-                        alert.severity === 'critical' ? 'bg-red-500' :
-                        alert.severity === 'high' ? 'bg-orange-500' : 'bg-yellow-500'
-                      }`} />
+              </StatusPill>
+            </CardHeader>
+            <CardContent>
+              {criticalAlerts.length > 0 ? (
+                <div className="space-y-2">
+                  {criticalAlerts.map((alert) => (
+                    <div
+                      key={alert.id}
+                      className="flex items-start justify-between gap-3 rounded-lg border border-ds-enterprise-line/70 p-3"
+                    >
                       <div>
-                        <Text className="text-sm font-medium">{alert.message}</Text>
-                        <Text className="text-xs text-gray-500">{alert.time}</Text>
+                        <p className="text-sm font-medium text-ds-foreground">{alert.message}</p>
+                        <p className="text-xs text-ds-muted-foreground">{alert.time}</p>
                       </div>
+                      <StatusPill status={SEVERITY_STATUS[alert.severity]}>{alert.severity}</StatusPill>
                     </div>
-                    <Badge color={
-                      alert.severity === 'critical' ? 'red' :
-                      alert.severity === 'high' ? 'orange' : 'yellow'
-                    } size="xs">
-                      {alert.severity}
-                    </Badge>
-                  </motion.div>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center dark:border-gray-700">
-                <Text className="text-gray-500">No active operational alerts in the current snapshot.</Text>
-              </div>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <EmptyState
+                  title="All clear"
+                  description="No active operational alerts in the current snapshot."
+                />
+              )}
+            </CardContent>
           </Card>
 
-          {/* Operational Insights */}
           <Card>
-            <div className="flex items-center justify-between mb-4">
-              <Title>Operational Insights</Title>
-              <Badge color="purple" icon={SparklesIcon}>
-                Derived Signals
-              </Badge>
-            </div>
-
-            {aiInsights.length > 0 ? (
-              <div className="space-y-3">
-                {aiInsights.map((insight, index) => (
-                  <motion.div
-                    key={index}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                    className="border rounded-lg p-3 dark:border-gray-700"
-                  >
-                    <div className="flex items-start space-x-2 mb-2">
-                      {insight.impact === 'positive' && <CheckCircleIcon className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
-                      {insight.impact === 'negative' && <ExclamationTriangleIcon className="w-5 h-5 text-red-500 flex-shrink-0" />}
-                      {insight.impact === 'warning' && <ExclamationTriangleIcon className="w-5 h-5 text-amber-500 flex-shrink-0" />}
-                      <Text className="text-sm">{insight.insight}</Text>
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle>Operational Insights</CardTitle>
+              <StatusPill status="review">Derived Signals</StatusPill>
+            </CardHeader>
+            <CardContent>
+              {aiInsights.length > 0 ? (
+                <div className="space-y-3">
+                  {aiInsights.map((insight, index) => (
+                    <div key={index} className="rounded-lg border border-ds-enterprise-line/70 p-3">
+                      <div className="flex items-start gap-2">
+                        <StatusPill status={IMPACT_STATUS[insight.impact]} />
+                        <p className="text-sm text-ds-foreground">{insight.insight}</p>
+                      </div>
+                      <p className="mt-2 pl-1 text-xs text-ds-muted-foreground">
+                        <span className="font-semibold text-ds-primary">Suggested:</span> {insight.action}
+                      </p>
                     </div>
-                    <div className="ml-7">
-                      <Badge color="indigo" size="xs">
-                        Suggested: {insight.action}
-                      </Badge>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center dark:border-gray-700">
-                <Text className="text-gray-500">
-                  No live operational insights are available until metrics feeds are connected.
-                </Text>
-              </div>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <EmptyState
+                  title="No insights yet"
+                  description="No live operational insights are available until metrics feeds are connected."
+                />
+              )}
+            </CardContent>
           </Card>
-        </Grid>
+        </div>
 
-        {/* System Health */}
+        {/* System health */}
         <Card>
-          <Title>System Health Monitor</Title>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4">
-            <div className="text-center">
-              <Text className="text-sm text-gray-500">Database Latency</Text>
-              <Metric className="text-lg">{systemHealth?.databaseLatency || 0}ms</Metric>
-              <Badge color={(systemHealth?.databaseLatency || 0) < 100 ? 'emerald' : 'amber'} size="xs">
-                {(systemHealth?.databaseLatency || 0) < 100 ? 'Optimal' : 'Slow'}
-              </Badge>
+          <CardHeader>
+            <CardTitle>System Health Monitor</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+              <HealthStat
+                label="Database Latency"
+                value={`${systemHealth?.databaseLatency ?? 0}ms`}
+                status={(systemHealth?.databaseLatency ?? 0) < 100 ? 'ok' : 'warn'}
+                caption={(systemHealth?.databaseLatency ?? 0) < 100 ? 'Optimal' : 'Slow'}
+              />
+              <HealthStat
+                label="Error Rate"
+                value={`${systemHealth?.errorRate ?? 0}%`}
+                status={(systemHealth?.errorRate ?? 0) < 0.1 ? 'ok' : 'fail'}
+                caption={(systemHealth?.errorRate ?? 0) < 0.1 ? 'Healthy' : 'High'}
+              />
+              <HealthStat
+                label="Active Connections"
+                value={`${systemHealth?.activeConnections ?? 0}`}
+                status="run"
+                caption="Running"
+              />
+              <HealthStat
+                label="Queue Depth"
+                value={`${systemHealth?.queueDepth ?? 0}`}
+                status={(systemHealth?.queueDepth ?? 0) < 50 ? 'ok' : 'warn'}
+                caption={(systemHealth?.queueDepth ?? 0) < 50 ? 'Normal' : 'Elevated'}
+              />
+              <HealthStat
+                label="Processing Speed"
+                value={`${systemHealth?.processingSpeed ?? 0}%`}
+                status={(systemHealth?.processingSpeed ?? 0) > 95 ? 'ok' : 'warn'}
+                caption={(systemHealth?.processingSpeed ?? 0) > 95 ? 'Fast' : 'Degraded'}
+              />
             </div>
-            <div className="text-center">
-              <Text className="text-sm text-gray-500">Error Rate</Text>
-              <Metric className="text-lg">{systemHealth?.errorRate || 0}%</Metric>
-              <Badge color={(systemHealth?.errorRate || 0) < 0.1 ? 'emerald' : 'red'} size="xs">
-                {(systemHealth?.errorRate || 0) < 0.1 ? 'Healthy' : 'High'}
-              </Badge>
-            </div>
-            <div className="text-center">
-              <Text className="text-sm text-gray-500">Active Connections</Text>
-              <Metric className="text-lg">{systemHealth?.activeConnections || 0}</Metric>
-              <Badge color="blue" size="xs">
-                Running
-              </Badge>
-            </div>
-            <div className="text-center">
-              <Text className="text-sm text-gray-500">Queue Depth</Text>
-              <Metric className="text-lg">{systemHealth?.queueDepth || 0}</Metric>
-              <Badge color={(systemHealth?.queueDepth || 0) < 50 ? 'emerald' : 'amber'} size="xs">
-                {(systemHealth?.queueDepth || 0) < 50 ? 'Normal' : 'Elevated'}
-              </Badge>
-            </div>
-            <div className="text-center">
-              <Text className="text-sm text-gray-500">Processing Speed</Text>
-              <Metric className="text-lg">{systemHealth?.processingSpeed || 0}%</Metric>
-              <Badge color={(systemHealth?.processingSpeed || 0) > 95 ? 'emerald' : 'amber'} size="xs">
-                {(systemHealth?.processingSpeed || 0) > 95 ? 'Fast' : 'Degraded'}
-              </Badge>
-            </div>
-          </div>
+          </CardContent>
         </Card>
-      </motion.div>
+      </div>
     </ErrorBoundary>
+  );
+}
+
+function HealthStat({
+  label,
+  value,
+  status,
+  caption,
+}: {
+  label: string;
+  value: string;
+  status: StatusTone;
+  caption: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2 text-center">
+      <p className="text-xs text-ds-muted-foreground">{label}</p>
+      <p className="ds-instrument-number text-lg text-ds-foreground">{value}</p>
+      <StatusPill status={status}>{caption}</StatusPill>
+    </div>
   );
 }
 

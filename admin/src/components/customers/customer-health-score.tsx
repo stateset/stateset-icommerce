@@ -1,23 +1,32 @@
 'use client';
 
 import { memo } from 'react';
-import { Card, Title, Text, Badge, Grid, Metric, DonutChart, BarChart, ProgressBar } from '@tremor/react';
+import { DonutChart, BarChart, ProgressBar } from '@tremor/react';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  Badge,
+  MetricCard,
+} from '@stateset/design';
 import { HeartIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getCustomerHealthData } from '@/app/actions/commerce';
 import { formatCurrency, formatNumber } from '@/lib/utils';
-import type { CustomerHealthData, CustomerHealthMetric, AtRiskCustomer, CustomerSegmentDetail, TremorColor } from '@/lib/types/dashboard-data';
+import type { CustomerHealthData, CustomerHealthMetric, AtRiskCustomer, CustomerSegmentDetail } from '@/lib/types/dashboard-data';
 
 interface CustomerHealthScoreProps {
   data?: CustomerHealthData;
 }
 
-const healthColors: Record<string, string> = {
-  excellent: 'emerald',
-  good: 'blue',
-  fair: 'amber',
-  at_risk: 'red',
+const healthIconColors: Record<string, string> = {
+  excellent: 'text-ds-status-ok',
+  good: 'text-ds-primary',
+  fair: 'text-ds-status-warn',
+  at_risk: 'text-ds-status-fail',
 };
 
 function CustomerHealthScoreInner({ data: propData }: CustomerHealthScoreProps) {
@@ -29,18 +38,22 @@ function CustomerHealthScoreInner({ data: propData }: CustomerHealthScoreProps) 
   if (isLoading && !data) {
     return (
       <Card>
-        <div className="animate-pulse space-y-4">
-          <div className="h-6 bg-gray-200 rounded w-48" />
-          <div className="h-64 bg-gray-200 rounded" />
-        </div>
+        <CardContent>
+          <div className="animate-pulse space-y-4">
+            <div className="h-6 bg-ds-muted rounded w-48" />
+            <div className="h-64 bg-ds-muted rounded" />
+          </div>
+        </CardContent>
       </Card>
     );
   }
 
   if (error || !data) {
     return (
-      <Card className="border-red-200">
-        <Text className="text-red-600">Failed to load customer health data</Text>
+      <Card className="border-ds-status-fail/30">
+        <CardContent>
+          <p className="text-sm text-ds-status-fail">Failed to load customer health data</p>
+        </CardContent>
       </Card>
     );
   }
@@ -59,137 +72,142 @@ function CustomerHealthScoreInner({ data: propData }: CustomerHealthScoreProps) 
       className="space-y-6"
     >
       {/* Key Metrics */}
-      <Grid numItems={2} numItemsSm={4} className="gap-4">
-        <Card decoration="top" decorationColor="emerald">
-          <Text>Overall Health Score</Text>
-          <Metric>{summary?.overallScore || 78}/100</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="blue">
-          <Text>Total Customers</Text>
-          <Metric>{formatNumber(summary?.totalCustomers || 2450)}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="amber">
-          <Text>At Risk</Text>
-          <Metric>{summary?.atRiskCount || 127}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="purple">
-          <Text>Avg Lifetime Value</Text>
-          <Metric>{formatCurrency(summary?.avgLifetimeValue || 485)}</Metric>
-        </Card>
-      </Grid>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <MetricCard label="Overall Health Score" value={`${summary?.overallScore || 78}/100`} tone="success" />
+        <MetricCard label="Total Customers" value={formatNumber(summary?.totalCustomers || 2450)} tone="primary" />
+        <MetricCard label="At Risk" value={summary?.atRiskCount || 127} tone="warning" />
+        <MetricCard label="Avg Lifetime Value" value={formatCurrency(summary?.avgLifetimeValue || 485)} tone="accent" />
+      </div>
 
       {/* Health Distribution */}
-      <Grid numItems={1} numItemsLg={2} className="gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <Title>Customer Health Distribution</Title>
-          <Text className="text-gray-500 mb-4">Breakdown by health segment</Text>
-          <DonutChart
-            className="h-64"
-            data={segmentChartData.length > 0 ? segmentChartData : generateDemoSegments()}
-            category="value"
-            index="name"
-            colors={['emerald', 'blue', 'amber', 'red']}
-            showAnimation
-          />
+          <CardHeader>
+            <CardTitle>Customer Health Distribution</CardTitle>
+            <CardDescription>Breakdown by health segment</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DonutChart
+              className="h-64"
+              data={segmentChartData.length > 0 ? segmentChartData : generateDemoSegments()}
+              category="value"
+              index="name"
+              colors={['emerald', 'indigo', 'amber', 'rose']}
+              showAnimation
+            />
+          </CardContent>
         </Card>
 
         <Card>
-          <Title>Health Metrics Breakdown</Title>
-          <Text className="text-gray-500 mb-4">Contributing factors to health score</Text>
-          <div className="space-y-4">
-            {(summary?.metrics || generateDemoMetrics()).map((metric: CustomerHealthMetric) => (
-              <div key={metric.name}>
-                <div className="flex justify-between mb-1">
-                  <Text className="font-medium">{metric.name}</Text>
-                  <Text className="text-sm">{metric.score}/100</Text>
+          <CardHeader>
+            <CardTitle>Health Metrics Breakdown</CardTitle>
+            <CardDescription>Contributing factors to health score</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {(summary?.metrics || generateDemoMetrics()).map((metric: CustomerHealthMetric) => (
+                <div key={metric.name}>
+                  <div className="flex justify-between mb-1">
+                    <p className="text-sm font-medium text-ds-foreground">{metric.name}</p>
+                    <p className="text-sm text-ds-muted-foreground">{metric.score}/100</p>
+                  </div>
+                  <ProgressBar
+                    value={metric.score}
+                    color={metric.score >= 70 ? 'emerald' : metric.score >= 50 ? 'amber' : 'rose'}
+                  />
                 </div>
-                <ProgressBar
-                  value={metric.score}
-                  color={metric.score >= 70 ? 'emerald' : metric.score >= 50 ? 'amber' : 'red'}
-                />
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </CardContent>
         </Card>
-      </Grid>
+      </div>
 
       {/* At Risk Customers */}
       <Card>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <Title>At-Risk Customers</Title>
-            <Text className="text-gray-500">Customers requiring immediate attention</Text>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>At-Risk Customers</CardTitle>
+              <CardDescription>Customers requiring immediate attention</CardDescription>
+            </div>
+            <Badge variant="danger">
+              {atRiskCustomers?.length || 5} customers
+            </Badge>
           </div>
-          <Badge color="red" size="lg">
-            {atRiskCustomers?.length || 5} customers
-          </Badge>
-        </div>
-
-        <div className="space-y-3">
-          {(atRiskCustomers || generateDemoAtRiskCustomers()).map((customer: AtRiskCustomer, index: number) => (
-            <motion.div
-              key={customer.id || index}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className="flex items-center justify-between p-4 border rounded-lg dark:border-gray-700 border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10"
-            >
-              <div className="flex items-center space-x-4">
-                <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                  <ExclamationCircleIcon className="w-5 h-5 text-red-600" />
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {(atRiskCustomers || generateDemoAtRiskCustomers()).map((customer: AtRiskCustomer, index: number) => (
+              <motion.div
+                key={customer.id || index}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: index * 0.1 }}
+                className="flex items-center justify-between p-4 border rounded-lg border-ds-status-fail/25 bg-ds-status-fail/10"
+              >
+                <div className="flex items-center space-x-4">
+                  <div className="w-10 h-10 rounded-full bg-ds-status-fail/15 flex items-center justify-center">
+                    <ExclamationCircleIcon className="w-5 h-5 text-ds-status-fail" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-ds-foreground">{customer.name}</p>
+                    <p className="text-xs text-ds-muted-foreground">{customer.email}</p>
+                  </div>
                 </div>
-                <div>
-                  <Text className="font-medium">{customer.name}</Text>
-                  <Text className="text-xs text-gray-500">{customer.email}</Text>
+                <div className="flex items-center space-x-4">
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-ds-foreground">Health: {customer.healthScore}</p>
+                    <p className="text-xs text-ds-status-fail">{customer.riskReason}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm text-ds-foreground">LTV: {formatCurrency(customer.lifetimeValue)}</p>
+                    <p className="text-xs text-ds-muted-foreground">
+                      Last order: {customer.daysSinceLastOrder}d ago
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center space-x-4">
-                <div className="text-right">
-                  <Text className="text-sm font-medium">Health: {customer.healthScore}</Text>
-                  <Text className="text-xs text-red-600">{customer.riskReason}</Text>
-                </div>
-                <div className="text-right">
-                  <Text className="text-sm">LTV: {formatCurrency(customer.lifetimeValue)}</Text>
-                  <Text className="text-xs text-gray-500">
-                    Last order: {customer.daysSinceLastOrder}d ago
-                  </Text>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
+              </motion.div>
+            ))}
+          </div>
+        </CardContent>
       </Card>
 
       {/* Customer Trends */}
       <Card>
-        <Title>Health Score Trends</Title>
-        <Text className="text-gray-500 mb-4">Average health score over time</Text>
-        <BarChart
-          className="h-64"
-          data={trends?.timeline || generateDemoTrends()}
-          index="month"
-          categories={['excellent', 'good', 'fair', 'atRisk']}
-          colors={['emerald', 'blue', 'amber', 'red']}
-          stack
-          showAnimation
-        />
+        <CardHeader>
+          <CardTitle>Health Score Trends</CardTitle>
+          <CardDescription>Average health score over time</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <BarChart
+            className="h-64"
+            data={trends?.timeline || generateDemoTrends()}
+            index="month"
+            categories={['excellent', 'good', 'fair', 'atRisk']}
+            colors={['emerald', 'indigo', 'amber', 'rose']}
+            stack
+            showAnimation
+          />
+        </CardContent>
       </Card>
 
       {/* Segment Details */}
-      <Grid numItems={1} numItemsSm={2} numItemsLg={4} className="gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {(Object.entries(segments || generateDemoSegmentDetails()) as [string, number | CustomerSegmentDetail][]).map(([segment, data]) => (
-          <Card key={segment} decoration="left" decorationColor={healthColors[segment] as TremorColor || 'gray'}>
-            <div className="flex items-center space-x-2 mb-2">
-              <HeartIcon className={`w-5 h-5 text-${healthColors[segment] || 'gray'}-600`} />
-              <Text className="font-medium capitalize">{segment.replace('_', ' ')}</Text>
-            </div>
-            <Metric>{typeof data === 'number' ? data : data.count}</Metric>
-            <Text className="text-xs text-gray-500 mt-1">
-              {typeof data === 'number' ? 'customers' : `Avg LTV: ${formatCurrency(data.avgLtv)}`}
-            </Text>
+          <Card key={segment}>
+            <CardContent className="p-5">
+              <div className="flex items-center space-x-2 mb-2">
+                <HeartIcon className={`w-5 h-5 ${healthIconColors[segment] || 'text-ds-muted-foreground'}`} />
+                <p className="text-sm font-medium text-ds-foreground capitalize">{segment.replace('_', ' ')}</p>
+              </div>
+              <p className="ds-instrument-number text-3xl text-ds-foreground">{typeof data === 'number' ? data : data.count}</p>
+              <p className="text-xs text-ds-muted-foreground mt-1">
+                {typeof data === 'number' ? 'customers' : `Avg LTV: ${formatCurrency(data.avgLtv)}`}
+              </p>
+            </CardContent>
           </Card>
         ))}
-      </Grid>
+      </div>
     </motion.div>
   );
 }

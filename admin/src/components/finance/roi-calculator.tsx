@@ -1,7 +1,8 @@
 'use client';
 
 import { memo } from 'react';
-import { Card, Title, Text, Badge, Grid, Metric, BarChart, DonutChart, ProgressBar } from '@tremor/react';
+import { BarChart, DonutChart, ProgressBar } from '@tremor/react';
+import { Badge, Card, CardContent, CardHeader, CardTitle, CardDescription, Separator } from '@stateset/design';
 import { CurrencyDollarIcon, ClockIcon, ArrowTrendingUpIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { formatCurrency, formatNumber, formatPercentage } from '@/lib/utils';
@@ -24,189 +25,214 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
       className="space-y-6"
     >
       {/* Key ROI Metrics */}
-      <Grid numItems={2} numItemsSm={4} className="gap-4">
-        <Card decoration="top" decorationColor="emerald">
-          <Text>Annual Savings</Text>
-          <Metric>{formatCurrency(summary.annualSavings)}</Metric>
-          <Text className="text-xs text-emerald-600 mt-1">
-            +{formatPercentage(summary.savingsGrowth)} vs last year
-          </Text>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <Card className="border-t-2 border-t-ds-status-ok">
+          <CardContent>
+            <p className="text-sm text-ds-muted-foreground">Annual Savings</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatCurrency(summary.annualSavings)}</p>
+            <p className="text-xs text-ds-status-ok mt-1">
+              +{formatPercentage(summary.savingsGrowth)} vs last year
+            </p>
+          </CardContent>
         </Card>
-        <Card decoration="top" decorationColor="blue">
-          <Text>ROI</Text>
-          <Metric>{summary.roi}%</Metric>
-          <Text className="text-xs text-blue-600 mt-1">
-            Payback: {summary.paybackMonths} months
-          </Text>
+        <Card className="border-t-2 border-t-ds-status-run">
+          <CardContent>
+            <p className="text-sm text-ds-muted-foreground">ROI</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">{summary.roi}%</p>
+            <p className="text-xs text-ds-status-run mt-1">
+              Payback: {summary.paybackMonths} months
+            </p>
+          </CardContent>
         </Card>
-        <Card decoration="top" decorationColor="purple">
-          <Text>Hours Saved</Text>
-          <Metric>{formatNumber(summary.hoursSaved)}</Metric>
-          <Text className="text-xs text-purple-600 mt-1">
-            Per month
-          </Text>
+        <Card className="border-t-2 border-t-ds-brand-500">
+          <CardContent>
+            <p className="text-sm text-ds-muted-foreground">Hours Saved</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatNumber(summary.hoursSaved)}</p>
+            <p className="text-xs text-ds-brand-600 mt-1">
+              Per month
+            </p>
+          </CardContent>
         </Card>
-        <Card decoration="top" decorationColor="amber">
-          <Text>Cost per Transaction</Text>
-          <Metric>{formatCurrency(summary.costPerTransaction)}</Metric>
-          <Text className="text-xs text-amber-600 mt-1">
-            -{formatPercentage(summary.costReduction)} reduction
-          </Text>
+        <Card className="border-t-2 border-t-ds-status-warn">
+          <CardContent>
+            <p className="text-sm text-ds-muted-foreground">Cost per Transaction</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatCurrency(summary.costPerTransaction)}</p>
+            <p className="text-xs text-ds-status-warn mt-1">
+              -{formatPercentage(summary.costReduction)} reduction
+            </p>
+          </CardContent>
         </Card>
-      </Grid>
+      </div>
 
       {/* Cost Breakdown */}
-      <Grid numItems={1} numItemsLg={2} className="gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <Title>Cost Breakdown</Title>
-          <Text className="text-gray-500 mb-4">Where your operational costs go</Text>
-          <DonutChart
-            className="h-64"
-            data={costBreakdown.categories}
-            category="value"
-            index="name"
-            colors={['blue', 'emerald', 'amber', 'purple', 'red']}
-            showAnimation
-            valueFormatter={(value) => formatCurrency(value)}
-          />
-          <div className="mt-4 space-y-2">
-            {costBreakdown.categories.map((category: CostCategory, index: number) => (
-              <div key={index} className="flex justify-between items-center">
-                <Text className="text-sm">{category.name}</Text>
-                <div className="flex items-center space-x-2">
-                  <Text className="text-sm font-medium">{formatCurrency(category.value)}</Text>
-                  {category.trend < 0 && (
-                    <Badge color="emerald" size="xs">
-                      {category.trend}%
-                    </Badge>
-                  )}
+          <CardHeader>
+            <CardTitle>Cost Breakdown</CardTitle>
+            <CardDescription>Where your operational costs go</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DonutChart
+              className="h-64"
+              data={costBreakdown.categories}
+              category="value"
+              index="name"
+              colors={['indigo', 'emerald', 'amber', 'violet', 'cyan']}
+              showAnimation
+              valueFormatter={(value) => formatCurrency(value)}
+            />
+            <div className="mt-4 space-y-2">
+              {costBreakdown.categories.map((category: CostCategory, index: number) => (
+                <div key={index} className="flex justify-between items-center">
+                  <p className="text-sm text-ds-muted-foreground">{category.name}</p>
+                  <div className="flex items-center space-x-2">
+                    <p className="text-sm font-medium text-ds-foreground">{formatCurrency(category.value)}</p>
+                    {category.trend < 0 && (
+                      <Badge variant="success">
+                        {category.trend}%
+                      </Badge>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </CardContent>
         </Card>
 
         <Card>
-          <Title>Savings by Category</Title>
-          <Text className="text-gray-500 mb-4">Where automation saves you money</Text>
-          <div className="space-y-4">
-            {costBreakdown.savingsByCategory.map((category: SavingsCategory, index: number) => (
-              <div key={index}>
-                <div className="flex justify-between mb-1">
-                  <Text className="font-medium">{category.name}</Text>
-                  <div className="flex items-center space-x-2">
-                    <Text className="text-emerald-600 font-medium">
-                      {formatCurrency(category.saved)}
-                    </Text>
-                    <Text className="text-sm text-gray-500">
-                      / {formatCurrency(category.previous)}
-                    </Text>
+          <CardHeader>
+            <CardTitle>Savings by Category</CardTitle>
+            <CardDescription>Where automation saves you money</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {costBreakdown.savingsByCategory.map((category: SavingsCategory, index: number) => (
+                <div key={index}>
+                  <div className="flex justify-between mb-1">
+                    <p className="text-sm font-medium text-ds-foreground">{category.name}</p>
+                    <div className="flex items-center space-x-2">
+                      <p className="text-sm font-medium text-ds-status-ok">
+                        {formatCurrency(category.saved)}
+                      </p>
+                      <p className="text-sm text-ds-muted-foreground">
+                        / {formatCurrency(category.previous)}
+                      </p>
+                    </div>
                   </div>
+                  <ProgressBar
+                    value={(category.saved / category.previous) * 100}
+                    color="emerald"
+                  />
+                  <p className="text-xs text-ds-muted-foreground mt-1">
+                    {formatPercentage(category.saved / category.previous)} reduction
+                  </p>
                 </div>
-                <ProgressBar
-                  value={(category.saved / category.previous) * 100}
-                  color="emerald"
-                />
-                <Text className="text-xs text-gray-500 mt-1">
-                  {formatPercentage(category.saved / category.previous)} reduction
-                </Text>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </CardContent>
         </Card>
-      </Grid>
+      </div>
 
       {/* Savings Projection */}
       <Card>
-        <Title>Savings Projection</Title>
-        <Text className="text-gray-500 mb-4">Projected savings over the next 12 months</Text>
-        <BarChart
-          className="h-72"
-          data={savingsProjection.monthly}
-          index="month"
-          categories={['currentCost', 'projectedCost', 'savings']}
-          colors={['red', 'blue', 'emerald']}
-          showAnimation
-          valueFormatter={(value) => formatCurrency(value)}
-        />
+        <CardHeader>
+          <CardTitle>Savings Projection</CardTitle>
+          <CardDescription>Projected savings over the next 12 months</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <BarChart
+            className="h-72"
+            data={savingsProjection.monthly}
+            index="month"
+            categories={['currentCost', 'projectedCost', 'savings']}
+            colors={['red', 'indigo', 'emerald']}
+            showAnimation
+            valueFormatter={(value) => formatCurrency(value)}
+          />
+        </CardContent>
       </Card>
 
       {/* Payback Analysis */}
       <Card>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <Title>Payback Analysis</Title>
-            <Text className="text-gray-500">Investment recovery timeline</Text>
+        <CardContent>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Payback Analysis</h3>
+              <p className="text-sm text-ds-muted-foreground">Investment recovery timeline</p>
+            </div>
+            <Badge variant="success">
+              {summary.paybackMonths} month payback
+            </Badge>
           </div>
-          <Badge color="emerald" size="lg">
-            {summary.paybackMonths} month payback
-          </Badge>
-        </div>
 
-        <Grid numItems={1} numItemsSm={3} className="gap-4 mb-6">
-          <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-            <div className="flex items-center space-x-2 mb-2">
-              <CurrencyDollarIcon className="w-5 h-5 text-blue-600" />
-              <Text className="font-medium">Initial Investment</Text>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            <div className="p-4 bg-ds-muted rounded-lg">
+              <div className="flex items-center space-x-2 mb-2">
+                <CurrencyDollarIcon className="w-5 h-5 text-ds-status-run" />
+                <p className="text-sm font-medium text-ds-foreground">Initial Investment</p>
+              </div>
+              <p className="ds-instrument-number text-3xl text-ds-status-run">{formatCurrency(paybackAnalysis.initialInvestment)}</p>
             </div>
-            <Metric className="text-blue-600">{formatCurrency(paybackAnalysis.initialInvestment)}</Metric>
-          </div>
-          <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-            <div className="flex items-center space-x-2 mb-2">
-              <ClockIcon className="w-5 h-5 text-amber-600" />
-              <Text className="font-medium">Monthly Cost</Text>
+            <div className="p-4 bg-ds-muted rounded-lg">
+              <div className="flex items-center space-x-2 mb-2">
+                <ClockIcon className="w-5 h-5 text-ds-status-warn" />
+                <p className="text-sm font-medium text-ds-foreground">Monthly Cost</p>
+              </div>
+              <p className="ds-instrument-number text-3xl text-ds-status-warn">{formatCurrency(paybackAnalysis.monthlyCost)}</p>
             </div>
-            <Metric className="text-amber-600">{formatCurrency(paybackAnalysis.monthlyCost)}</Metric>
-          </div>
-          <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-            <div className="flex items-center space-x-2 mb-2">
-              <ArrowTrendingUpIcon className="w-5 h-5 text-emerald-600" />
-              <Text className="font-medium">Monthly Savings</Text>
+            <div className="p-4 bg-ds-status-ok/10 rounded-lg">
+              <div className="flex items-center space-x-2 mb-2">
+                <ArrowTrendingUpIcon className="w-5 h-5 text-ds-status-ok" />
+                <p className="text-sm font-medium text-ds-foreground">Monthly Savings</p>
+              </div>
+              <p className="ds-instrument-number text-3xl text-ds-status-ok">{formatCurrency(paybackAnalysis.monthlySavings)}</p>
             </div>
-            <Metric className="text-emerald-600">{formatCurrency(paybackAnalysis.monthlySavings)}</Metric>
           </div>
-        </Grid>
 
-        {/* ROI Milestones */}
-        <div className="border-t dark:border-gray-700 pt-4">
-          <Text className="font-medium mb-3">ROI Milestones</Text>
-          <div className="flex items-center justify-between">
-            {paybackAnalysis.milestones.map((milestone: ROIMilestone, index: number) => (
-              <div key={index} className="flex items-center space-x-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                  milestone.achieved ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-gray-100 dark:bg-gray-800'
-                }`}>
-                  {milestone.achieved ? (
-                    <CheckCircleIcon className="w-5 h-5 text-emerald-600" />
-                  ) : (
-                    <Text className="text-sm font-medium text-gray-500">{index + 1}</Text>
+          {/* ROI Milestones */}
+          <Separator />
+          <div className="pt-4">
+            <p className="text-sm font-medium text-ds-foreground mb-3">ROI Milestones</p>
+            <div className="flex items-center justify-between">
+              {paybackAnalysis.milestones.map((milestone: ROIMilestone, index: number) => (
+                <div key={index} className="flex items-center space-x-3">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                    milestone.achieved ? 'bg-ds-status-ok/15' : 'bg-ds-muted'
+                  }`}>
+                    {milestone.achieved ? (
+                      <CheckCircleIcon className="w-5 h-5 text-ds-status-ok" />
+                    ) : (
+                      <p className="text-sm font-medium text-ds-muted-foreground">{index + 1}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-ds-foreground">{milestone.name}</p>
+                    <p className="text-xs text-ds-muted-foreground">{milestone.timeline}</p>
+                  </div>
+                  {index < paybackAnalysis.milestones.length - 1 && (
+                    <div className="flex-1 h-0.5 bg-ds-enterprise-line mx-4" />
                   )}
                 </div>
-                <div>
-                  <Text className="text-sm font-medium">{milestone.name}</Text>
-                  <Text className="text-xs text-gray-500">{milestone.timeline}</Text>
-                </div>
-                {index < paybackAnalysis.milestones.length - 1 && (
-                  <div className="flex-1 h-0.5 bg-gray-200 dark:bg-gray-700 mx-4" />
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        </CardContent>
       </Card>
 
       {/* Value Summary */}
-      <Card className="bg-gradient-to-r from-emerald-50 to-blue-50 dark:from-emerald-900/20 dark:to-blue-900/20">
-        <div className="flex items-center justify-between">
-          <div>
-            <Title>Total Value Generated</Title>
-            <Text className="text-gray-600">Since implementation</Text>
+      <Card className="bg-gradient-to-r from-ds-status-ok/10 to-ds-status-run/10">
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Total Value Generated</h3>
+              <p className="text-sm text-ds-muted-foreground">Since implementation</p>
+            </div>
+            <div className="text-right">
+              <p className="ds-instrument-number text-3xl text-ds-status-ok">{formatCurrency(summary.totalValueGenerated)}</p>
+              <p className="text-sm text-ds-muted-foreground">across all optimizations</p>
+            </div>
           </div>
-          <div className="text-right">
-            <Metric className="text-emerald-600">{formatCurrency(summary.totalValueGenerated)}</Metric>
-            <Text className="text-sm text-gray-500">across all optimizations</Text>
-          </div>
-        </div>
+        </CardContent>
       </Card>
     </motion.div>
   );

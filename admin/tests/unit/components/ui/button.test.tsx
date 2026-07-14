@@ -27,17 +27,17 @@ describe('Button', () => {
     render(<Button>x</Button>);
     const button = screen.getByRole('button');
     // Default variant has the dark "gray-900" bg, default size is h-9 px-4 py-2.
-    expect(button.className).toMatch(/bg-gray-900/);
+    expect(button.className).toMatch(/bg-ds-foreground/);
     expect(button.className).toMatch(/h-9/);
   });
 
   it.each([
-    ['destructive', /bg-red-500/],
+    ['destructive', /bg-ds-destructive/],
     ['outline', /border/],
-    ['secondary', /bg-gray-100/],
-    ['ghost', /hover:bg-gray-100/],
+    ['secondary', /bg-ds-muted/],
+    ['ghost', /hover:bg-ds-muted/],
     ['link', /underline-offset-4/],
-    ['primary', /bg-indigo-600/],
+    ['primary', /bg-ds-primary/],
   ] as const)('applies the %s variant className', (variant, pattern) => {
     render(<Button variant={variant}>v</Button>);
     expect(screen.getByRole('button').className).toMatch(pattern);

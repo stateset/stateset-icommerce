@@ -1,12 +1,23 @@
 import type { Config } from 'tailwindcss'
 
+// Single source of truth for the Stateset brand — semantic ds-* tokens, the pill
+// button scale, status vocabulary, and chart palette. See ../../stateset-design.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const statesetDesign = require('@stateset/design/tailwind-preset')
+
 const config: Config = {
   darkMode: ['class'],
+  presets: [statesetDesign],
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
     './node_modules/@tremor/**/*.{js,ts,jsx,tsx}',
+    // The design-system primitives ship raw .jsx; scan their real source so the
+    // ds-* utilities they reference are generated. (Relative path because the
+    // package is a sibling repo consumed via a file: link, not a vendored copy.)
+    '../../stateset-design/index.js',
+    '../../stateset-design/src/**/*.{js,jsx}',
   ],
   theme: {
     extend: {

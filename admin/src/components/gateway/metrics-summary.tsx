@@ -1,6 +1,6 @@
 'use client';
 
-import { Card, Metric, Text, Grid } from '@tremor/react';
+import { MetricCard } from '@stateset/design';
 import {
   ChatBubbleLeftEllipsisIcon,
   ArrowPathIcon,
@@ -9,6 +9,8 @@ import {
   ServerIcon,
 } from '@heroicons/react/24/outline';
 import type { GatewayMetrics } from '@/lib/types/gateway';
+
+type MetricTone = 'primary' | 'accent' | 'success' | 'warning' | 'danger';
 
 interface MetricsSummaryProps {
   metrics: GatewayMetrics;
@@ -21,52 +23,55 @@ export function MetricsSummary({ metrics }: MetricsSummaryProps) {
       ? ((totals.errors / totals.messagesReceived) * 100).toFixed(2)
       : '0.00';
 
-  const kpis = [
+  const kpis: {
+    label: string;
+    value: string;
+    icon: typeof ChatBubbleLeftEllipsisIcon;
+    tone: MetricTone;
+  }[] = [
     {
       label: 'Messages Received',
       value: totals.messagesReceived.toLocaleString(),
       icon: ChatBubbleLeftEllipsisIcon,
-      color: 'indigo' as const,
+      tone: 'primary',
     },
     {
       label: 'Responses Sent',
       value: totals.responsesSent.toLocaleString(),
       icon: ArrowPathIcon,
-      color: 'blue' as const,
+      tone: 'accent',
     },
     {
       label: 'Errors',
       value: `${totals.errors.toLocaleString()} (${errorRate}%)`,
       icon: ExclamationTriangleIcon,
-      color: (totals.errors > 0 ? 'red' : 'emerald') as 'red' | 'emerald',
+      tone: totals.errors > 0 ? 'danger' : 'success',
     },
     {
       label: 'Avg Response',
       value: `${Math.round(totals.avgResponseMs)}ms`,
       icon: ClockIcon,
-      color: (totals.avgResponseMs > 2000 ? 'amber' : 'emerald') as 'amber' | 'emerald',
+      tone: totals.avgResponseMs > 2000 ? 'warning' : 'success',
     },
     {
       label: 'Uptime',
       value: uptime,
       icon: ServerIcon,
-      color: 'emerald' as const,
+      tone: 'success',
     },
   ];
 
   return (
-    <Grid numItems={2} numItemsLg={5} className="gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
       {kpis.map((kpi) => (
-        <Card key={kpi.label} decoration="top" decorationColor={kpi.color}>
-          <div className="flex items-center justify-between">
-            <div>
-              <Text>{kpi.label}</Text>
-              <Metric className="text-xl">{kpi.value}</Metric>
-            </div>
-            <kpi.icon className="w-8 h-8 text-gray-400" />
-          </div>
-        </Card>
+        <MetricCard
+          key={kpi.label}
+          label={kpi.label}
+          value={kpi.value}
+          tone={kpi.tone}
+          icon={kpi.icon}
+        />
       ))}
-    </Grid>
+    </div>
   );
 }

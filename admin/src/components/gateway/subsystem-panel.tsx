@@ -1,6 +1,6 @@
 'use client';
 
-import { Card, Text, Badge } from '@tremor/react';
+import { Card, CardContent, StatusPill } from '@stateset/design';
 import {
   MicrophoneIcon,
   GlobeAltIcon,
@@ -27,16 +27,18 @@ export function SubsystemPanel({ subsystems }: SubsystemPanelProps) {
         const status = subsystems[key];
         const isEnabled = status === 'enabled';
         return (
-          <Card key={key} className="p-4">
-            <div className="flex items-center space-x-2">
-              <Icon
-                className={`w-5 h-5 ${isEnabled ? 'text-emerald-500' : 'text-gray-400'}`}
-              />
-              <Text className="text-sm font-medium">{label}</Text>
-            </div>
-            <Badge color={isEnabled ? 'emerald' : 'gray'} className="mt-2" size="xs">
-              {status}
-            </Badge>
+          <Card key={key}>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-2">
+                <Icon
+                  className={`w-5 h-5 ${isEnabled ? 'text-ds-status-ok' : 'text-ds-muted-foreground'}`}
+                />
+                <p className="text-sm font-medium text-ds-foreground">{label}</p>
+              </div>
+              <div className="mt-2">
+                <StatusPill status={isEnabled ? 'ok' : 'idle'}>{status}</StatusPill>
+              </div>
+            </CardContent>
           </Card>
         );
       })}

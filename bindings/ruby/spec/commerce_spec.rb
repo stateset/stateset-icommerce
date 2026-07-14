@@ -317,6 +317,6 @@ end
 
 RSpec.describe StateSet do
   it 'has a version number' do
-    expect(StateSet::VERSION).to eq('1.6.0')
+    expect(StateSet::VERSION).to eq('1.7.0')
   end
 end

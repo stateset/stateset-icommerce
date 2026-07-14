@@ -56,13 +56,13 @@ describe('ProgressBar', () => {
   });
 
   it.each([
-    ['emerald', /bg-emerald-500/],
-    ['amber', /bg-amber-500/],
-    ['red', /bg-red-500/],
-    ['blue', /bg-blue-500/],
-    ['indigo', /bg-indigo-500/],
-    ['purple', /bg-purple-500/],
-    ['gray', /bg-gray-500/],
+    ['emerald', /bg-ds-status-ok/],
+    ['amber', /bg-ds-status-warn/],
+    ['red', /bg-ds-status-fail/],
+    ['blue', /bg-ds-status-run/],
+    ['indigo', /bg-ds-primary/],
+    ['purple', /bg-ds-primary/],
+    ['gray', /bg-ds-muted-foreground/],
   ] as const)('applies the %s color class', (color, pattern) => {
     const { container } = render(<ProgressBar value={50} color={color} />);
     expect(innerFill(container).className).toMatch(pattern);

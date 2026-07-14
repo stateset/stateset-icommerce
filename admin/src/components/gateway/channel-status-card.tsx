@@ -1,6 +1,6 @@
 'use client';
 
-import { Card, Text, Badge } from '@tremor/react';
+import { Card, CardContent, StatusPill } from '@stateset/design';
 import {
   ChatBubbleLeftRightIcon,
   HashtagIcon,
@@ -58,45 +58,57 @@ export function ChannelStatusCard({ name, stats, onClick }: ChannelStatusCardPro
 
   return (
     <Card
-      className="cursor-pointer hover:shadow-md transition-shadow"
-      decoration="left"
-      decorationColor={isActive ? 'emerald' : 'gray'}
+      className="cursor-pointer transition-shadow hover:shadow-ds-card-hover"
       onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <Icon className="w-6 h-6 text-gray-500 dark:text-gray-400" />
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <Icon className="w-6 h-6 text-ds-muted-foreground" />
+            <div>
+              <p className="text-sm font-medium text-ds-foreground">{displayName}</p>
+              <p className="text-xs text-ds-muted-foreground">
+                {isActive
+                  ? `Active ${formatRelativeTime(stats.lastMessageAt!)}`
+                  : 'No activity'}
+              </p>
+            </div>
+          </div>
+          <StatusPill status={isActive ? 'ok' : 'idle'}>
+            {isActive ? 'Online' : 'Idle'}
+          </StatusPill>
+        </div>
+        <div className="grid grid-cols-3 gap-4 mt-4">
           <div>
-            <Text className="font-medium">{displayName}</Text>
-            <Text className="text-xs text-gray-400">
-              {isActive
-                ? `Active ${formatRelativeTime(stats.lastMessageAt!)}`
-                : 'No activity'}
-            </Text>
+            <p className="text-xs text-ds-muted-foreground">Messages</p>
+            <p className="text-sm font-semibold text-ds-foreground">{stats.messagesReceived}</p>
+          </div>
+          <div>
+            <p className="text-xs text-ds-muted-foreground">Errors</p>
+            <p
+              className={`text-sm font-semibold ${stats.errors > 0 ? 'text-ds-status-fail' : 'text-ds-foreground'}`}
+            >
+              {stats.errors} ({errorRate}%)
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-ds-muted-foreground">Avg Response</p>
+            <p className="text-sm font-semibold text-ds-foreground">{Math.round(stats.avgResponseMs)}ms</p>
           </div>
         </div>
-        <Badge color={isActive ? 'emerald' : 'gray'} size="xs">
-          {isActive ? 'Online' : 'Idle'}
-        </Badge>
-      </div>
-      <div className="grid grid-cols-3 gap-4 mt-4">
-        <div>
-          <Text className="text-xs text-gray-400">Messages</Text>
-          <Text className="font-semibold">{stats.messagesReceived}</Text>
-        </div>
-        <div>
-          <Text className="text-xs text-gray-400">Errors</Text>
-          <Text
-            className={`font-semibold ${stats.errors > 0 ? 'text-red-500' : ''}`}
-          >
-            {stats.errors} ({errorRate}%)
-          </Text>
-        </div>
-        <div>
-          <Text className="text-xs text-gray-400">Avg Response</Text>
-          <Text className="font-semibold">{Math.round(stats.avgResponseMs)}ms</Text>
-        </div>
-      </div>
+      </CardContent>
     </Card>
   );
 }

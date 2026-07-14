@@ -69,30 +69,47 @@ test('expired entries are lazily evicted, shrinking size()', () => {
   assert.equal(g.size(), 0);
 });
 
-test('LRU bound evicts the oldest entries when full', () => {
+test('a full guard rejects new nonces instead of evicting live ones', () => {
   let clock = 0;
   const g = new ReplayGuard({ maxEntries: 3, ttlMs: 1_000_000, now: () => (clock += 1) });
-  g.checkAndRecord('aid:v1:zA', 'n1'); // ts 1
-  g.checkAndRecord('aid:v1:zA', 'n2'); // ts 2
-  g.checkAndRecord('aid:v1:zA', 'n3'); // ts 3 → at cap (3)
-  // Inserting a 4th evicts the oldest (n1).
-  g.checkAndRecord('aid:v1:zA', 'n4'); // evicts n1, ts 4
-  assert.equal(g.size(), 3);
-  // n1 was evicted → re-seeing it is treated as first-seen (accepted).
-  assert.equal(g.checkAndRecord('aid:v1:zA', 'n1'), true);
-  // n4 is still retained → replay.
+  assert.equal(g.checkAndRecord('aid:v1:zA', 'n1'), true); // ts 1
+  assert.equal(g.checkAndRecord('aid:v1:zA', 'n2'), true); // ts 2
+  assert.equal(g.checkAndRecord('aid:v1:zA', 'n3'), true); // ts 3 → at cap (3)
+  // A 4th live nonce must be rejected (fail closed), NOT admitted by
+  // forgetting n1 — §5.3 requires already-seen nonces to stay rejected for
+  // the full window, so an attacker must not be able to flush them early.
   assert.equal(g.checkAndRecord('aid:v1:zA', 'n4'), false);
+  assert.equal(g.size(), 3);
+  // n1 is still remembered → replaying it is still rejected.
+  assert.equal(g.checkAndRecord('aid:v1:zA', 'n1'), false);
 });
 
-test('eviction under load never exceeds maxEntries', () => {
+test('expired entries free capacity for new nonces', () => {
+  let clock = 0;
+  const g = new ReplayGuard({ maxEntries: 2, ttlMs: 100, now: () => clock });
+  clock = 1;
+  assert.equal(g.checkAndRecord('aid:v1:zA', 'n1'), true);
+  clock = 2;
+  assert.equal(g.checkAndRecord('aid:v1:zA', 'n2'), true);
+  clock = 3;
+  assert.equal(g.checkAndRecord('aid:v1:zA', 'n3'), false); // full of live entries
+  clock = 150; // n1 (ts 1) and n2 (ts 2) are now past their window
+  assert.equal(g.checkAndRecord('aid:v1:zA', 'n3'), true);
+  assert.ok(g.size() <= 2);
+});
+
+test('flood load never exceeds maxEntries and never forgets live nonces', () => {
   let clock = 0;
   const g = new ReplayGuard({ maxEntries: 50, ttlMs: 1_000_000, now: () => (clock += 1) });
+  let accepted = 0;
   for (let i = 0; i < 500; i++) {
-    g.checkAndRecord('aid:v1:zLoad', `n${i}`);
+    if (g.checkAndRecord('aid:v1:zLoad', `n${i}`)) accepted += 1;
   }
+  assert.equal(accepted, 50, 'exactly the first maxEntries nonces are admitted');
   assert.ok(g.size() <= 50, `size ${g.size()} must be <= 50`);
-  // The most-recent nonce is retained → replay.
-  assert.equal(g.checkAndRecord('aid:v1:zLoad', 'n499'), false);
+  // Every admitted nonce is still remembered → replay rejected.
+  assert.equal(g.checkAndRecord('aid:v1:zLoad', 'n0'), false);
+  assert.equal(g.checkAndRecord('aid:v1:zLoad', 'n49'), false);
 });
 
 test('constructor rejects invalid config', () => {

@@ -44,13 +44,13 @@ describe('Card', () => {
   });
 
   it.each([
-    ['red', /border-t-red-500/],
-    ['amber', /border-t-amber-500/],
-    ['blue', /border-t-blue-500/],
-    ['indigo', /border-t-indigo-500/],
-    ['purple', /border-t-purple-500/],
-    ['emerald', /border-t-emerald-500/],
-    ['gray', /border-t-gray-500/],
+    ['red', /border-t-ds-status-fail/],
+    ['amber', /border-t-ds-status-warn/],
+    ['blue', /border-t-ds-status-run/],
+    ['indigo', /border-t-ds-primary/],
+    ['purple', /border-t-ds-primary/],
+    ['emerald', /border-t-ds-status-ok/],
+    ['gray', /border-t-ds-muted-foreground/],
   ] as const)('applies the %s decoration color on top', (color, pattern) => {
     const { container } = render(
       <Card decoration="top" decorationColor={color}>
@@ -66,7 +66,7 @@ describe('Card', () => {
         x
       </Card>,
     );
-    expect((container.firstChild as HTMLElement).className).toMatch(/border-t-indigo-500/);
+    expect((container.firstChild as HTMLElement).className).toMatch(/border-t-ds-primary/);
   });
 
   it('omits the decoration class when decoration is unset', () => {

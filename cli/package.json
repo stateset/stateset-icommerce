@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -184,7 +184,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.1.70",
     "@clack/prompts": "^0.11.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@stateset/embedded": "^1.6.0",
+    "@stateset/embedded": "^1.7.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ethers": "^6.16.0",
@@ -200,7 +200,7 @@
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "better-sqlite3": "^11.6.0",
+    "better-sqlite3": "^11.7.0",
     "botbuilder": "^4.23.0",
     "discord.js": "^14.14.0",
     "googleapis": "^130.0.0",

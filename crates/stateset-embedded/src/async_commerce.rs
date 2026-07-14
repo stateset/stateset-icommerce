@@ -2444,9 +2444,24 @@ impl AsyncCarts {
         self.db.carts().begin_checkout_async(id).await
     }
 
-    /// Complete checkout (creates order).
+    /// Complete checkout (creates order). The minted order is `Confirmed`
+    /// with payment left `Pending`; record the payment through the payments
+    /// API, or use [`complete_settled_externally`](Self::complete_settled_externally)
+    /// when settlement genuinely happened outside the engine.
     pub async fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
         let result = self.db.carts().complete_async(id).await?;
+        self.metrics.record_cart_checkout_completed(
+            &result.cart_id.to_string(),
+            &result.order_id.to_string(),
+        );
+        Ok(result)
+    }
+
+    /// Complete checkout for a cart settled outside the engine (ACP, external
+    /// PSP): explicit opt-in to mint a `Confirmed` + `Paid` order with no
+    /// engine-side payment record.
+    pub async fn complete_settled_externally(&self, id: Uuid) -> Result<CheckoutResult> {
+        let result = self.db.carts().complete_settled_externally_async(id).await?;
         self.metrics.record_cart_checkout_completed(
             &result.cart_id.to_string(),
             &result.order_id.to_string(),

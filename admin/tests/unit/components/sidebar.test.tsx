@@ -100,7 +100,7 @@ describe('Sidebar', () => {
 
   it('renders the SQLite latency info', () => {
     render(React.createElement(Sidebar));
-    expect(screen.getByText('SQLite: 0ms latency')).toBeDefined();
+    expect(screen.getByText('SQLite · 0ms latency')).toBeDefined();
   });
 
   it('renders the footer version string', () => {
@@ -117,23 +117,23 @@ describe('Sidebar', () => {
     mockUsePathname.mockReturnValue('/');
     render(React.createElement(Sidebar));
     const dashboardLink = screen.getByText('Dashboard').closest('a');
-    expect(dashboardLink?.className).toContain('bg-indigo-50');
+    expect(dashboardLink?.className).toContain('bg-ds-sidebar-accent');
   });
 
   it('highlights Orders link when pathname is /orders', () => {
     mockUsePathname.mockReturnValue('/orders');
     render(React.createElement(Sidebar));
     const ordersLink = screen.getByText('Orders').closest('a');
-    expect(ordersLink?.className).toContain('bg-indigo-50');
+    expect(ordersLink?.className).toContain('bg-ds-sidebar-accent');
     const dashboardLink = screen.getByText('Dashboard').closest('a');
-    expect(dashboardLink?.className).not.toContain('bg-indigo-50');
+    expect(dashboardLink?.className).not.toContain('bg-ds-sidebar-accent');
   });
 
   it('highlights a nav item for sub-paths (e.g. /orders/123)', () => {
     mockUsePathname.mockReturnValue('/orders/123');
     render(React.createElement(Sidebar));
     const ordersLink = screen.getByText('Orders').closest('a');
-    expect(ordersLink?.className).toContain('bg-indigo-50');
+    expect(ordersLink?.className).toContain('bg-ds-sidebar-accent');
   });
 
   it('renders correct href for each navigation item', () => {

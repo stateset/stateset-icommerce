@@ -17,6 +17,7 @@ import {
   ServerStackIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
+import { DashboardSidebarSection } from '@stateset/design';
 import { cn } from '@/lib/utils';
 import { APP_VERSION } from '@/lib/version';
 
@@ -37,81 +38,78 @@ export const navigation = [
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
 ];
 
+// Mirror of @stateset/design's SidebarNavItem styling, applied to a Next <Link>
+// so we keep the brand's navigation treatment AND client-side routing/prefetch.
+export function navItemClass(active: boolean): string {
+  return cn(
+    'group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-all duration-150',
+    active
+      ? 'bg-ds-sidebar-accent text-ds-sidebar-accent-foreground shadow-ds-card'
+      : 'text-ds-sidebar-foreground/[0.78] hover:bg-ds-sidebar-foreground/[0.08] hover:text-ds-sidebar-foreground',
+  );
+}
+
+export function isNavActive(pathname: string, href: string): boolean {
+  return pathname === href || (href !== '/' && pathname.startsWith(href));
+}
+
 export function Sidebar() {
   const pathname = usePathname();
 
   return (
     <div className="hidden lg:flex lg:flex-shrink-0">
-      <div className="flex w-64 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-          <div className="flex flex-1 flex-col overflow-y-auto pt-5 pb-4">
+      <div className="flex w-ds-sidebar flex-col">
+        <div className="flex min-h-0 flex-1 flex-col border-r border-ds-sidebar-border bg-ds-sidebar text-ds-sidebar-foreground">
+          <div className="flex flex-1 flex-col overflow-y-auto pb-4 pt-5">
             {/* Logo */}
-            <div className="flex flex-shrink-0 items-center px-4">
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-                  <SparklesIcon className="w-5 h-5 text-white" />
+            <div className="flex flex-shrink-0 items-center px-5">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-ds-primary">
+                  <SparklesIcon className="h-5 w-5 text-ds-primary-foreground" />
                 </div>
-                <span className="text-xl font-bold text-gray-900 dark:text-white">
+                <span className="font-ds-display text-xl font-semibold tracking-ds-tight text-ds-sidebar-foreground">
                   StateSet
                 </span>
               </div>
             </div>
 
-            {/* Engine Status */}
-            <div className="mx-4 mt-4 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-              <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+            {/* Engine status */}
+            <div className="mx-4 mt-5 rounded-lg border border-ds-status-ok/25 bg-ds-status-ok/10 p-3">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 animate-ds-soft-pulse rounded-full bg-ds-status-ok" />
+                <span className="text-xs font-semibold uppercase tracking-ds-kicker text-ds-status-ok">
                   Embedded Engine Active
                 </span>
               </div>
-              <p className="text-xs text-emerald-600 dark:text-emerald-500 mt-1">
-                SQLite: 0ms latency
-              </p>
+              <p className="mt-1 text-xs text-ds-sidebar-foreground/60">SQLite · 0ms latency</p>
             </div>
 
             {/* Navigation */}
-            <nav className="mt-5 flex-1 space-y-1 px-2">
-              {navigation.map((item) => {
-                const isActive = pathname === item.href ||
-                  (item.href !== '/' && pathname.startsWith(item.href));
-
-                return (
-                  <Link
-                    key={item.name}
-                    href={item.href}
-                    className={cn(
-                      isActive
-                        ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400'
-                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white',
-                      'group flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors'
-                    )}
-                  >
-                    <item.icon
-                      className={cn(
-                        isActive
-                          ? 'text-indigo-600 dark:text-indigo-400'
-                          : 'text-gray-400 dark:text-gray-500 group-hover:text-gray-500 dark:group-hover:text-gray-400',
-                        'mr-3 h-5 w-5 flex-shrink-0'
-                      )}
-                      aria-hidden="true"
-                    />
-                    {item.name}
-                  </Link>
-                );
-              })}
-            </nav>
+            <DashboardSidebarSection className="mt-3 flex-1">
+              <nav aria-label="Main navigation" className="space-y-1">
+                {navigation.map((item) => {
+                  const active = isNavActive(pathname, item.href);
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      aria-current={active ? 'page' : undefined}
+                      className={navItemClass(active)}
+                    >
+                      <item.icon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                      <span className="truncate">{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+            </DashboardSidebarSection>
           </div>
 
           {/* Footer */}
-          <div className="flex flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-4">
+          <div className="flex flex-shrink-0 border-t border-ds-sidebar-border p-4">
             <div className="w-full">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                StateSet iCommerce v{APP_VERSION}
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-500">
-                Embedded Commerce Engine
-              </p>
+              <p className="text-xs text-ds-sidebar-foreground/70">StateSet iCommerce v{APP_VERSION}</p>
+              <p className="text-xs text-ds-sidebar-foreground/50">Embedded Commerce Engine</p>
             </div>
           </div>
         </div>

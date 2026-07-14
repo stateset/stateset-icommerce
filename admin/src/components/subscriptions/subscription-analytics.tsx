@@ -1,24 +1,36 @@
 'use client';
 
 import { memo } from 'react';
-import { Card, Title, Text, Badge, Grid, Metric, AreaChart, DonutChart, ProgressBar } from '@tremor/react';
+import { AreaChart, DonutChart, ProgressBar } from '@tremor/react';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  Badge,
+  MetricCard,
+  StatusPill,
+} from '@stateset/design';
 import { CreditCardIcon, ArrowTrendingUpIcon, UserMinusIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getSubscriptionAnalyticsData } from '@/app/actions/commerce';
 import { formatCurrency, formatNumber, formatPercentage } from '@/lib/utils';
-import type { SubscriptionAnalyticsData, ChurnReason, UpcomingRenewal, TremorColor } from '@/lib/types/dashboard-data';
+import type { SubscriptionAnalyticsData, ChurnReason, UpcomingRenewal } from '@/lib/types/dashboard-data';
+
+type DsStatus = 'ok' | 'run' | 'warn' | 'fail' | 'review' | 'idle';
 
 interface SubscriptionAnalyticsProps {
   data?: SubscriptionAnalyticsData;
 }
 
-const statusColors: Record<string, string> = {
-  active: 'emerald',
-  trialing: 'blue',
-  past_due: 'amber',
-  canceled: 'red',
-  paused: 'gray',
+const statusPills: Record<string, DsStatus> = {
+  active: 'ok',
+  trialing: 'run',
+  past_due: 'warn',
+  canceled: 'fail',
+  paused: 'idle',
 };
 
 function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsProps) {
@@ -30,18 +42,22 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
   if (isLoading && !data) {
     return (
       <Card>
-        <div className="animate-pulse space-y-4">
-          <div className="h-6 bg-gray-200 rounded w-48" />
-          <div className="h-64 bg-gray-200 rounded" />
-        </div>
+        <CardContent>
+          <div className="animate-pulse space-y-4">
+            <div className="h-6 bg-ds-muted rounded w-48" />
+            <div className="h-64 bg-ds-muted rounded" />
+          </div>
+        </CardContent>
       </Card>
     );
   }
 
   if (error || !data) {
     return (
-      <Card className="border-red-200">
-        <Text className="text-red-600">Failed to load subscription analytics</Text>
+      <Card className="border-ds-status-fail/30">
+        <CardContent>
+          <p className="text-sm text-ds-status-fail">Failed to load subscription analytics</p>
+        </CardContent>
       </Card>
     );
   }
@@ -55,193 +71,205 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
       className="space-y-6"
     >
       {/* Key Metrics */}
-      <Grid numItems={2} numItemsSm={4} className="gap-4">
-        <Card decoration="top" decorationColor="emerald">
-          <Text>Monthly Recurring Revenue</Text>
-          <Metric>{formatCurrency(summary?.mrr || 45000)}</Metric>
-          <Text className="text-xs text-emerald-600 mt-1">
-            +{formatPercentage(summary?.mrrGrowth || 0.12)} vs last month
-          </Text>
-        </Card>
-        <Card decoration="top" decorationColor="blue">
-          <Text>Active Subscriptions</Text>
-          <Metric>{formatNumber(summary?.activeCount || 1250)}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="amber">
-          <Text>Churn Rate</Text>
-          <Metric>{formatPercentage(summary?.churnRate || 0.032)}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="purple">
-          <Text>Avg Revenue/User</Text>
-          <Metric>{formatCurrency(summary?.arpu || 36)}</Metric>
-        </Card>
-      </Grid>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <MetricCard
+          label="Monthly Recurring Revenue"
+          value={formatCurrency(summary?.mrr || 45000)}
+          subtitle={`+${formatPercentage(summary?.mrrGrowth || 0.12)} vs last month`}
+          tone="success"
+        />
+        <MetricCard label="Active Subscriptions" value={formatNumber(summary?.activeCount || 1250)} tone="primary" />
+        <MetricCard label="Churn Rate" value={formatPercentage(summary?.churnRate || 0.032)} tone="warning" />
+        <MetricCard label="Avg Revenue/User" value={formatCurrency(summary?.arpu || 36)} tone="accent" />
+      </div>
 
       {/* MRR Trend */}
       <Card>
-        <Title>MRR Growth Trend</Title>
-        <Text className="text-gray-500 mb-4">Monthly recurring revenue over time</Text>
-        <AreaChart
-          className="h-72"
-          data={mrrTrend || generateDemoMrrTrend()}
-          index="month"
-          categories={['mrr', 'newMrr', 'churnedMrr']}
-          colors={['emerald', 'blue', 'red']}
-          showAnimation
-          curveType="monotone"
-          valueFormatter={(value) => formatCurrency(value)}
-        />
+        <CardHeader>
+          <CardTitle>MRR Growth Trend</CardTitle>
+          <CardDescription>Monthly recurring revenue over time</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AreaChart
+            className="h-72"
+            data={mrrTrend || generateDemoMrrTrend()}
+            index="month"
+            categories={['mrr', 'newMrr', 'churnedMrr']}
+            colors={['emerald', 'indigo', 'rose']}
+            showAnimation
+            curveType="monotone"
+            valueFormatter={(value) => formatCurrency(value)}
+          />
+        </CardContent>
       </Card>
 
       {/* Charts Row */}
-      <Grid numItems={1} numItemsLg={2} className="gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Plan Distribution */}
         <Card>
-          <Title>Plan Distribution</Title>
-          <Text className="text-gray-500 mb-4">Subscribers by plan type</Text>
-          <DonutChart
-            className="h-64"
-            data={planDistribution || generateDemoPlanDistribution()}
-            category="count"
-            index="plan"
-            colors={['emerald', 'blue', 'purple', 'amber']}
-            showAnimation
-            valueFormatter={(value) => `${value} subscribers`}
-          />
+          <CardHeader>
+            <CardTitle>Plan Distribution</CardTitle>
+            <CardDescription>Subscribers by plan type</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DonutChart
+              className="h-64"
+              data={planDistribution || generateDemoPlanDistribution()}
+              category="count"
+              index="plan"
+              colors={['indigo', 'emerald', 'violet', 'amber']}
+              showAnimation
+              valueFormatter={(value) => `${value} subscribers`}
+            />
+          </CardContent>
         </Card>
 
         {/* Churn Analysis */}
         <Card>
-          <Title>Churn Analysis</Title>
-          <Text className="text-gray-500 mb-4">Cancellation reasons</Text>
-          <div className="space-y-4">
-            {(churnAnalysis?.reasons || generateDemoChurnReasons()).map((reason: ChurnReason) => (
-              <div key={reason.name}>
-                <div className="flex justify-between mb-1">
-                  <Text className="font-medium">{reason.name}</Text>
-                  <div className="flex items-center space-x-2">
-                    <Badge color="gray" size="xs">{reason.count}</Badge>
-                    <Text className="text-sm">{formatPercentage(reason.percentage)}</Text>
+          <CardHeader>
+            <CardTitle>Churn Analysis</CardTitle>
+            <CardDescription>Cancellation reasons</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {(churnAnalysis?.reasons || generateDemoChurnReasons()).map((reason: ChurnReason) => (
+                <div key={reason.name}>
+                  <div className="flex justify-between mb-1">
+                    <p className="text-sm font-medium text-ds-foreground">{reason.name}</p>
+                    <div className="flex items-center space-x-2">
+                      <Badge variant="default">{reason.count}</Badge>
+                      <p className="text-sm text-ds-muted-foreground">{formatPercentage(reason.percentage)}</p>
+                    </div>
                   </div>
+                  <ProgressBar
+                    value={reason.percentage * 100}
+                    color="rose"
+                  />
                 </div>
-                <ProgressBar
-                  value={reason.percentage * 100}
-                  color="red"
-                />
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </CardContent>
         </Card>
-      </Grid>
+      </div>
 
       {/* Subscription Status Breakdown */}
       <Card>
-        <Title>Subscription Status</Title>
-        <Text className="text-gray-500 mb-4">Current status distribution</Text>
-        <Grid numItems={2} numItemsSm={5} className="gap-4">
-          {Object.entries(summary?.statusBreakdown || generateDemoStatusBreakdown()).map(([status, count]) => (
-            <div key={status} className="text-center p-4 border rounded-lg dark:border-gray-700">
-              <Badge color={statusColors[status] as TremorColor || 'gray'} size="lg">
-                {status.replace('_', ' ')}
-              </Badge>
-              <Metric className="mt-2">{count as number}</Metric>
-            </div>
-          ))}
-        </Grid>
+        <CardHeader>
+          <CardTitle>Subscription Status</CardTitle>
+          <CardDescription>Current status distribution</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            {Object.entries(summary?.statusBreakdown || generateDemoStatusBreakdown()).map(([status, count]) => (
+              <div key={status} className="text-center p-4 border border-ds-enterprise-line rounded-lg">
+                <StatusPill status={statusPills[status] || 'idle'}>
+                  {status.replace('_', ' ')}
+                </StatusPill>
+                <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{count as number}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
       </Card>
 
       {/* Upcoming Renewals */}
       <Card>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <Title>Upcoming Renewals</Title>
-            <Text className="text-gray-500">Subscriptions renewing in the next 7 days</Text>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Upcoming Renewals</CardTitle>
+              <CardDescription>Subscriptions renewing in the next 7 days</CardDescription>
+            </div>
+            <Badge variant="primary">
+              {formatCurrency((upcomingRenewals || []).reduce((sum: number, r: UpcomingRenewal) => sum + r.amount, 0))} expected
+            </Badge>
           </div>
-          <Badge color="blue" size="lg">
-            {formatCurrency((upcomingRenewals || []).reduce((sum: number, r: UpcomingRenewal) => sum + r.amount, 0))} expected
-          </Badge>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b dark:border-gray-700">
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Customer</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Plan</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Renewal Date</th>
-                <th className="text-right py-2 px-3 text-sm font-medium text-gray-500">Amount</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Risk</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(upcomingRenewals || generateDemoUpcomingRenewals()).map((renewal: UpcomingRenewal, index: number) => (
-                <motion.tr
-                  key={renewal.id || index}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                  className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
-                >
-                  <td className="py-3 px-3">
-                    <div>
-                      <Text className="font-medium">{renewal.customerName}</Text>
-                      <Text className="text-xs text-gray-500">{renewal.email}</Text>
-                    </div>
-                  </td>
-                  <td className="py-3 px-3">
-                    <Badge color="blue" size="xs">{renewal.plan}</Badge>
-                  </td>
-                  <td className="py-3 px-3">
-                    <div className="flex items-center space-x-2">
-                      <CalendarIcon className="w-4 h-4 text-gray-400" />
-                      <Text className="text-sm">{renewal.renewalDate}</Text>
-                    </div>
-                  </td>
-                  <td className="py-3 px-3 text-right">
-                    <Text className="font-medium">{formatCurrency(renewal.amount)}</Text>
-                  </td>
-                  <td className="py-3 px-3">
-                    <Badge
-                      color={renewal.churnRisk < 0.2 ? 'emerald' : renewal.churnRisk < 0.5 ? 'amber' : 'red'}
-                      size="xs"
-                    >
-                      {renewal.churnRisk < 0.2 ? 'Low' : renewal.churnRisk < 0.5 ? 'Medium' : 'High'}
-                    </Badge>
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-ds-enterprise-line">
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Customer</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Plan</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Renewal Date</th>
+                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">Amount</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Risk</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(upcomingRenewals || generateDemoUpcomingRenewals()).map((renewal: UpcomingRenewal, index: number) => (
+                  <motion.tr
+                    key={renewal.id || index}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                    className="border-b border-ds-enterprise-line hover:bg-ds-muted"
+                  >
+                    <td className="py-3 px-3">
+                      <div>
+                        <p className="text-sm font-medium text-ds-foreground">{renewal.customerName}</p>
+                        <p className="text-xs text-ds-muted-foreground">{renewal.email}</p>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3">
+                      <Badge variant="primary">{renewal.plan}</Badge>
+                    </td>
+                    <td className="py-3 px-3">
+                      <div className="flex items-center space-x-2">
+                        <CalendarIcon className="w-4 h-4 text-ds-muted-foreground" />
+                        <p className="text-sm text-ds-foreground">{renewal.renewalDate}</p>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 text-right">
+                      <p className="text-sm font-medium text-ds-foreground">{formatCurrency(renewal.amount)}</p>
+                    </td>
+                    <td className="py-3 px-3">
+                      <StatusPill status={renewal.churnRisk < 0.2 ? 'ok' : renewal.churnRisk < 0.5 ? 'warn' : 'fail'}>
+                        {renewal.churnRisk < 0.2 ? 'Low' : renewal.churnRisk < 0.5 ? 'Medium' : 'High'}
+                      </StatusPill>
+                    </td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
       </Card>
 
       {/* Revenue Metrics */}
-      <Grid numItems={1} numItemsSm={3} className="gap-4">
-        <Card decoration="left" decorationColor="emerald">
-          <div className="flex items-center space-x-2">
-            <ArrowTrendingUpIcon className="w-5 h-5 text-emerald-600" />
-            <Text className="font-medium">New MRR</Text>
-          </div>
-          <Metric className="mt-2">{formatCurrency(summary?.newMrr || 5200)}</Metric>
-          <Text className="text-xs text-gray-500">From {summary?.newSubscribers || 145} new subscribers</Text>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center space-x-2">
+              <ArrowTrendingUpIcon className="w-5 h-5 text-ds-status-ok" />
+              <p className="text-sm font-medium text-ds-foreground">New MRR</p>
+            </div>
+            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{formatCurrency(summary?.newMrr || 5200)}</p>
+            <p className="text-xs text-ds-muted-foreground">From {summary?.newSubscribers || 145} new subscribers</p>
+          </CardContent>
         </Card>
-        <Card decoration="left" decorationColor="blue">
-          <div className="flex items-center space-x-2">
-            <CreditCardIcon className="w-5 h-5 text-blue-600" />
-            <Text className="font-medium">Expansion MRR</Text>
-          </div>
-          <Metric className="mt-2">{formatCurrency(summary?.expansionMrr || 1800)}</Metric>
-          <Text className="text-xs text-gray-500">From {summary?.upgrades || 32} upgrades</Text>
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center space-x-2">
+              <CreditCardIcon className="w-5 h-5 text-ds-primary" />
+              <p className="text-sm font-medium text-ds-foreground">Expansion MRR</p>
+            </div>
+            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{formatCurrency(summary?.expansionMrr || 1800)}</p>
+            <p className="text-xs text-ds-muted-foreground">From {summary?.upgrades || 32} upgrades</p>
+          </CardContent>
         </Card>
-        <Card decoration="left" decorationColor="red">
-          <div className="flex items-center space-x-2">
-            <UserMinusIcon className="w-5 h-5 text-red-600" />
-            <Text className="font-medium">Churned MRR</Text>
-          </div>
-          <Metric className="mt-2">{formatCurrency(summary?.churnedMrr || 1400)}</Metric>
-          <Text className="text-xs text-gray-500">From {summary?.cancellations || 38} cancellations</Text>
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center space-x-2">
+              <UserMinusIcon className="w-5 h-5 text-ds-status-fail" />
+              <p className="text-sm font-medium text-ds-foreground">Churned MRR</p>
+            </div>
+            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{formatCurrency(summary?.churnedMrr || 1400)}</p>
+            <p className="text-xs text-ds-muted-foreground">From {summary?.cancellations || 38} cancellations</p>
+          </CardContent>
         </Card>
-      </Grid>
+      </div>
     </motion.div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Card, Title, Text, Grid } from '@tremor/react';
+import { Card, CardContent, StatusPill } from '@stateset/design';
 import { ServerStackIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
@@ -49,11 +49,11 @@ export default function GatewayOverview() {
   if (!health || !metrics) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center">
-        <ServerStackIcon className="w-12 h-12 text-gray-300 mb-4" />
-        <Text className="text-gray-500">Unable to connect to gateway</Text>
-        <Text className="text-xs text-gray-400 mt-1">
+        <ServerStackIcon className="w-12 h-12 text-ds-muted-foreground mb-4" />
+        <p className="text-sm text-ds-muted-foreground">Unable to connect to gateway</p>
+        <p className="text-xs text-ds-muted-foreground mt-1">
           Ensure the CLI gateway is running on the configured URL
-        </Text>
+        </p>
       </div>
     );
   }
@@ -79,14 +79,14 @@ export default function GatewayOverview() {
         <div>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center space-x-3">
-              <ServerStackIcon className="w-8 h-8 text-indigo-600" />
-              <Title className="text-2xl">Gateway</Title>
+              <ServerStackIcon className="w-8 h-8 text-ds-primary" />
+              <h3 className="font-ds-display text-2xl font-semibold text-ds-foreground">Gateway</h3>
             </div>
             <GatewayConnectionStatus />
           </div>
-          <Text className="text-gray-500">
+          <p className="text-sm text-ds-muted-foreground">
             Multi-channel messaging gateway status and metrics
-          </Text>
+          </p>
         </div>
 
         {/* KPI Row */}
@@ -94,47 +94,43 @@ export default function GatewayOverview() {
 
         {/* Subsystems */}
         <div>
-          <Title className="text-lg mb-3">Subsystems</Title>
+          <h3 className="font-ds-display text-lg font-semibold text-ds-foreground mb-3">Subsystems</h3>
           <SubsystemPanel subsystems={health.subsystems} />
         </div>
 
         {/* Readiness Checks */}
         {readiness && (
           <Card>
-            <div className="flex items-center justify-between">
-              <Title className="text-lg">Readiness</Title>
-              <Text
-                className={
-                  readiness.status === 'ready'
-                    ? 'text-emerald-600 font-medium'
-                    : 'text-red-600 font-medium'
-                }
-              >
-                {readiness.status.toUpperCase()}
-              </Text>
-            </div>
-            <div className="flex space-x-4 mt-3">
-              {Object.entries(readiness.checks).map(([name, status]) => (
-                <div key={name} className="flex items-center space-x-2">
-                  <div
-                    className={`w-2 h-2 rounded-full ${
-                      status === 'ok' || status === 'configured'
-                        ? 'bg-emerald-500'
-                        : 'bg-red-500'
-                    }`}
-                  />
-                  <Text className="text-sm capitalize">{name}</Text>
-                </div>
-              ))}
-            </div>
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <h3 className="font-ds-display text-lg font-semibold text-ds-foreground">Readiness</h3>
+                <StatusPill status={readiness.status === 'ready' ? 'ok' : 'fail'}>
+                  {readiness.status.toUpperCase()}
+                </StatusPill>
+              </div>
+              <div className="flex space-x-4 mt-3">
+                {Object.entries(readiness.checks).map(([name, status]) => (
+                  <div key={name} className="flex items-center space-x-2">
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        status === 'ok' || status === 'configured'
+                          ? 'bg-ds-status-ok'
+                          : 'bg-ds-status-fail'
+                      }`}
+                    />
+                    <p className="text-sm capitalize text-ds-foreground">{name}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
           </Card>
         )}
 
         {/* Channels Grid */}
         <div>
-          <Title className="text-lg mb-3">Channels</Title>
+          <h3 className="font-ds-display text-lg font-semibold text-ds-foreground mb-3">Channels</h3>
           {Object.keys(metrics.channels).length > 0 ? (
-            <Grid numItems={1} numItemsSm={2} numItemsLg={3} className="gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {Object.entries(metrics.channels).map(([name, stats]) => (
                 <ChannelStatusCard
                   key={name}
@@ -143,12 +139,14 @@ export default function GatewayOverview() {
                   onClick={() => setSelectedChannel(name)}
                 />
               ))}
-            </Grid>
+            </div>
           ) : (
-            <Card className="p-8 text-center">
-              <Text className="text-gray-400">
-                No channels have received messages yet
-              </Text>
+            <Card>
+              <CardContent className="p-8 text-center">
+                <p className="text-sm text-ds-muted-foreground">
+                  No channels have received messages yet
+                </p>
+              </CardContent>
             </Card>
           )}
         </div>

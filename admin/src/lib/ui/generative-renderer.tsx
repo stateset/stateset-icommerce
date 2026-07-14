@@ -2,7 +2,7 @@
 
 import React, { Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { componentRegistry, type GenerativeComponent, type ComponentContext } from './component-registry';
-import { Card, Title, Text, Badge } from '@tremor/react';
+import { Card, CardContent, Badge } from '@stateset/design';
 import { AlertCircle, Loader2, RefreshCw, Sparkles, Zap, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -54,14 +54,14 @@ function SkeletonLoader({ style = 'wave' }: { style: 'default' | 'pulse' | 'wave
   if (style === 'none') return null;
 
   const animationClass = style === 'wave'
-    ? 'animate-pulse bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200'
+    ? 'animate-pulse bg-gradient-to-r from-ds-muted via-ds-muted/60 to-ds-muted'
     : style === 'pulse'
-    ? 'animate-pulse bg-gray-200'
-    : 'bg-gray-100';
+    ? 'animate-pulse bg-ds-muted'
+    : 'bg-ds-muted/60';
 
   return (
     <Card className="w-full overflow-hidden">
-      <div className="p-6 space-y-4">
+      <CardContent className="p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div className={`h-6 w-48 rounded ${animationClass}`} />
           <div className={`h-5 w-20 rounded-full ${animationClass}`} />
@@ -80,7 +80,7 @@ function SkeletonLoader({ style = 'wave' }: { style: 'default' | 'pulse' | 'wave
           ))}
         </div>
         <div className={`h-48 w-full rounded-lg ${animationClass}`} />
-      </div>
+      </CardContent>
     </Card>
   );
 }
@@ -96,7 +96,7 @@ function PhaseIndicator({ phase }: { phase: ComponentState['phase'] }) {
   const currentIndex = phases.findIndex(p => p.key === phase);
 
   return (
-    <div className="flex items-center space-x-2 text-sm text-gray-500">
+    <div className="flex items-center space-x-2 text-sm text-ds-muted-foreground">
       {phases.map((p, index) => {
         const Icon = p.icon;
         const isActive = p.key === phase;
@@ -105,13 +105,13 @@ function PhaseIndicator({ phase }: { phase: ComponentState['phase'] }) {
         return (
           <React.Fragment key={p.key}>
             <div className={`flex items-center space-x-1 ${
-              isActive ? 'text-indigo-600' : isComplete ? 'text-emerald-600' : 'text-gray-400'
+              isActive ? 'text-ds-status-run' : isComplete ? 'text-ds-status-ok' : 'text-ds-muted-foreground'
             }`}>
               <Icon className={`h-4 w-4 ${isActive ? 'animate-spin' : ''}`} />
               <span className={isActive ? 'font-medium' : ''}>{p.label}</span>
             </div>
             {index < phases.length - 1 && (
-              <ChevronRight className={`h-3 w-3 ${isComplete ? 'text-emerald-600' : 'text-gray-300'}`} />
+              <ChevronRight className={`h-3 w-3 ${isComplete ? 'text-ds-status-ok' : 'text-ds-muted-foreground/60'}`} />
             )}
           </React.Fragment>
         );
@@ -432,7 +432,7 @@ export function GenerativeRenderer({
         <div className="flex items-center justify-between">
           <PhaseIndicator phase={state.phase} />
           {state.retryCount > 0 && (
-            <Badge color="gray" className="text-xs">
+            <Badge variant="outline" className="text-xs">
               Retry {state.retryCount}/{maxRetries}
             </Badge>
           )}
@@ -445,13 +445,13 @@ export function GenerativeRenderer({
   // Error state
   if (state.error) {
     return (
-      <Card className="w-full border-red-200 bg-red-50/50 dark:bg-red-900/20">
-        <div className="p-6">
-          <div className="flex items-center space-x-2 text-red-600 mb-4">
+      <Card className="w-full border-ds-status-fail/25 bg-ds-status-fail/10">
+        <CardContent className="p-6">
+          <div className="flex items-center space-x-2 text-ds-status-fail mb-4">
             <AlertCircle className="h-5 w-5" />
-            <Title>Component Loading Error</Title>
+            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Component Loading Error</h3>
           </div>
-          <Text className="text-red-800 dark:text-red-200 mb-4">{state.error.message}</Text>
+          <p className="text-sm text-ds-status-fail mb-4">{state.error.message}</p>
 
           <div className="flex items-center space-x-2">
             <Button onClick={handleRetry} variant="outline" size="sm">
@@ -461,11 +461,11 @@ export function GenerativeRenderer({
           </div>
 
           {showAlternatives && alternatives.length > 0 && (
-            <div className="mt-4 p-3 bg-white dark:bg-gray-800 rounded-lg border">
-              <Text className="font-medium mb-2 flex items-center">
-                <Sparkles className="h-4 w-4 mr-1 text-purple-500" />
+            <div className="mt-4 p-3 bg-ds-card rounded-lg border border-ds-enterprise-line">
+              <p className="text-sm font-medium text-ds-foreground mb-2 flex items-center">
+                <Sparkles className="h-4 w-4 mr-1 text-ds-accent" />
                 Try alternatives:
-              </Text>
+              </p>
               <div className="flex flex-wrap gap-2">
                 {alternatives.map((alt) => (
                   <Button
@@ -482,11 +482,11 @@ export function GenerativeRenderer({
           )}
 
           {FallbackComponent && (
-            <div className="mt-4 pt-4 border-t">
+            <div className="mt-4 pt-4 border-t border-ds-enterprise-line">
               <FallbackComponent {...(state.resolvedData || data || {})} />
             </div>
           )}
-        </div>
+        </CardContent>
       </Card>
     );
   }
@@ -497,9 +497,9 @@ export function GenerativeRenderer({
     const componentProps = state.resolvedData || data || {};
 
     const getConfidenceColor = () => {
-      if (confidence >= 0.9) return 'text-emerald-600';
-      if (confidence >= 0.7) return 'text-blue-600';
-      return 'text-gray-600';
+      if (confidence >= 0.9) return 'text-ds-status-ok';
+      if (confidence >= 0.7) return 'text-ds-info';
+      return 'text-ds-muted-foreground';
     };
 
     return (
@@ -510,14 +510,14 @@ export function GenerativeRenderer({
         style={{ transitionDuration: `${transitionDuration}ms` }}
       >
         {showMetadata && (
-          <div className="flex items-center justify-between text-sm text-gray-500 px-1">
+          <div className="flex items-center justify-between text-sm text-ds-muted-foreground px-1">
             <div className="flex items-center space-x-2">
-              <Badge color="indigo" className="capitalize">
+              <Badge variant="primary" className="capitalize">
                 {component.category}
               </Badge>
-              <span className="font-medium text-gray-700 dark:text-gray-300">{component.name}</span>
+              <span className="font-medium text-ds-foreground">{component.name}</span>
               {confidence > 0 && (
-                <Badge color="gray" className={`text-xs ${getConfidenceColor()}`}>
+                <Badge variant="outline" className={`text-xs ${getConfidenceColor()}`}>
                   <Sparkles className="h-3 w-3 mr-1" />
                   {Math.round(confidence * 100)}% match
                 </Badge>
@@ -526,14 +526,14 @@ export function GenerativeRenderer({
 
             {showAlternatives && alternatives.length > 0 && (
               <div className="flex items-center space-x-1">
-                <span className="text-xs text-gray-400">Switch to:</span>
+                <span className="text-xs text-ds-muted-foreground">Switch to:</span>
                 {alternatives.slice(0, 3).map((alt) => (
                   <Button
                     key={alt.id}
                     onClick={() => handleAlternativeSelect(alt)}
                     size="sm"
                     variant="ghost"
-                    className="h-6 px-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="h-6 px-2 text-xs hover:bg-ds-muted"
                   >
                     {alt.name}
                   </Button>
@@ -552,9 +552,9 @@ export function GenerativeRenderer({
 
   return (
     <Card className="w-full">
-      <div className="text-center p-8">
-        <Text className="text-gray-500">No component available</Text>
-      </div>
+      <CardContent className="text-center p-8">
+        <p className="text-sm text-ds-muted-foreground">No component available</p>
+      </CardContent>
     </Card>
   );
 }

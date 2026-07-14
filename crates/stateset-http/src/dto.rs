@@ -672,7 +672,8 @@ pub struct CreatePaymentRequest {
     #[schema(value_type = Option<String>, format = "uuid")]
     pub customer_id: Option<stateset_primitives::CustomerId>,
     pub payment_method: Option<String>,
-    pub amount: f64,
+    #[schema(value_type = String)]
+    pub amount: Decimal,
     pub currency: Option<String>,
     pub external_id: Option<String>,
     pub description: Option<String>,
@@ -681,7 +682,8 @@ pub struct CreatePaymentRequest {
 /// Request body for `POST /api/v1/payments/:id/refund`.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateRefundRequest {
-    pub amount: f64,
+    #[schema(value_type = String)]
+    pub amount: Decimal,
     pub reason: Option<String>,
     pub notes: Option<String>,
 }
@@ -777,7 +779,8 @@ pub struct CreateInvoiceRequest {
 /// Request body for `POST /api/v1/invoices/:id/payments`.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct RecordInvoicePaymentRequest {
-    pub amount: f64,
+    #[schema(value_type = String)]
+    pub amount: Decimal,
     pub payment_method: Option<String>,
     pub reference: Option<String>,
     pub notes: Option<String>,
@@ -1190,6 +1193,45 @@ mod tests {
     fn pagination_clamps_zero_to_one() {
         let p = PaginationParams { limit: Some(0), offset: None };
         assert_eq!(p.resolved_limit(), 1);
+    }
+
+    // ============================================================================
+    // Money DTO precision tests
+    //
+    // Monetary request fields must deserialize as exact decimals (string form),
+    // matching PaymentResponse/InvoiceResponse serialization, while continuing
+    // to accept plain JSON numbers for wire compatibility.
+    // ============================================================================
+
+    #[test]
+    fn payment_amount_accepts_exact_decimal_string() {
+        let req: CreatePaymentRequest = serde_json::from_str(
+            r#"{"order_id":"01234567-89ab-cdef-0123-456789abcdef","amount":"123.456789012345678901"}"#,
+        )
+        .expect("string-encoded amount must deserialize exactly");
+        assert_eq!(req.amount.to_string(), "123.456789012345678901");
+    }
+
+    #[test]
+    fn refund_amount_accepts_exact_decimal_string() {
+        let req: CreateRefundRequest = serde_json::from_str(r#"{"amount":"0.30"}"#)
+            .expect("string-encoded amount must deserialize exactly");
+        assert_eq!(req.amount.to_string(), "0.30");
+    }
+
+    #[test]
+    fn refund_amount_still_accepts_json_number() {
+        let req: CreateRefundRequest = serde_json::from_str(r#"{"amount":49.99}"#)
+            .expect("plain JSON number amount must keep deserializing");
+        assert_eq!(req.amount.to_string(), "49.99");
+    }
+
+    #[test]
+    fn invoice_payment_amount_accepts_exact_decimal_string() {
+        let req: RecordInvoicePaymentRequest =
+            serde_json::from_str(r#"{"amount":"1000000000000.000001"}"#)
+                .expect("string-encoded amount must deserialize exactly");
+        assert_eq!(req.amount.to_string(), "1000000000000.000001");
     }
 
     // ============================================================================

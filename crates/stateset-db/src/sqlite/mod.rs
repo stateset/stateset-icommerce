@@ -980,20 +980,38 @@ pub(crate) fn is_retryable_error(e: &rusqlite::Error) -> bool {
 
 /// Execute a database operation with retry logic for transient lock errors.
 /// Uses exponential backoff with jitter to avoid thundering herd.
+/// Per-retry backoff jitter in milliseconds (0..50), from a thread-local
+/// xorshift PRNG. Each thread seeds from `RandomState` so concurrent
+/// contenders draw decorrelated sequences instead of backing off in lockstep
+/// and re-colliding every round.
+pub(crate) fn retry_jitter(retries: u32) -> u64 {
+    use std::cell::Cell;
+    use std::hash::{BuildHasher, Hasher, RandomState};
+
+    thread_local! {
+        static SEED: Cell<u64> = Cell::new({
+            // RandomState carries fresh per-instance entropy, giving every
+            // thread its own seed. Avoid 0, the xorshift fixed point.
+            let mut hasher = RandomState::new().build_hasher();
+            hasher.write_u64(0xa076_1d64_78bd_642f);
+            hasher.finish().max(1)
+        });
+    }
+
+    SEED.with(|seed| {
+        let mut s = seed.get().wrapping_add(u64::from(retries));
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        seed.set(s);
+        s % 50
+    })
+}
+
 pub(crate) fn with_retry<T, F>(mut f: F, max_retries: u32) -> Result<T, rusqlite::Error>
 where
     F: FnMut() -> Result<T, rusqlite::Error>,
 {
-    use std::cell::Cell;
-    use std::time::Instant;
-
-    // Thread-local simple PRNG for jitter
-    thread_local! {
-        static SEED: Cell<u64> = Cell::new(
-            Instant::now().elapsed().as_nanos() as u64
-        );
-    }
-
     let mut retries = 0;
     let mut backoff_ms = INITIAL_BACKOFF_MS;
 
@@ -1002,15 +1020,7 @@ where
             Ok(result) => return Ok(result),
             Err(e) if is_retryable_error(&e) && retries < max_retries => {
                 retries += 1;
-                // Simple xorshift for pseudo-random jitter
-                let jitter = SEED.with(|seed| {
-                    let mut s = seed.get().wrapping_add(u64::from(retries));
-                    s ^= s << 13;
-                    s ^= s >> 7;
-                    s ^= s << 17;
-                    seed.set(s);
-                    s % 50
-                });
+                let jitter = retry_jitter(retries);
                 let delay = backoff_ms.min(MAX_BACKOFF_MS) + jitter;
                 thread::sleep(Duration::from_millis(delay));
                 // Exponential backoff with cap
@@ -1252,5 +1262,27 @@ mod tests {
 
         assert_eq!(result, 3);
         assert_eq!(attempts.get(), 3);
+    }
+
+    #[test]
+    fn retry_jitter_is_decorrelated_across_threads() {
+        // Concurrent writers hitting SQLITE_BUSY must not back off in lockstep:
+        // each thread's jitter sequence has to differ, or contenders re-collide
+        // every round and the jitter is decorative.
+        let sequences: Vec<Vec<u64>> = (0..4)
+            .map(|_| {
+                std::thread::spawn(|| (1..=8).map(retry_jitter).collect::<Vec<u64>>())
+                    .join()
+                    .expect("jitter thread panicked")
+            })
+            .collect();
+
+        let distinct: std::collections::HashSet<&Vec<u64>> = sequences.iter().collect();
+        assert!(
+            distinct.len() > 1,
+            "all {} threads drew the identical jitter sequence {:?}",
+            sequences.len(),
+            sequences[0]
+        );
     }
 }

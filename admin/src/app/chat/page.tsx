@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { Card, Title, Text, Badge } from '@tremor/react';
+import { Card, Badge } from '@stateset/design';
 import { PaperAirplaneIcon, SparklesIcon, UserIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -13,8 +13,8 @@ const GenerativeRenderer = dynamic(
   () => import('@/lib/ui/generative-renderer').then(mod => mod.GenerativeRenderer),
   {
     loading: () => (
-      <div className="animate-pulse p-4 rounded-lg border bg-gray-50 dark:bg-gray-800">
-        <div className="h-32 bg-gray-200 dark:bg-gray-700 rounded" />
+      <div className="animate-pulse p-4 rounded-lg border border-ds-enterprise-line bg-ds-muted">
+        <div className="h-32 bg-ds-muted rounded" />
       </div>
     ),
     ssr: false,
@@ -161,13 +161,13 @@ export default function ChatPage() {
           called. The badge below must stay until a real model is wired in. */}
       <div className="mb-4">
         <div className="flex items-center space-x-2 mb-2">
-          <SparklesIcon className="w-8 h-8 text-indigo-600" />
-          <Title className="text-2xl">Commerce Assistant</Title>
-          <Badge color="amber" size="sm">Scripted demo — no AI model</Badge>
+          <SparklesIcon className="w-8 h-8 text-ds-primary" />
+          <h3 className="font-ds-display text-2xl font-semibold text-ds-foreground">Commerce Assistant</h3>
+          <Badge variant="warning">Scripted demo — no AI model</Badge>
         </div>
-        <Text className="text-gray-600">
+        <p className="text-sm text-ds-muted-foreground">
           Demo interface: your question is matched against keywords to pick a dashboard view. Data in the views comes from the embedded commerce engine.
-        </Text>
+        </p>
       </div>
 
       {/* Chat Area */}
@@ -186,25 +186,25 @@ export default function ChatPage() {
                 <div className={`flex items-start space-x-2 max-w-[85%] ${message.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                     message.role === 'user'
-                      ? 'bg-indigo-100 dark:bg-indigo-900'
-                      : 'bg-purple-100 dark:bg-purple-900'
+                      ? 'bg-ds-brand-100 dark:bg-ds-brand-900'
+                      : 'bg-ds-muted'
                   }`}>
                     {message.role === 'user' ? (
-                      <UserIcon className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                      <UserIcon className="w-5 h-5 text-ds-primary" />
                     ) : (
-                      <CpuChipIcon className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                      <CpuChipIcon className="w-5 h-5 text-ds-accent" />
                     )}
                   </div>
 
                   <div className="space-y-2">
                     <div className={`rounded-lg p-3 ${
                       message.role === 'user'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                        ? 'bg-ds-primary text-ds-primary-foreground'
+                        : 'bg-ds-muted text-ds-foreground'
                     }`}>
-                      <Text className={message.role === 'user' ? 'text-white' : ''}>
+                      <p className={`text-sm ${message.role === 'user' ? 'text-ds-primary-foreground' : 'text-ds-foreground'}`}>
                         {message.content}
-                      </Text>
+                      </p>
                     </div>
 
                     {/* Generative UI Component */}
@@ -235,14 +235,14 @@ export default function ChatPage() {
               animate={{ opacity: 1 }}
               className="flex items-start space-x-2"
             >
-              <div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900 flex items-center justify-center">
-                <CpuChipIcon className="w-5 h-5 text-purple-600 dark:text-purple-400 animate-pulse" />
+              <div className="w-8 h-8 rounded-full bg-ds-muted flex items-center justify-center">
+                <CpuChipIcon className="w-5 h-5 text-ds-accent animate-pulse" />
               </div>
-              <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3">
+              <div className="bg-ds-muted rounded-lg p-3">
                 <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-purple-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 bg-purple-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 bg-purple-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  <div className="w-2 h-2 bg-ds-accent rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-ds-accent rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-ds-accent rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                 </div>
               </div>
             </motion.div>
@@ -252,14 +252,14 @@ export default function ChatPage() {
         </div>
 
         {/* Suggested Queries */}
-        <div className="border-t dark:border-gray-700 p-3">
-          <Text className="text-xs text-gray-500 mb-2">Suggested queries:</Text>
+        <div className="border-t border-ds-enterprise-line p-3">
+          <p className="text-xs text-ds-muted-foreground mb-2">Suggested queries:</p>
           <div className="flex flex-wrap gap-2">
             {suggestedQueries.map((suggestion) => (
               <Badge
                 key={suggestion.label}
-                color="gray"
-                className="cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                variant="default"
+                className="cursor-pointer hover:bg-ds-brand-50 transition-colors"
                 onClick={() => handleSuggestionClick(suggestion.query)}
               >
                 {suggestion.label}
@@ -269,14 +269,14 @@ export default function ChatPage() {
         </div>
 
         {/* Input */}
-        <form onSubmit={handleSubmit} className="border-t dark:border-gray-700 p-4">
+        <form onSubmit={handleSubmit} className="border-t border-ds-enterprise-line p-4">
           <div className="flex items-center space-x-2">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about your commerce operations..."
-              className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-gray-800"
+              className="flex-1 px-4 py-2 border border-ds-enterprise-line rounded-lg bg-ds-card focus:ring-2 focus:ring-ds-primary focus:border-transparent"
               disabled={isProcessing}
             />
             <Button type="submit" variant="primary" disabled={isProcessing || !input.trim()}>

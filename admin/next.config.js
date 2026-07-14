@@ -1,6 +1,11 @@
+const path = require('path');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  // The design system ships raw .jsx ESM source (single source of truth), so Next
+  // must transpile it rather than treat it as a pre-built node_modules package.
+  transpilePackages: ['@stateset/design'],
   experimental: {
     serverComponentsExternalPackages: ['@stateset/embedded'],
   },
@@ -10,6 +15,19 @@ const nextConfig = {
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals.push('@stateset/embedded');
+    }
+    // @stateset/design is consumed via a file: symlink and ships its own react in
+    // node_modules; on the CLIENT, force a single React instance so the transpiled
+    // primitives share the host's React — otherwise hooks break. The server keeps
+    // Next's own vendored React canary (which the public package lacks, e.g. cache()).
+    if (!isServer) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        react: path.resolve(__dirname, 'node_modules/react'),
+        'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
+        'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime'),
+        'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime'),
+      };
     }
     return config;
   },

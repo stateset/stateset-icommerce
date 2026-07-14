@@ -60,13 +60,13 @@ describe('Button', () => {
   it('applies the default variant classes', () => {
     render(React.createElement(Button, null, 'Default'));
     const button = screen.getByRole('button');
-    expect(button.className).toContain('bg-gray-900');
+    expect(button.className).toContain('bg-ds-foreground');
   });
 
   it('applies the destructive variant classes', () => {
     render(React.createElement(Button, { variant: 'destructive' }, 'Delete'));
     const button = screen.getByRole('button');
-    expect(button.className).toContain('bg-red-500');
+    expect(button.className).toContain('bg-ds-destructive');
   });
 
   it('applies the outline variant classes', () => {
@@ -78,7 +78,7 @@ describe('Button', () => {
   it('applies the primary variant classes', () => {
     render(React.createElement(Button, { variant: 'primary' }, 'Primary'));
     const button = screen.getByRole('button');
-    expect(button.className).toContain('bg-indigo-600');
+    expect(button.className).toContain('bg-ds-primary');
   });
 
   it('applies the sm size classes', () => {

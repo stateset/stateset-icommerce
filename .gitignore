@@ -102,6 +102,10 @@ cli/add-more-events.mjs
 FUTURE.md
 PAPER.md
 comparison_doc.md
+CODEBASE_REVIEW.md
+
+# Framework build output
+.next/
 
 # Admin dashboard local artifacts
 .claude/*.local*

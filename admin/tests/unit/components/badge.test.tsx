@@ -38,7 +38,7 @@ describe('Badge', () => {
       React.createElement(Badge, { 'data-testid': 'badge' }, 'Default')
     );
     const badge = screen.getByTestId('badge');
-    expect(badge.className).toContain('bg-gray-900');
+    expect(badge.className).toContain('bg-ds-foreground');
   });
 
   it('applies destructive variant classes', () => {
@@ -50,7 +50,7 @@ describe('Badge', () => {
       )
     );
     const badge = screen.getByTestId('badge');
-    expect(badge.className).toContain('bg-red-500');
+    expect(badge.className).toContain('bg-ds-destructive');
   });
 
   it('applies color variant classes', () => {
@@ -62,7 +62,7 @@ describe('Badge', () => {
       )
     );
     const badge = screen.getByTestId('badge');
-    expect(badge.className).toContain('bg-green-100');
+    expect(badge.className).toContain('bg-ds-status-ok/10');
   });
 
   it('applies size variant classes', () => {

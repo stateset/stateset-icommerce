@@ -166,7 +166,7 @@ async fn postgres_cart_checkout_creates_order() {
         .expect("order row");
     assert_eq!(order.customer_id, customer.id);
     assert_eq!(order.status, OrderStatus::Confirmed);
-    assert_eq!(order.payment_status, PaymentStatus::Paid);
+    assert_eq!(order.payment_status, PaymentStatus::Pending);
     assert_eq!(order.items.len(), 1);
 
     let reservations = commerce
@@ -319,7 +319,73 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
     let updated_order =
         commerce.orders().get(order.id.into_uuid()).await.expect("get order").expect("order row");
     assert_eq!(updated_order.status, OrderStatus::Confirmed);
-    assert_eq!(updated_order.payment_status, PaymentStatus::Paid);
+    assert_eq!(updated_order.payment_status, PaymentStatus::Pending);
+}
+
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_complete_settled_externally_marks_order_paid() {
+    let url = match postgres_url() {
+        Some(url) => url,
+        None => {
+            eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping settled-externally test");
+            return;
+        }
+    };
+
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
+
+    let unique = Uuid::new_v4().to_string();
+    let cart = commerce
+        .carts()
+        .create(CreateCart {
+            customer_email: Some(format!("settled-{}@example.com", unique)),
+            customer_name: Some("Settled Externally".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("create cart");
+
+    commerce
+        .carts()
+        .add_item(
+            cart.id.into_uuid(),
+            AddCartItem {
+                sku: format!("SKU-{}", unique.replace('-', "")),
+                name: "Widget".into(),
+                quantity: 1,
+                unit_price: dec!(9.99),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("add cart item");
+
+    commerce
+        .carts()
+        .set_shipping_address(cart.id.into_uuid(), test_address())
+        .await
+        .expect("set shipping address");
+
+    let result = commerce
+        .carts()
+        .complete_settled_externally(cart.id.into_uuid())
+        .await
+        .expect("settled-externally checkout should succeed");
+
+    let order = commerce
+        .orders()
+        .get(result.order_id.into_uuid())
+        .await
+        .expect("get order")
+        .expect("order row");
+    assert_eq!(order.status, OrderStatus::Confirmed);
+    assert_eq!(order.payment_status, PaymentStatus::Paid);
+
+    let updated_cart =
+        commerce.carts().get(cart.id.into_uuid()).await.expect("get cart").expect("cart row");
+    assert_eq!(updated_cart.status, CartStatus::Completed);
 }
 
 #[cfg(feature = "postgres")]

@@ -221,8 +221,7 @@ pub(crate) async fn create_payment(
         order_id: Some(req.order_id),
         customer_id: req.customer_id,
         payment_method: payment_method.unwrap_or_default(),
-        amount: Decimal::try_from(req.amount)
-            .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?,
+        amount: req.amount,
         currency,
         external_id: req.external_id,
         ..Default::default()
@@ -291,10 +290,7 @@ pub(crate) async fn create_refund(
     let tenant_id = tenant_id_from_headers(&headers);
     let input = CreateRefund {
         payment_id: id,
-        amount: Some(
-            Decimal::try_from(req.amount)
-                .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?,
-        ),
+        amount: Some(req.amount),
         reason: req.reason,
         ..Default::default()
     };

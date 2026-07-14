@@ -1,11 +1,15 @@
-# Binding Generator Specification
-# This declarative spec generates 11 language bindings from a single source of truth
+# Binding Generator Specification (DESIGN DOCUMENT — no generator exists yet)
+#
+# This declarative spec describes the intended single source of truth for
+# future binding codegen. Today every language binding under bindings/ is
+# hand-maintained; cross-language consistency is enforced by the shared test
+# vectors in bindings/test-vectors/, not by generation from this file.
 
 # ============================================================================
 # Metadata
 # ============================================================================
 name: "stateset-icommerce"
-version: "1.6.0"
+version: "1.7.0"
 description: "The SQLite of commerce operations"
 
 # ============================================================================

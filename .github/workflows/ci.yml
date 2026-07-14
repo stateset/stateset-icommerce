@@ -976,6 +976,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
+      - name: Check stateset-db coverage floor
+        # stateset-db is excluded from the workspace 80% gate below, but it must
+        # not be floorless: this gate measures the db crate against its own test
+        # suite. Baseline measured 2026-07-14: 52.05% lines. Ratchet this floor
+        # up as db-crate coverage improves; do not lower it.
+        env:
+          STATESET_ALLOW_POSTGRES_SKIP: "1"
+        run: |
+          cargo llvm-cov \
+            -p stateset-db \
+            --fail-under-lines 50 \
+            --ignore-filename-regex '(/tests/|/benches/)' \
+            --summary-only
+
       - name: Generate code coverage
         env:
           STATESET_ALLOW_POSTGRES_SKIP: "1"

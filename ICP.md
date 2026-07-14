@@ -41,9 +41,10 @@ settlement. No other public protocol covers this layer.
 | **SDKs** | [`packages/icp-client/`](./packages/icp-client/) (npm), [`packages/icp-python-client/`](./packages/icp-python-client/) (PyPI), [`crates/stateset-icp-client/`](./crates/stateset-icp-client/) (cargo) — 3 first-party clients, byte-identical wire bytes; **all 3 ship `registerWebhook` + `verifyWebhook` + `fetchChannelEvents` + `verifySettlementReceipt`**; JS has full `.d.ts` types | **JS 33/33 · Python 33/33 · Rust 29/29** |
 | **Quickstart** | [`icp-spec/guides/icpip-0005-quickstart.md`](./icp-spec/guides/icpip-0005-quickstart.md) — side-by-side JS / Python / Rust integration in 5 minutes | — |
 
-Cumulative protocol-layer tests on every CI run: **60+ PASS, 0 FAIL** across
-HTTP, MCP, Settler, contract, conformance (**4 languages**), demos, and
-the **Docker Compose integration suite** (17/17 against the live stack).
+Cumulative protocol-layer tests in the ICP conformance workflow (runs
+whenever ICP code changes): **60+ PASS, 0 FAIL** across HTTP, MCP, Settler,
+contract, conformance (**4 languages**), demos, and the **Docker Compose
+integration suite** (17/17 against the live stack).
 
 ## Reproduce in 5 minutes
 

@@ -12,6 +12,11 @@
 //! A declarative, condition-based rule system for enforcing business logic,
 //! access control, and data transformations in commerce operations.
 //!
+//! **Status: opt-in library.** Consumed via `stateset-sdk`'s `policy`
+//! feature (`stateset_sdk::policy`); the engine does **not** evaluate
+//! policies implicitly on commerce operations — call
+//! [`PolicyEngine::evaluate`] at your own decision points.
+//!
 //! This crate is a faithful Rust port of the JS policy engine
 //! (`cli/src/policies/engine.js`, 1,138 lines).
 //!

@@ -13,7 +13,6 @@ use crate::dto::{
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
-use rust_decimal::Decimal;
 use stateset_core::{
     CreateInvoice, CustomerId, InvoiceFilter, InvoiceStatus, InvoiceType, OrderId,
     RecordInvoicePayment,
@@ -254,8 +253,7 @@ pub(crate) async fn record_invoice_payment(
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
     let input = RecordInvoicePayment {
-        amount: Decimal::try_from(req.amount)
-            .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?,
+        amount: req.amount,
         payment_id: None,
         payment_method: req.payment_method,
         reference: req.reference,
