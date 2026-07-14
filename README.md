@@ -72,7 +72,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.7.0](#whats-new-in-v160)
+- [What's New in v1.7.0](#whats-new-in-v170)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -320,14 +320,37 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ## What's New in v1.7.0
 
-**v1.7.0 completes three-language SDK symmetry on the ICP trust
-primitives.** The Rust and Python SDKs gain `verify_settlement_receipt`
-(mirroring the JS helper byte-for-byte), all three first-party SDKs now
-ship `registerWebhook` + `verifyWebhook` + `fetchChannelEvents` +
-`verifySettlementReceipt`, and operator-facing integration guides land
-under `icp-spec/guides/` (merchant integration, Settler implementation,
-ICPIP-0005 quickstart). See [`CHANGELOG.md`](./CHANGELOG.md) for the
-full entry.
+**v1.7.0 is a correctness and hardening release.**
+
+- **BREAKING: safe-by-default checkout.** `carts().complete()` now mints
+  orders as `Confirmed` with payment `Pending`; record payment through the
+  payments API. Out-of-band settlement (ACP, external PSPs) opts in
+  explicitly via the new `complete_settled_externally()` — on both
+  backends, `Commerce`, and `AsyncCommerce`. x402 checkout is unchanged.
+- **Exact-decimal money end to end.** Payment, refund, and invoice-payment
+  request amounts are `Decimal` on the wire (string or number), closing the
+  last IEEE-754 float path into the engine.
+- **Inventory reservation accounting fixes.** Committed
+  reserve/release/confirm operations can no longer surface as caller
+  errors under lock contention (previously a retrying caller could
+  double-release); found by the repaired oversell property test.
+- **Atomic checkout on Postgres.** Order promotion and cart completion
+  commit in a single transaction on both the standard and x402 paths.
+- **Security hardening.** Per-client HTTP rate limiting (keyed token
+  buckets, bounded memory), production-baseline startup warnings for
+  missing authz/rate-limit on non-loopback binds, and a fail-closed ICP
+  replay guard that never evicts live nonces under flood.
+- **Tighter CI.** `stateset-db` gains a ratcheting coverage floor and the
+  Postgres parity matrix auto-discovers its test files.
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for the full entry.
+
+**v1.6.0** completed three-language SDK symmetry on the ICP trust
+primitives: the Rust and Python SDKs gained `verify_settlement_receipt`
+(mirroring the JS helper byte-for-byte), all three first-party SDKs ship
+`registerWebhook` + `verifyWebhook` + `fetchChannelEvents` +
+`verifySettlementReceipt`, and operator-facing integration guides landed
+under `icp-spec/guides/`.
 
 ICP-1.0 ships **all seven core intent verbs** — 100% of the addressable
 commerce verb surface:
