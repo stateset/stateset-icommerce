@@ -1826,7 +1826,7 @@ impl SqliteCartRepository {
     /// without a payment record. That is only correct when settlement happened
     /// out of band (x402, ACP, external PSP) and the caller opted in
     /// explicitly; the plain checkout path leaves payment pending so a
-    /// mis-wired integration cannot mint revenue-recognized orders with no
+    /// miswired integration cannot mint revenue-recognized orders with no
     /// payment trail.
     fn complete_checkout_in_tx(
         &self,

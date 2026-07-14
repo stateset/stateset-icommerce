@@ -16,7 +16,7 @@ This project follows Keep a Changelog and Semantic Versioning.
   outside the engine — ACP, external PSPs) is an explicit opt-in via the new
   `carts().complete_settled_externally()` on both backends, the sync
   `Commerce` facade, and `AsyncCommerce`. x402 checkout is unchanged — it
-  verifies settlement before marking paid. Rationale: a mis-wired integration
+  verifies settlement before marking paid. Rationale: a miswired integration
   could previously revenue-recognize orders with no payment trail.
 
 ### Security
