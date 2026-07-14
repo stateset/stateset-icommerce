@@ -57,15 +57,6 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
-      - name: Check stateset-db coverage floor
-        # Keep in sync with the db floor in ci.yml (baseline 52.05% on 2026-07-14).
-        run: |
-          cargo llvm-cov \
-            -p stateset-db \
-            --fail-under-lines 50 \
-            --ignore-filename-regex '(/tests/|/benches/)' \
-            --summary-only
-
       - name: Check coverage threshold
         run: |
           cargo llvm-cov report \
@@ -87,6 +78,20 @@ jobs:
               sys.exit(1)
           print(f"Coverage {coverage}% meets threshold")
           PY
+
+      - name: Check stateset-db coverage floor
+        # Keep in sync with the db floor in ci.yml (baseline 52.05% on
+        # 2026-07-14). Runs LAST: each cargo-llvm-cov test invocation clears
+        # the shared profraw data, so this must not run between the workspace
+        # measurement and its report/threshold steps.
+        env:
+          STATESET_ALLOW_POSTGRES_SKIP: "1"
+        run: |
+          cargo llvm-cov \
+            -p stateset-db \
+            --fail-under-lines 50 \
+            --ignore-filename-regex '(/tests/|/benches/)' \
+            --summary-only
 
   benchmarks:
     name: Benchmarks
