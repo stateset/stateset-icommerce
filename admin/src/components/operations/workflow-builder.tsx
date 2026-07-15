@@ -1,20 +1,30 @@
 'use client';
 
-import { Card, Title, Text, Badge, Grid, Metric } from '@tremor/react';
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  MetricCard,
+  StatusPill,
+  Badge,
+  type StatusTone,
+} from '@stateset/design';
 import { CogIcon, BoltIcon, ArrowRightIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { formatNumber } from '@/lib/utils';
-import type { WorkflowBuilderData, Workflow, WorkflowTemplate, WorkflowExecution, TremorColor } from '@/lib/types/dashboard-data';
+import type { WorkflowBuilderData, Workflow, WorkflowTemplate, WorkflowExecution } from '@/lib/types/dashboard-data';
 
 interface WorkflowBuilderProps {
   data?: WorkflowBuilderData;
 }
 
-const statusColors: Record<string, string> = {
-  active: 'emerald',
-  paused: 'amber',
-  draft: 'gray',
-  error: 'red',
+const statusPillMap: Record<string, StatusTone> = {
+  active: 'ok',
+  paused: 'warn',
+  draft: 'idle',
+  error: 'fail',
 };
 
 const triggerIcons: Record<string, string> = {
@@ -38,172 +48,184 @@ export default function WorkflowBuilder({ data: propData }: WorkflowBuilderProps
       className="space-y-6"
     >
       {/* Key Metrics */}
-      <Grid numItems={2} numItemsSm={4} className="gap-4">
-        <Card decoration="top" decorationColor="emerald">
-          <Text>Active Workflows</Text>
-          <Metric>{summary.activeCount}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="blue">
-          <Text>Executions Today</Text>
-          <Metric>{formatNumber(summary.executionsToday)}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="purple">
-          <Text>Success Rate</Text>
-          <Metric>{summary.successRate}%</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="amber">
-          <Text>Time Saved</Text>
-          <Metric>{summary.hoursSaved}h</Metric>
-        </Card>
-      </Grid>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <MetricCard
+          label="Active Workflows"
+          value={summary.activeCount}
+          tone="success"
+        />
+        <MetricCard
+          label="Executions Today"
+          value={formatNumber(summary.executionsToday)}
+          tone="primary"
+        />
+        <MetricCard
+          label="Success Rate"
+          value={`${summary.successRate}%`}
+          tone="accent"
+        />
+        <MetricCard
+          label="Time Saved"
+          value={`${summary.hoursSaved}h`}
+          tone="warning"
+        />
+      </div>
 
       {/* Active Workflows */}
       <Card>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <Title>Active Workflows</Title>
-            <Text className="text-gray-500">Automated processes running on your commerce operations</Text>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Active Workflows</CardTitle>
+              <CardDescription>Automated processes running on your commerce operations</CardDescription>
+            </div>
+            <StatusPill status="ok">{summary.activeCount} active</StatusPill>
           </div>
-          <Badge color="emerald" size="lg">
-            {summary.activeCount} active
-          </Badge>
-        </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {workflows.map((workflow: Workflow, index: number) => (
+              <motion.div
+                key={workflow.id || index}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.05 }}
+                className="p-4 border border-ds-enterprise-line rounded-lg hover:border-ds-brand-300 transition-colors"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-4">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      workflow.status === 'active' ? 'bg-ds-status-ok/15' :
+                      workflow.status === 'paused' ? 'bg-ds-status-warn/15' :
+                      'bg-ds-muted'
+                    }`}>
+                      <CogIcon className={`w-5 h-5 ${
+                        workflow.status === 'active' ? 'text-ds-status-ok' :
+                        workflow.status === 'paused' ? 'text-ds-status-warn' :
+                        'text-ds-muted-foreground'
+                      }`} />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <p className="text-sm font-medium text-ds-foreground">{workflow.name}</p>
+                        <StatusPill status={statusPillMap[workflow.status] || 'idle'}>
+                          {workflow.status}
+                        </StatusPill>
+                      </div>
+                      <p className="text-sm text-ds-muted-foreground mt-1">{workflow.description}</p>
 
-        <div className="space-y-4">
-          {workflows.map((workflow: Workflow, index: number) => (
-            <motion.div
-              key={workflow.id || index}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.05 }}
-              className="p-4 border rounded-lg dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-start space-x-4">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    workflow.status === 'active' ? 'bg-emerald-100 dark:bg-emerald-900/30' :
-                    workflow.status === 'paused' ? 'bg-amber-100 dark:bg-amber-900/30' :
-                    'bg-gray-100 dark:bg-gray-800'
-                  }`}>
-                    <CogIcon className={`w-5 h-5 ${
-                      workflow.status === 'active' ? 'text-emerald-600' :
-                      workflow.status === 'paused' ? 'text-amber-600' :
-                      'text-gray-500'
-                    }`} />
+                      {/* Workflow Steps */}
+                      <div className="flex items-center space-x-2 mt-3">
+                        <Badge variant="primary">
+                          {triggerIcons[workflow.trigger] || workflow.trigger}
+                        </Badge>
+                        <ArrowRightIcon className="w-4 h-4 text-ds-muted-foreground" />
+                        {workflow.steps.map((step: string, i: number) => (
+                          <div key={i} className="flex items-center space-x-2">
+                            <span className="text-xs px-2 py-1 bg-ds-muted rounded text-ds-foreground">
+                              {step}
+                            </span>
+                            {i < workflow.steps.length - 1 && (
+                              <ArrowRightIcon className="w-3 h-3 text-ds-muted-foreground" />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                  <div>
+
+                  <div className="text-right">
                     <div className="flex items-center space-x-2">
-                      <Text className="font-medium">{workflow.name}</Text>
-                      <Badge color={statusColors[workflow.status] as TremorColor || 'gray'} size="xs">
-                        {workflow.status}
-                      </Badge>
+                      <p className="text-sm text-ds-muted-foreground">
+                        {formatNumber(workflow.executions)} runs
+                      </p>
+                      <div className="flex items-center space-x-1">
+                        <CheckCircleIcon className="w-4 h-4 text-ds-status-ok" />
+                        <p className="text-sm text-ds-status-ok">{workflow.successRate}%</p>
+                      </div>
                     </div>
-                    <Text className="text-sm text-gray-500 mt-1">{workflow.description}</Text>
-
-                    {/* Workflow Steps */}
-                    <div className="flex items-center space-x-2 mt-3">
-                      <Badge color="blue" size="xs">
-                        {triggerIcons[workflow.trigger] || workflow.trigger}
-                      </Badge>
-                      <ArrowRightIcon className="w-4 h-4 text-gray-400" />
-                      {workflow.steps.map((step: string, i: number) => (
-                        <div key={i} className="flex items-center space-x-2">
-                          <Text className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">
-                            {step}
-                          </Text>
-                          {i < workflow.steps.length - 1 && (
-                            <ArrowRightIcon className="w-3 h-3 text-gray-400" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <p className="text-xs text-ds-muted-foreground mt-1">
+                      Last run: {workflow.lastRun}
+                    </p>
                   </div>
                 </div>
-
-                <div className="text-right">
-                  <div className="flex items-center space-x-2">
-                    <Text className="text-sm text-gray-500">
-                      {formatNumber(workflow.executions)} runs
-                    </Text>
-                    <div className="flex items-center space-x-1">
-                      <CheckCircleIcon className="w-4 h-4 text-emerald-500" />
-                      <Text className="text-sm text-emerald-600">{workflow.successRate}%</Text>
-                    </div>
-                  </div>
-                  <Text className="text-xs text-gray-500 mt-1">
-                    Last run: {workflow.lastRun}
-                  </Text>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
+              </motion.div>
+            ))}
+          </div>
+        </CardContent>
       </Card>
 
       {/* Workflow Templates */}
       <Card>
-        <Title>Quick Start Templates</Title>
-        <Text className="text-gray-500 mb-4">Pre-built workflows for common commerce operations</Text>
-
-        <Grid numItems={1} numItemsSm={2} numItemsLg={3} className="gap-4">
-          {templates.map((template: WorkflowTemplate, index: number) => (
-            <motion.div
-              key={template.id || index}
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: index * 0.05 }}
-              className="p-4 border rounded-lg dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-700 cursor-pointer transition-colors"
-            >
-              <div className="flex items-center space-x-3 mb-2">
-                <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-                  <BoltIcon className="w-4 h-4 text-indigo-600" />
+        <CardHeader>
+          <CardTitle>Quick Start Templates</CardTitle>
+          <CardDescription>Pre-built workflows for common commerce operations</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {templates.map((template: WorkflowTemplate, index: number) => (
+              <motion.div
+                key={template.id || index}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: index * 0.05 }}
+                className="p-4 border border-ds-enterprise-line rounded-lg hover:border-ds-brand-300 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center space-x-3 mb-2">
+                  <div className="w-8 h-8 rounded-lg bg-ds-brand-100 flex items-center justify-center">
+                    <BoltIcon className="w-4 h-4 text-ds-primary" />
+                  </div>
+                  <p className="text-sm font-medium text-ds-foreground">{template.name}</p>
                 </div>
-                <Text className="font-medium">{template.name}</Text>
-              </div>
-              <Text className="text-sm text-gray-500">{template.description}</Text>
-              <div className="flex items-center justify-between mt-3">
-                <Badge color="gray" size="xs">{template.category}</Badge>
-                <Text className="text-xs text-indigo-600">
-                  {formatNumber(template.usedBy)} businesses use this
-                </Text>
-              </div>
-            </motion.div>
-          ))}
-        </Grid>
+                <p className="text-sm text-ds-muted-foreground">{template.description}</p>
+                <div className="flex items-center justify-between mt-3">
+                  <Badge variant="default">{template.category}</Badge>
+                  <p className="text-xs text-ds-primary">
+                    {formatNumber(template.usedBy)} businesses use this
+                  </p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </CardContent>
       </Card>
 
       {/* Execution History */}
       <Card>
-        <Title>Recent Executions</Title>
-        <Text className="text-gray-500 mb-4">Latest workflow runs and their outcomes</Text>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b dark:border-gray-700">
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Workflow</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Trigger</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Status</th>
-                <th className="text-right py-2 px-3 text-sm font-medium text-gray-500">Duration</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.recentExecutions?.map((execution: WorkflowExecution, index: number) => (
-                <tr key={index} className="border-b dark:border-gray-700">
-                  <td className="py-2 px-3 text-sm font-medium">{execution.workflow}</td>
-                  <td className="py-2 px-3 text-sm text-gray-500">{execution.trigger}</td>
-                  <td className="py-2 px-3">
-                    <Badge color={execution.status === 'success' ? 'emerald' : 'red'} size="xs">
-                      {execution.status}
-                    </Badge>
-                  </td>
-                  <td className="py-2 px-3 text-sm text-right">{execution.duration}</td>
-                  <td className="py-2 px-3 text-sm text-gray-500">{execution.time}</td>
+        <CardHeader>
+          <CardTitle>Recent Executions</CardTitle>
+          <CardDescription>Latest workflow runs and their outcomes</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-ds-enterprise-line">
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Workflow</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Trigger</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Status</th>
+                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">Duration</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Time</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {summary.recentExecutions?.map((execution: WorkflowExecution, index: number) => (
+                  <tr key={index} className="border-b border-ds-enterprise-line">
+                    <td className="py-2 px-3 text-sm font-medium text-ds-foreground">{execution.workflow}</td>
+                    <td className="py-2 px-3 text-sm text-ds-muted-foreground">{execution.trigger}</td>
+                    <td className="py-2 px-3">
+                      <StatusPill status={execution.status === 'success' ? 'ok' : 'fail'}>
+                        {execution.status}
+                      </StatusPill>
+                    </td>
+                    <td className="py-2 px-3 text-sm text-right text-ds-foreground">{execution.duration}</td>
+                    <td className="py-2 px-3 text-sm text-ds-muted-foreground">{execution.time}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
       </Card>
     </motion.div>
   );

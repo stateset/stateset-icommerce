@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Bars3Icon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
-import { navigation } from '@/components/sidebar';
+import { navigation, navItemClass, isNavActive } from '@/components/sidebar';
 
 export function MobileNav() {
   const pathname = usePathname();
@@ -34,13 +34,15 @@ export function MobileNav() {
   }, [open]);
 
   return (
-    <div className="lg:hidden border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+    <div className="border-b border-ds-sidebar-border bg-ds-sidebar text-ds-sidebar-foreground lg:hidden">
       <div className="flex items-center justify-between px-4 py-3">
-        <Link href="/" className="flex items-center space-x-2">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-            <SparklesIcon className="w-5 h-5 text-white" aria-hidden="true" />
+        <Link href="/" className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-ds-primary">
+            <SparklesIcon className="h-5 w-5 text-ds-primary-foreground" aria-hidden="true" />
           </div>
-          <span className="text-xl font-bold text-gray-900 dark:text-white">StateSet</span>
+          <span className="font-ds-display text-xl font-semibold tracking-ds-tight text-ds-sidebar-foreground">
+            StateSet
+          </span>
         </Link>
         <button
           type="button"
@@ -48,7 +50,7 @@ export function MobileNav() {
           aria-expanded={open}
           aria-controls={panelId}
           aria-label={open ? 'Close navigation menu' : 'Open navigation menu'}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-gray-600 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-50"
+          className="ds-focus-ring inline-flex h-9 w-9 items-center justify-center rounded-lg text-ds-sidebar-foreground/[0.78] hover:bg-ds-sidebar-foreground/[0.08] hover:text-ds-sidebar-foreground"
         >
           {open ? (
             <XMarkIcon className="h-6 w-6" aria-hidden="true" />
@@ -63,31 +65,17 @@ export function MobileNav() {
         className={cn('space-y-1 px-2 pb-3', open ? 'block' : 'hidden')}
       >
         {navigation.map((item) => {
-          const isActive =
-            pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+          const active = isNavActive(pathname, item.href);
 
           return (
             <Link
               key={item.name}
               href={item.href}
-              aria-current={isActive ? 'page' : undefined}
-              className={cn(
-                isActive
-                  ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white',
-                'group flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors'
-              )}
+              aria-current={active ? 'page' : undefined}
+              className={navItemClass(active)}
             >
-              <item.icon
-                className={cn(
-                  isActive
-                    ? 'text-indigo-600 dark:text-indigo-400'
-                    : 'text-gray-400 dark:text-gray-500 group-hover:text-gray-500 dark:group-hover:text-gray-400',
-                  'mr-3 h-5 w-5 flex-shrink-0'
-                )}
-                aria-hidden="true"
-              />
-              {item.name}
+              <item.icon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+              <span className="truncate">{item.name}</span>
             </Link>
           );
         })}

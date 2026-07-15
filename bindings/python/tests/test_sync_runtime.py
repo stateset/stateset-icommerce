@@ -32,6 +32,10 @@ def build_sync_config(base_url: str, tmp_path):
             "confirmation_capacity": 16,
             "outbox_path": str(tmp_path / "sync-outbox.json"),
             "state_path": str(tmp_path / "sync-state.json"),
+            # The stub sequencer publishes commitment metadata without a
+            # signed manifest; opt out of the fail-closed trust default for
+            # this trusted in-process test environment.
+            "commitment_trust": {"require_manifest": False},
         },
         "agent_key_id": 7,
     }

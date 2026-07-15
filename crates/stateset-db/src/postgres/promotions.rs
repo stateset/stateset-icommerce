@@ -805,6 +805,47 @@ impl PgPromotionRepository {
                         continue;
                     }
 
+                    // Validity window (status alone may lag wall-clock expiry).
+                    let now = Utc::now();
+                    if coupon.starts_at.is_some_and(|s| s > now)
+                        || coupon.ends_at.is_some_and(|e| e < now)
+                    {
+                        result.rejected_promotions.push(RejectedPromotion {
+                            promotion_id: None,
+                            coupon_code: Some(code.clone()),
+                            reason: "Coupon is outside its validity window".into(),
+                            reason_code: RejectionReason::Expired,
+                        });
+                        continue;
+                    }
+
+                    // Coupon usage limits (record_usage re-checks these
+                    // transactionally; here they produce friendly rejections).
+                    if coupon.usage_limit.is_some_and(|l| coupon.usage_count >= l) {
+                        result.rejected_promotions.push(RejectedPromotion {
+                            promotion_id: None,
+                            coupon_code: Some(code.clone()),
+                            reason: "Coupon usage limit reached".into(),
+                            reason_code: RejectionReason::UsageLimitReached,
+                        });
+                        continue;
+                    }
+                    if let (Some(limit), Some(customer_id)) =
+                        (coupon.per_customer_limit, request.customer_id)
+                    {
+                        if self.coupon_customer_usage_count(coupon.id, customer_id).await?
+                            >= i64::from(limit)
+                        {
+                            result.rejected_promotions.push(RejectedPromotion {
+                                promotion_id: None,
+                                coupon_code: Some(code.clone()),
+                                reason: "Per-customer coupon usage limit reached".into(),
+                                reason_code: RejectionReason::UsageLimitReached,
+                            });
+                            continue;
+                        }
+                    }
+
                     if let Some(promo) = self.get_async(coupon.promotion_id).await? {
                         coupon_promotions.push((promo, Some(code.clone())));
                     }
@@ -830,6 +871,35 @@ impl PgPromotionRepository {
         let mut has_exclusive = false;
 
         for (promo, coupon_code) in all_promotions {
+            // The promotion itself must be active and inside its validity
+            // window — coupon-linked promotions bypass the is_active list
+            // filter, so a coupon on a draft/expired promotion lands here.
+            if !promo.is_active() {
+                result.rejected_promotions.push(RejectedPromotion {
+                    promotion_id: Some(promo.id),
+                    coupon_code: coupon_code.clone(),
+                    reason: "Promotion is not active".into(),
+                    reason_code: RejectionReason::Expired,
+                });
+                continue;
+            }
+
+            // Customer targeting: when the promotion lists eligible
+            // customers (and no groups, which the request cannot resolve),
+            // only those customers — identified, not anonymous — may use it.
+            if !promo.eligible_customer_ids.is_empty()
+                && promo.eligible_customer_groups.is_empty()
+                && !request.customer_id.is_some_and(|c| promo.eligible_customer_ids.contains(&c))
+            {
+                result.rejected_promotions.push(RejectedPromotion {
+                    promotion_id: Some(promo.id),
+                    coupon_code: coupon_code.clone(),
+                    reason: "Customer is not eligible for this promotion".into(),
+                    reason_code: RejectionReason::CustomerNotEligible,
+                });
+                continue;
+            }
+
             if has_exclusive && promo.stacking == StackingBehavior::Exclusive {
                 result.rejected_promotions.push(RejectedPromotion {
                     promotion_id: Some(promo.id),
@@ -856,6 +926,22 @@ impl PgPromotionRepository {
                         promotion_id: Some(promo.id),
                         coupon_code: coupon_code.clone(),
                         reason: "Promotion usage limit reached".into(),
+                        reason_code: RejectionReason::UsageLimitReached,
+                    });
+                    continue;
+                }
+            }
+
+            // Check per-customer usage limit (record_usage re-checks this
+            // transactionally; here it produces a friendly rejection).
+            if let (Some(limit), Some(customer_id)) =
+                (promo.per_customer_limit, request.customer_id)
+            {
+                if self.customer_usage_count(promo.id, customer_id).await? >= i64::from(limit) {
+                    result.rejected_promotions.push(RejectedPromotion {
+                        promotion_id: Some(promo.id),
+                        coupon_code: coupon_code.clone(),
+                        reason: "Per-customer usage limit reached".into(),
                         reason_code: RejectionReason::UsageLimitReached,
                     });
                     continue;
@@ -905,6 +991,38 @@ impl PgPromotionRepository {
         Ok(result)
     }
 
+    /// Times a customer has used a specific coupon (from the usage ledger).
+    async fn coupon_customer_usage_count(
+        &self,
+        coupon_id: Uuid,
+        customer_id: CustomerId,
+    ) -> Result<i64> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM promotion_usage WHERE coupon_id = $1 AND customer_id = $2",
+        )
+        .bind(coupon_id)
+        .bind(customer_id.into_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)
+    }
+
+    /// Times a customer has used a promotion (from the usage ledger).
+    async fn customer_usage_count(
+        &self,
+        promotion_id: PromotionId,
+        customer_id: CustomerId,
+    ) -> Result<i64> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = $1 AND customer_id = $2",
+        )
+        .bind(promotion_id.into_uuid())
+        .bind(customer_id.into_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn record_usage_async(
         &self,
@@ -919,6 +1037,97 @@ impl PgPromotionRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        // One transaction, limit-guarded increments first — the
+        // evaluation-time check reads a snapshot, so concurrent redemptions
+        // would race past the limits otherwise, and a rejected limit must not
+        // leave an orphaned usage row.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Per-customer limits (promotion and coupon), enforced against the
+        // usage ledger inside the same transaction. Anonymous usage (no
+        // customer_id) cannot be attributed and is not limited here.
+        if let Some(customer_id) = customer_id {
+            let limit: Option<i32> =
+                sqlx::query_scalar("SELECT per_customer_limit FROM promotions WHERE id = $1")
+                    .bind(promotion_id.into_uuid())
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .flatten();
+            if let Some(limit) = limit {
+                let used: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = $1 AND customer_id = $2",
+                )
+                .bind(promotion_id.into_uuid())
+                .bind(customer_id.into_uuid())
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+                if used >= i64::from(limit) {
+                    return Err(CommerceError::ValidationError(
+                        "Per-customer promotion usage limit reached".to_string(),
+                    ));
+                }
+            }
+
+            if let Some(coupon_id) = coupon_id {
+                let limit: Option<i32> =
+                    sqlx::query_scalar("SELECT per_customer_limit FROM coupon_codes WHERE id = $1")
+                        .bind(coupon_id)
+                        .fetch_optional(tx.as_mut())
+                        .await
+                        .map_err(map_db_error)?
+                        .flatten();
+                if let Some(limit) = limit {
+                    let used: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM promotion_usage WHERE coupon_id = $1 AND customer_id = $2",
+                    )
+                    .bind(coupon_id)
+                    .bind(customer_id.into_uuid())
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+                    if used >= i64::from(limit) {
+                        return Err(CommerceError::ValidationError(
+                            "Per-customer coupon usage limit reached".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let rows = sqlx::query(
+            "UPDATE promotions SET usage_count = usage_count + 1
+             WHERE id = $1 AND (total_usage_limit IS NULL OR usage_count < total_usage_limit)",
+        )
+        .bind(promotion_id.into_uuid())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::ValidationError(
+                "Promotion not found or usage limit reached".to_string(),
+            ));
+        }
+
+        if let Some(coupon_id) = coupon_id {
+            let rows = sqlx::query(
+                "UPDATE coupon_codes SET usage_count = usage_count + 1
+                 WHERE id = $1 AND (usage_limit IS NULL OR usage_count < usage_limit)",
+            )
+            .bind(coupon_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .rows_affected();
+            if rows == 0 {
+                return Err(CommerceError::ValidationError(
+                    "Coupon not found or usage limit reached".to_string(),
+                ));
+            }
+        }
+
         sqlx::query(
             "INSERT INTO promotion_usage (id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount, currency, used_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
@@ -932,23 +1141,11 @@ impl PgPromotionRepository {
         .bind(discount_amount)
         .bind(currency)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        sqlx::query("UPDATE promotions SET usage_count = usage_count + 1 WHERE id = $1")
-            .bind(promotion_id.into_uuid())
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        if let Some(coupon_id) = coupon_id {
-            sqlx::query("UPDATE coupon_codes SET usage_count = usage_count + 1 WHERE id = $1")
-                .bind(coupon_id)
-                .execute(&self.pool)
-                .await
-                .map_err(map_db_error)?;
-        }
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(PromotionUsage {
             id,
@@ -1103,7 +1300,24 @@ impl PgPromotionRepository {
         request: &ApplyPromotionsRequest,
         already_discounted: Decimal,
     ) -> Result<Decimal> {
-        let applicable_amount = request.subtotal - already_discounted;
+        // When the promotion scopes to specific products, the discount base is
+        // the eligible line items' worth, not the whole subtotal. A scoped
+        // promotion with no line-item data cannot verify eligibility and
+        // fails closed (zero base).
+        let scoped = promo.has_product_scoping();
+        let (eligible_subtotal, eligible_qty) = if scoped {
+            request
+                .line_items
+                .iter()
+                .filter(|item| promo.item_in_scope(item))
+                .fold((Decimal::ZERO, 0i32), |(total, qty), item| {
+                    (total + item.line_total, qty + item.quantity)
+                })
+        } else {
+            (request.subtotal, request.line_items.iter().map(|i| i.quantity).sum())
+        };
+        let applicable_amount =
+            (eligible_subtotal.min(request.subtotal - already_discounted)).max(Decimal::ZERO);
 
         let discount = match promo.promotion_type {
             PromotionType::PercentageOff | PromotionType::FirstOrderDiscount => {
@@ -1113,7 +1327,12 @@ impl PgPromotionRepository {
                     Decimal::ZERO
                 }
             }
-            PromotionType::FixedAmountOff => promo.fixed_amount_off.unwrap_or(Decimal::ZERO),
+            PromotionType::FixedAmountOff => {
+                let fixed = promo.fixed_amount_off.unwrap_or(Decimal::ZERO);
+                // A scoped fixed discount cannot exceed the eligible items'
+                // worth; unscoped keeps its historical whole-order semantics.
+                if scoped { fixed.min(applicable_amount) } else { fixed }
+            }
             PromotionType::FreeShipping => request.shipping_amount,
             PromotionType::TieredDiscount => {
                 if let Some(tiers) = &promo.tiers {
@@ -1126,14 +1345,10 @@ impl PgPromotionRepository {
                 if let (Some(buy), Some(get), Some(discount_pct)) =
                     (promo.buy_quantity, promo.get_quantity, promo.get_discount_percent)
                 {
-                    let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
+                    let total_qty: i32 = eligible_qty;
                     let sets = total_qty / (buy + get);
-                    if sets > 0 {
-                        let avg_price = if !request.line_items.is_empty() {
-                            request.subtotal / Decimal::from(total_qty)
-                        } else {
-                            Decimal::ZERO
-                        };
+                    if sets > 0 && total_qty > 0 {
+                        let avg_price = eligible_subtotal / Decimal::from(total_qty);
                         avg_price * Decimal::from(get * sets) * discount_pct
                     } else {
                         Decimal::ZERO

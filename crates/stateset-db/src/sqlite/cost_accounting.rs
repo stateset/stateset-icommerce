@@ -604,14 +604,18 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             sql.push_str(" AND source_type = ?");
             params.push(Box::new(source.to_string()));
         }
-        if filter.has_remaining == Some(true) {
-            sql.push_str(" AND CAST(remaining_quantity AS REAL) > 0");
-        }
+        // `remaining_quantity` is a TEXT decimal; filtering it in SQL with
+        // CAST(... AS REAL) coerces to IEEE-754 floats, so the filter is
+        // applied below on the exact parsed `Decimal` values instead (and the
+        // LIMIT after it, so filtering never eats into the page).
+        let has_remaining = filter.has_remaining == Some(true);
 
         sql.push_str(" ORDER BY layer_date ASC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
+        if !has_remaining {
+            if let Some(limit) = filter.limit {
+                sql.push_str(&format!(" LIMIT {limit}"));
+            }
         }
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
@@ -625,6 +629,12 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         for row in rows {
             layers.push(row.map_err(map_db_error)?);
         }
+        if has_remaining {
+            layers.retain(|layer| layer.remaining_quantity > Decimal::ZERO);
+            if let Some(limit) = filter.limit {
+                layers.truncate(limit as usize);
+            }
+        }
         Ok(layers)
     }
 
@@ -634,21 +644,28 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
 
-        // Get layers in FIFO order (oldest first) from the same transaction snapshot.
+        // Get layers in FIFO order (oldest first) from the same transaction
+        // snapshot. Depleted layers are skipped in Rust on the exact parsed
+        // `Decimal`: `remaining_quantity` is a TEXT decimal, and filtering it
+        // in SQL via CAST(... AS REAL) would coerce to IEEE-754 floats.
         let layers: Vec<CostLayer> = {
             let mut stmt = tx
                 .prepare(
                     "SELECT id, sku, layer_date, quantity, remaining_quantity, unit_cost, total_cost,
                             source_type, source_id, lot_id, location_id, created_at
                      FROM cost_layers
-                     WHERE sku = ? AND CAST(remaining_quantity AS REAL) > 0
+                     WHERE sku = ?
                      ORDER BY layer_date ASC",
                 )
                 .map_err(map_db_error)?;
             let rows = stmt
                 .query_map([&input.sku], |row| self.row_to_cost_layer(row))
                 .map_err(map_db_error)?;
-            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)?
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_db_error)?
+                .into_iter()
+                .filter(|layer| layer.remaining_quantity > Decimal::ZERO)
+                .collect()
         };
 
         for layer in layers {
@@ -700,21 +717,28 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
 
-        // Get layers in LIFO order (newest first) from the same transaction snapshot.
+        // Get layers in LIFO order (newest first) from the same transaction
+        // snapshot. Depleted layers are skipped in Rust on the exact parsed
+        // `Decimal`: `remaining_quantity` is a TEXT decimal, and filtering it
+        // in SQL via CAST(... AS REAL) would coerce to IEEE-754 floats.
         let layers: Vec<CostLayer> = {
             let mut stmt = tx
                 .prepare(
                     "SELECT id, sku, layer_date, quantity, remaining_quantity, unit_cost, total_cost,
                             source_type, source_id, lot_id, location_id, created_at
                      FROM cost_layers
-                     WHERE sku = ? AND CAST(remaining_quantity AS REAL) > 0
+                     WHERE sku = ?
                      ORDER BY layer_date DESC",
                 )
                 .map_err(map_db_error)?;
             let rows = stmt
                 .query_map([&input.sku], |row| self.row_to_cost_layer(row))
                 .map_err(map_db_error)?;
-            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)?
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_db_error)?
+                .into_iter()
+                .filter(|layer| layer.remaining_quantity > Decimal::ZERO)
+                .collect()
         };
 
         for layer in layers {
@@ -1201,10 +1225,13 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        // Sum on-hand from inventory_balances (per-location) up to per-sku via inventory_items.id
+        // Sum on-hand from inventory_balances (per-location) up to per-sku via
+        // inventory_items.id. Quantities are TEXT decimals, so use the exact
+        // `decimal_sum` aggregate (see money_agg) instead of SUM(CAST(.. AS
+        // REAL)), which accumulates IEEE-754 float error in the costing path.
         let mut stmt = conn
             .prepare(
-                "SELECT COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0) AS qty,
+                "SELECT decimal_sum(ib.quantity_on_hand) AS qty,
                         ic.standard_cost, ic.average_cost, ic.last_cost
                  FROM inventory_items ii
                  LEFT JOIN inventory_balances ib ON ib.item_id = ii.id
@@ -1218,8 +1245,9 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let mut total_value = Decimal::ZERO;
 
         while let Some(row) = rows.next().map_err(map_db_error)? {
-            let qty_real: f64 = row.get(0).map_err(map_db_error)?;
-            let quantity = Decimal::from_f64_retain(qty_real).unwrap_or(Decimal::ZERO);
+            let qty_text: String = row.get(0).map_err(map_db_error)?;
+            let quantity =
+                parse_decimal_strict(&qty_text, "inventory_balances", "quantity_on_hand")?;
 
             let standard_raw: Option<String> = row.get(1).map_err(map_db_error)?;
             let average_raw: Option<String> = row.get(2).map_err(map_db_error)?;
@@ -1274,10 +1302,12 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     fn get_sku_cost_summary(&self, sku: &str) -> Result<Option<SkuCostSummary>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+        // Quantities are TEXT decimals; `decimal_sum` (see money_agg) keeps the
+        // aggregation exact instead of round-tripping through f64.
         let result = conn.query_row(
             "SELECT
                 ii.sku,
-                COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0) AS qty,
+                decimal_sum(ib.quantity_on_hand) AS qty,
                 ic.standard_cost,
                 ic.average_cost
              FROM inventory_items ii
@@ -1289,20 +1319,21 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, f64>(1)?,
+                    row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<String>>(3)?,
                 ))
             },
         );
 
-        let (sku_value, qty_real, standard_raw, average_raw) = match result {
+        let (sku_value, qty_text, standard_raw, average_raw) = match result {
             Ok(row) => row,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
             Err(e) => return Err(map_db_error(e)),
         };
 
-        let quantity_on_hand = Decimal::from_f64_retain(qty_real).unwrap_or(Decimal::ZERO);
+        let quantity_on_hand =
+            parse_decimal_strict(&qty_text, "inventory_balances", "quantity_on_hand")?;
         let standard_cost = match standard_raw {
             Some(value) if !value.is_empty() => {
                 parse_decimal_strict(&value, "sku_cost_summary", "standard_cost")?
@@ -1376,6 +1407,138 @@ mod tests {
             location_id: Some(1),
         })
         .expect("create layer")
+    }
+
+    /// Seed an inventory item with one on-hand balance row per quantity
+    /// (each in its own location, since balances are unique per location).
+    fn seed_on_hand(repo: &SqliteCostAccountingRepository, sku: &str, quantities: &[&str]) {
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "INSERT INTO inventory_items (sku, name) VALUES (?1, ?2)",
+            rusqlite::params![sku, format!("Item {sku}")],
+        )
+        .expect("insert item");
+        let item_id = conn.last_insert_rowid();
+        for (i, qty) in quantities.iter().enumerate() {
+            let location_id = (i + 1) as i64;
+            conn.execute(
+                "INSERT OR IGNORE INTO inventory_locations (id, name, code) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    location_id,
+                    format!("Loc {location_id}"),
+                    format!("LOC-{location_id}")
+                ],
+            )
+            .expect("insert location");
+            conn.execute(
+                "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![item_id, location_id, qty],
+            )
+            .expect("insert balance");
+        }
+    }
+
+    #[test]
+    fn inventory_valuation_sums_float_hostile_quantities_exactly() {
+        let repo = fresh_repo();
+        // 0.1 + 0.2 + 0.3 accumulates float error under SUM(CAST(... AS REAL))
+        // (0.6000000000000001); the exact Decimal sum is 0.6.
+        seed_on_hand(&repo, "VAL-EXACT", &["0.1", "0.2", "0.3"]);
+        repo.set_item_cost(SetItemCost {
+            sku: "VAL-EXACT".into(),
+            cost_method: Some(CostMethod::Standard),
+            standard_cost: Some(dec!(0.1)),
+            ..Default::default()
+        })
+        .expect("cost");
+
+        let v = repo.get_inventory_valuation(CostMethod::Standard).expect("valuation");
+        assert_eq!(v.total_quantity, dec!(0.6));
+        assert_eq!(v.total_value, dec!(0.06));
+    }
+
+    #[test]
+    fn inventory_valuation_preserves_high_precision_quantities() {
+        let repo = fresh_repo();
+        // 25 significant digits cannot round-trip through an f64.
+        seed_on_hand(&repo, "VAL-HP", &["1234567.123456789012345678"]);
+        repo.set_item_cost(SetItemCost {
+            sku: "VAL-HP".into(),
+            cost_method: Some(CostMethod::Standard),
+            standard_cost: Some(dec!(1)),
+            ..Default::default()
+        })
+        .expect("cost");
+
+        let v = repo.get_inventory_valuation(CostMethod::Standard).expect("valuation");
+        assert_eq!(v.total_quantity, dec!(1234567.123456789012345678));
+        assert_eq!(v.total_value, dec!(1234567.123456789012345678));
+    }
+
+    #[test]
+    fn sku_cost_summary_quantity_and_value_are_exact() {
+        let repo = fresh_repo();
+        seed_on_hand(&repo, "SUM-EXACT", &["0.1", "0.2"]);
+        // average_cost starts equal to the standard cost on first insert.
+        repo.set_item_cost(SetItemCost {
+            sku: "SUM-EXACT".into(),
+            cost_method: Some(CostMethod::Average),
+            standard_cost: Some(dec!(3)),
+            ..Default::default()
+        })
+        .expect("cost");
+
+        let s = repo.get_sku_cost_summary("SUM-EXACT").expect("ok").expect("found");
+        assert_eq!(s.quantity_on_hand, dec!(0.3), "0.1 + 0.2 must sum exactly");
+        assert_eq!(s.total_value, dec!(0.9), "0.3 * 3 must be exact");
+    }
+
+    #[test]
+    fn issue_fifo_skips_depleted_layers_and_has_remaining_excludes_them() {
+        let repo = fresh_repo();
+        let first = make_layer(&repo, "FIFO-D", dec!(0.3), dec!(5));
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let second = make_layer(&repo, "FIFO-D", dec!(1), dec!(8));
+
+        // Deplete the first layer with three exact 0.1 issues.
+        for _ in 0..3 {
+            repo.issue_fifo(IssueCostLayers {
+                sku: "FIFO-D".into(),
+                quantity: dec!(0.1),
+                reference_type: None,
+                reference_id: None,
+                notes: None,
+            })
+            .expect("issue");
+        }
+        let first_after = repo.get_cost_layer(first.id).expect("ok").expect("found");
+        assert_eq!(first_after.remaining_quantity, dec!(0));
+
+        // The next issue must come entirely from the second layer.
+        let txns = repo
+            .issue_fifo(IssueCostLayers {
+                sku: "FIFO-D".into(),
+                quantity: dec!(0.5),
+                reference_type: None,
+                reference_id: None,
+                notes: None,
+            })
+            .expect("issue rest");
+        assert!(!txns.is_empty());
+        assert!(txns.iter().all(|t| t.layer_id == Some(second.id)));
+
+        // has_remaining (with a limit) must return only the non-depleted layer.
+        let remaining = repo
+            .list_cost_layers(CostLayerFilter {
+                sku: Some("FIFO-D".into()),
+                has_remaining: Some(true),
+                limit: Some(10),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, second.id);
     }
 
     #[test]

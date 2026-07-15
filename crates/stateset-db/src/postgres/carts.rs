@@ -9,7 +9,7 @@ use stateset_core::{
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
     CreateCustomer, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentType,
     OrderStatus, PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
-    ShippingRate, UpdateCart, UpdateCartItem, UpdateOrder, X402Asset, X402AwaitingSettlementData,
+    ShippingRate, UpdateCart, UpdateCartItem, X402Asset, X402AwaitingSettlementData,
     X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
     X402PaymentRequiredData, validate_batch_size,
 };
@@ -451,16 +451,23 @@ impl PgCartRepository {
             )
             .await?;
 
-        let order = order_repo
-            .update_async(
-                order.id.into_uuid(),
-                UpdateOrder {
-                    status: Some(OrderStatus::Confirmed),
-                    payment_status: Some(PaymentStatus::Paid),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        // Promote the order and complete the cart atomically (x402 settlement
+        // is already durable upstream; order creation above is idempotent by
+        // cart_id, so a crash before this transaction commits is converged by
+        // checkout replay).
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query(
+            r#"UPDATE orders SET
+                status = $2, payment_status = $3, updated_at = $4, version = version + 1
+            WHERE id = $1"#,
+        )
+        .bind(order.id)
+        .bind(OrderStatus::Confirmed.to_string())
+        .bind(PaymentStatus::Paid.to_string())
+        .bind(Utc::now())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         let now = Utc::now();
         sqlx::query(
@@ -477,9 +484,10 @@ impl PgCartRepository {
         .bind(now)
         .bind(customer_id)
         .bind(cart_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(X402CheckoutResult::Completed(CheckoutResult {
             cart_id: cart_id.into(),
@@ -1364,6 +1372,16 @@ impl PgCartRepository {
     }
 
     pub async fn complete_async(&self, id: Uuid) -> Result<CheckoutResult> {
+        self.complete_checkout_async(id, false).await
+    }
+
+    /// See [`CartRepository::complete_settled_externally`]: explicit opt-in to
+    /// mint a `Paid` order with no engine-side payment record.
+    pub async fn complete_settled_externally_async(&self, id: Uuid) -> Result<CheckoutResult> {
+        self.complete_checkout_async(id, true).await
+    }
+
+    async fn complete_checkout_async(&self, id: Uuid, mark_paid: bool) -> Result<CheckoutResult> {
         // Lock the cart row so only one checkout can run at a time.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
@@ -1449,33 +1467,50 @@ impl PgCartRepository {
             )
             .await?;
 
-        let order = order_repo
-            .update_async(
-                order.id.into_uuid(),
-                UpdateOrder {
-                    status: Some(OrderStatus::Confirmed),
-                    payment_status: Some(PaymentStatus::Paid),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-        let now = Utc::now();
+        // Promote the order inside the same transaction that completes the
+        // cart: a confirmed (and, with `mark_paid`, revenue-recognized) order
+        // must never become visible unless the cart atomically completes with
+        // it. Order *creation* above intentionally commits separately — it is
+        // idempotent by cart_id, so a crash before this transaction commits is
+        // converged by checkout replay.
         sqlx::query(
-            r#"UPDATE carts SET
-                status = 'completed', order_id = $1, order_number = $2,
-                payment_status = 'captured', completed_at = $3, updated_at = $4, customer_id = $5
-            WHERE id = $6"#,
+            r#"UPDATE orders SET
+                status = $2,
+                payment_status = CASE WHEN $3 THEN $4 ELSE payment_status END,
+                updated_at = $5, version = version + 1
+            WHERE id = $1"#,
         )
         .bind(order.id)
-        .bind(&order.order_number)
-        .bind(now)
-        .bind(now)
-        .bind(customer_id)
-        .bind(id)
+        .bind(OrderStatus::Confirmed.to_string())
+        .bind(mark_paid)
+        .bind(PaymentStatus::Paid.to_string())
+        .bind(Utc::now())
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        let now = Utc::now();
+        let cart_update = if mark_paid {
+            r#"UPDATE carts SET
+                status = 'completed', order_id = $1, order_number = $2,
+                payment_status = 'captured', completed_at = $3, updated_at = $4, customer_id = $5
+            WHERE id = $6"#
+        } else {
+            r#"UPDATE carts SET
+                status = 'completed', order_id = $1, order_number = $2,
+                completed_at = $3, updated_at = $4, customer_id = $5
+            WHERE id = $6"#
+        };
+        sqlx::query(cart_update)
+            .bind(order.id)
+            .bind(&order.order_number)
+            .bind(now)
+            .bind(now)
+            .bind(customer_id)
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -2052,6 +2087,10 @@ impl CartRepository for PgCartRepository {
 
     fn complete(&self, id: CartId) -> Result<CheckoutResult> {
         super::block_on(self.complete_async(id.into_uuid()))
+    }
+
+    fn complete_settled_externally(&self, id: CartId) -> Result<CheckoutResult> {
+        super::block_on(self.complete_settled_externally_async(id.into_uuid()))
     }
 
     fn cancel(&self, id: CartId) -> Result<Cart> {

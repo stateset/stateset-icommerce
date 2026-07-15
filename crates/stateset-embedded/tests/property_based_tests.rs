@@ -49,11 +49,6 @@ proptest! {
             .map(|&quantity| quantity as u64)
             .sum();
 
-        // Skip if total reservations would exceed initial (expected failure case)
-        if total_reserve > initial_quantity as u64 {
-            return Ok(());
-        }
-
         let commerce = Arc::new(Commerce::new(":memory:").unwrap());
 
         commerce
@@ -71,16 +66,29 @@ proptest! {
             let commerce = Arc::clone(&commerce);
             let handle = std::thread::spawn(move || {
                 let order_id = Uuid::new_v4();
-                commerce
+                let result = commerce
                     .inventory()
-                    .reserve("SKU-001", Decimal::from(quantity), "order", &order_id.to_string(), None)
+                    .reserve("SKU-001", Decimal::from(quantity), "order", &order_id.to_string(), None);
+                (quantity, result)
             });
             handles.push(handle);
         }
 
+        let mut succeeded: u64 = 0;
         for handle in handles {
-            let result = handle.join().unwrap();
-            prop_assert!(result.is_ok(), "Reservation failed: {:?}", result);
+            let (quantity, result) = handle.join().unwrap();
+            if result.is_ok() {
+                succeeded += quantity as u64;
+            }
+        }
+
+        // When stock suffices, every reservation must succeed.
+        if total_reserve <= initial_quantity as u64 {
+            prop_assert!(
+                succeeded == total_reserve,
+                "Reservations failed despite sufficient stock: reserved {} of {}",
+                succeeded, total_reserve
+            );
         }
 
         let stock = commerce.inventory().get_stock("SKU-001").unwrap().unwrap();
@@ -89,7 +97,15 @@ proptest! {
             "Stock went negative: {}", stock.total_on_hand
         );
 
-        let expected_allocated = Decimal::from(total_reserve);
+        // The oversell invariant: successful reservations never exceed stock,
+        // regardless of how much was requested concurrently.
+        prop_assert!(
+            succeeded <= initial_quantity as u64,
+            "Oversold: reserved {} against {} on hand",
+            succeeded, initial_quantity
+        );
+
+        let expected_allocated = Decimal::from(succeeded);
         prop_assert!(
             stock.total_allocated == expected_allocated,
             "Allocated mismatch: expected {}, got {}",
@@ -132,21 +148,25 @@ proptest! {
 
     #[test]
     fn prop_order_total_calculation_deterministic(
-        num_items in 1u32..20u32,
-        quantities: Vec<u32>,
-        prices: Vec<i64>
+        // Paired (quantity, unit_price) per item so lengths always agree and
+        // every generated case exercises the assertion.
+        line_items in proptest::collection::vec((1u32..20u32, 1i64..1000i64), 1..20)
     ) {
-        if quantities.len() != prices.len() || quantities.len() != num_items as usize {
-            return Ok(());
-        }
-
         let commerce = Commerce::new(":memory:").unwrap();
-        let customer_id = Uuid::new_v4();
+        let customer = commerce
+            .customers()
+            .create(CreateCustomer {
+                email: "prop-order@example.com".into(),
+                first_name: "Prop".into(),
+                last_name: "Order".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let customer_id = customer.id;
 
-        let items: Vec<_> = quantities
+        let items: Vec<_> = line_items
             .iter()
-            .zip(prices.iter())
-            .map(|(&qty, &price)| CreateOrderItem {
+            .map(|&(qty, price)| CreateOrderItem {
                 product_id: Uuid::new_v4().into(),
                 sku: format!("SKU-{:03}", customer_id),
                 name: "Test Product".into(),
@@ -159,25 +179,24 @@ proptest! {
         let order = commerce
             .orders()
             .create(CreateOrder {
-                customer_id: customer_id.into(),
+                customer_id,
                 items,
                 ..Default::default()
             });
 
-        if order.is_ok() {
-            let order = order.unwrap();
-            let expected_total: Decimal = quantities
-                .iter()
-                .zip(prices.iter())
-                .map(|(&qty, &price)| Decimal::from(qty) * Decimal::from(price))
-                .sum();
+        prop_assert!(order.is_ok(), "Order creation failed for valid inputs: {:?}", order.err());
+        let order = order.unwrap();
 
-            prop_assert!(
-                order.total_amount == expected_total,
-                "Order total mismatch: expected {}, got {}",
-                expected_total, order.total_amount
-            );
-        }
+        let expected_total: Decimal = line_items
+            .iter()
+            .map(|&(qty, price)| Decimal::from(qty) * Decimal::from(price))
+            .sum();
+
+        prop_assert!(
+            order.total_amount == expected_total,
+            "Order total mismatch: expected {}, got {}",
+            expected_total, order.total_amount
+        );
     }
 }
 

@@ -72,7 +72,7 @@ export function CsvExportButton<T>({
         {busy ? 'Exporting…' : label}
       </Button>
       {error && (
-        <p className="text-xs text-red-600 max-w-xs" role="alert">
+        <p className="text-xs text-ds-status-fail max-w-xs" role="alert">
           {error}
         </p>
       )}

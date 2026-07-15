@@ -1,5 +1,7 @@
 //! HTTP middleware — request ID, logging, CORS, rate limiting, caching.
 
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -468,26 +470,87 @@ impl TokenBucket {
             false
         }
     }
+
+    /// A bucket that would refill to capacity right now carries no throttling
+    /// state — the client has been idle long enough to be forgotten.
+    fn is_idle(&self) -> bool {
+        let elapsed = self.last_refill.elapsed().as_secs_f64();
+        (self.tokens + elapsed * self.rate) >= self.capacity
+    }
 }
 
-/// Create a shared token bucket wrapped in an `Arc<Mutex<_>>`.
-pub(crate) fn create_rate_limiter(config: &RateLimitConfig) -> Arc<Mutex<TokenBucket>> {
-    Arc::new(Mutex::new(TokenBucket::new(config.requests_per_second, config.burst_size)))
-}
+/// Maximum number of client buckets tracked before eviction kicks in.
+pub(crate) const RATE_LIMITER_MAX_KEYS: usize = 10_000;
 
-/// Middleware that enforces a global request rate limit.
+/// Per-client rate limiter: independent token buckets keyed by peer IP, so
+/// one abusive client exhausts its own budget without starving other tenants.
 ///
-/// Returns HTTP 429 with a `Retry-After` header when the bucket is empty.
+/// Memory is bounded by `max_keys`: when full, idle (fully refilled) buckets
+/// are dropped first, then the least-recently-used bucket.
+pub(crate) struct KeyedRateLimiter {
+    buckets: Mutex<HashMap<IpAddr, TokenBucket>>,
+    config: RateLimitConfig,
+    max_keys: usize,
+}
+
+impl KeyedRateLimiter {
+    pub(crate) fn new(config: &RateLimitConfig, max_keys: usize) -> Self {
+        Self {
+            buckets: Mutex::new(HashMap::new()),
+            config: config.clone(),
+            max_keys: max_keys.max(1),
+        }
+    }
+
+    pub(crate) fn try_acquire(&self, key: IpAddr) -> bool {
+        let mut buckets = self.buckets.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !buckets.contains_key(&key) && buckets.len() >= self.max_keys {
+            Self::evict(&mut buckets);
+        }
+        buckets
+            .entry(key)
+            .or_insert_with(|| {
+                TokenBucket::new(self.config.requests_per_second, self.config.burst_size)
+            })
+            .try_acquire()
+    }
+
+    /// Drop idle buckets (a fully refilled bucket carries no throttling
+    /// state); if none are idle, drop the least-recently-used bucket so a new
+    /// client can always be admitted.
+    fn evict(buckets: &mut HashMap<IpAddr, TokenBucket>) {
+        let before = buckets.len();
+        buckets.retain(|_, bucket| !bucket.is_idle());
+        if buckets.len() == before {
+            if let Some(oldest) =
+                buckets.iter().min_by_key(|(_, b)| b.last_refill).map(|(ip, _)| *ip)
+            {
+                buckets.remove(&oldest);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn tracked_keys(&self) -> usize {
+        self.buckets.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len()
+    }
+}
+
+/// Middleware that enforces a per-client request rate limit.
+///
+/// Clients are keyed by peer IP (from axum's `ConnectInfo`); requests without
+/// peer information share a single fallback bucket. Returns HTTP 429 with a
+/// `Retry-After` header when the client's bucket is empty.
 async fn rate_limit(
-    State(bucket): State<Arc<Mutex<TokenBucket>>>,
+    State(limiter): State<Arc<KeyedRateLimiter>>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let allowed = {
-        let mut guard = bucket.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.try_acquire()
-    };
-    if allowed {
+    let key = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), |ci| ci.0.ip());
+    if limiter.try_acquire(key) {
         next.run(request).await
     } else {
         let mut response =
@@ -649,8 +712,8 @@ pub(crate) fn apply_middleware(
     router = router.layer(from_fn(http_cache));
 
     if let Some(config) = rate_limit_config {
-        let bucket = create_rate_limiter(&config);
-        router = router.layer(from_fn_with_state(bucket, rate_limit));
+        let limiter = Arc::new(KeyedRateLimiter::new(&config, RATE_LIMITER_MAX_KEYS));
+        router = router.layer(from_fn_with_state(limiter, rate_limit));
     }
 
     if let Some(config) = authz_config {
@@ -718,6 +781,33 @@ mod tests {
     #[test]
     fn request_id_layers_build() {
         let (_set, _propagate) = request_id_layers();
+    }
+
+    #[test]
+    fn keyed_rate_limiter_isolates_clients() {
+        let limiter =
+            KeyedRateLimiter::new(&RateLimitConfig { requests_per_second: 1, burst_size: 2 }, 100);
+        let a: std::net::IpAddr = "10.0.0.1".parse().unwrap();
+        let b: std::net::IpAddr = "10.0.0.2".parse().unwrap();
+        assert!(limiter.try_acquire(a));
+        assert!(limiter.try_acquire(a));
+        assert!(!limiter.try_acquire(a), "client A must be throttled after its burst");
+        assert!(limiter.try_acquire(b), "client B must not be starved by client A");
+    }
+
+    #[test]
+    fn keyed_rate_limiter_bounds_tracked_keys() {
+        let limiter =
+            KeyedRateLimiter::new(&RateLimitConfig { requests_per_second: 1, burst_size: 1 }, 4);
+        for i in 0..50u8 {
+            let ip: std::net::IpAddr = format!("10.1.0.{i}").parse().unwrap();
+            let _ = limiter.try_acquire(ip);
+        }
+        assert!(
+            limiter.tracked_keys() <= 4,
+            "tracked keys must stay bounded, got {}",
+            limiter.tracked_keys()
+        );
     }
 
     #[test]
@@ -1002,7 +1092,7 @@ mod tests {
     #[test]
     fn rate_limit_config_builds() {
         let config = RateLimitConfig { requests_per_second: 100, burst_size: 200 };
-        let _limiter = create_rate_limiter(&config);
+        let _limiter = KeyedRateLimiter::new(&config, RATE_LIMITER_MAX_KEYS);
     }
 
     #[tokio::test]
@@ -1019,23 +1109,46 @@ mod tests {
     #[tokio::test]
     async fn rate_limit_returns_429_when_exceeded() {
         let config = RateLimitConfig { requests_per_second: 1, burst_size: 1 };
-        let bucket = create_rate_limiter(&config);
+        let limiter = Arc::new(KeyedRateLimiter::new(&config, RATE_LIMITER_MAX_KEYS));
 
-        // Exhaust the bucket
-        {
-            let mut guard = bucket.lock().unwrap();
-            guard.try_acquire();
-        }
+        // Exhaust the fallback bucket (oneshot requests carry no ConnectInfo).
+        assert!(limiter.try_acquire(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)));
 
         // Build the middleware with a pre-exhausted bucket
         let app: Router<()> = Router::new()
             .route("/health", get(|| async { "ok" }))
-            .layer(from_fn_with_state(bucket, rate_limit));
+            .layer(from_fn_with_state(limiter, rate_limit));
 
         let response =
             app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(response.headers().get("retry-after").and_then(|v| v.to_str().ok()), Some("1"));
+    }
+
+    #[tokio::test]
+    async fn rate_limit_keys_by_connect_info_peer_ip() {
+        let config = RateLimitConfig { requests_per_second: 1, burst_size: 1 };
+        let limiter = Arc::new(KeyedRateLimiter::new(&config, RATE_LIMITER_MAX_KEYS));
+        let app: Router<()> = Router::new()
+            .route("/health", get(|| async { "ok" }))
+            .layer(from_fn_with_state(limiter, rate_limit));
+
+        let request_from = |ip: &str| {
+            let mut request = Request::get("/health").body(Body::empty()).unwrap();
+            let addr: SocketAddr = format!("{ip}:12345").parse().unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(addr));
+            request
+        };
+
+        // Client A uses its single-token burst, then gets throttled.
+        let ok = app.clone().oneshot(request_from("10.9.0.1")).await.unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+        let throttled = app.clone().oneshot(request_from("10.9.0.1")).await.unwrap();
+        assert_eq!(throttled.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Client B is unaffected by A's exhaustion.
+        let other = app.clone().oneshot(request_from("10.9.0.2")).await.unwrap();
+        assert_eq!(other.status(), StatusCode::OK);
     }
 
     #[test]

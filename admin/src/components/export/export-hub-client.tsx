@@ -24,7 +24,7 @@ function EntityCard({ title, description, columnCount, exportButton }: EntityCar
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">{title}</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{description}</p>
+            <p className="text-sm text-ds-muted-foreground mt-1">{description}</p>
           </div>
           <Badge color="indigo">{columnCount} cols</Badge>
         </div>

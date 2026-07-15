@@ -9,6 +9,15 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/**/*.test.{ts,tsx}'],
+    // Inline @stateset/design and its (nested) Radix deps so Vitest transforms
+    // them through the resolver where the react alias/dedupe below applies —
+    // otherwise the symlinked package's nested Radix loads its own React copy
+    // and hook-based primitives hit a null dispatcher under jsdom.
+    server: {
+      deps: {
+        inline: [/@stateset\/design/, /@radix-ui/],
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
@@ -77,8 +86,14 @@ export default defineConfig({
     },
   },
   resolve: {
+    // Dedupe React so @stateset/design (a file: symlink that ships its own copy
+    // in node_modules) shares the host's single React instance under jsdom —
+    // otherwise its hook-based primitives (Reveal, etc.) hit a null dispatcher.
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@': path.resolve(__dirname, './src'),
+      react: path.resolve(__dirname, './node_modules/react'),
+      'react-dom': path.resolve(__dirname, './node_modules/react-dom'),
     },
   },
 });

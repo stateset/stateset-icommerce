@@ -27,6 +27,7 @@ pub(crate) struct IngestOrderRequest {
     pub external_order_id: String,
     pub external_status: Option<String>,
     #[serde(default)]
+    #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
     pub items: Vec<IngestLineRequest>,
 }
@@ -115,7 +116,7 @@ pub fn router() -> Router<AppState> {
         .route("/purgatory/orders/{id}/lines/{line_id}", post(map_line))
 }
 
-#[utoipa::path(post, path = "/api/v1/purgatory/orders", tag = "purgatory",
+#[utoipa::path(post, operation_id = "purgatory_ingest", path = "/api/v1/purgatory/orders", tag = "purgatory",
     request_body = IngestOrderRequest,
     responses((status = 201, body = PurgatoryOrderResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -153,7 +154,7 @@ pub(crate) async fn ingest(
     Ok((StatusCode::CREATED, Json(to_resp(&o))))
 }
 
-#[utoipa::path(get, path = "/api/v1/purgatory/orders", tag = "purgatory",
+#[utoipa::path(get, operation_id = "purgatory_list", path = "/api/v1/purgatory/orders", tag = "purgatory",
     params(PurgatoryFilterParams),
     responses((status = 200, body = PurgatoryListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -183,7 +184,7 @@ pub(crate) async fn list(
     Ok(Json(PurgatoryListResponse { orders: orders.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/purgatory/orders/{id}", tag = "purgatory",
+#[utoipa::path(get, operation_id = "purgatory_get_one", path = "/api/v1/purgatory/orders/{id}", tag = "purgatory",
     params(("id" = String, Path, description = "Purgatory order ID")),
     responses((status = 200, body = PurgatoryOrderResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -201,7 +202,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&o)))
 }
 
-#[utoipa::path(post, path = "/api/v1/purgatory/orders/{id}/post", tag = "purgatory",
+#[utoipa::path(post, operation_id = "purgatory_post_order", path = "/api/v1/purgatory/orders/{id}/post", tag = "purgatory",
     params(("id" = String, Path, description = "Purgatory order ID")),
     responses((status = 200, body = PurgatoryOrderResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -215,7 +216,7 @@ pub(crate) async fn post_order(
     Ok(Json(to_resp(&c.purgatory().post(id)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/purgatory/orders/{id}/lines/{line_id}", tag = "purgatory",
+#[utoipa::path(post, operation_id = "purgatory_map_line", path = "/api/v1/purgatory/orders/{id}/lines/{line_id}", tag = "purgatory",
     request_body = MapLineRequest,
     params(
         ("id" = String, Path, description = "Purgatory order ID"),
@@ -243,7 +244,7 @@ pub(crate) async fn map_line(
     Ok(Json(to_resp(&c.purgatory().map_line(id, line_id, input)?)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/purgatory/orders/{id}", tag = "purgatory",
+#[utoipa::path(delete, operation_id = "purgatory_delete_one", path = "/api/v1/purgatory/orders/{id}", tag = "purgatory",
     params(("id" = String, Path, description = "Purgatory order ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]

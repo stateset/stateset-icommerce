@@ -1,20 +1,19 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { AreaChart } from '@tremor/react';
 import {
   Card,
-  Title,
-  Text,
-  Tab,
-  TabGroup,
-  TabList,
-  TabPanel,
-  TabPanels,
-  AreaChart,
-  Grid,
-  Metric,
-  Badge,
-} from '@tremor/react';
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  StatusPill,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from '@stateset/design';
 import { ServerStackIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
@@ -67,8 +66,8 @@ export default function MetricsDashboard() {
   if (!metrics) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center">
-        <ServerStackIcon className="w-12 h-12 text-gray-300 mb-4" />
-        <Text className="text-gray-500">Unable to connect to gateway</Text>
+        <ServerStackIcon className="w-12 h-12 text-ds-muted-foreground mb-4" />
+        <p className="text-sm text-ds-muted-foreground">Unable to connect to gateway</p>
       </div>
     );
   }
@@ -83,94 +82,95 @@ export default function MetricsDashboard() {
       className="space-y-6"
     >
       <div>
-        <Title className="text-2xl">Metrics</Title>
-        <Text className="text-gray-500">
+        <h3 className="font-ds-display text-2xl font-semibold text-ds-foreground">Metrics</h3>
+        <p className="text-sm text-ds-muted-foreground">
           Detailed gateway performance metrics and analytics
-        </Text>
+        </p>
       </div>
 
-      <TabGroup>
-        <TabList>
-          <Tab>Overview</Tab>
-          <Tab>Channels</Tab>
-          <Tab>Commands</Tab>
-          <Tab>Response Times</Tab>
-        </TabList>
+      <Tabs defaultValue="overview">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="channels">Channels</TabsTrigger>
+          <TabsTrigger value="commands">Commands</TabsTrigger>
+          <TabsTrigger value="response-times">Response Times</TabsTrigger>
+        </TabsList>
 
-        <TabPanels>
-          {/* Overview */}
-          <TabPanel className="mt-6 space-y-6">
-            <MetricsSummary metrics={metrics} />
-            <ChannelMetricsChart metrics={metrics} />
-          </TabPanel>
+        {/* Overview */}
+        <TabsContent value="overview" className="mt-6 space-y-6">
+          <MetricsSummary metrics={metrics} />
+          <ChannelMetricsChart metrics={metrics} />
+        </TabsContent>
 
-          {/* Channels */}
-          <TabPanel className="mt-6 space-y-4">
-            {channelEntries.length === 0 ? (
-              <Card className="p-8 text-center">
-                <Text className="text-gray-400">No channels active</Text>
-              </Card>
-            ) : (
-              channelEntries.map(([name, stats]) => (
-                <Card key={name}>
-                  <div className="flex items-center justify-between mb-3">
-                    <Title className="text-lg capitalize">{name}</Title>
-                    <Badge
-                      color={stats.lastMessageAt ? 'emerald' : 'gray'}
-                      size="xs"
-                    >
-                      {stats.lastMessageAt ? 'Active' : 'Idle'}
-                    </Badge>
+        {/* Channels */}
+        <TabsContent value="channels" className="mt-6 space-y-4">
+          {channelEntries.length === 0 ? (
+            <Card className="p-8 text-center">
+              <p className="text-sm text-ds-muted-foreground">No channels active</p>
+            </Card>
+          ) : (
+            channelEntries.map(([name, stats]) => (
+              <Card key={name} className="p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-ds-display text-lg font-semibold capitalize text-ds-foreground">
+                    {name}
+                  </h3>
+                  <StatusPill status={stats.lastMessageAt ? 'ok' : 'idle'}>
+                    {stats.lastMessageAt ? 'Active' : 'Idle'}
+                  </StatusPill>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                  <div>
+                    <p className="text-xs text-ds-muted-foreground">Messages In</p>
+                    <p className="ds-instrument-number text-lg text-ds-foreground">
+                      {stats.messagesReceived.toLocaleString()}
+                    </p>
                   </div>
-                  <Grid numItems={2} numItemsLg={5} className="gap-4">
-                    <div>
-                      <Text className="text-xs text-gray-400">Messages In</Text>
-                      <Metric className="text-lg">
-                        {stats.messagesReceived.toLocaleString()}
-                      </Metric>
-                    </div>
-                    <div>
-                      <Text className="text-xs text-gray-400">Responses</Text>
-                      <Metric className="text-lg">
-                        {stats.responsesSent.toLocaleString()}
-                      </Metric>
-                    </div>
-                    <div>
-                      <Text className="text-xs text-gray-400">Errors</Text>
-                      <Metric
-                        className={`text-lg ${stats.errors > 0 ? 'text-red-500' : ''}`}
-                      >
-                        {stats.errors}
-                      </Metric>
-                    </div>
-                    <div>
-                      <Text className="text-xs text-gray-400">Blocked</Text>
-                      <Metric className="text-lg">{stats.blocked}</Metric>
-                    </div>
-                    <div>
-                      <Text className="text-xs text-gray-400">Avg Response</Text>
-                      <Metric className="text-lg">
-                        {Math.round(stats.avgResponseMs)}ms
-                      </Metric>
-                    </div>
-                  </Grid>
-                </Card>
-              ))
-            )}
-          </TabPanel>
+                  <div>
+                    <p className="text-xs text-ds-muted-foreground">Responses</p>
+                    <p className="ds-instrument-number text-lg text-ds-foreground">
+                      {stats.responsesSent.toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-ds-muted-foreground">Errors</p>
+                    <p
+                      className={`ds-instrument-number text-lg ${stats.errors > 0 ? 'text-ds-status-fail' : 'text-ds-foreground'}`}
+                    >
+                      {stats.errors}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-ds-muted-foreground">Blocked</p>
+                    <p className="ds-instrument-number text-lg text-ds-foreground">{stats.blocked}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-ds-muted-foreground">Avg Response</p>
+                    <p className="ds-instrument-number text-lg text-ds-foreground">
+                      {Math.round(stats.avgResponseMs)}ms
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            ))
+          )}
+        </TabsContent>
 
-          {/* Commands */}
-          <TabPanel className="mt-6">
-            <CommandUsageTable commandUsage={metrics.commandUsage} />
-          </TabPanel>
+        {/* Commands */}
+        <TabsContent value="commands" className="mt-6">
+          <CommandUsageTable commandUsage={metrics.commandUsage} />
+        </TabsContent>
 
-          {/* Response Times */}
-          <TabPanel className="mt-6 space-y-6">
-            <Card>
-              <Title>Response Time Trend</Title>
-              <Text className="text-gray-500 mb-4">
+        {/* Response Times */}
+        <TabsContent value="response-times" className="mt-6 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Response Time Trend</CardTitle>
+              <CardDescription>
                 Average response time per polling interval (10s)
-              </Text>
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
               {history.length > 1 ? (
                 <AreaChart
                   className="h-72"
@@ -183,34 +183,38 @@ export default function MetricsDashboard() {
                 />
               ) : (
                 <div className="h-72 flex items-center justify-center">
-                  <Text className="text-gray-400">Accumulating data...</Text>
+                  <p className="text-sm text-ds-muted-foreground">Accumulating data...</p>
                 </div>
               )}
-            </Card>
+            </CardContent>
+          </Card>
 
-            <Card>
-              <Title>Throughput Trend</Title>
-              <Text className="text-gray-500 mb-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Throughput Trend</CardTitle>
+              <CardDescription>
                 Messages and responses per interval
-              </Text>
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
               {history.length > 1 ? (
                 <AreaChart
                   className="h-72"
                   data={history}
                   index="timestamp"
                   categories={['messagesReceived', 'responsesSent', 'errors']}
-                  colors={['indigo', 'blue', 'red']}
+                  colors={['indigo', 'emerald', 'amber']}
                   showAnimation
                 />
               ) : (
                 <div className="h-72 flex items-center justify-center">
-                  <Text className="text-gray-400">Accumulating data...</Text>
+                  <p className="text-sm text-ds-muted-foreground">Accumulating data...</p>
                 </div>
               )}
-            </Card>
-          </TabPanel>
-        </TabPanels>
-      </TabGroup>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </motion.div>
   );
 }

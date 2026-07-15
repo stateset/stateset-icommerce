@@ -317,12 +317,28 @@ impl PgLoyaltyProgramRepository {
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        // Lock the account row and fetch the current balance
+        let current_balance: i64 = sqlx::query_scalar(
+            "SELECT points_balance FROM loyalty_accounts WHERE id = $1 FOR UPDATE",
+        )
+        .bind(account_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+
+        let new_balance = current_balance.checked_add(input.points).ok_or_else(|| {
+            CommerceError::ValidationError("Points adjustment overflows".to_string())
+        })?;
+        if new_balance < 0 {
+            return Err(CommerceError::ValidationError("Insufficient points balance".to_string()));
+        }
+
         // Update the account balance
         sqlx::query(
-            "UPDATE loyalty_accounts SET points_balance = points_balance + $1,
-             updated_at = $2 WHERE id = $3",
+            "UPDATE loyalty_accounts SET points_balance = $1, updated_at = $2 WHERE id = $3",
         )
-        .bind(input.points)
+        .bind(new_balance)
         .bind(now)
         .bind(account_id)
         .execute(tx.as_mut())

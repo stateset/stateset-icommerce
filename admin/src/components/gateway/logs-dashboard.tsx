@@ -1,6 +1,5 @@
 'use client';
 
-import { Title, Text } from '@tremor/react';
 import { motion } from 'framer-motion';
 import { LiveLogViewer } from './live-log-viewer';
 
@@ -13,10 +12,10 @@ export default function LogsDashboard() {
       className="space-y-6"
     >
       <div>
-        <Title className="text-2xl">Logs</Title>
-        <Text className="text-gray-500">
+        <h3 className="font-ds-display text-2xl font-semibold text-ds-foreground">Logs</h3>
+        <p className="text-sm text-ds-muted-foreground">
           Real-time gateway activity derived from metrics polling
-        </Text>
+        </p>
       </div>
 
       <LiveLogViewer />

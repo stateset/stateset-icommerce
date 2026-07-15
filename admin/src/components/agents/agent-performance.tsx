@@ -1,7 +1,8 @@
 'use client';
 
 import { memo } from 'react';
-import { Card, Title, Text, Badge, Grid, Metric, AreaChart, BarChart, DonutChart, ProgressBar } from '@tremor/react';
+import { AreaChart, BarChart, DonutChart, ProgressBar } from '@tremor/react';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, StatusPill, MetricCard } from '@stateset/design';
 import { CpuChipIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
@@ -14,18 +15,19 @@ import type {
   DailyOutcomeEntry,
   RecentTask,
   TaskDistributionEntry,
-  TremorColor,
 } from '@/lib/types/dashboard-data';
 
 interface AgentPerformanceProps {
   data?: AgentPerformanceData;
 }
 
-const statusColors: Record<string, string> = {
-  online: 'emerald',
-  busy: 'amber',
-  offline: 'gray',
-  error: 'red',
+type AgentStatusKind = 'ok' | 'run' | 'warn' | 'fail' | 'review' | 'idle';
+
+const statusPillMap: Record<string, AgentStatusKind> = {
+  online: 'ok',
+  busy: 'warn',
+  offline: 'idle',
+  error: 'fail',
 };
 
 function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
@@ -37,18 +39,22 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
   if (isLoading && !data) {
     return (
       <Card>
-        <div className="animate-pulse space-y-4">
-          <div className="h-6 bg-gray-200 rounded w-48" />
-          <div className="h-64 bg-gray-200 rounded" />
-        </div>
+        <CardContent>
+          <div className="animate-pulse space-y-4">
+            <div className="h-6 bg-ds-muted rounded w-48" />
+            <div className="h-64 bg-ds-muted rounded" />
+          </div>
+        </CardContent>
       </Card>
     );
   }
 
   if (error || !data) {
     return (
-      <Card className="border-red-200">
-        <Text className="text-red-600">Failed to load agent performance data</Text>
+      <Card className="border-ds-status-fail/25">
+        <CardContent>
+          <p className="text-sm text-ds-status-fail">Failed to load agent performance data</p>
+        </CardContent>
       </Card>
     );
   }
@@ -62,192 +68,214 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
       className="space-y-6"
     >
       {/* Key Metrics */}
-      <Grid numItems={2} numItemsSm={4} className="gap-4">
-        <Card decoration="top" decorationColor="emerald">
-          <Text>Active Agents</Text>
-          <Metric>{summary?.activeAgents || 8}</Metric>
-          <Text className="text-xs text-emerald-600 mt-1">
-            {summary?.onlinePercentage || 95}% online
-          </Text>
-        </Card>
-        <Card decoration="top" decorationColor="blue">
-          <Text>Tasks Completed</Text>
-          <Metric>{formatNumber(summary?.tasksCompleted || 12450)}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="amber">
-          <Text>Avg Response Time</Text>
-          <Metric>{summary?.avgResponseTime || 1.2}s</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="purple">
-          <Text>Success Rate</Text>
-          <Metric>{formatPercentage(summary?.successRate || 0.984)}</Metric>
-        </Card>
-      </Grid>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <MetricCard
+          label="Active Agents"
+          value={summary?.activeAgents || 8}
+          tone="success"
+          subtitle={`${summary?.onlinePercentage || 95}% online`}
+        />
+        <MetricCard
+          label="Tasks Completed"
+          value={formatNumber(summary?.tasksCompleted || 12450)}
+          tone="primary"
+        />
+        <MetricCard
+          label="Avg Response Time"
+          value={`${summary?.avgResponseTime || 1.2}s`}
+          tone="warning"
+        />
+        <MetricCard
+          label="Success Rate"
+          value={formatPercentage(summary?.successRate || 0.984)}
+          tone="accent"
+        />
+      </div>
 
       {/* Response Time Trend.
           The hourly avg/p95/p99 series is generated deterministically in
           getAgentPerformanceData — there is no real latency telemetry yet,
           so this chart must carry the simulated-data badge. */}
       <Card>
-        <div className="flex items-center justify-between">
-          <Title>Response Time Trend</Title>
-          <SimulatedDataBadge />
-        </div>
-        <Text className="text-gray-500 mb-4">Agent response times over the last 24 hours</Text>
-        <AreaChart
-          className="h-64"
-          data={responseTimeTrend || generateDemoResponseTimeTrend()}
-          index="time"
-          categories={['avgTime', 'p95Time', 'p99Time']}
-          colors={['emerald', 'amber', 'red']}
-          showAnimation
-          curveType="monotone"
-          valueFormatter={(value) => `${value}ms`}
-        />
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>Response Time Trend</CardTitle>
+            <SimulatedDataBadge />
+          </div>
+          <CardDescription>Agent response times over the last 24 hours</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AreaChart
+            className="h-64"
+            data={responseTimeTrend || generateDemoResponseTimeTrend()}
+            index="time"
+            categories={['avgTime', 'p95Time', 'p99Time']}
+            colors={['emerald', 'amber', 'indigo']}
+            showAnimation
+            curveType="monotone"
+            valueFormatter={(value) => `${value}ms`}
+          />
+        </CardContent>
       </Card>
 
       {/* Agent Status Grid */}
       <Card>
-        <Title>Agent Status</Title>
-        <Text className="text-gray-500 mb-4">Real-time status of all AI agents</Text>
-        <Grid numItems={1} numItemsSm={2} numItemsLg={4} className="gap-4">
-          {(agents || generateDemoAgents()).map((agent: Agent, index: number) => (
-            <motion.div
-              key={agent.id || index}
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: index * 0.05 }}
-              className="p-4 border rounded-lg dark:border-gray-700"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center space-x-2">
-                  <CpuChipIcon className="w-5 h-5 text-indigo-600" />
-                  <Text className="font-medium">{agent.name}</Text>
+        <CardHeader>
+          <CardTitle>Agent Status</CardTitle>
+          <CardDescription>Real-time status of all AI agents</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {(agents || generateDemoAgents()).map((agent: Agent, index: number) => (
+              <motion.div
+                key={agent.id || index}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: index * 0.05 }}
+                className="p-4 border border-ds-enterprise-line rounded-lg"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-2">
+                    <CpuChipIcon className="w-5 h-5 text-ds-primary" />
+                    <p className="text-sm font-medium text-ds-foreground">{agent.name}</p>
+                  </div>
+                  <StatusPill status={statusPillMap[agent.status] || 'idle'}>
+                    {agent.status}
+                  </StatusPill>
                 </div>
-                <Badge color={statusColors[agent.status] as TremorColor || 'gray'} size="xs">
-                  {agent.status}
-                </Badge>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <Text className="text-gray-500">Tasks</Text>
-                  <Text>{formatNumber(agent.tasksCompleted)}</Text>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <p className="text-sm text-ds-muted-foreground">Tasks</p>
+                    <p className="text-sm text-ds-foreground">{formatNumber(agent.tasksCompleted)}</p>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <p className="text-sm text-ds-muted-foreground">Success</p>
+                    <p className="text-sm text-ds-foreground">{formatPercentage(agent.successRate)}</p>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <p className="text-sm text-ds-muted-foreground">Avg Time</p>
+                    <p className="text-sm text-ds-foreground">{agent.avgResponseTime}ms</p>
+                  </div>
+                  <ProgressBar
+                    value={agent.utilization * 100}
+                    color={agent.utilization > 0.8 ? 'red' : agent.utilization > 0.6 ? 'amber' : 'emerald'}
+                  />
+                  <p className="text-xs text-ds-muted-foreground text-center">
+                    {formatPercentage(agent.utilization)} utilization
+                  </p>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <Text className="text-gray-500">Success</Text>
-                  <Text>{formatPercentage(agent.successRate)}</Text>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <Text className="text-gray-500">Avg Time</Text>
-                  <Text>{agent.avgResponseTime}ms</Text>
-                </div>
-                <ProgressBar
-                  value={agent.utilization * 100}
-                  color={agent.utilization > 0.8 ? 'red' : agent.utilization > 0.6 ? 'amber' : 'emerald'}
-                />
-                <Text className="text-xs text-gray-500 text-center">
-                  {formatPercentage(agent.utilization)} utilization
-                </Text>
-              </div>
-            </motion.div>
-          ))}
-        </Grid>
+              </motion.div>
+            ))}
+          </div>
+        </CardContent>
       </Card>
 
       {/* Task Metrics */}
-      <Grid numItems={1} numItemsLg={2} className="gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Task Distribution */}
         <Card>
-          <Title>Task Distribution</Title>
-          <Text className="text-gray-500 mb-4">Tasks by type</Text>
-          <DonutChart
-            className="h-64"
-            data={taskMetrics?.distribution || generateDemoTaskDistribution()}
-            category="count"
-            index="type"
-            colors={['blue', 'emerald', 'amber', 'purple', 'red']}
-            showAnimation
-          />
+          <CardHeader>
+            <CardTitle>Task Distribution</CardTitle>
+            <CardDescription>Tasks by type</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DonutChart
+              className="h-64"
+              data={taskMetrics?.distribution || generateDemoTaskDistribution()}
+              category="count"
+              index="type"
+              colors={['indigo', 'emerald', 'violet', 'amber', 'cyan']}
+              showAnimation
+            />
+          </CardContent>
         </Card>
 
         {/* Task Success/Failure.
             Daily success/failed/timeout counts are deterministic demo values
             (no per-task outcome history exists in the engine yet). */}
         <Card>
-          <div className="flex items-center justify-between">
-            <Title>Task Outcomes</Title>
-            <SimulatedDataBadge />
-          </div>
-          <Text className="text-gray-500 mb-4">Last 7 days performance</Text>
-          <BarChart
-            className="h-64"
-            data={taskMetrics?.dailyOutcomes || generateDemoTaskOutcomes()}
-            index="day"
-            categories={['success', 'failed', 'timeout']}
-            colors={['emerald', 'red', 'amber']}
-            stack
-            showAnimation
-          />
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle>Task Outcomes</CardTitle>
+              <SimulatedDataBadge />
+            </div>
+            <CardDescription>Last 7 days performance</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <BarChart
+              className="h-64"
+              data={taskMetrics?.dailyOutcomes || generateDemoTaskOutcomes()}
+              index="day"
+              categories={['success', 'failed', 'timeout']}
+              colors={['emerald', 'indigo', 'amber']}
+              stack
+              showAnimation
+            />
+          </CardContent>
         </Card>
-      </Grid>
+      </div>
 
       {/* Recent Tasks */}
       <Card>
-        <Title>Recent Agent Tasks</Title>
-        <Text className="text-gray-500 mb-4">Latest tasks processed by AI agents</Text>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b dark:border-gray-700">
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Task ID</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Agent</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Type</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Status</th>
-                <th className="text-right py-2 px-3 text-sm font-medium text-gray-500">Duration</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-gray-500">Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(taskMetrics?.recentTasks || generateDemoRecentTasks()).map((task: RecentTask, index: number) => (
-                <motion.tr
-                  key={task.id || index}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.03 }}
-                  className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
-                >
-                  <td className="py-2 px-3 text-sm font-mono">{task.id}</td>
-                  <td className="py-2 px-3">
-                    <div className="flex items-center space-x-2">
-                      <CpuChipIcon className="w-4 h-4 text-indigo-500" />
-                      <Text className="text-sm">{task.agent}</Text>
-                    </div>
-                  </td>
-                  <td className="py-2 px-3">
-                    <Badge color="blue" size="xs">{task.type}</Badge>
-                  </td>
-                  <td className="py-2 px-3">
-                    {task.status === 'success' ? (
-                      <div className="flex items-center space-x-1">
-                        <CheckCircleIcon className="w-4 h-4 text-emerald-500" />
-                        <Text className="text-sm text-emerald-600">Success</Text>
+        <CardHeader>
+          <CardTitle>Recent Agent Tasks</CardTitle>
+          <CardDescription>Latest tasks processed by AI agents</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-ds-enterprise-line">
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Task ID</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Agent</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Type</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Status</th>
+                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">Duration</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(taskMetrics?.recentTasks || generateDemoRecentTasks()).map((task: RecentTask, index: number) => (
+                  <motion.tr
+                    key={task.id || index}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.03 }}
+                    className="border-b border-ds-enterprise-line hover:bg-ds-muted"
+                  >
+                    <td className="py-2 px-3 text-sm font-mono text-ds-foreground">{task.id}</td>
+                    <td className="py-2 px-3">
+                      <div className="flex items-center space-x-2">
+                        <CpuChipIcon className="w-4 h-4 text-ds-primary" />
+                        <p className="text-sm text-ds-foreground">{task.agent}</p>
                       </div>
-                    ) : task.status === 'failed' ? (
-                      <div className="flex items-center space-x-1">
-                        <XCircleIcon className="w-4 h-4 text-red-500" />
-                        <Text className="text-sm text-red-600">Failed</Text>
-                      </div>
-                    ) : (
-                      <Badge color="amber" size="xs">{task.status}</Badge>
-                    )}
-                  </td>
-                  <td className="py-2 px-3 text-sm text-right">{task.duration}ms</td>
-                  <td className="py-2 px-3 text-sm text-gray-500">{task.timestamp}</td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    </td>
+                    <td className="py-2 px-3">
+                      <Badge variant="primary">{task.type}</Badge>
+                    </td>
+                    <td className="py-2 px-3">
+                      {task.status === 'success' ? (
+                        <div className="flex items-center space-x-1">
+                          <CheckCircleIcon className="w-4 h-4 text-ds-status-ok" />
+                          <p className="text-sm text-ds-status-ok">Success</p>
+                        </div>
+                      ) : task.status === 'failed' ? (
+                        <div className="flex items-center space-x-1">
+                          <XCircleIcon className="w-4 h-4 text-ds-status-fail" />
+                          <p className="text-sm text-ds-status-fail">Failed</p>
+                        </div>
+                      ) : (
+                        <Badge variant="warning">{task.status}</Badge>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-sm text-right text-ds-foreground">{task.duration}ms</td>
+                    <td className="py-2 px-3 text-sm text-ds-muted-foreground">{task.timestamp}</td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
       </Card>
     </motion.div>
   );

@@ -533,11 +533,12 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .unwrap_or((0, 0, 0));
 
-        // Total inventory value (rough estimate)
+        // Total inventory value, accumulated exactly (quantity x unit cost on
+        // TEXT money columns would drift through IEEE-754 with built-in SUM).
         let total_value: String = conn
             .query_row(
                 r"
-                SELECT CAST(COALESCE(SUM(ib.on_hand * COALESCE(pv.cost_price, pv.price, 0)), 0) AS TEXT)
+                SELECT decimal_sum_product(ib.on_hand, COALESCE(pv.cost_price, pv.price, 0))
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
                 LEFT JOIN product_variants pv ON ii.sku = pv.sku
@@ -561,50 +562,50 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
 
     fn get_low_stock_items(&self, threshold: Option<Decimal>) -> Result<Vec<LowStockItem>> {
         let conn = self.conn()?;
-        let threshold_val = threshold.unwrap_or(Decimal::from(10)).to_string();
+        let threshold = threshold.unwrap_or(Decimal::from(10));
 
-        // inventory_balances stores `quantity_on_hand` and `quantity_allocated` (per migration 002),
-        // and `reorder_point` lives on inventory_balances, not inventory_items.
+        // inventory_balances stores `quantity_on_hand` and `quantity_allocated`
+        // (per migration 002), and `reorder_point` lives on inventory_balances,
+        // not inventory_items. Quantities are TEXT decimals, so they are
+        // aggregated with the exact `decimal_sum` aggregate (see money_agg)
+        // rather than SUM(CAST(.. AS REAL)); the availability arithmetic,
+        // threshold filter, and sort happen on exact `Decimal`s in Rust.
         let mut stmt = conn
             .prepare(
                 r"
                 SELECT
                     ii.sku,
                     ii.name,
-                    CAST(COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0) AS TEXT) as on_hand,
-                    CAST(COALESCE(SUM(CAST(ib.quantity_allocated AS REAL)), 0) AS TEXT) as allocated,
-                    CAST(COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0)
-                         - COALESCE(SUM(CAST(ib.quantity_allocated AS REAL)), 0) AS TEXT) as available,
+                    decimal_sum(ib.quantity_on_hand) as on_hand,
+                    decimal_sum(ib.quantity_allocated) as allocated,
                     MAX(ib.reorder_point) as reorder_point
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
                 GROUP BY ii.id, ii.sku, ii.name
-                HAVING COALESCE(SUM(CAST(ib.quantity_on_hand AS REAL)), 0)
-                       - COALESCE(SUM(CAST(ib.quantity_allocated AS REAL)), 0) <= ?1
-                ORDER BY available ASC
                 ",
             )
             .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map([&threshold_val], |row| {
+            .query_map([], |row| {
                 let sku: String = row.get(0)?;
                 let name: String = row.get(1)?;
                 let on_hand: String = row.get(2)?;
                 let allocated: String = row.get(3)?;
-                let available: String = row.get(4)?;
-                let reorder_point: Option<String> = row.get(5)?;
-                Ok((sku, name, on_hand, allocated, available, reorder_point))
+                let reorder_point: Option<String> = row.get(4)?;
+                Ok((sku, name, on_hand, allocated, reorder_point))
             })
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
         for row in rows {
-            let (sku, name, on_hand, allocated, available, reorder_point) =
-                row.map_err(map_db_error)?;
+            let (sku, name, on_hand, allocated, reorder_point) = row.map_err(map_db_error)?;
             let on_hand = parse_decimal_value(&on_hand, "on_hand")?;
             let allocated = parse_decimal_value(&allocated, "allocated")?;
-            let available = parse_decimal_value(&available, "available")?;
+            let available = on_hand - allocated;
+            if available > threshold {
+                continue;
+            }
             let reorder_point =
                 reorder_point.map(|s| parse_decimal_value(&s, "reorder_point")).transpose()?;
             results.push(LowStockItem {
@@ -618,6 +619,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 days_of_stock: None,
             });
         }
+        results.sort_by(|a, b| a.available.cmp(&b.available));
 
         Ok(results)
     }
@@ -1135,6 +1137,72 @@ mod tests {
         let repo = fresh_repo();
         let rows = repo.get_low_stock_items(Some(dec!(10))).expect("ok");
         assert!(rows.is_empty());
+    }
+
+    /// Seed an inventory item with one balance row per quantity (each in its
+    /// own location, since balances are unique per (item, location)).
+    fn seed_item_with_balances(repo: &SqliteAnalyticsRepository, sku: &str, quantities: &[&str]) {
+        let conn = repo.conn().expect("conn");
+        conn.execute(
+            "INSERT INTO inventory_items (sku, name) VALUES (?1, ?2)",
+            rusqlite::params![sku, format!("Item {sku}")],
+        )
+        .expect("insert item");
+        let item_id = conn.last_insert_rowid();
+        for (i, qty) in quantities.iter().enumerate() {
+            let location_id = (i + 1) as i64;
+            conn.execute(
+                "INSERT OR IGNORE INTO inventory_locations (id, name, code) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    location_id,
+                    format!("Loc {location_id}"),
+                    format!("LOC-{location_id}")
+                ],
+            )
+            .expect("insert location");
+            conn.execute(
+                "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![item_id, location_id, qty],
+            )
+            .expect("insert balance");
+        }
+    }
+
+    #[test]
+    fn low_stock_items_sum_quantities_exactly() {
+        let repo = fresh_repo();
+        // 0.1 + 0.2 sums to exactly 0.3; a float SUM yields 0.30000000000000004
+        // and would wrongly drop the item at threshold 0.3.
+        seed_item_with_balances(&repo, "LOW-A", &["0.1", "0.2"]);
+
+        let rows = repo.get_low_stock_items(Some(dec!(0.3))).expect("ok");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].sku, "LOW-A");
+        assert_eq!(rows[0].on_hand, dec!(0.3));
+        assert_eq!(rows[0].available, dec!(0.3));
+    }
+
+    #[test]
+    fn low_stock_threshold_comparison_is_exact_not_float() {
+        let repo = fresh_repo();
+        // Over the threshold by 1e-18: as f64 this rounds to exactly 10.0 and
+        // a float comparison would wrongly include it.
+        seed_item_with_balances(&repo, "LOW-B", &["10.000000000000000001"]);
+
+        let rows = repo.get_low_stock_items(Some(dec!(10))).expect("ok");
+        assert!(rows.iter().all(|r| r.sku != "LOW-B"), "10.000000000000000001 > 10 exactly");
+    }
+
+    #[test]
+    fn low_stock_items_sort_numerically_not_lexicographically() {
+        let repo = fresh_repo();
+        seed_item_with_balances(&repo, "LOW-TEN", &["10"]);
+        seed_item_with_balances(&repo, "LOW-TWO", &["2"]);
+
+        let rows = repo.get_low_stock_items(Some(dec!(100))).expect("ok");
+        let skus: Vec<&str> = rows.iter().map(|r| r.sku.as_str()).collect();
+        assert_eq!(skus, vec!["LOW-TWO", "LOW-TEN"], "2 sorts before 10 numerically");
     }
 
     #[test]

@@ -11,6 +11,11 @@
 //!
 //! A background work system for the StateSet iCommerce engine.
 //!
+//! **Status: standalone library.** No other workspace crate depends on this
+//! crate yet — the engine does not schedule jobs implicitly. Embed it
+//! directly (`cargo add stateset-jobs`) and register your own jobs against
+//! your `Commerce` instance.
+//!
 //! This crate provides a Tokio-based async job scheduler supporting:
 //!
 //! - **Cron scheduling** — standard 5-field cron expressions

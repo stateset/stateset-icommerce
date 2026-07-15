@@ -1,7 +1,18 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Card, Title, Text, Badge, TextInput, Select, SelectItem } from '@tremor/react';
+import {
+  Card,
+  CardContent,
+  Badge,
+  Input,
+  StatusPill,
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@stateset/design';
 import { MagnifyingGlassIcon, PauseIcon, PlayIcon } from '@heroicons/react/24/outline';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getGatewayMetrics } from '@/lib/gateway-client';
@@ -15,10 +26,10 @@ interface LogEntry {
   message: string;
 }
 
-const LEVEL_COLORS: Record<string, 'emerald' | 'amber' | 'red'> = {
-  info: 'emerald',
-  warn: 'amber',
-  error: 'red',
+const LEVEL_STATUS: Record<string, 'ok' | 'warn' | 'fail'> = {
+  info: 'ok',
+  warn: 'warn',
+  error: 'fail',
 };
 
 let entryId = 0;
@@ -120,83 +131,92 @@ export function LiveLogViewer() {
 
   return (
     <Card>
-      <div className="flex items-center justify-between mb-4">
-        <Title>Live Activity Log</Title>
-        <button
-          onClick={() => setPaused((p) => !p)}
-          className="flex items-center space-x-1 px-3 py-1.5 text-sm rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-        >
-          {paused ? (
-            <>
-              <PlayIcon className="w-4 h-4" />
-              <span>Resume</span>
-            </>
-          ) : (
-            <>
-              <PauseIcon className="w-4 h-4" />
-              <span>Pause</span>
-            </>
-          )}
-        </button>
-      </div>
-
-      <div className="flex items-center space-x-3 mb-4">
-        <TextInput
-          icon={MagnifyingGlassIcon}
-          placeholder="Search logs..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1"
-        />
-        <Select value={channelFilter} onValueChange={setChannelFilter} className="w-40">
-          <SelectItem value="all">All Channels</SelectItem>
-          {channels.map((ch) => (
-            <SelectItem key={ch} value={ch}>
-              {ch}
-            </SelectItem>
-          ))}
-        </Select>
-      </div>
-
-      <div
-        ref={scrollRef}
-        className="h-96 overflow-y-auto bg-gray-950 rounded-lg p-4 font-mono text-xs space-y-1"
-      >
-        {filtered.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <Text className="text-gray-500">
-              {paused ? 'Paused — click Resume to continue' : 'Waiting for activity...'}
-            </Text>
-          </div>
-        ) : (
-          filtered.map((log) => (
-            <div key={log.id} className="flex items-start space-x-2 text-gray-300">
-              <span className="text-gray-600 shrink-0">
-                {new Date(log.timestamp).toLocaleTimeString()}
-              </span>
-              <Badge color={LEVEL_COLORS[log.level]} size="xs" className="shrink-0">
-                {log.level.toUpperCase()}
-              </Badge>
-              <Badge color="blue" size="xs" className="shrink-0">
-                {log.channel}
-              </Badge>
-              <span>{log.message}</span>
-            </div>
-          ))
-        )}
-      </div>
-
-      <div className="flex items-center justify-between mt-2">
-        <Text className="text-xs text-gray-500">{filtered.length} entries</Text>
-        {logs.length > 0 && (
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Live Activity Log</h3>
           <button
-            onClick={() => setLogs([])}
-            className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+            onClick={() => setPaused((p) => !p)}
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm rounded-md bg-ds-muted text-ds-foreground hover:bg-ds-muted/80 transition-colors"
           >
-            Clear
+            {paused ? (
+              <>
+                <PlayIcon className="w-4 h-4" />
+                <span>Resume</span>
+              </>
+            ) : (
+              <>
+                <PauseIcon className="w-4 h-4" />
+                <span>Pause</span>
+              </>
+            )}
           </button>
-        )}
-      </div>
+        </div>
+
+        <div className="flex items-center space-x-3 mb-4">
+          <div className="relative flex-1">
+            <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-muted-foreground" />
+            <Input
+              placeholder="Search logs..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Select value={channelFilter} onValueChange={setChannelFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Channels</SelectItem>
+              {channels.map((ch) => (
+                <SelectItem key={ch} value={ch}>
+                  {ch}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div
+          ref={scrollRef}
+          className="h-96 overflow-y-auto bg-ds-brand-950 rounded-lg p-4 font-mono text-xs space-y-1"
+        >
+          {filtered.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-sm text-ds-muted-foreground">
+                {paused ? 'Paused — click Resume to continue' : 'Waiting for activity...'}
+              </p>
+            </div>
+          ) : (
+            filtered.map((log) => (
+              <div key={log.id} className="flex items-start space-x-2 text-ds-brand-100">
+                <span className="text-ds-brand-300 shrink-0">
+                  {new Date(log.timestamp).toLocaleTimeString()}
+                </span>
+                <StatusPill status={LEVEL_STATUS[log.level]}>
+                  {log.level.toUpperCase()}
+                </StatusPill>
+                <Badge variant="outline" className="shrink-0">
+                  {log.channel}
+                </Badge>
+                <span>{log.message}</span>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="flex items-center justify-between mt-2">
+          <p className="text-xs text-ds-muted-foreground">{filtered.length} entries</p>
+          {logs.length > 0 && (
+            <button
+              onClick={() => setLogs([])}
+              className="text-xs text-ds-muted-foreground hover:text-ds-foreground transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </CardContent>
     </Card>
   );
 }

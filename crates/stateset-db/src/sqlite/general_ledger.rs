@@ -1,6 +1,6 @@
 //! SQLite implementation of General Ledger repository
 
-use crate::sqlite::{map_db_error, parse_uuid};
+use crate::sqlite::{map_db_error, parse_uuid, with_immediate_transaction};
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -185,6 +185,38 @@ impl SqliteGeneralLedgerRepository {
         .map_err(map_db_error)?;
 
         Ok(())
+    }
+
+    fn load_journal_entry_lines_with_conn(
+        conn: &rusqlite::Connection,
+        journal_entry_id: Uuid,
+    ) -> rusqlite::Result<Vec<JournalEntryLine>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, journal_entry_id, line_number, account_id, account_number,
+                    account_name, description, debit_amount, credit_amount, currency,
+                    reference_type, reference_id, created_at
+             FROM gl_journal_entry_lines WHERE journal_entry_id = ?1 ORDER BY line_number",
+        )?;
+        let rows = stmt
+            .query_map(params![journal_entry_id.to_string()], Self::map_journal_entry_line_row)?;
+        rows.collect()
+    }
+
+    fn load_journal_entry_with_conn(
+        conn: &rusqlite::Connection,
+        id: Uuid,
+    ) -> rusqlite::Result<JournalEntry> {
+        let mut entry = conn.query_row(
+            "SELECT id, entry_number, entry_date, period_id, entry_type, source,
+                    source_document_type, source_document_id, description, total_debits,
+                    total_credits, is_balanced, status, posted_at, posted_by,
+                    reversed_entry_id, reversing_entry_id, created_at, updated_at
+             FROM gl_journal_entries WHERE id = ?1",
+            params![id.to_string()],
+            Self::map_journal_entry_row,
+        )?;
+        entry.lines = Self::load_journal_entry_lines_with_conn(conn, id)?;
+        Ok(entry)
     }
 }
 
@@ -860,74 +892,93 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
-        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
-        if !entry.can_post() {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Entry cannot be posted - must be draft and balanced".to_string(),
-            ));
-        }
-
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
-        let tx = conn.transaction().map_err(map_db_error)?;
 
-        // Update account balances first, then mark the journal posted in one transaction.
-        for line in &entry.lines {
-            Self::update_account_balance_with_conn(
-                &tx,
-                line.account_id,
-                line.debit_amount,
-                line.credit_amount,
+        with_immediate_transaction(&self.pool, |tx| {
+            // Re-read inside the write transaction so a concurrent poster
+            // cannot pass validation against stale state.
+            let entry = Self::load_journal_entry_with_conn(tx, id)?;
+
+            if !entry.can_post() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    stateset_core::CommerceError::ValidationError(
+                        "Entry cannot be posted - must be draft and balanced".to_string(),
+                    ),
+                )));
+            }
+
+            for line in &entry.lines {
+                Self::update_account_balance_with_conn(
+                    tx,
+                    line.account_id,
+                    line.debit_amount,
+                    line.credit_amount,
+                )
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            }
+
+            // Guard on status so the balance updates above can only commit
+            // together with exactly one draft -> posted transition.
+            let rows_affected = tx.execute(
+                "UPDATE gl_journal_entries SET status = 'posted', posted_at = ?1, posted_by = ?2
+                 WHERE id = ?3 AND status = 'draft'",
+                params![now.to_rfc3339(), posted_by, id.to_string()],
             )?;
-        }
+            if rows_affected == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    stateset_core::CommerceError::Conflict(
+                        "Journal entry was modified concurrently".to_string(),
+                    ),
+                )));
+            }
 
-        tx.execute(
-            "UPDATE gl_journal_entries SET status = 'posted', posted_at = ?1, posted_by = ?2 WHERE id = ?3",
-            params![now.to_rfc3339(), posted_by, id.to_string()],
-        ).map_err(map_db_error)?;
-
-        tx.commit().map_err(map_db_error)?;
+            Ok(())
+        })?;
 
         self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
-        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            // Re-read inside the write transaction so a concurrent voider
+            // cannot pass validation against stale state.
+            let entry = Self::load_journal_entry_with_conn(tx, id)?;
 
-        if !entry.can_void() {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Entry cannot be voided - must be posted".to_string(),
-            ));
-        }
+            if !entry.can_void() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    stateset_core::CommerceError::ValidationError(
+                        "Entry cannot be voided - must be posted".to_string(),
+                    ),
+                )));
+            }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+            // Reverse account balances
+            for line in &entry.lines {
+                Self::update_account_balance_with_conn(
+                    tx,
+                    line.account_id,
+                    line.credit_amount,
+                    line.debit_amount,
+                )
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            }
 
-        // Reverse account balances
-        for line in &entry.lines {
-            Self::update_account_balance_with_conn(
-                &tx,
-                line.account_id,
-                line.credit_amount,
-                line.debit_amount,
+            // Guard on status so the balance reversal above can only commit
+            // together with exactly one posted -> voided transition.
+            let rows_affected = tx.execute(
+                "UPDATE gl_journal_entries SET status = 'voided' WHERE id = ?1 AND status = 'posted'",
+                params![id.to_string()],
             )?;
-        }
+            if rows_affected == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    stateset_core::CommerceError::Conflict(
+                        "Journal entry was modified concurrently".to_string(),
+                    ),
+                )));
+            }
 
-        // Update entry status
-        tx.execute(
-            "UPDATE gl_journal_entries SET status = 'voided' WHERE id = ?1",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        tx.commit().map_err(map_db_error)?;
+            Ok(())
+        })?;
 
         self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
@@ -938,6 +989,25 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         if entry.status != JournalEntryStatus::Posted {
             return Err(stateset_core::CommerceError::ValidationError(
                 "Can only reverse posted entries".to_string(),
+            ));
+        }
+
+        // Claim the entry (posted -> reversed) before creating the reversing
+        // entry, which commits its own transactions; the status guard ensures
+        // concurrent reversals cannot both create (and auto-post) a reversal.
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let claimed = conn
+            .execute(
+                "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = ?1 AND status = 'posted'",
+                params![id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if claimed == 0 {
+            return Err(stateset_core::CommerceError::Conflict(
+                "Journal entry was modified concurrently".to_string(),
             ));
         }
 
@@ -955,7 +1025,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             })
             .collect();
 
-        let reversing_entry = self.create_journal_entry(stateset_core::CreateJournalEntry {
+        let reversing_entry = match self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date: reversal_date,
             entry_type: Some(JournalEntryType::Reversing),
             description: format!("Reversal of {}", entry.entry_number),
@@ -963,17 +1033,25 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             source_document_type: Some("reversal".to_string()),
             source_document_id: Some(entry.id),
             auto_post: Some(true),
-        })?;
+        }) {
+            Ok(reversing_entry) => reversing_entry,
+            Err(e) => {
+                // Best-effort release of the claim so the entry is not left
+                // marked reversed without a reversing entry.
+                let _ = conn.execute(
+                    "UPDATE gl_journal_entries SET status = 'posted' WHERE id = ?1 AND status = 'reversed'",
+                    params![id.to_string()],
+                );
+                return Err(e);
+            }
+        };
 
         // Link entries
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         conn.execute(
-            "UPDATE gl_journal_entries SET reversing_entry_id = ?1, status = 'reversed' WHERE id = ?2",
+            "UPDATE gl_journal_entries SET reversing_entry_id = ?1 WHERE id = ?2",
             params![reversing_entry.id.to_string(), id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         conn.execute(
             "UPDATE gl_journal_entries SET reversed_entry_id = ?1 WHERE id = ?2",
@@ -2084,5 +2162,143 @@ mod tests {
             })
             .expect_err("err");
         assert!(matches!(err, CommerceError::ValidationError(_)));
+    }
+
+    fn make_balanced_entry(
+        repo: &SqliteGeneralLedgerRepository,
+        debit_account: &GlAccount,
+        credit_account: &GlAccount,
+        amount: rust_decimal::Decimal,
+    ) -> JournalEntry {
+        repo.create_journal_entry(CreateJournalEntry {
+            entry_date: NaiveDate::from_ymd_opt(2026, 1, 10).expect("date"),
+            entry_type: None,
+            description: "Concurrency test entry".into(),
+            lines: vec![
+                CreateJournalEntryLine::debit(debit_account.id, amount, None),
+                CreateJournalEntryLine::credit(credit_account.id, amount, None),
+            ],
+            source_document_type: None,
+            source_document_id: None,
+            auto_post: Some(false),
+        })
+        .expect("create entry")
+    }
+
+    fn account_balance(repo: &SqliteGeneralLedgerRepository, id: Uuid) -> rust_decimal::Decimal {
+        repo.get_account(id).expect("ok").expect("found").current_balance
+    }
+
+    #[test]
+    fn post_journal_entry_concurrent_posts_apply_balances_once() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let repo = db.general_ledger();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(100));
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let entry_id = entry.id;
+            handles.push(thread::spawn(move || {
+                let repo = db.general_ledger();
+                barrier.wait();
+                repo.post_journal_entry(entry_id, "racer")
+            }));
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly one concurrent post should succeed: {results:?}");
+
+        assert_eq!(account_balance(&repo, cash.id), dec!(100), "cash applied more than once");
+        assert_eq!(account_balance(&repo, revenue.id), dec!(100), "revenue applied more than once");
+
+        let posted = repo.get_journal_entry(entry.id).expect("ok").expect("found");
+        assert_eq!(posted.status, JournalEntryStatus::Posted);
+    }
+
+    #[test]
+    fn post_journal_entry_rejects_already_posted_and_keeps_balances() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(40));
+
+        repo.post_journal_entry(entry.id, "tester").expect("first post");
+        assert_eq!(account_balance(&repo, cash.id), dec!(40));
+
+        let err = repo.post_journal_entry(entry.id, "again").expect_err("second post must fail");
+        assert!(
+            matches!(err, CommerceError::ValidationError(_) | CommerceError::Conflict(_)),
+            "got {err:?}"
+        );
+
+        assert_eq!(account_balance(&repo, cash.id), dec!(40));
+        assert_eq!(account_balance(&repo, revenue.id), dec!(40));
+    }
+
+    #[test]
+    fn void_journal_entry_rejects_already_voided_and_keeps_balances() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(25));
+
+        repo.post_journal_entry(entry.id, "tester").expect("post");
+        repo.void_journal_entry(entry.id).expect("first void");
+        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+
+        let err = repo.void_journal_entry(entry.id).expect_err("second void must fail");
+        assert!(
+            matches!(err, CommerceError::ValidationError(_) | CommerceError::Conflict(_)),
+            "got {err:?}"
+        );
+
+        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+    }
+
+    #[test]
+    fn reverse_journal_entry_rejects_second_reversal_and_keeps_balances() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(60));
+
+        repo.post_journal_entry(entry.id, "tester").expect("post");
+        repo.reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 15).expect("date"))
+            .expect("first reversal");
+        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+
+        let err = repo
+            .reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 16).expect("date"))
+            .expect_err("second reversal must fail");
+        assert!(
+            matches!(err, CommerceError::ValidationError(_) | CommerceError::Conflict(_)),
+            "got {err:?}"
+        );
+
+        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+
+        let reversals = repo
+            .list_journal_entries(JournalEntryFilter {
+                source_document_id: Some(entry.id),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(reversals.len(), 1, "only one reversing entry may exist");
     }
 }

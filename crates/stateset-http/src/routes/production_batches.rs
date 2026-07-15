@@ -76,7 +76,7 @@ pub fn router() -> Router<AppState> {
         .route("/production-batches/{id}/work-orders", post(add_work_orders))
 }
 
-#[utoipa::path(post, path = "/api/v1/production-batches", tag = "production_batches",
+#[utoipa::path(post, operation_id = "production_batches_create", path = "/api/v1/production-batches", tag = "production_batches",
     request_body = CreateProductionBatchRequest,
     responses((status = 201, body = ProductionBatchResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -99,7 +99,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&b))))
 }
 
-#[utoipa::path(get, path = "/api/v1/production-batches", tag = "production_batches",
+#[utoipa::path(get, operation_id = "production_batches_list", path = "/api/v1/production-batches", tag = "production_batches",
     params(ProductionBatchFilterParams),
     responses((status = 200, body = ProductionBatchListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -133,7 +133,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/production-batches/{id}", tag = "production_batches",
+#[utoipa::path(get, operation_id = "production_batches_get_one", path = "/api/v1/production-batches/{id}", tag = "production_batches",
     params(("id" = String, Path, description = "Production batch ID")),
     responses((status = 200, body = ProductionBatchResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -151,7 +151,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&b)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/production-batches/{id}", tag = "production_batches",
+#[utoipa::path(delete, operation_id = "production_batches_delete_one", path = "/api/v1/production-batches/{id}", tag = "production_batches",
     params(("id" = String, Path, description = "Production batch ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]
@@ -166,7 +166,7 @@ pub(crate) async fn delete_one(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(post, path = "/api/v1/production-batches/{id}/work-orders", tag = "production_batches",
+#[utoipa::path(post, operation_id = "production_batches_add_work_orders", path = "/api/v1/production-batches/{id}/work-orders", tag = "production_batches",
     request_body = WorkOrdersRequest,
     params(("id" = String, Path, description = "Production batch ID")),
     responses((status = 200, body = ProductionBatchResponse)))]

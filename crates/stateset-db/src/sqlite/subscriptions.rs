@@ -50,6 +50,7 @@ impl SqliteSubscriptionRepository {
     // ========================================================================
 
     pub fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan> {
+        stateset_core::Validate::validate(&input)?;
         let id = Uuid::new_v4();
         let code = input.code.clone().unwrap_or_else(|| generate_plan_code(&input.name));
         let now = Utc::now();
@@ -230,6 +231,7 @@ impl SqliteSubscriptionRepository {
     }
 
     pub fn update_plan(&self, id: Uuid, input: UpdateSubscriptionPlan) -> Result<SubscriptionPlan> {
+        stateset_core::Validate::validate(&input)?;
         // Update plan - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
@@ -390,6 +392,7 @@ impl SqliteSubscriptionRepository {
     // ========================================================================
 
     pub fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
+        stateset_core::Validate::validate(&input)?;
         // Get the plan first (uses its own connection)
         let plan = self.get_plan(input.plan_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
@@ -716,6 +719,7 @@ impl SqliteSubscriptionRepository {
         id: SubscriptionId,
         input: UpdateSubscription,
     ) -> Result<Subscription> {
+        stateset_core::Validate::validate(&input)?;
         // Update subscription - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
@@ -1726,6 +1730,68 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
 #[cfg(test)]
 mod tests {
     use super::SqliteSubscriptionRepository;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{BillingInterval, CommerceError, CreateSubscriptionPlan};
+
+    fn plan_input() -> CreateSubscriptionPlan {
+        CreateSubscriptionPlan {
+            code: None,
+            name: "Test Plan".into(),
+            description: None,
+            billing_interval: BillingInterval::Monthly,
+            custom_interval_days: None,
+            price: dec!(10.00),
+            setup_fee: None,
+            currency: None,
+            trial_days: None,
+            trial_requires_payment_method: None,
+            min_cycles: None,
+            max_cycles: None,
+            items: None,
+            discount_percent: None,
+            discount_amount: None,
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn create_plan_rejects_invalid_pricing() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.subscriptions();
+
+        // discount_percent is a fraction — 10 would mean 1000% off (billing
+        // multiplies it directly by the subtotal, flooring the total at 0).
+        let err = repo
+            .create_plan(CreateSubscriptionPlan {
+                discount_percent: Some(dec!(10)),
+                ..plan_input()
+            })
+            .expect_err("out-of-range discount_percent rejected");
+        assert!(matches!(err, CommerceError::InvalidInput { .. }), "got {err:?}");
+
+        // Negative money fields rejected; a surcharge-by-negative-discount
+        // must not be expressible.
+        for input in [
+            CreateSubscriptionPlan { price: dec!(-1.00), ..plan_input() },
+            CreateSubscriptionPlan { setup_fee: Some(dec!(-1.00)), ..plan_input() },
+            CreateSubscriptionPlan { discount_amount: Some(dec!(-5.00)), ..plan_input() },
+        ] {
+            assert!(matches!(
+                repo.create_plan(input).unwrap_err(),
+                CommerceError::InvalidInput { .. }
+            ));
+        }
+
+        // A sane fractional discount still works.
+        let plan = repo
+            .create_plan(CreateSubscriptionPlan {
+                discount_percent: Some(dec!(0.10)),
+                ..plan_input()
+            })
+            .expect("valid plan");
+        assert_eq!(plan.discount_percent, Some(dec!(0.10)));
+    }
 
     #[test]
     fn detects_subscription_number_unique_violation() {

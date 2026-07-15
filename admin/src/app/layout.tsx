@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { Inter } from 'next/font/google';
 import { Suspense } from 'react';
+import '@stateset/design/tokens.css';
 import './globals.css';
 import { Sidebar } from '@/components/sidebar';
 import { MobileNav } from '@/components/mobile-nav';
@@ -19,15 +20,15 @@ export const metadata: Metadata = {
 
 function SidebarSkeleton() {
   return (
-    <div className="hidden lg:flex flex-col w-64 border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 animate-pulse">
-      <div className="p-4 space-y-3">
-        <div className="h-6 bg-gray-200 dark:bg-gray-800 rounded w-3/4" />
-        <div className="h-8 bg-gray-200 dark:bg-gray-800 rounded" />
-        <div className="h-8 bg-gray-200 dark:bg-gray-800 rounded" />
+    <div className="hidden w-ds-sidebar flex-col border-r border-ds-sidebar-border bg-ds-sidebar lg:flex">
+      <div className="space-y-3 p-4">
+        <div className="h-6 w-3/4 animate-pulse rounded bg-ds-sidebar-foreground/10" />
+        <div className="h-8 animate-pulse rounded bg-ds-sidebar-foreground/10" />
+        <div className="h-8 animate-pulse rounded bg-ds-sidebar-foreground/10" />
       </div>
-      <div className="flex-1 p-4 space-y-2">
+      <div className="flex-1 space-y-2 p-4">
         {[...Array(5)].map((_, i) => (
-          <div key={i} className="h-20 bg-gray-200 dark:bg-gray-800 rounded-lg" />
+          <div key={i} className="h-10 animate-pulse rounded-lg bg-ds-sidebar-foreground/10" />
         ))}
       </div>
     </div>
@@ -54,7 +55,7 @@ export default async function RootLayout({
 
     return (
       <html lang="en" suppressHydrationWarning>
-        <body className={`${inter.className} min-h-screen bg-gray-50 dark:bg-gray-950`}>
+        <body className={`${inter.className} ds-app-frame min-h-screen bg-ds-enterprise-canvas text-ds-foreground`}>
           <main className="flex min-h-screen items-center justify-center p-6">
             <AdminLoginGate />
           </main>
@@ -70,11 +71,11 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} bg-gray-50 dark:bg-gray-950`}>
+      <body className={`${inter.className} ds-app-frame bg-ds-enterprise-canvas text-ds-foreground`}>
         {/* Skip to content link for accessibility */}
         <a
           href="#main-content"
-          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-indigo-600 focus:text-white focus:rounded-md focus:outline-none"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-full focus:bg-ds-primary focus:px-4 focus:py-2 focus:text-ds-primary-foreground focus:outline-none"
         >
           Skip to content
         </a>
@@ -91,9 +92,9 @@ export default async function RootLayout({
               <TopBar />
             </Suspense>
             <Suspense fallback={
-              <div className="container mx-auto p-6 animate-pulse">
-                <div className="h-8 bg-gray-200 dark:bg-gray-800 rounded w-1/3 mb-4" />
-                <div className="h-64 bg-gray-200 dark:bg-gray-800 rounded" />
+              <div className="container mx-auto animate-pulse p-6">
+                <div className="mb-4 h-8 w-1/3 rounded bg-ds-muted" />
+                <div className="h-64 rounded bg-ds-muted" />
               </div>
             }>
               <div className="container mx-auto p-6 flex-1">

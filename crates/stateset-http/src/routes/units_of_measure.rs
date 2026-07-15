@@ -117,7 +117,7 @@ pub fn router() -> Router<AppState> {
         .route("/unit-conversion-rules", post(create_rule).get(list_rules))
 }
 
-#[utoipa::path(post, path = "/api/v1/unit-classes", tag = "units_of_measure",
+#[utoipa::path(post, operation_id = "units_of_measure_create_class", path = "/api/v1/unit-classes", tag = "units_of_measure",
     request_body = CreateUnitClassRequest,
     responses((status = 201, body = UnitClassResponse)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -135,7 +135,7 @@ pub(crate) async fn create_class(
     Ok((StatusCode::CREATED, Json(class_resp(&class))))
 }
 
-#[utoipa::path(get, path = "/api/v1/unit-classes", tag = "units_of_measure",
+#[utoipa::path(get, operation_id = "units_of_measure_list_classes", path = "/api/v1/unit-classes", tag = "units_of_measure",
     responses((status = 200, body = [UnitClassResponse])))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn list_classes(
@@ -148,7 +148,7 @@ pub(crate) async fn list_classes(
     Ok(Json(classes.iter().map(class_resp).collect()))
 }
 
-#[utoipa::path(post, path = "/api/v1/units-of-measure", tag = "units_of_measure",
+#[utoipa::path(post, operation_id = "units_of_measure_create_uom", path = "/api/v1/units-of-measure", tag = "units_of_measure",
     request_body = CreateUnitOfMeasureRequest,
     responses((status = 201, body = UnitOfMeasureResponse)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -168,7 +168,7 @@ pub(crate) async fn create_uom(
     Ok((StatusCode::CREATED, Json(uom_resp(&uom))))
 }
 
-#[utoipa::path(get, path = "/api/v1/units-of-measure", tag = "units_of_measure",
+#[utoipa::path(get, operation_id = "units_of_measure_list_uoms", path = "/api/v1/units-of-measure", tag = "units_of_measure",
     params(UomFilterParams),
     responses((status = 200, body = [UnitOfMeasureResponse])))]
 #[tracing::instrument(skip(state, headers))]
@@ -187,7 +187,7 @@ pub(crate) async fn list_uoms(
     Ok(Json(uoms.iter().map(uom_resp).collect()))
 }
 
-#[utoipa::path(post, path = "/api/v1/unit-conversion-rules", tag = "units_of_measure",
+#[utoipa::path(post, operation_id = "units_of_measure_create_rule", path = "/api/v1/unit-conversion-rules", tag = "units_of_measure",
     request_body = CreateConversionRuleRequest,
     responses((status = 201, body = ConversionRuleResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -212,7 +212,7 @@ pub(crate) async fn create_rule(
     Ok((StatusCode::CREATED, Json(rule_resp(&rule))))
 }
 
-#[utoipa::path(get, path = "/api/v1/unit-conversion-rules", tag = "units_of_measure",
+#[utoipa::path(get, operation_id = "units_of_measure_list_rules", path = "/api/v1/unit-conversion-rules", tag = "units_of_measure",
     responses((status = 200, body = [ConversionRuleResponse])))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn list_rules(

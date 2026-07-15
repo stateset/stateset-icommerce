@@ -66,7 +66,7 @@ pub fn router() -> Router<AppState> {
         .route("/reports/consumption", post(consumption))
 }
 
-#[utoipa::path(post, path = "/api/v1/reports/inventory-aging", tag = "reports",
+#[utoipa::path(post, operation_id = "reports_inventory_aging", path = "/api/v1/reports/inventory-aging", tag = "reports",
     request_body = InventoryAgingRequest,
     responses((status = 200, body = InventoryAgingResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(req))]
@@ -151,7 +151,7 @@ pub(crate) struct SalesByChannelResponse {
     pub total_units: String,
 }
 
-#[utoipa::path(post, path = "/api/v1/reports/sales-by-channel", tag = "reports",
+#[utoipa::path(post, operation_id = "reports_sales_by_channel", path = "/api/v1/reports/sales-by-channel", tag = "reports",
     request_body = SalesByChannelRequest,
     responses((status = 200, body = SalesByChannelResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(req))]
@@ -233,7 +233,7 @@ pub(crate) struct TransactionCogsResponse {
     pub gross_margin_pct: String,
 }
 
-#[utoipa::path(post, path = "/api/v1/reports/transaction-cogs", tag = "reports",
+#[utoipa::path(post, operation_id = "reports_transaction_cogs", path = "/api/v1/reports/transaction-cogs", tag = "reports",
     request_body = TransactionCogsRequest,
     responses((status = 200, body = TransactionCogsResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(req))]
@@ -321,7 +321,7 @@ pub(crate) struct CloseBooksResponse {
     pub is_ready: bool,
 }
 
-#[utoipa::path(post, path = "/api/v1/reports/close-the-books", tag = "reports",
+#[utoipa::path(post, operation_id = "reports_close_the_books", path = "/api/v1/reports/close-the-books", tag = "reports",
     request_body = CloseBooksRequest,
     responses((status = 200, body = CloseBooksResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(req))]
@@ -396,7 +396,7 @@ pub(crate) struct ConsumptionResponse {
     pub total_quantity: String,
 }
 
-#[utoipa::path(post, path = "/api/v1/reports/consumption", tag = "reports",
+#[utoipa::path(post, operation_id = "reports_consumption", path = "/api/v1/reports/consumption", tag = "reports",
     request_body = ConsumptionRequest,
     responses((status = 200, body = ConsumptionResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(req))]

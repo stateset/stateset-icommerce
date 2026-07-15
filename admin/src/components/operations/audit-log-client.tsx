@@ -157,7 +157,7 @@ export function AuditLogClient() {
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Badge color={connectionBadge.color}>{connectionBadge.label}</Badge>
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-ds-muted-foreground">
               {filtered.length} of {events.length} events shown
             </span>
           </div>
@@ -189,7 +189,7 @@ export function AuditLogClient() {
             placeholder="Filter by event type (e.g. order.* or inventory_adjusted)"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900"
+            className="w-full px-3 py-2 text-sm rounded-md border border-ds-enterprise-line bg-ds-card text-ds-foreground"
             aria-label="Event type filter"
           />
         </CardContent>
@@ -198,7 +198,7 @@ export function AuditLogClient() {
       <Card>
         <CardContent className="p-0">
           {filtered.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            <div className="p-8 text-center text-sm text-ds-muted-foreground">
               {paused
                 ? 'Stream paused. Resume to receive new events.'
                 : connection === 'open'
@@ -208,19 +208,19 @@ export function AuditLogClient() {
                     : 'Connecting to the event stream…'}
             </div>
           ) : (
-            <ul role="list" className="divide-y divide-gray-100 dark:divide-gray-800">
+            <ul role="list" className="divide-y divide-ds-enterprise-line">
               {filtered.map((e) => (
                 <li key={e.id} className="px-4 py-3 flex items-start gap-4 text-sm">
                   <time
                     dateTime={e.receivedAt}
-                    className="font-mono text-xs text-gray-500 dark:text-gray-400 shrink-0 w-32"
+                    className="font-mono text-xs text-ds-muted-foreground shrink-0 w-32"
                   >
                     {e.receivedAt.slice(11, 23)}
                   </time>
                   <Badge color={badgeColorFor(e.type)} className="shrink-0">
                     {e.type}
                   </Badge>
-                  <pre className="font-mono text-xs text-gray-700 dark:text-gray-300 truncate flex-1">
+                  <pre className="font-mono text-xs text-ds-foreground truncate flex-1">
                     {JSON.stringify(e.data)}
                   </pre>
                 </li>

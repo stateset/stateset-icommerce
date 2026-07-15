@@ -22,7 +22,7 @@ export async function TopBar() {
   if (!hasOrgSwitcher) return null;
 
   return (
-    <div className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/50">
+    <div className="border-b border-ds-enterprise-line bg-ds-enterprise-surface/90 backdrop-blur-xl">
       <div className="container mx-auto px-6 py-2 flex items-center justify-end gap-4">
         <OrgSwitcher options={organizations} activeOrgId={activeOrgId} />
       </div>

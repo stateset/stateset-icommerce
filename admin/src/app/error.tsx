@@ -25,17 +25,17 @@ export default function RootError({ error, reset }: RootErrorProps) {
     <div className="flex min-h-[60vh] items-center justify-center p-6">
       <div
         role="alert"
-        className="flex w-full max-w-md flex-col items-center rounded-lg border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20"
+        className="flex w-full max-w-md flex-col items-center rounded-lg border border-ds-status-fail/25 bg-ds-status-fail/10 p-6 text-center"
       >
-        <ExclamationTriangleIcon className="mb-4 h-12 w-12 text-red-500" />
-        <h2 className="mb-2 text-lg font-semibold text-red-800 dark:text-red-200">
+        <ExclamationTriangleIcon className="mb-4 h-12 w-12 text-ds-status-fail" />
+        <h2 className="mb-2 text-lg font-semibold text-ds-foreground">
           Something went wrong
         </h2>
-        <p className="mb-4 text-sm text-red-600 dark:text-red-300">
+        <p className="mb-4 text-sm text-ds-status-fail">
           {error.message || 'An unexpected error occurred while loading this page.'}
         </p>
         {error.digest && (
-          <p className="mb-4 text-xs text-red-500 dark:text-red-400">
+          <p className="mb-4 text-xs text-ds-muted-foreground">
             Reference: <code>{error.digest}</code>
           </p>
         )}

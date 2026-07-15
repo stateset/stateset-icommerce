@@ -20,7 +20,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "1.6.0"
+//! stateset-sdk = "1.7.0"
 //! ```
 //!
 //! ```rust,ignore
@@ -187,8 +187,8 @@ pub mod prelude {
         CounterpartyCommitment, CounterpartyConvergenceStatus, DeadLetter, KernelExecutionError,
         KernelMetadata, KernelReceipt, KernelReceiptStatus, KernelTransaction,
         ManifestVerificationError, PolicyCheckpoint, PolicyDecision, PullResult, PushConfirmation,
-        PushResult, RemoteHead, SequenceAuthority, SequencerHttpTransport, SyncConfig, SyncEngine,
-        SyncError, SyncEvent, SyncStatus, VerifiedCommitmentManifest,
+        PushResult, RemoteHead, SequenceAuthority, SequencerHttpTransport, SignerTrustMode,
+        SyncConfig, SyncEngine, SyncError, SyncEvent, SyncStatus, VerifiedCommitmentManifest,
         compute_commitment_manifest_hash, sign_commitment_manifest, verify_commitment_manifest,
         verify_commitment_manifest_against_state,
     };

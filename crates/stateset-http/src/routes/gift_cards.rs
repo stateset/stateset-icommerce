@@ -83,6 +83,30 @@ pub(crate) struct GiftCardResponse {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Request body for `POST /api/v1/gift-cards/{id}/charge` and `/refund`.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct GiftCardAmountRequest {
+    /// Amount to charge (debit) or refund (credit). Must be positive.
+    #[schema(value_type = String)]
+    pub amount: Decimal,
+    /// Optional reference (e.g. order ID) recorded on the transaction.
+    pub reference_id: Option<String>,
+}
+
+/// A gift card ledger transaction.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct GiftCardTransactionResponse {
+    pub id: String,
+    pub gift_card_id: String,
+    #[schema(value_type = String)]
+    pub amount: Decimal,
+    #[schema(value_type = String)]
+    pub balance_after: Decimal,
+    pub transaction_type: String,
+    pub reference_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Response body for `GET /api/v1/gift-cards` (list).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct GiftCardListResponse {
@@ -102,6 +126,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/gift-cards", post(create_gift_card).get(list_gift_cards))
         .route("/gift-cards/{id}", get(get_gift_card))
+        .route("/gift-cards/{id}/charge", post(charge_gift_card))
+        .route("/gift-cards/{id}/refund", post(refund_gift_card))
         .route("/gift-cards/{id}/disable", post(disable_gift_card))
 }
 
@@ -244,6 +270,58 @@ pub(crate) async fn list_gift_cards(
     }))
 }
 
+/// `POST /api/v1/gift-cards/{id}/charge`
+#[utoipa::path(
+    post,
+    path = "/api/v1/gift-cards/{id}/charge",
+    tag = "gift_cards",
+    params(("id" = String, Path, description = "Gift card ID (UUID)")),
+    request_body = GiftCardAmountRequest,
+    responses(
+        (status = 200, description = "Gift card charged", body = GiftCardTransactionResponse),
+        (status = 422, description = "Invalid amount, inactive or expired card, or insufficient balance", body = ErrorBody),
+        (status = 404, description = "Gift card not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn charge_gift_card(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<stateset_primitives::GiftCardId>,
+    Json(req): Json<GiftCardAmountRequest>,
+) -> Result<Json<GiftCardTransactionResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let txn = commerce.gift_cards().charge(id, req.amount, req.reference_id)?;
+    Ok(Json(transaction_to_response(txn)))
+}
+
+/// `POST /api/v1/gift-cards/{id}/refund`
+#[utoipa::path(
+    post,
+    path = "/api/v1/gift-cards/{id}/refund",
+    tag = "gift_cards",
+    params(("id" = String, Path, description = "Gift card ID (UUID)")),
+    request_body = GiftCardAmountRequest,
+    responses(
+        (status = 200, description = "Gift card refunded", body = GiftCardTransactionResponse),
+        (status = 422, description = "Invalid amount or disabled card", body = ErrorBody),
+        (status = 404, description = "Gift card not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn refund_gift_card(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<stateset_primitives::GiftCardId>,
+    Json(req): Json<GiftCardAmountRequest>,
+) -> Result<Json<GiftCardTransactionResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let txn = commerce.gift_cards().refund(id, req.amount, req.reference_id)?;
+    Ok(Json(transaction_to_response(txn)))
+}
+
 /// `POST /api/v1/gift-cards/{id}/disable`
 #[utoipa::path(
     post,
@@ -271,6 +349,18 @@ pub(crate) async fn disable_gift_card(
 // Helpers
 // ============================================================================
 
+fn transaction_to_response(txn: stateset_core::GiftCardTransaction) -> GiftCardTransactionResponse {
+    GiftCardTransactionResponse {
+        id: txn.id.to_string(),
+        gift_card_id: txn.gift_card_id.to_string(),
+        amount: txn.amount,
+        balance_after: txn.balance_after,
+        transaction_type: txn.transaction_type.to_string(),
+        reference_id: txn.reference_id,
+        created_at: txn.created_at,
+    }
+}
+
 fn gift_card_to_response(gc: stateset_core::GiftCard) -> GiftCardResponse {
     GiftCardResponse {
         id: gc.id.to_string(),
@@ -288,4 +378,87 @@ fn gift_card_to_response(gc: stateset_core::GiftCard) -> GiftCardResponse {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use stateset_embedded::Commerce;
+    use tower::ServiceExt;
+
+    fn app() -> Router {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        router().with_state(state)
+    }
+
+    async fn post_json(
+        app: &Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
+    }
+
+    #[tokio::test]
+    async fn charge_and_refund_roundtrip() {
+        let app = app();
+        let (status, card) =
+            post_json(&app, "/gift-cards", serde_json::json!({"initial_balance": 50.0})).await;
+        assert_eq!(status, StatusCode::CREATED);
+        let id = card["id"].as_str().unwrap().to_string();
+
+        let (status, txn) = post_json(
+            &app,
+            &format!("/gift-cards/{id}/charge"),
+            serde_json::json!({"amount": "30.00", "reference_id": "ORD-1"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(txn["balance_after"], "20.00");
+        assert_eq!(txn["transaction_type"], "charge");
+
+        let (status, txn) = post_json(
+            &app,
+            &format!("/gift-cards/{id}/refund"),
+            serde_json::json!({"amount": "5.00"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(txn["balance_after"], "25.00");
+    }
+
+    #[tokio::test]
+    async fn charge_rejects_negative_and_overdraft() {
+        let app = app();
+        let (_, card) =
+            post_json(&app, "/gift-cards", serde_json::json!({"initial_balance": 10.0})).await;
+        let id = card["id"].as_str().unwrap().to_string();
+
+        let (status, _) = post_json(
+            &app,
+            &format!("/gift-cards/{id}/charge"),
+            serde_json::json!({"amount": "-5.00"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        let (status, _) = post_json(
+            &app,
+            &format!("/gift-cards/{id}/charge"),
+            serde_json::json!({"amount": "99.00"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+}

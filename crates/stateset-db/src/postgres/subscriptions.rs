@@ -608,6 +608,7 @@ impl PgSubscriptionRepository {
         &self,
         input: CreateSubscriptionPlan,
     ) -> Result<SubscriptionPlan> {
+        stateset_core::Validate::validate(&input)?;
         let id = Uuid::new_v4();
         let code = input.code.clone().unwrap_or_else(|| generate_plan_code(&input.name));
         let now = Utc::now();
@@ -793,6 +794,7 @@ impl PgSubscriptionRepository {
         id: Uuid,
         input: UpdateSubscriptionPlan,
     ) -> Result<SubscriptionPlan> {
+        stateset_core::Validate::validate(&input)?;
         let now = Utc::now();
 
         sqlx::query(
@@ -859,6 +861,7 @@ impl PgSubscriptionRepository {
         &self,
         input: CreateSubscription,
     ) -> Result<Subscription> {
+        stateset_core::Validate::validate(&input)?;
         let plan = self.get_plan_async(input.plan_id).await?.ok_or(CommerceError::NotFound)?;
 
         if plan.status != PlanStatus::Active {
@@ -1174,6 +1177,7 @@ impl PgSubscriptionRepository {
         id: SubscriptionId,
         input: UpdateSubscription,
     ) -> Result<Subscription> {
+        stateset_core::Validate::validate(&input)?;
         let now = Utc::now();
 
         let shipping_address = input

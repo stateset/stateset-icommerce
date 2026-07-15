@@ -294,7 +294,7 @@ impl SqliteCartRepository {
     /// Finalize x402 checkout after payment settlement
     fn finalize_x402_checkout(&self, cart_id: CartId) -> Result<X402CheckoutResult> {
         let result = with_immediate_transaction(&self.pool, |tx| {
-            self.complete_checkout_in_tx(tx, cart_id, true)
+            self.complete_checkout_in_tx(tx, cart_id, true, true)
         })?;
         Ok(X402CheckoutResult::Completed(result))
     }
@@ -1220,7 +1220,15 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn complete(&self, id: CartId) -> Result<CheckoutResult> {
-        with_immediate_transaction(&self.pool, |tx| self.complete_checkout_in_tx(tx, id, false))
+        with_immediate_transaction(&self.pool, |tx| {
+            self.complete_checkout_in_tx(tx, id, false, false)
+        })
+    }
+
+    fn complete_settled_externally(&self, id: CartId) -> Result<CheckoutResult> {
+        with_immediate_transaction(&self.pool, |tx| {
+            self.complete_checkout_in_tx(tx, id, false, true)
+        })
     }
 
     fn cancel(&self, id: CartId) -> Result<Cart> {
@@ -1814,11 +1822,18 @@ impl SqliteCartRepository {
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
     }
 
+    /// `mark_paid` promotes the minted order straight to `PaymentStatus::Paid`
+    /// without a payment record. That is only correct when settlement happened
+    /// out of band (x402, ACP, external PSP) and the caller opted in
+    /// explicitly; the plain checkout path leaves payment pending so a
+    /// miswired integration cannot mint revenue-recognized orders with no
+    /// payment trail.
     fn complete_checkout_in_tx(
         &self,
         tx: &rusqlite::Transaction<'_>,
         cart_id: CartId,
         x402_settled: bool,
+        mark_paid: bool,
     ) -> std::result::Result<CheckoutResult, rusqlite::Error> {
         let mut cart = match tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
@@ -1917,19 +1932,21 @@ impl SqliteCartRepository {
             )));
         }
 
-        if order.status != OrderStatus::Confirmed || order.payment_status != PaymentStatus::Paid {
+        let target_payment_status =
+            if mark_paid { PaymentStatus::Paid } else { order.payment_status };
+        if order.status != OrderStatus::Confirmed || order.payment_status != target_payment_status {
             let now = Utc::now();
             tx.execute(
                 "UPDATE orders SET status = ?, payment_status = ?, updated_at = ?, version = version + 1 WHERE id = ?",
                 rusqlite::params![
                     OrderStatus::Confirmed.to_string(),
-                    PaymentStatus::Paid.to_string(),
+                    target_payment_status.to_string(),
                     now.to_rfc3339(),
                     order.id.to_string(),
                 ],
             )?;
             order.status = OrderStatus::Confirmed;
-            order.payment_status = PaymentStatus::Paid;
+            order.payment_status = target_payment_status;
             order.updated_at = now;
             order.version += 1;
         }
@@ -1951,10 +1968,23 @@ impl SqliteCartRepository {
                     cart_id.to_string()
                 ],
             )?;
-        } else {
+        } else if mark_paid {
             tx.execute(
                 "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
                  payment_status = 'captured', completed_at = ?, updated_at = ?, customer_id = ? WHERE id = ?",
+                rusqlite::params![
+                    order.id.to_string(),
+                    &order.order_number,
+                    completed_at.to_rfc3339(),
+                    completed_at.to_rfc3339(),
+                    customer_id.to_string(),
+                    cart_id.to_string()
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
+                 completed_at = ?, updated_at = ?, customer_id = ? WHERE id = ?",
                 rusqlite::params![
                     order.id.to_string(),
                     &order.order_number,
@@ -2201,6 +2231,43 @@ mod tests {
         let completed = repo.get(cart.id).expect("ok").expect("found");
         assert_eq!(completed.status, CartStatus::Completed);
         assert!(completed.order_id.is_some());
+    }
+
+    #[test]
+    fn complete_leaves_payment_pending_without_explicit_settlement() {
+        use stateset_core::OrderRepository as _;
+
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let repo = db.carts();
+        let cart = checkoutable_cart(&repo);
+        let result = repo.complete(cart.id).expect("checkout should succeed");
+        assert!(result.payment_id.is_none());
+
+        let order = db.orders().get(result.order_id).expect("ok").expect("order exists");
+        assert_eq!(order.status, stateset_core::OrderStatus::Confirmed);
+        assert_eq!(
+            order.payment_status,
+            stateset_core::PaymentStatus::Pending,
+            "plain complete() must not mark an order paid with no payment record; \
+             out-of-band settlement uses complete_settled_externally()"
+        );
+    }
+
+    #[test]
+    fn complete_settled_externally_marks_order_paid() {
+        use stateset_core::OrderRepository as _;
+
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let repo = db.carts();
+        let cart = checkoutable_cart(&repo);
+        let result = repo.complete_settled_externally(cart.id).expect("checkout should succeed");
+
+        let order = db.orders().get(result.order_id).expect("ok").expect("order exists");
+        assert_eq!(order.status, stateset_core::OrderStatus::Confirmed);
+        assert_eq!(order.payment_status, stateset_core::PaymentStatus::Paid);
+
+        let completed = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(completed.status, CartStatus::Completed);
     }
 
     #[test]

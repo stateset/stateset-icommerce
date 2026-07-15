@@ -117,10 +117,11 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
     assert_eq!(checkout.order_id, order.id);
     assert_eq!(checkout.order_number, order.order_number);
 
-    // Checkout confirms and marks the order paid.
+    // Checkout confirms the order; payment stays pending until recorded
+    // through the payments API (complete_settled_externally opts in to Paid).
     let updated_order = orders.get(order.id).expect("get order").expect("order exists");
     assert_eq!(updated_order.status, OrderStatus::Confirmed);
-    assert_eq!(updated_order.payment_status, PaymentStatus::Paid);
+    assert_eq!(updated_order.payment_status, PaymentStatus::Pending);
 }
 
 #[test]

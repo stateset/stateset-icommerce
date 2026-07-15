@@ -14,40 +14,40 @@ type ParagraphProps = React.HTMLAttributes<HTMLParagraphElement> & DataAttribute
 // Keep these as string literals so Tailwind can see every class at build time.
 const CARD_DECORATION_CLASSES: Record<Decoration, Record<DecorationColor, string>> = {
   top: {
-    gray: 'border-t-4 border-t-gray-500',
-    red: 'border-t-4 border-t-red-500',
-    amber: 'border-t-4 border-t-amber-500',
-    blue: 'border-t-4 border-t-blue-500',
-    indigo: 'border-t-4 border-t-indigo-500',
-    purple: 'border-t-4 border-t-purple-500',
-    emerald: 'border-t-4 border-t-emerald-500',
+    gray: 'border-t-4 border-t-ds-muted-foreground',
+    red: 'border-t-4 border-t-ds-status-fail',
+    amber: 'border-t-4 border-t-ds-status-warn',
+    blue: 'border-t-4 border-t-ds-status-run',
+    indigo: 'border-t-4 border-t-ds-primary',
+    purple: 'border-t-4 border-t-ds-primary',
+    emerald: 'border-t-4 border-t-ds-status-ok',
   },
   left: {
-    gray: 'border-l-4 border-l-gray-500',
-    red: 'border-l-4 border-l-red-500',
-    amber: 'border-l-4 border-l-amber-500',
-    blue: 'border-l-4 border-l-blue-500',
-    indigo: 'border-l-4 border-l-indigo-500',
-    purple: 'border-l-4 border-l-purple-500',
-    emerald: 'border-l-4 border-l-emerald-500',
+    gray: 'border-l-4 border-l-ds-muted-foreground',
+    red: 'border-l-4 border-l-ds-status-fail',
+    amber: 'border-l-4 border-l-ds-status-warn',
+    blue: 'border-l-4 border-l-ds-status-run',
+    indigo: 'border-l-4 border-l-ds-primary',
+    purple: 'border-l-4 border-l-ds-primary',
+    emerald: 'border-l-4 border-l-ds-status-ok',
   },
   bottom: {
-    gray: 'border-b-4 border-b-gray-500',
-    red: 'border-b-4 border-b-red-500',
-    amber: 'border-b-4 border-b-amber-500',
-    blue: 'border-b-4 border-b-blue-500',
-    indigo: 'border-b-4 border-b-indigo-500',
-    purple: 'border-b-4 border-b-purple-500',
-    emerald: 'border-b-4 border-b-emerald-500',
+    gray: 'border-b-4 border-b-ds-muted-foreground',
+    red: 'border-b-4 border-b-ds-status-fail',
+    amber: 'border-b-4 border-b-ds-status-warn',
+    blue: 'border-b-4 border-b-ds-status-run',
+    indigo: 'border-b-4 border-b-ds-primary',
+    purple: 'border-b-4 border-b-ds-primary',
+    emerald: 'border-b-4 border-b-ds-status-ok',
   },
   right: {
-    gray: 'border-r-4 border-r-gray-500',
-    red: 'border-r-4 border-r-red-500',
-    amber: 'border-r-4 border-r-amber-500',
-    blue: 'border-r-4 border-r-blue-500',
-    indigo: 'border-r-4 border-r-indigo-500',
-    purple: 'border-r-4 border-r-purple-500',
-    emerald: 'border-r-4 border-r-emerald-500',
+    gray: 'border-r-4 border-r-ds-muted-foreground',
+    red: 'border-r-4 border-r-ds-status-fail',
+    amber: 'border-r-4 border-r-ds-status-warn',
+    blue: 'border-r-4 border-r-ds-status-run',
+    indigo: 'border-r-4 border-r-ds-primary',
+    purple: 'border-r-4 border-r-ds-primary',
+    emerald: 'border-r-4 border-r-ds-status-ok',
   },
 };
 
@@ -67,7 +67,7 @@ const Card = React.forwardRef<
     <div
       ref={ref}
       className={cn(
-        'rounded-lg border bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm',
+        'rounded-lg border border-ds-enterprise-line bg-ds-card text-ds-foreground shadow-sm',
         decorationClasses,
         className
       )}
@@ -110,7 +110,7 @@ const CardDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <p
     ref={ref}
-    className={cn('text-sm text-gray-500 dark:text-gray-400', className)}
+    className={cn('text-sm text-ds-muted-foreground', className)}
     {...props}
   />
 ));

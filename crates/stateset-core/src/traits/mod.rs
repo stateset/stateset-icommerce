@@ -1303,8 +1303,18 @@ pub trait CartRepository: Send + Sync {
     /// Begin checkout/payment process
     fn begin_checkout(&self, id: CartId) -> Result<Cart>;
 
-    /// Complete checkout (creates order, returns checkout result)
+    /// Complete checkout (creates order, returns checkout result).
+    ///
+    /// The minted order is `Confirmed` with payment left `Pending`; record the
+    /// payment through the payments API (or use
+    /// [`complete_settled_externally`](Self::complete_settled_externally) when
+    /// settlement genuinely happened out of band).
     fn complete(&self, id: CartId) -> Result<CheckoutResult>;
+
+    /// Complete checkout for a cart whose payment was settled outside the
+    /// engine (ACP, external PSP). Explicitly opts in to minting an order that
+    /// is `Confirmed` + `Paid` with no engine-side payment record.
+    fn complete_settled_externally(&self, id: CartId) -> Result<CheckoutResult>;
 
     /// Cancel a cart
     fn cancel(&self, id: CartId) -> Result<Cart>;

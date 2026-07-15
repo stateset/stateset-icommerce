@@ -116,7 +116,7 @@ pub fn router() -> Router<AppState> {
         .route("/payment-obligations/{id}/bills", post(link_bill))
 }
 
-#[utoipa::path(post, path = "/api/v1/payment-obligations", tag = "payment_obligations",
+#[utoipa::path(post, operation_id = "payment_obligations_create", path = "/api/v1/payment-obligations", tag = "payment_obligations",
     request_body = CreatePaymentObligationRequest,
     responses((status = 201, body = PaymentObligationResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -143,7 +143,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&o))))
 }
 
-#[utoipa::path(get, path = "/api/v1/payment-obligations", tag = "payment_obligations",
+#[utoipa::path(get, operation_id = "payment_obligations_list", path = "/api/v1/payment-obligations", tag = "payment_obligations",
     params(PaymentObligationFilterParams),
     responses((status = 200, body = PaymentObligationListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -189,7 +189,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/payment-obligations/dashboard", tag = "payment_obligations",
+#[utoipa::path(get, operation_id = "payment_obligations_dashboard", path = "/api/v1/payment-obligations/dashboard", tag = "payment_obligations",
     responses((status = 200, body = DashboardResponse)))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn dashboard(
@@ -208,7 +208,7 @@ pub(crate) async fn dashboard(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/payment-obligations/{id}", tag = "payment_obligations",
+#[utoipa::path(get, operation_id = "payment_obligations_get_one", path = "/api/v1/payment-obligations/{id}", tag = "payment_obligations",
     params(("id" = String, Path, description = "Payment obligation ID")),
     responses((status = 200, body = PaymentObligationResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -226,7 +226,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&o)))
 }
 
-#[utoipa::path(post, path = "/api/v1/payment-obligations/{id}/payments", tag = "payment_obligations",
+#[utoipa::path(post, operation_id = "payment_obligations_record_payment", path = "/api/v1/payment-obligations/{id}/payments", tag = "payment_obligations",
     request_body = RecordPaymentRequest,
     params(("id" = String, Path, description = "Payment obligation ID")),
     responses((status = 200, body = PaymentObligationResponse), (status = 400, body = ErrorBody)))]
@@ -244,7 +244,7 @@ pub(crate) async fn record_payment(
     )))
 }
 
-#[utoipa::path(post, path = "/api/v1/payment-obligations/{id}/status", tag = "payment_obligations",
+#[utoipa::path(post, operation_id = "payment_obligations_set_status", path = "/api/v1/payment-obligations/{id}/status", tag = "payment_obligations",
     request_body = SetStatusRequest,
     params(("id" = String, Path, description = "Payment obligation ID")),
     responses((status = 200, body = PaymentObligationResponse), (status = 400, body = ErrorBody)))]
@@ -261,7 +261,7 @@ pub(crate) async fn set_status(
     Ok(Json(to_resp(&c.payment_obligations().set_status(id, status)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/payment-obligations/{id}/bills", tag = "payment_obligations",
+#[utoipa::path(post, operation_id = "payment_obligations_link_bill", path = "/api/v1/payment-obligations/{id}/bills", tag = "payment_obligations",
     request_body = LinkBillRequest,
     params(("id" = String, Path, description = "Payment obligation ID")),
     responses((status = 200, body = PaymentObligationResponse)))]

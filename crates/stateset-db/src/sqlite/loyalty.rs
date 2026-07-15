@@ -264,10 +264,29 @@ impl LoyaltyProgramRepository for SqliteLoyaltyProgramRepository {
         let account_id_str = input.account_id.to_string();
 
         with_immediate_transaction(&self.pool, |tx| {
+            // Fetch the current balance inside the transaction (errors if the
+            // account does not exist).
+            let current_balance: i64 = tx.query_row(
+                "SELECT points_balance FROM loyalty_accounts WHERE id = ?",
+                [&account_id_str],
+                |row| row.get(0),
+            )?;
+
+            let new_balance = current_balance.checked_add(input.points).ok_or_else(|| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::ValidationError(
+                    "Points adjustment overflows".to_string(),
+                )))
+            })?;
+            if new_balance < 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Insufficient points balance".to_string()),
+                )));
+            }
+
             // Update the account balance
             tx.execute(
-                "UPDATE loyalty_accounts SET points_balance = points_balance + ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![input.points, &now_str, &account_id_str],
+                "UPDATE loyalty_accounts SET points_balance = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![new_balance, &now_str, &account_id_str],
             )?;
 
             // If earning points, also increment lifetime_points
@@ -491,5 +510,122 @@ mod tests {
         // Most recent first (ORDER BY created_at DESC)
         assert_eq!(txns[0].transaction_type, LoyaltyTransactionType::Redeem);
         assert_eq!(txns[1].transaction_type, LoyaltyTransactionType::Earn);
+    }
+
+    #[test]
+    fn adjust_points_rejects_overdraft() {
+        let repo = test_repo();
+        let program = repo
+            .create(CreateLoyaltyProgram {
+                name: "Overdraft Program".into(),
+                description: None,
+                points_per_dollar: 1,
+                tiers: vec![],
+            })
+            .expect("create program");
+        let account = repo
+            .enroll(EnrollCustomer { customer_id: CustomerId::new(), program_id: program.id })
+            .expect("enroll");
+
+        repo.adjust_points(AdjustPoints {
+            account_id: account.id,
+            points: 50,
+            transaction_type: LoyaltyTransactionType::Earn,
+            reference_id: None,
+            description: None,
+        })
+        .expect("earn");
+
+        // Redeeming more than the balance must fail, not go negative.
+        assert!(
+            repo.adjust_points(AdjustPoints {
+                account_id: account.id,
+                points: -100,
+                transaction_type: LoyaltyTransactionType::Redeem,
+                reference_id: None,
+                description: None,
+            })
+            .is_err()
+        );
+
+        let fetched = repo.get_account(account.id).expect("get").expect("found");
+        assert_eq!(fetched.points_balance, 50);
+        // No transaction record for the rejected redemption.
+        assert_eq!(repo.get_transactions(account.id, None).expect("txns").len(), 1);
+    }
+
+    #[test]
+    fn concurrent_redemptions_cannot_overdraw() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("db"));
+        let repo = SqliteLoyaltyProgramRepository::new(db.pool().clone());
+        let program = repo
+            .create(CreateLoyaltyProgram {
+                name: "Race Program".into(),
+                description: None,
+                points_per_dollar: 1,
+                tiers: vec![],
+            })
+            .expect("create program");
+        let account = repo
+            .enroll(EnrollCustomer { customer_id: CustomerId::new(), program_id: program.id })
+            .expect("enroll");
+        repo.adjust_points(AdjustPoints {
+            account_id: account.id,
+            points: 50,
+            transaction_type: LoyaltyTransactionType::Earn,
+            reference_id: None,
+            description: None,
+        })
+        .expect("earn");
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let account_id = account.id;
+            handles.push(thread::spawn(move || {
+                let repo = SqliteLoyaltyProgramRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.adjust_points(AdjustPoints {
+                    account_id,
+                    points: -30,
+                    transaction_type: LoyaltyTransactionType::Redeem,
+                    reference_id: None,
+                    description: None,
+                })
+            }));
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly one concurrent redemption should succeed: {results:?}");
+
+        let fetched = repo.get_account(account.id).expect("get").expect("found");
+        assert_eq!(fetched.points_balance, 20, "points overdrawn under concurrency");
+    }
+
+    #[test]
+    fn adjust_points_rejects_unknown_account() {
+        let repo = test_repo();
+        let ghost = LoyaltyAccountId::new();
+
+        assert!(
+            repo.adjust_points(AdjustPoints {
+                account_id: ghost,
+                points: 100,
+                transaction_type: LoyaltyTransactionType::Earn,
+                reference_id: None,
+                description: None,
+            })
+            .is_err()
+        );
+
+        // No orphaned transaction record for the nonexistent account.
+        assert!(repo.get_transactions(ghost, None).expect("txns").is_empty());
     }
 }

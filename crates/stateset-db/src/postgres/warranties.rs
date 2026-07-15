@@ -675,6 +675,25 @@ impl PgWarrantyRepository {
         let now = Utc::now();
         let claim_number = generate_claim_number();
 
+        // One transaction, limit-guarded increment first — the is_valid()
+        // pre-check above reads a snapshot, so concurrent claims would race
+        // past max_claims otherwise.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let rows = sqlx::query(
+            "UPDATE warranties SET claims_used = claims_used + 1, updated_at = $1
+             WHERE id = $2 AND (max_claims IS NULL OR claims_used < max_claims)",
+        )
+        .bind(now)
+        .bind(input.warranty_id.into_uuid())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::ValidationError("Warranty claim limit reached".to_string()));
+        }
+
         sqlx::query(
             "INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, status,
              resolution, issue_description, issue_category, issue_date, contact_phone, contact_email,
@@ -697,19 +716,11 @@ impl PgWarrantyRepository {
         .bind(now)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        // Increment claims_used
-        sqlx::query(
-            "UPDATE warranties SET claims_used = claims_used + 1, updated_at = $1 WHERE id = $2",
-        )
-        .bind(now)
-        .bind(input.warranty_id.into_uuid())
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -759,6 +770,30 @@ impl PgWarrantyRepository {
     ) -> Result<WarrantyClaim> {
         let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
+
+        // Payout guards: amounts must be non-negative, and the combined
+        // refund + repair payout must fit the warranty's coverage limit.
+        if input.refund_amount.is_some() || input.repair_cost.is_some() {
+            let new_refund = input.refund_amount.or(claim.refund_amount);
+            let new_repair = input.repair_cost.or(claim.repair_cost);
+            if new_refund.is_some_and(|a| a < Decimal::ZERO)
+                || new_repair.is_some_and(|a| a < Decimal::ZERO)
+            {
+                return Err(CommerceError::ValidationError(
+                    "Claim payout amounts must be non-negative".to_string(),
+                ));
+            }
+            let warranty =
+                self.get_async(claim.warranty_id).await?.ok_or(CommerceError::NotFound)?;
+            if let Some(max) = warranty.max_coverage_amount {
+                let total = new_refund.unwrap_or_default() + new_repair.unwrap_or_default();
+                if total > max {
+                    return Err(CommerceError::ValidationError(format!(
+                        "Claim payout {total} exceeds warranty coverage limit {max}"
+                    )));
+                }
+            }
+        }
 
         let status = input.status.unwrap_or(claim.status);
         if status != claim.status {

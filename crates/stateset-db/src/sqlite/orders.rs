@@ -982,22 +982,17 @@ impl OrderRepository for SqliteOrderRepository {
     }
 
     fn delete(&self, id: OrderId) -> Result<()> {
-        let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
-
-        tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
-        tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
-        tx.commit().map_err(map_db_error)?;
-        Ok(())
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])?;
+            tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()])?;
+            Ok(())
+        })
     }
 
     fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem> {
         validate_required_uuid("order.id", order_id.into_uuid())?;
         Self::validate_order_item_input(&item)?;
 
-        let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
         let item_id = OrderItemId::new();
         let item_total = OrderItem::calculate_total(
             item.quantity,
@@ -1006,29 +1001,31 @@ impl OrderRepository for SqliteOrderRepository {
             item.tax_amount.unwrap_or_default(),
         );
 
-        tx.execute(
-            "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
-                                      quantity, unit_price, discount, tax_amount, total)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                item_id.to_string(),
-                order_id.to_string(),
-                item.product_id.to_string(),
-                item.variant_id.map(|v| v.to_string()),
-                item.sku,
-                item.name,
-                item.quantity,
-                item.unit_price.to_string(),
-                item.discount.unwrap_or_default().to_string(),
-                item.tax_amount.unwrap_or_default().to_string(),
-                item_total.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
+                "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
+                                          quantity, unit_price, discount, tax_amount, total)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    item_id.to_string(),
+                    order_id.to_string(),
+                    item.product_id.to_string(),
+                    item.variant_id.map(|v| v.to_string()),
+                    item.sku,
+                    item.name,
+                    item.quantity,
+                    item.unit_price.to_string(),
+                    item.discount.unwrap_or_default().to_string(),
+                    item.tax_amount.unwrap_or_default().to_string(),
+                    item_total.to_string(),
+                ],
+            )?;
 
-        // Update order total
-        self.update_order_total(&tx, order_id)?;
-        tx.commit().map_err(map_db_error)?;
+            // Update order total
+            self.update_order_total(tx, order_id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            Ok(())
+        })?;
 
         Ok(OrderItem {
             id: item_id,
@@ -1046,17 +1043,16 @@ impl OrderRepository for SqliteOrderRepository {
     }
 
     fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
-        let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
-        tx.execute(
-            "DELETE FROM order_items WHERE id = ? AND order_id = ?",
-            [item_id.to_string(), order_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
+                "DELETE FROM order_items WHERE id = ? AND order_id = ?",
+                [item_id.to_string(), order_id.to_string()],
+            )?;
 
-        self.update_order_total(&tx, order_id)?;
-        tx.commit().map_err(map_db_error)?;
-        Ok(())
+            self.update_order_total(tx, order_id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            Ok(())
+        })
     }
 
     fn count(&self, filter: OrderFilter) -> Result<u64> {

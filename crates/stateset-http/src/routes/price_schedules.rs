@@ -118,7 +118,7 @@ pub fn router() -> Router<AppState> {
         .route("/price-schedules/{id}/entries", post(set_entry).get(list_entries))
 }
 
-#[utoipa::path(post, path = "/api/v1/price-schedules", tag = "price_schedules",
+#[utoipa::path(post, operation_id = "price_schedules_create", path = "/api/v1/price-schedules", tag = "price_schedules",
     request_body = CreatePriceScheduleRequest,
     responses((status = 201, body = PriceScheduleResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -149,7 +149,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&s))))
 }
 
-#[utoipa::path(get, path = "/api/v1/price-schedules", tag = "price_schedules",
+#[utoipa::path(get, operation_id = "price_schedules_list", path = "/api/v1/price-schedules", tag = "price_schedules",
     params(PriceScheduleFilterParams),
     responses((status = 200, body = PriceScheduleListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -179,7 +179,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/price-schedules/resolve", tag = "price_schedules",
+#[utoipa::path(get, operation_id = "price_schedules_resolve", path = "/api/v1/price-schedules/resolve", tag = "price_schedules",
     params(ResolveParams),
     responses((status = 200, body = ResolveResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -202,7 +202,7 @@ pub(crate) async fn resolve(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/price-schedules/{id}", tag = "price_schedules",
+#[utoipa::path(get, operation_id = "price_schedules_get_one", path = "/api/v1/price-schedules/{id}", tag = "price_schedules",
     params(("id" = String, Path, description = "Price schedule ID")),
     responses((status = 200, body = PriceScheduleResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -220,7 +220,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&s)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/price-schedules/{id}", tag = "price_schedules",
+#[utoipa::path(delete, operation_id = "price_schedules_delete_one", path = "/api/v1/price-schedules/{id}", tag = "price_schedules",
     params(("id" = String, Path, description = "Price schedule ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]
@@ -235,7 +235,7 @@ pub(crate) async fn delete_one(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(post, path = "/api/v1/price-schedules/{id}/entries", tag = "price_schedules",
+#[utoipa::path(post, operation_id = "price_schedules_set_entry", path = "/api/v1/price-schedules/{id}/entries", tag = "price_schedules",
     request_body = SetEntryRequest,
     params(("id" = String, Path, description = "Price schedule ID")),
     responses((status = 200, body = PriceScheduleEntryResponse), (status = 400, body = ErrorBody)))]
@@ -253,7 +253,7 @@ pub(crate) async fn set_entry(
     Ok(Json(entry_resp(&c.price_schedules().set_entry(id, product_id, price)?)))
 }
 
-#[utoipa::path(get, path = "/api/v1/price-schedules/{id}/entries", tag = "price_schedules",
+#[utoipa::path(get, operation_id = "price_schedules_list_entries", path = "/api/v1/price-schedules/{id}/entries", tag = "price_schedules",
     params(("id" = String, Path, description = "Price schedule ID")),
     responses((status = 200, body = [PriceScheduleEntryResponse])))]
 #[tracing::instrument(skip(state, headers))]

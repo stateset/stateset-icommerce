@@ -295,7 +295,12 @@ impl Carts {
         self.db.carts().begin_checkout(id)
     }
 
-    /// Complete the checkout and create an order
+    /// Complete the checkout and create an order.
+    ///
+    /// The minted order is `Confirmed` with payment left `Pending` — record
+    /// the payment through [`Payments`](crate::Payments), or use
+    /// [`complete_settled_externally`](Self::complete_settled_externally) when
+    /// settlement genuinely happened outside the engine.
     ///
     /// # Example
     ///
@@ -313,6 +318,20 @@ impl Carts {
     /// ```
     pub fn complete(&self, id: CartId) -> Result<CheckoutResult> {
         let result = self.db.carts().complete(id)?;
+        self.metrics.record_cart_checkout_completed(
+            &result.cart_id.to_string(),
+            &result.order_id.to_string(),
+        );
+        Ok(result)
+    }
+
+    /// Complete the checkout for a cart settled outside the engine (ACP,
+    /// external PSP): the minted order is `Confirmed` + `Paid` with no
+    /// engine-side payment record. This is an explicit opt-in — prefer
+    /// [`complete`](Self::complete) plus a payment record when the engine
+    /// processes the payment.
+    pub fn complete_settled_externally(&self, id: CartId) -> Result<CheckoutResult> {
+        let result = self.db.carts().complete_settled_externally(id)?;
         self.metrics.record_cart_checkout_completed(
             &result.cart_id.to_string(),
             &result.order_id.to_string(),

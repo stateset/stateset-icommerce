@@ -746,6 +746,7 @@ impl ServerBuilder {
         let bound_actor_id = self.bound_actor_id.clone();
         let generated_default_token = self.generated_default_token;
         let authz_enabled = self.authz_config.is_some();
+        let rate_limit_enabled = self.rate_limit.is_some();
         let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
         let addr = self.addr;
 
@@ -800,6 +801,23 @@ impl ServerBuilder {
             tracing::warn!(
                 "Request authorization is enabled for /api/v1/*; ensure x-actor-id is set by a trusted upstream"
             );
+        }
+        if !addr.ip().is_loopback() {
+            // Production baseline: authentication alone leaves every valid
+            // token with full API access, and no throttle at all.
+            if !authz_enabled {
+                tracing::warn!(
+                    "No authorization (RBAC) configured on a non-loopback bind: any valid \
+                     bearer token has full access to every /api/v1 route. Configure \
+                     ServerBuilder::with_authz for production deployments."
+                );
+            }
+            if !rate_limit_enabled {
+                tracing::warn!(
+                    "No rate limiting configured on a non-loopback bind. Configure \
+                     ServerBuilder::with_rate_limit for production deployments."
+                );
+            }
         }
 
         if metrics_token.is_some() {

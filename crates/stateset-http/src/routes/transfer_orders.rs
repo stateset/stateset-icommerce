@@ -106,7 +106,7 @@ pub fn router() -> Router<AppState> {
         .route("/transfer-orders/{id}/cancel", post(cancel))
 }
 
-#[utoipa::path(post, path = "/api/v1/transfer-orders", tag = "transfer_orders",
+#[utoipa::path(post, operation_id = "transfer_orders_create", path = "/api/v1/transfer-orders", tag = "transfer_orders",
     request_body = CreateTransferOrderRequest,
     responses((status = 201, body = TransferOrderResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -141,7 +141,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&t))))
 }
 
-#[utoipa::path(get, path = "/api/v1/transfer-orders", tag = "transfer_orders",
+#[utoipa::path(get, operation_id = "transfer_orders_list", path = "/api/v1/transfer-orders", tag = "transfer_orders",
     params(TransferOrderFilterParams),
     responses((status = 200, body = TransferOrderListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -173,7 +173,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/transfer-orders/{id}", tag = "transfer_orders",
+#[utoipa::path(get, operation_id = "transfer_orders_get_one", path = "/api/v1/transfer-orders/{id}", tag = "transfer_orders",
     params(("id" = String, Path, description = "Transfer order ID")),
     responses((status = 200, body = TransferOrderResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -191,7 +191,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&t)))
 }
 
-#[utoipa::path(post, path = "/api/v1/transfer-orders/{id}/ship", tag = "transfer_orders",
+#[utoipa::path(post, operation_id = "transfer_orders_ship", path = "/api/v1/transfer-orders/{id}/ship", tag = "transfer_orders",
     params(("id" = String, Path, description = "Transfer order ID")),
     responses((status = 200, body = TransferOrderResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -205,7 +205,7 @@ pub(crate) async fn ship(
     Ok(Json(to_resp(&c.transfer_orders().ship(id)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/transfer-orders/{id}/receive", tag = "transfer_orders",
+#[utoipa::path(post, operation_id = "transfer_orders_receive", path = "/api/v1/transfer-orders/{id}/receive", tag = "transfer_orders",
     request_body = ReceiveLineRequest,
     params(("id" = String, Path, description = "Transfer order ID")),
     responses((status = 200, body = TransferOrderResponse)))]
@@ -223,7 +223,7 @@ pub(crate) async fn receive(
     Ok(Json(to_resp(&t)))
 }
 
-#[utoipa::path(post, path = "/api/v1/transfer-orders/{id}/cancel", tag = "transfer_orders",
+#[utoipa::path(post, operation_id = "transfer_orders_cancel", path = "/api/v1/transfer-orders/{id}/cancel", tag = "transfer_orders",
     params(("id" = String, Path, description = "Transfer order ID")),
     responses((status = 200, body = TransferOrderResponse)))]
 #[tracing::instrument(skip(state, headers))]

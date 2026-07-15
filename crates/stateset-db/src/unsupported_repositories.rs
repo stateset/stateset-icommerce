@@ -8,8 +8,6 @@
 //! so the embedded layer's capability gate normally short-circuits before these
 //! are ever called — they exist to satisfy the trait's return type.
 
-#![cfg(feature = "postgres")]
-
 use rust_decimal::Decimal;
 use stateset_core::{
     ActivityLogEntry, ActivityLogFilter, ActivityLogId, ActivityLogRepository, ApplyPrepayment,
@@ -57,7 +55,7 @@ fn unsupported<T>(domain: &str) -> Result<T> {
 
 /// Channel repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedChannelRepository;
+pub(crate) struct UnsupportedChannelRepository;
 
 impl ChannelRepository for UnsupportedChannelRepository {
     fn create(&self, _input: CreateChannel) -> Result<Channel> {
@@ -88,7 +86,7 @@ impl ChannelRepository for UnsupportedChannelRepository {
 
 /// Company repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedCompanyRepository;
+pub(crate) struct UnsupportedCompanyRepository;
 
 impl CompanyRepository for UnsupportedCompanyRepository {
     fn create(&self, _input: CreateCompany) -> Result<Company> {
@@ -125,7 +123,7 @@ impl CompanyRepository for UnsupportedCompanyRepository {
 
 /// Transfer order repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedTransferOrderRepository;
+pub(crate) struct UnsupportedTransferOrderRepository;
 
 impl TransferOrderRepository for UnsupportedTransferOrderRepository {
     fn create(&self, _input: CreateTransferOrder) -> Result<TransferOrder> {
@@ -155,7 +153,7 @@ impl TransferOrderRepository for UnsupportedTransferOrderRepository {
 
 /// Units-of-measure repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedUnitOfMeasureRepository;
+pub(crate) struct UnsupportedUnitOfMeasureRepository;
 
 impl UnitOfMeasureRepository for UnsupportedUnitOfMeasureRepository {
     fn create_class(&self, _input: CreateUnitClass) -> Result<UnitClass> {
@@ -192,7 +190,7 @@ impl UnitOfMeasureRepository for UnsupportedUnitOfMeasureRepository {
 
 /// Production batch repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedProductionBatchRepository;
+pub(crate) struct UnsupportedProductionBatchRepository;
 
 impl ProductionBatchRepository for UnsupportedProductionBatchRepository {
     fn create(&self, _input: CreateProductionBatch) -> Result<ProductionBatch> {
@@ -232,7 +230,7 @@ impl ProductionBatchRepository for UnsupportedProductionBatchRepository {
 
 /// Supplier SKU repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedSupplierSkuRepository;
+pub(crate) struct UnsupportedSupplierSkuRepository;
 
 impl SupplierSkuRepository for UnsupportedSupplierSkuRepository {
     fn create(&self, _input: CreateSupplierSku) -> Result<SupplierSku> {
@@ -257,7 +255,7 @@ impl SupplierSkuRepository for UnsupportedSupplierSkuRepository {
 
 /// Vendor return repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedVendorReturnRepository;
+pub(crate) struct UnsupportedVendorReturnRepository;
 
 impl VendorReturnRepository for UnsupportedVendorReturnRepository {
     fn create(&self, _input: CreateVendorReturn) -> Result<VendorReturn> {
@@ -282,7 +280,7 @@ impl VendorReturnRepository for UnsupportedVendorReturnRepository {
 
 /// Vendor credit repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedVendorCreditRepository;
+pub(crate) struct UnsupportedVendorCreditRepository;
 
 impl VendorCreditRepository for UnsupportedVendorCreditRepository {
     fn create(&self, _input: CreateVendorCredit) -> Result<VendorCredit> {
@@ -314,7 +312,7 @@ impl VendorCreditRepository for UnsupportedVendorCreditRepository {
 
 /// Payment obligation repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedPaymentObligationRepository;
+pub(crate) struct UnsupportedPaymentObligationRepository;
 
 impl PaymentObligationRepository for UnsupportedPaymentObligationRepository {
     fn create(&self, _input: CreatePaymentObligation) -> Result<PaymentObligation> {
@@ -350,7 +348,7 @@ impl PaymentObligationRepository for UnsupportedPaymentObligationRepository {
 
 /// Price level repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedPriceLevelRepository;
+pub(crate) struct UnsupportedPriceLevelRepository;
 
 impl PriceLevelRepository for UnsupportedPriceLevelRepository {
     fn create(&self, _input: CreatePriceLevel) -> Result<PriceLevel> {
@@ -386,7 +384,7 @@ impl PriceLevelRepository for UnsupportedPriceLevelRepository {
 
 /// Prepayment repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedPrepaymentRepository;
+pub(crate) struct UnsupportedPrepaymentRepository;
 
 impl PrepaymentRepository for UnsupportedPrepaymentRepository {
     fn create(&self, _input: CreatePrepayment) -> Result<Prepayment> {
@@ -418,7 +416,7 @@ impl PrepaymentRepository for UnsupportedPrepaymentRepository {
 
 /// Price schedule repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedPriceScheduleRepository;
+pub(crate) struct UnsupportedPriceScheduleRepository;
 
 impl PriceScheduleRepository for UnsupportedPriceScheduleRepository {
     fn create(&self, _input: CreatePriceSchedule) -> Result<PriceSchedule> {
@@ -461,7 +459,7 @@ impl PriceScheduleRepository for UnsupportedPriceScheduleRepository {
 
 /// Activity log repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedActivityLogRepository;
+pub(crate) struct UnsupportedActivityLogRepository;
 
 impl ActivityLogRepository for UnsupportedActivityLogRepository {
     fn record(&self, _input: RecordActivity) -> Result<ActivityLogEntry> {
@@ -484,7 +482,7 @@ impl ActivityLogRepository for UnsupportedActivityLogRepository {
 
 /// Integration mapping repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedIntegrationMappingRepository;
+pub(crate) struct UnsupportedIntegrationMappingRepository;
 
 impl IntegrationMappingRepository for UnsupportedIntegrationMappingRepository {
     fn create(&self, _input: CreateIntegrationMapping) -> Result<IntegrationMapping> {
@@ -516,7 +514,7 @@ impl IntegrationMappingRepository for UnsupportedIntegrationMappingRepository {
 
 /// Inbound shipment repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedInboundShipmentRepository;
+pub(crate) struct UnsupportedInboundShipmentRepository;
 
 impl InboundShipmentRepository for UnsupportedInboundShipmentRepository {
     fn create(&self, _input: CreateInboundShipment) -> Result<InboundShipment> {
@@ -549,7 +547,7 @@ impl InboundShipmentRepository for UnsupportedInboundShipmentRepository {
 
 /// Purgatory repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedPurgatoryRepository;
+pub(crate) struct UnsupportedPurgatoryRepository;
 
 impl PurgatoryRepository for UnsupportedPurgatoryRepository {
     fn ingest(&self, _input: IngestOrder) -> Result<PurgatoryOrder> {
@@ -579,7 +577,7 @@ impl PurgatoryRepository for UnsupportedPurgatoryRepository {
 
 /// Print station repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedPrintStationRepository;
+pub(crate) struct UnsupportedPrintStationRepository;
 
 impl PrintStationRepository for UnsupportedPrintStationRepository {
     fn pair(&self, _input: CreatePrintStation) -> Result<PairStationResult> {
@@ -618,7 +616,7 @@ impl PrintStationRepository for UnsupportedPrintStationRepository {
 
 /// EDI document repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedEdiDocumentRepository;
+pub(crate) struct UnsupportedEdiDocumentRepository;
 
 impl EdiDocumentRepository for UnsupportedEdiDocumentRepository {
     fn create(&self, _input: CreateEdiDocument) -> Result<EdiDocument> {
@@ -645,7 +643,7 @@ impl EdiDocumentRepository for UnsupportedEdiDocumentRepository {
 
 /// Integration field-mapping repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedIntegrationFieldMappingRepository;
+pub(crate) struct UnsupportedIntegrationFieldMappingRepository;
 
 impl IntegrationFieldMappingRepository for UnsupportedIntegrationFieldMappingRepository {
     fn create(&self, _input: CreateIntegrationFieldMapping) -> Result<IntegrationFieldMapping> {
@@ -680,7 +678,7 @@ impl IntegrationFieldMappingRepository for UnsupportedIntegrationFieldMappingRep
 
 /// Topology snapshot repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedTopologySnapshotRepository;
+pub(crate) struct UnsupportedTopologySnapshotRepository;
 
 impl TopologySnapshotRepository for UnsupportedTopologySnapshotRepository {
     fn capture(&self, _input: CaptureTopologySnapshot) -> Result<TopologySnapshot> {
@@ -702,7 +700,7 @@ impl TopologySnapshotRepository for UnsupportedTopologySnapshotRepository {
 
 /// Stock snapshot repository shim that rejects all operations.
 #[derive(Debug, Default)]
-pub struct UnsupportedStockSnapshotRepository;
+pub(crate) struct UnsupportedStockSnapshotRepository;
 
 impl StockSnapshotRepository for UnsupportedStockSnapshotRepository {
     fn capture(&self, _input: CaptureStockSnapshot) -> Result<StockSnapshot> {

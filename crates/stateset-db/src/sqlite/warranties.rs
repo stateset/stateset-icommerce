@@ -3,6 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    with_immediate_transaction,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -633,9 +634,24 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let now = chrono::Utc::now();
         let claim_number = generate_claim_number();
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        // One IMMEDIATE transaction so concurrent claims serialize (with
+        // retry) instead of failing with SQLITE_BUSY.
+        with_immediate_transaction(&self.pool, |tx| {
+            // Enforce max_claims in the increment itself — the is_valid()
+            // pre-check above reads a snapshot, so concurrent claims would
+            // race past the limit otherwise.
+            let rows = tx.execute(
+                "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ?
+                     WHERE id = ? AND (max_claims IS NULL OR claims_used < max_claims)",
+                params![now.to_rfc3339(), input.warranty_id.to_string()],
+            )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Warranty claim limit reached".to_string()),
+                )));
+            }
+
+            tx.execute(
                 "INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, status,
                  resolution, issue_description, issue_category, issue_date, contact_phone, contact_email,
                  shipping_address, customer_notes, submitted_at, created_at, updated_at)
@@ -658,15 +674,10 @@ impl WarrantyRepository for SqliteWarrantyRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            ).map_err(map_db_error)?;
+            )?;
 
-            // Increment claims_used on warranty
-            conn.execute(
-                "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ? WHERE id = ?",
-                params![now.to_rfc3339(), input.warranty_id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
+            Ok(())
+        })?;
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
@@ -699,6 +710,29 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
         let now = chrono::Utc::now();
         let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
+
+        // Payout guards: amounts must be non-negative, and the combined
+        // refund + repair payout must fit the warranty's coverage limit.
+        if input.refund_amount.is_some() || input.repair_cost.is_some() {
+            let new_refund = input.refund_amount.or(claim.refund_amount);
+            let new_repair = input.repair_cost.or(claim.repair_cost);
+            if new_refund.is_some_and(|a| a < rust_decimal::Decimal::ZERO)
+                || new_repair.is_some_and(|a| a < rust_decimal::Decimal::ZERO)
+            {
+                return Err(CommerceError::ValidationError(
+                    "Claim payout amounts must be non-negative".to_string(),
+                ));
+            }
+            let warranty = self.get(claim.warranty_id)?.ok_or(CommerceError::NotFound)?;
+            if let Some(max) = warranty.max_coverage_amount {
+                let total = new_refund.unwrap_or_default() + new_repair.unwrap_or_default();
+                if total > max {
+                    return Err(CommerceError::ValidationError(format!(
+                        "Claim payout {total} exceeds warranty coverage limit {max}"
+                    )));
+                }
+            }
+        }
 
         let status = input.status.unwrap_or(claim.status);
         if status != claim.status {
@@ -1216,6 +1250,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 mod tests {
     use super::*;
     use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
     use stateset_core::{
         CreateWarranty, CreateWarrantyClaim, CustomerId, WarrantyClaimFilter, WarrantyFilter,
         WarrantyRepository, WarrantyStatus, WarrantyType,
@@ -1247,6 +1282,104 @@ mod tests {
             notes: None,
         })
         .expect("create warranty")
+    }
+
+    fn claim_input(warranty_id: stateset_core::WarrantyId) -> CreateWarrantyClaim {
+        CreateWarrantyClaim {
+            warranty_id,
+            issue_description: "It broke".into(),
+            issue_category: None,
+            issue_date: None,
+            contact_phone: None,
+            contact_email: None,
+            shipping_address: None,
+            customer_notes: None,
+        }
+    }
+
+    #[test]
+    fn update_claim_enforces_coverage_cap_and_nonnegative_amounts() {
+        let repo = fresh_repo();
+        let w = repo
+            .create(CreateWarranty {
+                customer_id: CustomerId::new(),
+                order_id: None,
+                order_item_id: None,
+                product_id: None,
+                sku: Some("CAPPED-1".into()),
+                serial_number: None,
+                warranty_type: Some(WarrantyType::Standard),
+                provider: None,
+                coverage_description: None,
+                purchase_date: None,
+                start_date: None,
+                end_date: None,
+                duration_months: Some(12),
+                max_coverage_amount: Some(dec!(100.00)),
+                deductible: None,
+                max_claims: None,
+                terms: None,
+                notes: None,
+            })
+            .expect("create warranty");
+        let claim = repo.create_claim(claim_input(w.id)).expect("claim");
+
+        // Negative payouts rejected.
+        let err = repo
+            .update_claim(
+                claim.id,
+                UpdateWarrantyClaim { refund_amount: Some(dec!(-5.00)), ..Default::default() },
+            )
+            .expect_err("negative refund rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        // A payout beyond the coverage cap is rejected.
+        let err = repo
+            .update_claim(
+                claim.id,
+                UpdateWarrantyClaim { refund_amount: Some(dec!(150.00)), ..Default::default() },
+            )
+            .expect_err("over-coverage refund rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        // Combined refund + repair must respect the cap.
+        repo.update_claim(
+            claim.id,
+            UpdateWarrantyClaim { refund_amount: Some(dec!(60.00)), ..Default::default() },
+        )
+        .expect("refund within cap");
+        let err = repo
+            .update_claim(
+                claim.id,
+                UpdateWarrantyClaim { repair_cost: Some(dec!(50.00)), ..Default::default() },
+            )
+            .expect_err("refund 60 + repair 50 exceeds 100 cap");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        // The exact remaining headroom is fine.
+        repo.update_claim(
+            claim.id,
+            UpdateWarrantyClaim { repair_cost: Some(dec!(40.00)), ..Default::default() },
+        )
+        .expect("repair within cap");
+    }
+
+    #[test]
+    fn create_claim_enforces_max_claims_at_record_time() {
+        let repo = fresh_repo();
+        let w = make_warranty(&repo, CustomerId::new());
+        assert_eq!(w.max_claims, Some(2));
+
+        repo.create_claim(claim_input(w.id)).expect("claim 1");
+        repo.create_claim(claim_input(w.id)).expect("claim 2");
+
+        // The limit must hold at the DB increment, not just in the pre-check —
+        // otherwise concurrent claims race past max_claims.
+        let err = repo.create_claim(claim_input(w.id)).expect_err("third claim rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        let fetched = repo.get(w.id).expect("ok").expect("found");
+        assert_eq!(fetched.claims_used, 2);
     }
 
     #[test]

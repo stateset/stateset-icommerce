@@ -83,7 +83,7 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
     <div className="container mx-auto py-8 max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Build &amp; Release</h1>
-        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+        <p className="text-sm text-ds-muted-foreground mt-1">
           What binary is running, where it came from, and whether the
           release pipeline signed it.
         </p>
@@ -95,7 +95,7 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
             <div className="text-sm">
               <Badge color="red">Engine unreachable</Badge>
             </div>
-            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+            <p className="mt-3 text-sm text-ds-muted-foreground">
               Could not fetch <code>/version</code>: {result.error}.
               Check that the engine is running and that
               <code className="mx-1">STATESET_API_URL</code> points to it.
@@ -107,7 +107,7 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold">Verification</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
+              <p className="text-sm text-ds-muted-foreground">
                 Trust signal for the running binary
               </p>
             </div>
@@ -121,7 +121,7 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
               </Badge>
             )}
           </CardHeader>
-          <CardContent className="text-sm text-gray-700 dark:text-gray-300">
+          <CardContent className="text-sm text-ds-foreground">
             {version!.signed ? (
               <p>
                 This binary was built by the StateSet release pipeline and
@@ -147,52 +147,52 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
           </CardHeader>
           <CardContent className="text-sm">
             <dl className="grid grid-cols-1 sm:grid-cols-3 gap-y-3 gap-x-4">
-              <dt className="font-medium text-gray-500 dark:text-gray-400">Version</dt>
+              <dt className="font-medium text-ds-muted-foreground">Version</dt>
               <dd className="sm:col-span-2 font-mono">{version!.version}</dd>
 
-              <dt className="font-medium text-gray-500 dark:text-gray-400">Release tag</dt>
+              <dt className="font-medium text-ds-muted-foreground">Release tag</dt>
               <dd className="sm:col-span-2 font-mono">
                 {version!.release_tag ? (
                   <a
                     href={releaseHref(version!.release_tag)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-indigo-600 dark:text-indigo-400 hover:underline"
+                    className="text-ds-primary hover:underline"
                   >
                     {version!.release_tag}
                   </a>
                 ) : (
-                  <span className="text-gray-400">Not set</span>
+                  <span className="text-ds-muted-foreground">Not set</span>
                 )}
               </dd>
 
-              <dt className="font-medium text-gray-500 dark:text-gray-400">Git commit</dt>
+              <dt className="font-medium text-ds-muted-foreground">Git commit</dt>
               <dd className="sm:col-span-2 font-mono">
                 {version!.git_commit ? (
                   <a
                     href={commitHref(version!.git_commit)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-indigo-600 dark:text-indigo-400 hover:underline"
+                    className="text-ds-primary hover:underline"
                   >
                     {shortenCommit(version!.git_commit)}
                   </a>
                 ) : (
-                  <span className="text-gray-400">Not set</span>
+                  <span className="text-ds-muted-foreground">Not set</span>
                 )}
               </dd>
 
-              <dt className="font-medium text-gray-500 dark:text-gray-400">Git ref</dt>
+              <dt className="font-medium text-ds-muted-foreground">Git ref</dt>
               <dd className="sm:col-span-2 font-mono">
-                {version!.git_ref ?? <span className="text-gray-400">Not set</span>}
+                {version!.git_ref ?? <span className="text-ds-muted-foreground">Not set</span>}
               </dd>
 
-              <dt className="font-medium text-gray-500 dark:text-gray-400">Built at</dt>
+              <dt className="font-medium text-ds-muted-foreground">Built at</dt>
               <dd className="sm:col-span-2 font-mono">
                 {version!.built_at ? (
                   <time dateTime={version!.built_at}>{version!.built_at}</time>
                 ) : (
-                  <span className="text-gray-400">Not set</span>
+                  <span className="text-ds-muted-foreground">Not set</span>
                 )}
               </dd>
             </dl>
@@ -204,7 +204,7 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
         <CardHeader>
           <h2 className="text-lg font-semibold">How signing works</h2>
         </CardHeader>
-        <CardContent className="text-sm text-gray-700 dark:text-gray-300 space-y-2">
+        <CardContent className="text-sm text-ds-foreground space-y-2">
           <p>
             Releases are built via GitHub Actions and signed via sigstore
             using OIDC keyless signing. The public transparency log

@@ -96,7 +96,7 @@ pub fn router() -> Router<AppState> {
         .route("/edi-documents/{id}/status", post(set_status))
 }
 
-#[utoipa::path(post, path = "/api/v1/edi-documents", tag = "edi_documents",
+#[utoipa::path(post, operation_id = "edi_documents_create", path = "/api/v1/edi-documents", tag = "edi_documents",
     request_body = CreateEdiDocumentRequest,
     responses((status = 201, body = EdiDocumentResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -122,7 +122,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&d))))
 }
 
-#[utoipa::path(get, path = "/api/v1/edi-documents", tag = "edi_documents",
+#[utoipa::path(get, operation_id = "edi_documents_list", path = "/api/v1/edi-documents", tag = "edi_documents",
     params(EdiDocumentFilterParams),
     responses((status = 200, body = EdiDocumentListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -158,7 +158,7 @@ pub(crate) async fn list(
     Ok(Json(EdiDocumentListResponse { documents: documents.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/edi-documents/summary", tag = "edi_documents",
+#[utoipa::path(get, operation_id = "edi_documents_summary", path = "/api/v1/edi-documents/summary", tag = "edi_documents",
     responses((status = 200, body = EdiSummaryResponse)))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn summary(
@@ -178,7 +178,7 @@ pub(crate) async fn summary(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/edi-documents/{id}", tag = "edi_documents",
+#[utoipa::path(get, operation_id = "edi_documents_get_one", path = "/api/v1/edi-documents/{id}", tag = "edi_documents",
     params(("id" = String, Path, description = "EDI document ID")),
     responses((status = 200, body = EdiDocumentResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -196,7 +196,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&d)))
 }
 
-#[utoipa::path(post, path = "/api/v1/edi-documents/{id}/status", tag = "edi_documents",
+#[utoipa::path(post, operation_id = "edi_documents_set_status", path = "/api/v1/edi-documents/{id}/status", tag = "edi_documents",
     request_body = SetStatusRequest,
     params(("id" = String, Path, description = "EDI document ID")),
     responses((status = 200, body = EdiDocumentResponse), (status = 400, body = ErrorBody)))]

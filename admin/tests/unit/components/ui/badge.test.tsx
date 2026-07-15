@@ -16,25 +16,25 @@ describe('Badge', () => {
   it('applies the default variant + size classes', () => {
     const { container } = render(<Badge>x</Badge>);
     const badge = container.firstChild as HTMLElement;
-    expect(badge.className).toMatch(/bg-gray-900/);
+    expect(badge.className).toMatch(/bg-ds-foreground/);
     expect(badge.className).toMatch(/px-2\.5/); // sm size default
   });
 
   it.each([
-    ['secondary', /bg-gray-100/],
-    ['destructive', /bg-red-500/],
-    ['outline', /text-gray-950/],
+    ['secondary', /bg-ds-muted/],
+    ['destructive', /bg-ds-destructive/],
+    ['outline', /text-ds-foreground/],
   ] as const)('applies the %s variant className', (variant, pattern) => {
     const { container } = render(<Badge variant={variant}>v</Badge>);
     expect((container.firstChild as HTMLElement).className).toMatch(pattern);
   });
 
   it.each([
-    ['red', /bg-red-100/],
-    ['green', /bg-green-100/],
-    ['blue', /bg-blue-100/],
-    ['amber', /bg-amber-100/],
-    ['indigo', /bg-indigo-100/],
+    ['red', /bg-ds-status-fail/],
+    ['green', /bg-ds-status-ok/],
+    ['blue', /bg-ds-status-run/],
+    ['amber', /bg-ds-status-warn/],
+    ['indigo', /bg-ds-brand-100/],
   ] as const)('applies the %s color className', (color, pattern) => {
     const { container } = render(<Badge color={color}>c</Badge>);
     expect((container.firstChild as HTMLElement).className).toMatch(pattern);

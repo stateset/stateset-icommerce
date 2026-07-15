@@ -79,6 +79,20 @@ jobs:
           print(f"Coverage {coverage}% meets threshold")
           PY
 
+      - name: Check stateset-db coverage floor
+        # Keep in sync with the db floor in ci.yml (baseline 52.05% on
+        # 2026-07-14). Runs LAST: each cargo-llvm-cov test invocation clears
+        # the shared profraw data, so this must not run between the workspace
+        # measurement and its report/threshold steps.
+        env:
+          STATESET_ALLOW_POSTGRES_SKIP: "1"
+        run: |
+          cargo llvm-cov \
+            -p stateset-db \
+            --fail-under-lines 50 \
+            --ignore-filename-regex '(/tests/|/benches/)' \
+            --summary-only
+
   benchmarks:
     name: Benchmarks
     runs-on: ubuntu-latest
@@ -123,6 +137,24 @@ jobs:
           cache: "npm"
           cache-dependency-path: cli/package-lock.json
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      # The CLI's E2E tests exercise `--db :memory:` flows through
+      # @stateset/embedded, which needs the locally built native binding —
+      # same setup as the CI workflow's `cli` job.
+      - name: Install embedded binding dependencies
+        working-directory: bindings/node
+        run: npm ci
+
+      - name: Build local embedded native binding
+        working-directory: bindings/node
+        run: npm run build:debug
+
       - name: Install dependencies
         working-directory: cli
         run: npm ci
@@ -137,9 +169,10 @@ jobs:
       - name: Check coverage threshold
         working-directory: cli
         run: |
-          # Node's --experimental-test-coverage outputs a summary like:
-          #   line % | branch % | function %
-          LINE_COV=$(grep -oP 'line.*?(\d+\.\d+)%' coverage-output.txt | grep -oP '\d+\.\d+' | head -1)
+          # Node's --experimental-test-coverage summary row looks like:
+          #   # all files | 85.94 | 86.70 | 89.63 |
+          # (columns: line %, branch %, funcs %; no % signs in the cells).
+          LINE_COV=$(grep -E 'all files' coverage-output.txt | grep -oP '\d+\.\d+' | head -1)
           echo "Line coverage: ${LINE_COV:-unknown}%"
           if [ -z "$LINE_COV" ]; then
             echo "::error::Could not determine CLI line coverage"
@@ -156,7 +189,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: cli-coverage
-          path: cli/coverage
+          # Node's built-in coverage reporter writes to stdout only; the tee'd
+          # transcript is the artifact (there is no cli/coverage directory).
+          path: cli/coverage-output.txt
           if-no-files-found: error
 
   node-bindings-coverage:

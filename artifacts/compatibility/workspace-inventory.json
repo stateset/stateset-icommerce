@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.6.0",
+    "version": "1.7.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -956,7 +956,7 @@
     "a2aModuleCount": 44
   },
   "admin": {
-    "dependencyCount": 25,
+    "dependencyCount": 26,
     "devDependencyCount": 18,
     "embeddedBindingSource": "file:../bindings/node"
   }

@@ -28,6 +28,10 @@ pub struct CommitmentManifest {
     #[serde(default = "default_signature_scheme")]
     pub signature_scheme: String,
     /// Hex-encoded Ed25519 public key of the signer.
+    ///
+    /// Supplied by the manifest itself and therefore untrusted input: it must
+    /// be bound to an operator trust anchor (see
+    /// [`crate::CommitmentTrustPolicy`]) before the manifest may be relied on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signer_public_key: Option<String>,
     /// Hex-encoded detached signature over the manifest hash.
@@ -194,6 +198,21 @@ pub fn sign_commitment_manifest(
 
 /// Verify a signed commitment manifest and return the retained verified record.
 ///
+/// # Security: this check is self-certifying
+///
+/// The signature is verified against the manifest's **own embedded**
+/// [`CommitmentManifest::signer_public_key`]. A success result therefore only
+/// proves the manifest is internally consistent — it does **not** prove the
+/// manifest was produced by a party you trust: anyone able to serve a manifest
+/// can sign it with a freshly generated key and pass this check.
+///
+/// Callers MUST additionally bind the returned
+/// [`VerifiedCommitmentManifest::signer_public_key`] to an out-of-band trust
+/// anchor. [`crate::SyncEngine::verify_commitment_manifest`] does this by
+/// enforcing the configured [`crate::CommitmentTrustPolicy`], which rejects
+/// all manifests by default until signer keys are pinned; prefer that entry
+/// point over calling this function directly.
+///
 /// # Errors
 ///
 /// Returns [`ManifestVerificationError`] if signature material is missing or invalid.
@@ -238,6 +257,14 @@ pub fn verify_commitment_manifest(
 }
 
 /// Verify that a signed commitment manifest is consistent with the engine's current remote state.
+///
+/// # Security: this check is self-certifying
+///
+/// Like [`verify_commitment_manifest`], the signature is checked against the
+/// manifest's own embedded signer key and establishes no signer authenticity
+/// on its own. Callers must additionally enforce a signer trust anchor (see
+/// [`crate::CommitmentTrustPolicy`]); prefer
+/// [`crate::SyncEngine::verify_commitment_manifest`], which does so.
 ///
 /// # Errors
 ///

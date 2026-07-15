@@ -146,7 +146,7 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Badge color="blue">{visible.length} shown</Badge>
-            <span className="text-sm text-gray-500">{orders.length} total</span>
+            <span className="text-sm text-ds-muted-foreground">{orders.length} total</span>
             {selected.size > 0 && (
               <Badge color="indigo">{selected.size} selected</Badge>
             )}
@@ -164,7 +164,7 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
             ))}
           </div>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2 border-t border-gray-100 dark:border-gray-800 pt-3">
+        <CardContent className="flex flex-wrap items-center gap-2 border-t border-ds-enterprise-line pt-3">
           <Button
             variant="outline"
             size="sm"
@@ -194,11 +194,11 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
           </Button>
         </CardContent>
         {errors.length > 0 && (
-          <CardContent className="border-t border-red-100 bg-red-50 dark:bg-red-900/20">
-            <p className="text-sm font-medium text-red-700 dark:text-red-300 mb-1">
+          <CardContent className="border-t border-ds-status-fail/25 bg-ds-status-fail/10">
+            <p className="text-sm font-medium text-ds-status-fail mb-1">
               {errors.length} failure{errors.length === 1 ? '' : 's'}:
             </p>
-            <ul className="text-xs font-mono text-red-700 dark:text-red-300 space-y-0.5">
+            <ul className="text-xs font-mono text-ds-status-fail space-y-0.5">
               {errors.map((e) => (
                 <li key={e}>{e}</li>
               ))}
@@ -210,12 +210,12 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
       <Card>
         <CardContent className="p-0">
           {visible.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            <div className="p-8 text-center text-sm text-ds-muted-foreground">
               No orders match the current filter.
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="border-b border-gray-100 dark:border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
+              <thead className="border-b border-ds-enterprise-line text-left text-xs uppercase tracking-wide text-ds-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 w-10">
                     <input
@@ -233,13 +233,13 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
                   <th className="px-4 py-3">Created</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              <tbody className="divide-y divide-ds-enterprise-line">
                 {visible.map((o) => {
                   const isSelected = selected.has(o.id);
                   return (
                     <tr
                       key={o.id}
-                      className={isSelected ? 'bg-indigo-50/40 dark:bg-indigo-900/10' : ''}
+                      className={isSelected ? 'bg-ds-brand-50' : ''}
                     >
                       <td className="px-4 py-3">
                         <input
@@ -258,7 +258,7 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
                       <td className="px-4 py-3">
                         <Badge color={STATUS_BADGE_COLOR[o.status]}>{o.status}</Badge>
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-500">
+                      <td className="px-4 py-3 text-xs text-ds-muted-foreground">
                         {o.createdAt.slice(0, 10)}
                       </td>
                     </tr>

@@ -117,7 +117,7 @@ pub fn router() -> Router<AppState> {
         .route("/inbound-shipments/{id}/cancel", post(cancel))
 }
 
-#[utoipa::path(post, path = "/api/v1/inbound-shipments", tag = "inbound_shipments",
+#[utoipa::path(post, operation_id = "inbound_shipments_create", path = "/api/v1/inbound-shipments", tag = "inbound_shipments",
     request_body = CreateInboundShipmentRequest,
     responses((status = 201, body = InboundShipmentResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -158,7 +158,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&s))))
 }
 
-#[utoipa::path(get, path = "/api/v1/inbound-shipments", tag = "inbound_shipments",
+#[utoipa::path(get, operation_id = "inbound_shipments_list", path = "/api/v1/inbound-shipments", tag = "inbound_shipments",
     params(InboundShipmentFilterParams),
     responses((status = 200, body = InboundShipmentListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -195,7 +195,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/inbound-shipments/{id}", tag = "inbound_shipments",
+#[utoipa::path(get, operation_id = "inbound_shipments_get_one", path = "/api/v1/inbound-shipments/{id}", tag = "inbound_shipments",
     params(("id" = String, Path, description = "Inbound shipment ID")),
     responses((status = 200, body = InboundShipmentResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -213,7 +213,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&s)))
 }
 
-#[utoipa::path(post, path = "/api/v1/inbound-shipments/{id}/in-transit", tag = "inbound_shipments",
+#[utoipa::path(post, operation_id = "inbound_shipments_mark_in_transit", path = "/api/v1/inbound-shipments/{id}/in-transit", tag = "inbound_shipments",
     params(("id" = String, Path, description = "Inbound shipment ID")),
     responses((status = 200, body = InboundShipmentResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -227,7 +227,7 @@ pub(crate) async fn mark_in_transit(
     Ok(Json(to_resp(&c.inbound_shipments().mark_in_transit(id)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/inbound-shipments/{id}/arrived", tag = "inbound_shipments",
+#[utoipa::path(post, operation_id = "inbound_shipments_mark_arrived", path = "/api/v1/inbound-shipments/{id}/arrived", tag = "inbound_shipments",
     params(("id" = String, Path, description = "Inbound shipment ID")),
     responses((status = 200, body = InboundShipmentResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -241,7 +241,7 @@ pub(crate) async fn mark_arrived(
     Ok(Json(to_resp(&c.inbound_shipments().mark_arrived(id)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/inbound-shipments/{id}/receive", tag = "inbound_shipments",
+#[utoipa::path(post, operation_id = "inbound_shipments_receive", path = "/api/v1/inbound-shipments/{id}/receive", tag = "inbound_shipments",
     request_body = ReceiveLineRequest,
     params(("id" = String, Path, description = "Inbound shipment ID")),
     responses((status = 200, body = InboundShipmentResponse), (status = 400, body = ErrorBody)))]
@@ -259,7 +259,7 @@ pub(crate) async fn receive(
     Ok(Json(to_resp(&c.inbound_shipments().receive_line(id, item_id, qty)?)))
 }
 
-#[utoipa::path(post, path = "/api/v1/inbound-shipments/{id}/cancel", tag = "inbound_shipments",
+#[utoipa::path(post, operation_id = "inbound_shipments_cancel", path = "/api/v1/inbound-shipments/{id}/cancel", tag = "inbound_shipments",
     params(("id" = String, Path, description = "Inbound shipment ID")),
     responses((status = 200, body = InboundShipmentResponse)))]
 #[tracing::instrument(skip(state, headers))]

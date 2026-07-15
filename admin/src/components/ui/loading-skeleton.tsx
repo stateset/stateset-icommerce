@@ -10,7 +10,7 @@ export function Skeleton({ className }: SkeletonProps) {
   return (
     <div
       className={cn(
-        'animate-pulse rounded-md bg-gray-200 dark:bg-gray-700',
+        'animate-pulse rounded-md bg-ds-muted',
         className
       )}
       aria-hidden="true"
@@ -31,7 +31,7 @@ export default function LoadingSkeleton({
     switch (type) {
       case 'metric':
         return (
-          <div className="p-4 rounded-lg border bg-white dark:bg-gray-900">
+          <div className="p-4 rounded-lg border border-ds-enterprise-line bg-ds-card">
             <Skeleton className="h-4 w-24 mb-2" />
             <Skeleton className="h-8 w-32" />
             <Skeleton className="h-3 w-16 mt-2" />
@@ -40,7 +40,7 @@ export default function LoadingSkeleton({
 
       case 'chart':
         return (
-          <div className="p-6 rounded-lg border bg-white dark:bg-gray-900">
+          <div className="p-6 rounded-lg border border-ds-enterprise-line bg-ds-card">
             <Skeleton className="h-6 w-48 mb-2" />
             <Skeleton className="h-4 w-64 mb-6" />
             <Skeleton className="h-64 w-full rounded" />
@@ -49,7 +49,7 @@ export default function LoadingSkeleton({
 
       case 'table':
         return (
-          <div className="p-6 rounded-lg border bg-white dark:bg-gray-900">
+          <div className="p-6 rounded-lg border border-ds-enterprise-line bg-ds-card">
             <Skeleton className="h-6 w-48 mb-4" />
             <div className="space-y-3">
               <Skeleton className="h-10 w-full" />
@@ -63,7 +63,7 @@ export default function LoadingSkeleton({
 
       case 'list':
         return (
-          <div className="p-6 rounded-lg border bg-white dark:bg-gray-900">
+          <div className="p-6 rounded-lg border border-ds-enterprise-line bg-ds-card">
             <Skeleton className="h-6 w-48 mb-4" />
             <div className="space-y-3">
               {[...Array(4)].map((_, i) => (
@@ -82,7 +82,7 @@ export default function LoadingSkeleton({
       case 'card':
       default:
         return (
-          <div className="p-6 rounded-lg border bg-white dark:bg-gray-900">
+          <div className="p-6 rounded-lg border border-ds-enterprise-line bg-ds-card">
             <Skeleton className="h-6 w-48 mb-2" />
             <Skeleton className="h-4 w-64 mb-4" />
             <Skeleton className="h-32 w-full rounded" />
@@ -109,7 +109,7 @@ export default function LoadingSkeleton({
  */
 export function AgentConfigSidebarSkeleton() {
   return (
-    <div className="flex flex-col w-72 border-l border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 p-4 space-y-4">
+    <div className="flex flex-col w-72 border-l border-ds-enterprise-line bg-ds-muted p-4 space-y-4">
       {/* Header */}
       <div className="space-y-2">
         <Skeleton className="h-5 w-32" />

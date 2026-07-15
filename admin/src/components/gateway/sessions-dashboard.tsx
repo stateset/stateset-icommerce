@@ -1,6 +1,17 @@
 'use client';
 
-import { Card, Title, Text, Badge, Grid, Metric } from '@tremor/react';
+import {
+  Card,
+  CardContent,
+  MetricCard,
+  StatusPill,
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@stateset/design';
 import { ServerStackIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
@@ -36,8 +47,8 @@ export default function SessionsDashboard() {
   if (!metrics) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center">
-        <ServerStackIcon className="w-12 h-12 text-gray-300 mb-4" />
-        <Text className="text-gray-500">Unable to connect to gateway</Text>
+        <ServerStackIcon className="w-12 h-12 text-ds-muted-foreground mb-4" />
+        <p className="text-sm text-ds-muted-foreground">Unable to connect to gateway</p>
       </div>
     );
   }
@@ -62,83 +73,72 @@ export default function SessionsDashboard() {
       className="space-y-6"
     >
       <div>
-        <Title className="text-2xl">Sessions</Title>
-        <Text className="text-gray-500">Active channel sessions and activity</Text>
+        <h3 className="font-ds-display text-2xl font-semibold text-ds-foreground">Sessions</h3>
+        <p className="text-sm text-ds-muted-foreground">Active channel sessions and activity</p>
       </div>
 
-      <Grid numItems={2} numItemsLg={4} className="gap-4">
-        <Card decoration="top" decorationColor="indigo">
-          <Text>Total Channels</Text>
-          <Metric className="text-xl">{channels.length}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="emerald">
-          <Text>Active</Text>
-          <Metric className="text-xl">{activeCount}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="gray">
-          <Text>Idle</Text>
-          <Metric className="text-xl">{channels.length - activeCount}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="blue">
-          <Text>Total Messages</Text>
-          <Metric className="text-xl">
-            {metrics.totals.messagesReceived.toLocaleString()}
-          </Metric>
-        </Card>
-      </Grid>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard label="Total Channels" value={channels.length} tone="primary" format="number" />
+        <MetricCard label="Active" value={activeCount} tone="success" format="number" />
+        <MetricCard label="Idle" value={channels.length - activeCount} format="number" />
+        <MetricCard
+          label="Total Messages"
+          value={metrics.totals.messagesReceived}
+          tone="accent"
+          format="number"
+        />
+      </div>
 
       <Card>
-        <Title className="text-lg mb-4">Channel Sessions</Title>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 dark:border-gray-700">
-                <th className="text-left py-2 px-3 text-gray-500 font-medium">Channel</th>
-                <th className="text-left py-2 px-3 text-gray-500 font-medium">Status</th>
-                <th className="text-right py-2 px-3 text-gray-500 font-medium">Messages</th>
-                <th className="text-right py-2 px-3 text-gray-500 font-medium">Responses</th>
-                <th className="text-right py-2 px-3 text-gray-500 font-medium">Errors</th>
-                <th className="text-right py-2 px-3 text-gray-500 font-medium">Avg Response</th>
-                <th className="text-left py-2 px-3 text-gray-500 font-medium">Last Active</th>
-              </tr>
-            </thead>
-            <tbody>
-              {channels.map(([name, stats]) => (
-                <tr
-                  key={name}
-                  className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900/50"
-                >
-                  <td className="py-3 px-3 font-medium">
-                    {DISPLAY_NAMES[name] || name}
-                  </td>
-                  <td className="py-3 px-3">
-                    <Badge
-                      color={stats.lastMessageAt ? 'emerald' : 'gray'}
-                      size="xs"
-                    >
-                      {stats.lastMessageAt ? 'Active' : 'Idle'}
-                    </Badge>
-                  </td>
-                  <td className="py-3 px-3 text-right">{stats.messagesReceived}</td>
-                  <td className="py-3 px-3 text-right">{stats.responsesSent}</td>
-                  <td className="py-3 px-3 text-right">
-                    <span className={stats.errors > 0 ? 'text-red-500' : ''}>
-                      {stats.errors}
-                    </span>
-                  </td>
-                  <td className="py-3 px-3 text-right">
-                    {Math.round(stats.avgResponseMs)}ms
-                  </td>
-                  <td className="py-3 px-3 text-gray-500">
-                    {stats.lastMessageAt
-                      ? formatRelativeTime(stats.lastMessageAt)
-                      : '-'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <CardContent>
+          <h3 className="font-ds-display text-lg font-semibold text-ds-foreground mb-4">
+            Channel Sessions
+          </h3>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Channel</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Messages</TableHead>
+                  <TableHead className="text-right">Responses</TableHead>
+                  <TableHead className="text-right">Errors</TableHead>
+                  <TableHead className="text-right">Avg Response</TableHead>
+                  <TableHead>Last Active</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {channels.map(([name, stats]) => (
+                  <TableRow key={name}>
+                    <TableCell className="font-medium text-ds-foreground">
+                      {DISPLAY_NAMES[name] || name}
+                    </TableCell>
+                    <TableCell>
+                      <StatusPill status={stats.lastMessageAt ? 'ok' : 'idle'}>
+                        {stats.lastMessageAt ? 'Active' : 'Idle'}
+                      </StatusPill>
+                    </TableCell>
+                    <TableCell tone="numeric">{stats.messagesReceived}</TableCell>
+                    <TableCell tone="numeric">{stats.responsesSent}</TableCell>
+                    <TableCell tone="numeric">
+                      <span className={stats.errors > 0 ? 'text-ds-status-fail' : ''}>
+                        {stats.errors}
+                      </span>
+                    </TableCell>
+                    <TableCell tone="numeric">
+                      {Math.round(stats.avgResponseMs)}ms
+                    </TableCell>
+                    <TableCell className="text-ds-muted-foreground">
+                      {stats.lastMessageAt
+                        ? formatRelativeTime(stats.lastMessageAt)
+                        : '-'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
       </Card>
     </motion.div>
   );

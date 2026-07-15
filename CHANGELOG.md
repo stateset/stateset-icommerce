@@ -6,7 +6,53 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-14
+
+### Changed
+- **BREAKING: cart checkout no longer marks orders paid without a payment
+  record.** `carts().complete()` now mints the order as `Confirmed` with
+  `payment_status: Pending`; record the payment through the payments API. The
+  previous mint-as-`Paid` behavior (for settlement that genuinely happens
+  outside the engine — ACP, external PSPs) is an explicit opt-in via the new
+  `carts().complete_settled_externally()` on both backends, the sync
+  `Commerce` facade, and `AsyncCommerce`. x402 checkout is unchanged — it
+  verifies settlement before marking paid. Rationale: a miswired integration
+  could previously revenue-recognize orders with no payment trail.
+
+### Security
+- **HTTP rate limiting is now per-client.** The single global token bucket
+  (one abusive client could starve every tenant) is replaced by independent
+  buckets keyed on peer IP, bounded at 10k tracked clients with
+  idle-first eviction. `serve()` now also warns at startup when a
+  non-loopback bind has no authorization config or no rate limit, and the
+  README documents the production security baseline.
+- **ICP ReplayGuard fails closed at capacity.** A guard full of live nonces
+  previously evicted the oldest to admit new ones, letting a nonce flood
+  flush a victim's nonce out of its §5.3 replay window; new messages are now
+  rejected instead while live entries are retained for their full TTL.
+
 ### Fixed
+- **Inventory: committed reservation mutations could surface as errors.** With
+  the default `events` feature, `reserve()`, `release_reservation()`, and
+  `confirm_reservation()` performed fallible balance/lookup reads after the
+  write had committed and propagated those errors to the caller. Under lock
+  contention a caller could see `Err` for a reservation that was durably
+  allocated (or retry a committed release, corrupting allocation accounting).
+  Post-commit event-support reads are now best-effort, logged on failure.
+  Found by the repaired oversell property test, which previously skipped the
+  over-reservation case and never exercised its assertions.
+- **SQLite: retry backoff jitter was identical across threads.** The
+  thread-local PRNG seeded from a just-created `Instant` (~0 in every thread),
+  so contending writers backed off in lockstep; now seeded from per-thread
+  `RandomState` entropy, with a regression test asserting cross-thread
+  decorrelation.
+- **SQLite: order `delete`/`add_item`/`remove_item` used DEFERRED
+  transactions without retry**, surfacing raw `SQLITE_BUSY` under write
+  contention; now on `with_immediate_transaction` like every other write path.
+- **HTTP: payment/refund/invoice-payment amounts arrived as IEEE-754 floats.**
+  `CreatePaymentRequest.amount`, `CreateRefundRequest.amount`, and
+  `RecordInvoicePaymentRequest.amount` are now exact `Decimal`s (string or
+  number on the wire), matching every response DTO.
 - **CI: trunk gates that had never run are now green.** gitleaks (required a
   nonexistent `GITLEAKS_LICENSE` org secret → pinned checksum-verified binary,
   82 historical findings triaged as false positives and allowlisted),

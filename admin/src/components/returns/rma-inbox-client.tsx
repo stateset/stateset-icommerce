@@ -154,7 +154,7 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Badge color="blue">{visible.length} shown</Badge>
-            <span className="text-sm text-gray-500">{returns.length} total</span>
+            <span className="text-sm text-ds-muted-foreground">{returns.length} total</span>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -187,14 +187,14 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
       <Card>
         <CardContent className="p-0">
           {visible.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            <div className="p-8 text-center text-sm text-ds-muted-foreground">
               {statusFilter === 'pending'
                 ? 'No pending returns. Switch to "All" to see refunded / rejected / closed records.'
                 : 'No returns yet.'}
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="border-b border-gray-100 dark:border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
+              <thead className="border-b border-ds-enterprise-line text-left text-xs uppercase tracking-wide text-ds-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 w-10">
                     <input
@@ -212,7 +212,7 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              <tbody className="divide-y divide-ds-enterprise-line">
                 {visible.map((r) => {
                   const row = rowStates[r.id] ?? { busy: false };
                   const isSelected = selected.has(r.id);
@@ -221,7 +221,7 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
                   const canReceive = r.status === 'approved';
                   const canRefund = r.status === 'received' || r.status === 'inspected';
                   return (
-                    <tr key={r.id} className={isSelected ? 'bg-indigo-50/40 dark:bg-indigo-900/10' : ''}>
+                    <tr key={r.id} className={isSelected ? 'bg-ds-brand-50' : ''}>
                       <td className="px-4 py-3">
                         <input
                           type="checkbox"
@@ -279,7 +279,7 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
                           </Button>
                         )}
                         {row.error && (
-                          <p className="text-xs text-red-600 mt-1 max-w-xs ml-auto">
+                          <p className="text-xs text-ds-status-fail mt-1 max-w-xs ml-auto">
                             {row.error}
                           </p>
                         )}

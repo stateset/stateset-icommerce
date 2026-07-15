@@ -102,7 +102,7 @@ pub fn router() -> Router<AppState> {
         .route("/price-levels/{id}/entries", post(set_entry).get(list_entries))
 }
 
-#[utoipa::path(post, path = "/api/v1/price-levels", tag = "price_levels",
+#[utoipa::path(post, operation_id = "price_levels_create", path = "/api/v1/price-levels", tag = "price_levels",
     request_body = CreatePriceLevelRequest,
     responses((status = 201, body = PriceLevelResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -133,7 +133,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&l))))
 }
 
-#[utoipa::path(get, path = "/api/v1/price-levels", tag = "price_levels",
+#[utoipa::path(get, operation_id = "price_levels_list", path = "/api/v1/price-levels", tag = "price_levels",
     params(PriceLevelFilterParams),
     responses((status = 200, body = PriceLevelListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -160,7 +160,7 @@ pub(crate) async fn list(
     Ok(Json(PriceLevelListResponse { price_levels: levels.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/price-levels/{id}", tag = "price_levels",
+#[utoipa::path(get, operation_id = "price_levels_get_one", path = "/api/v1/price-levels/{id}", tag = "price_levels",
     params(("id" = String, Path, description = "Price level ID")),
     responses((status = 200, body = PriceLevelResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -178,7 +178,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&l)))
 }
 
-#[utoipa::path(put, path = "/api/v1/price-levels/{id}", tag = "price_levels",
+#[utoipa::path(put, operation_id = "price_levels_update", path = "/api/v1/price-levels/{id}", tag = "price_levels",
     request_body = UpdatePriceLevelRequest,
     params(("id" = String, Path, description = "Price level ID")),
     responses((status = 200, body = PriceLevelResponse), (status = 400, body = ErrorBody)))]
@@ -209,7 +209,7 @@ pub(crate) async fn update(
     Ok(Json(to_resp(&c.price_levels().update(id, input)?)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/price-levels/{id}", tag = "price_levels",
+#[utoipa::path(delete, operation_id = "price_levels_delete_one", path = "/api/v1/price-levels/{id}", tag = "price_levels",
     params(("id" = String, Path, description = "Price level ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]
@@ -224,7 +224,7 @@ pub(crate) async fn delete_one(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(post, path = "/api/v1/price-levels/{id}/entries", tag = "price_levels",
+#[utoipa::path(post, operation_id = "price_levels_set_entry", path = "/api/v1/price-levels/{id}/entries", tag = "price_levels",
     request_body = SetEntryRequest,
     params(("id" = String, Path, description = "Price level ID")),
     responses((status = 200, body = PriceLevelEntryResponse), (status = 400, body = ErrorBody)))]
@@ -242,7 +242,7 @@ pub(crate) async fn set_entry(
     Ok(Json(entry_resp(&c.price_levels().set_entry(id, product_id, price)?)))
 }
 
-#[utoipa::path(get, path = "/api/v1/price-levels/{id}/entries", tag = "price_levels",
+#[utoipa::path(get, operation_id = "price_levels_list_entries", path = "/api/v1/price-levels/{id}/entries", tag = "price_levels",
     params(("id" = String, Path, description = "Price level ID")),
     responses((status = 200, body = [PriceLevelEntryResponse])))]
 #[tracing::instrument(skip(state, headers))]

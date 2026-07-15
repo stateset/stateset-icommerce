@@ -40,6 +40,10 @@ ful = "ful"
 # mirror the accepted `actives`/`cancelleds` siblings in the same test fns.
 pendings = "pendings"
 expireds = "expireds"
+# ZPL printer-language command (^FO = Field Origin) in print-station test payloads.
+FO = "FO"
+# `REORD-*` SKU prefixes in inventory reorder-point tests.
+REORD = "REORD"
 
 [default.extend-identifiers]
 # Proper noun (HashiCorp Vault) and an intentional acronym stylization

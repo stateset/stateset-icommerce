@@ -233,13 +233,22 @@ impl PgStoreCreditRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         // Fetch current balance inside transaction for consistency
-        let current_balance: Decimal = sqlx::query_scalar(
-            "SELECT current_balance FROM store_credits WHERE id = $1 FOR UPDATE",
+        let (current_balance, status_str): (Decimal, String) = sqlx::query_as(
+            "SELECT current_balance, status FROM store_credits WHERE id = $1 FOR UPDATE",
         )
         .bind(id)
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        let current_status: StoreCreditStatus = status_str.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid store_credit.status '{status_str}': {e}"))
+        })?;
+        if matches!(current_status, StoreCreditStatus::Voided | StoreCreditStatus::Expired) {
+            return Err(CommerceError::ValidationError(
+                "Cannot adjust a voided or expired store credit".to_string(),
+            ));
+        }
 
         let new_balance = current_balance + input.amount;
 
@@ -294,18 +303,35 @@ impl PgStoreCreditRepository {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<StoreCreditTransaction> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Apply amount must be positive".to_string(),
+            ));
+        }
+
         let now = Utc::now();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         // Lock the row and fetch current balance
-        let current_balance: Decimal = sqlx::query_scalar(
-            "SELECT current_balance FROM store_credits WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let (current_balance, status_str, expires_at): (Decimal, String, Option<DateTime<Utc>>) =
+            sqlx::query_as(
+                "SELECT current_balance, status, expires_at FROM store_credits WHERE id = $1 FOR UPDATE",
+            )
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        let current_status: StoreCreditStatus = status_str.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid store_credit.status '{status_str}': {e}"))
+        })?;
+        if current_status != StoreCreditStatus::Active {
+            return Err(CommerceError::ValidationError("Store credit is not active".to_string()));
+        }
+        if expires_at.is_some_and(|exp| exp < now) {
+            return Err(CommerceError::ValidationError("Store credit has expired".to_string()));
+        }
 
         if current_balance < amount {
             return Err(CommerceError::ValidationError(

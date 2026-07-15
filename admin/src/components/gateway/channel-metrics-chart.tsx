@@ -1,6 +1,7 @@
 'use client';
 
-import { Card, Title, Text, BarChart, DonutChart, Grid } from '@tremor/react';
+import { BarChart, DonutChart } from '@tremor/react';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@stateset/design';
 import type { GatewayMetrics } from '@/lib/types/gateway';
 
 interface ChannelMetricsChartProps {
@@ -20,56 +21,52 @@ export function ChannelMetricsChart({ metrics }: ChannelMetricsChartProps) {
     .filter((d) => d.value > 0);
 
   return (
-    <Grid numItems={1} numItemsLg={2} className="gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <Card>
-        <Title>Messages by Channel</Title>
-        <Text className="text-gray-500 mb-4">Received vs Sent per channel</Text>
-        {channelData.length > 0 ? (
-          <BarChart
-            className="h-72"
-            data={channelData}
-            index="channel"
-            categories={['Messages Received', 'Responses Sent', 'Errors']}
-            colors={['indigo', 'blue', 'red']}
-            showAnimation
-          />
-        ) : (
-          <div className="h-72 flex items-center justify-center">
-            <Text className="text-gray-400">No channel data available</Text>
-          </div>
-        )}
+        <CardHeader>
+          <CardTitle>Messages by Channel</CardTitle>
+          <CardDescription>Received vs Sent per channel</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {channelData.length > 0 ? (
+            <BarChart
+              className="h-72"
+              data={channelData}
+              index="channel"
+              categories={['Messages Received', 'Responses Sent', 'Errors']}
+              colors={['indigo', 'emerald', 'violet']}
+              showAnimation
+            />
+          ) : (
+            <div className="h-72 flex items-center justify-center">
+              <p className="text-sm text-ds-muted-foreground">No channel data available</p>
+            </div>
+          )}
+        </CardContent>
       </Card>
 
       <Card>
-        <Title>Traffic Distribution</Title>
-        <Text className="text-gray-500 mb-4">Share of messages by channel</Text>
-        {trafficDistribution.length > 0 ? (
-          <DonutChart
-            className="h-72"
-            data={trafficDistribution}
-            category="value"
-            index="name"
-            colors={[
-              'indigo',
-              'blue',
-              'purple',
-              'emerald',
-              'amber',
-              'red',
-              'pink',
-              'teal',
-              'cyan',
-              'sky',
-              'orange',
-            ]}
-            showAnimation
-          />
-        ) : (
-          <div className="h-72 flex items-center justify-center">
-            <Text className="text-gray-400">No traffic data available</Text>
-          </div>
-        )}
+        <CardHeader>
+          <CardTitle>Traffic Distribution</CardTitle>
+          <CardDescription>Share of messages by channel</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {trafficDistribution.length > 0 ? (
+            <DonutChart
+              className="h-72"
+              data={trafficDistribution}
+              category="value"
+              index="name"
+              colors={['indigo', 'emerald', 'violet', 'amber', 'cyan']}
+              showAnimation
+            />
+          ) : (
+            <div className="h-72 flex items-center justify-center">
+              <p className="text-sm text-ds-muted-foreground">No traffic data available</p>
+            </div>
+          )}
+        </CardContent>
       </Card>
-    </Grid>
+    </div>
   );
 }

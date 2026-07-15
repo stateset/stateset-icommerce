@@ -128,7 +128,7 @@ pub fn router() -> Router<AppState> {
         .route("/integration-field-mappings/{id}", get(get_one).put(update).delete(delete_one))
 }
 
-#[utoipa::path(post, path = "/api/v1/integration-field-mappings", tag = "integration_field_mappings",
+#[utoipa::path(post, operation_id = "integration_field_mappings_create", path = "/api/v1/integration-field-mappings", tag = "integration_field_mappings",
     request_body = CreateFieldMappingRequest,
     responses((status = 201, body = FieldMappingResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -143,7 +143,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&m))))
 }
 
-#[utoipa::path(post, path = "/api/v1/integration-field-mappings/bulk", tag = "integration_field_mappings",
+#[utoipa::path(post, operation_id = "integration_field_mappings_bulk_create", path = "/api/v1/integration-field-mappings/bulk", tag = "integration_field_mappings",
     request_body = BulkCreateRequest,
     responses((status = 200, body = BulkResultResponse)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -162,7 +162,7 @@ pub(crate) async fn bulk_create(
     Ok(Json(BulkResultResponse { affected }))
 }
 
-#[utoipa::path(delete, path = "/api/v1/integration-field-mappings/bulk", tag = "integration_field_mappings",
+#[utoipa::path(delete, operation_id = "integration_field_mappings_bulk_delete", path = "/api/v1/integration-field-mappings/bulk", tag = "integration_field_mappings",
     request_body = BulkDeleteRequest,
     responses((status = 200, body = BulkResultResponse)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -181,7 +181,7 @@ pub(crate) async fn bulk_delete(
     Ok(Json(BulkResultResponse { affected }))
 }
 
-#[utoipa::path(get, path = "/api/v1/integration-field-mappings", tag = "integration_field_mappings",
+#[utoipa::path(get, operation_id = "integration_field_mappings_list", path = "/api/v1/integration-field-mappings", tag = "integration_field_mappings",
     params(FieldMappingFilterParams),
     responses((status = 200, body = FieldMappingListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -209,7 +209,7 @@ pub(crate) async fn list(
     Ok(Json(FieldMappingListResponse { mappings: mappings.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/integration-field-mappings/groups", tag = "integration_field_mappings",
+#[utoipa::path(get, operation_id = "integration_field_mappings_groups", path = "/api/v1/integration-field-mappings/groups", tag = "integration_field_mappings",
     params(GroupsParams),
     responses((status = 200, body = [String])))]
 #[tracing::instrument(skip(state, headers))]
@@ -223,7 +223,7 @@ pub(crate) async fn groups(
     Ok(Json(c.integration_field_mappings().distinct_groups(&params.integration_account)?))
 }
 
-#[utoipa::path(get, path = "/api/v1/integration-field-mappings/{id}", tag = "integration_field_mappings",
+#[utoipa::path(get, operation_id = "integration_field_mappings_get_one", path = "/api/v1/integration-field-mappings/{id}", tag = "integration_field_mappings",
     params(("id" = String, Path, description = "Field mapping ID")),
     responses((status = 200, body = FieldMappingResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -241,7 +241,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&m)))
 }
 
-#[utoipa::path(put, path = "/api/v1/integration-field-mappings/{id}", tag = "integration_field_mappings",
+#[utoipa::path(put, operation_id = "integration_field_mappings_update", path = "/api/v1/integration-field-mappings/{id}", tag = "integration_field_mappings",
     request_body = UpdateFieldMappingRequest,
     params(("id" = String, Path, description = "Field mapping ID")),
     responses((status = 200, body = FieldMappingResponse), (status = 400, body = ErrorBody)))]
@@ -268,7 +268,7 @@ pub(crate) async fn update(
     Ok(Json(to_resp(&c.integration_field_mappings().update(id, input)?)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/integration-field-mappings/{id}", tag = "integration_field_mappings",
+#[utoipa::path(delete, operation_id = "integration_field_mappings_delete_one", path = "/api/v1/integration-field-mappings/{id}", tag = "integration_field_mappings",
     params(("id" = String, Path, description = "Field mapping ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]

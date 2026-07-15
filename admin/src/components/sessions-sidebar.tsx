@@ -13,42 +13,47 @@ import {
   PauseIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline';
+import { StatusPill, type StatusTone } from '@stateset/design';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime, truncate } from '@/lib/utils';
 import type { AgentSession, AgentSessionStatus, AgentSessionSummary } from '@/lib/types';
 
+// Map domain session states onto the design system's operational status vocabulary
+// (ok / run / warn / fail / review / idle) so sessions read the same as every
+// other status surface in the product.
+const STATUS_TONE: Record<AgentSessionStatus, StatusTone> = {
+  pending: 'review',
+  running: 'run',
+  rotating: 'run',
+  paused: 'warn',
+  completed: 'ok',
+  failed: 'fail',
+  cancelled: 'idle',
+};
+
+function statusTone(status: AgentSessionStatus): StatusTone {
+  return STATUS_TONE[status] ?? 'idle';
+}
+
 function getStatusIcon(status: AgentSessionStatus) {
   switch (status) {
     case 'running':
-      return <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />;
+      return <div className="h-2 w-2 animate-ds-soft-pulse rounded-full bg-ds-status-run" />;
     case 'pending':
-      return <ClockIcon className="w-3.5 h-3.5 text-amber-500" />;
+      return <ClockIcon className="h-3.5 w-3.5 text-ds-status-review" />;
     case 'rotating':
-      return <ArrowPathIcon className="w-3.5 h-3.5 text-blue-500 animate-spin" />;
+      return <ArrowPathIcon className="h-3.5 w-3.5 animate-spin text-ds-status-run" />;
     case 'paused':
-      return <PauseIcon className="w-3.5 h-3.5 text-amber-500" />;
+      return <PauseIcon className="h-3.5 w-3.5 text-ds-status-warn" />;
     case 'completed':
-      return <CheckCircleIcon className="w-3.5 h-3.5 text-gray-400" />;
+      return <CheckCircleIcon className="h-3.5 w-3.5 text-ds-status-ok" />;
     case 'failed':
-      return <ExclamationCircleIcon className="w-3.5 h-3.5 text-red-500" />;
+      return <ExclamationCircleIcon className="h-3.5 w-3.5 text-ds-status-fail" />;
     case 'cancelled':
-      return <XCircleIcon className="w-3.5 h-3.5 text-gray-400" />;
+      return <XCircleIcon className="h-3.5 w-3.5 text-ds-muted-foreground" />;
     default:
-      return <div className="w-2 h-2 bg-gray-400 rounded-full" />;
+      return <div className="h-2 w-2 rounded-full bg-ds-status-idle" />;
   }
-}
-
-function getStatusColor(status: AgentSessionStatus): string {
-  const colors: Record<AgentSessionStatus, string> = {
-    pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-    running: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-    rotating: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-    paused: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-    completed: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
-    failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-    cancelled: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
-  };
-  return colors[status] || 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400';
 }
 
 function formatDuration(seconds: number): string {
@@ -74,41 +79,36 @@ function SessionItem({ session, isSelected, onClick }: SessionItemProps) {
     <button
       onClick={onClick}
       className={cn(
-        'w-full text-left p-3 rounded-lg transition-all',
+        'ds-focus-ring w-full rounded-lg border p-3 text-left transition-all',
         isSelected
-          ? 'bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800'
-          : 'hover:bg-gray-50 dark:hover:bg-gray-800/50 border border-transparent'
+          ? 'border-ds-brand-200 bg-ds-brand-50 dark:border-ds-brand-700 dark:bg-ds-brand-950/30'
+          : 'border-transparent hover:bg-ds-muted'
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
           {getStatusIcon(session.status)}
-          <span className="text-xs font-mono text-gray-600 dark:text-gray-400 truncate">
+          <span className="truncate font-mono text-xs text-ds-muted-foreground">
             {truncate(session.id, 12)}
           </span>
         </div>
-        <ChevronRightIcon className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+        <ChevronRightIcon className="h-3.5 w-3.5 flex-shrink-0 text-ds-muted-foreground" />
       </div>
 
       {/* Session name or org */}
       {(session.name || session.org_name) && (
-        <div className="mt-1.5 text-xs font-medium text-gray-900 dark:text-white truncate">
+        <div className="mt-1.5 truncate text-xs font-medium text-ds-foreground">
           {session.name || session.org_name}
         </div>
       )}
 
-      <div className="mt-2 flex items-center gap-2 flex-wrap">
-        <span className={cn(
-          'text-[10px] font-medium px-1.5 py-0.5 rounded',
-          getStatusColor(session.status)
-        )}>
-          {session.status}
-        </span>
-        <span className="text-[10px] text-gray-500 dark:text-gray-500">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <StatusPill status={statusTone(session.status)}>{session.status}</StatusPill>
+        <span className="text-[10px] text-ds-muted-foreground">
           {session.total_exec_count} ops
         </span>
         {session.budget_consumed.cost_cents > 0 && (
-          <span className="text-[10px] text-gray-500 dark:text-gray-500">
+          <span className="text-[10px] text-ds-muted-foreground">
             {formatCost(session.budget_consumed.cost_cents)}
           </span>
         )}
@@ -116,17 +116,17 @@ function SessionItem({ session, isSelected, onClick }: SessionItemProps) {
 
       {/* Duration or error */}
       {session.error_message ? (
-        <div className="mt-1.5 text-[10px] text-red-500 truncate">
+        <div className="mt-1.5 truncate text-[10px] text-ds-destructive">
           {truncate(session.error_message, 40)}
         </div>
       ) : session.budget_consumed.duration_seconds > 0 && (
-        <div className="mt-1.5 text-[10px] text-gray-500 dark:text-gray-500">
+        <div className="mt-1.5 text-[10px] text-ds-muted-foreground">
           Duration: {formatDuration(session.budget_consumed.duration_seconds)}
         </div>
       )}
 
-      <div className="mt-1.5 flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-600">
-        <ClockIcon className="w-3 h-3" />
+      <div className="mt-1.5 flex items-center gap-1 text-[10px] text-ds-muted-foreground">
+        <ClockIcon className="h-3 w-3" />
         <span>{formatRelativeTime(session.last_activity_at)}</span>
       </div>
     </button>
@@ -226,42 +226,42 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
 
   return (
     <div className={cn(
-      'flex flex-col w-64 border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50',
+      'flex w-64 flex-col border-r border-ds-enterprise-line bg-ds-enterprise-surface',
       className
     )}>
       {/* Header */}
-      <div className="p-4 border-b border-gray-200 dark:border-gray-800">
-        <div className="flex items-center justify-between mb-3">
+      <div className="border-b border-ds-enterprise-line p-4">
+        <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <ChatBubbleLeftIcon className="w-4 h-4 text-gray-500" />
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Sessions</h2>
+            <ChatBubbleLeftIcon className="h-4 w-4 text-ds-muted-foreground" />
+            <h2 className="text-sm font-semibold text-ds-foreground">Sessions</h2>
           </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => { fetchSessions(); fetchSummary(); }}
-              className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              className="ds-focus-ring rounded-md p-1.5 transition-colors hover:bg-ds-muted"
               title="Refresh"
             >
-              <ArrowPathIcon className={cn("w-4 h-4 text-gray-500", isLoading && "animate-spin")} />
+              <ArrowPathIcon className={cn("h-4 w-4 text-ds-muted-foreground", isLoading && "animate-spin")} />
             </button>
             <button
-              className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              className="ds-focus-ring rounded-md p-1.5 transition-colors hover:bg-ds-muted"
               title="New Session"
             >
-              <PlusIcon className="w-4 h-4 text-gray-500" />
+              <PlusIcon className="h-4 w-4 text-ds-muted-foreground" />
             </button>
           </div>
         </div>
 
         {/* Search */}
         <div className="relative mb-2">
-          <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+          <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ds-muted-foreground" />
           <input
             type="text"
             placeholder="Search sessions..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+            className="ds-focus-ring w-full rounded-md border border-ds-input bg-ds-background py-1.5 pl-8 pr-3 text-xs text-ds-foreground placeholder:text-ds-muted-foreground"
           />
         </div>
 
@@ -269,7 +269,7 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as AgentSessionStatus | '')}
-          className="w-full px-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+          className="ds-focus-ring w-full rounded-md border border-ds-input bg-ds-background px-2 py-1.5 text-xs text-ds-foreground"
         >
           <option value="">All statuses</option>
           <option value="running">Running</option>
@@ -284,30 +284,30 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
       {/* Sessions List */}
       <div className="flex-1 overflow-y-auto" aria-busy={isLoading} aria-live="polite">
         {isLoading && sessions.length === 0 ? (
-          <div className="p-4 space-y-3">
+          <div className="space-y-3 p-4">
             {[...Array(3)].map((_, i) => (
               <div key={i} className="animate-pulse">
-                <div className="h-24 bg-gray-200 dark:bg-gray-800 rounded-lg" />
+                <div className="h-24 rounded-lg bg-ds-muted" />
               </div>
             ))}
           </div>
         ) : error ? (
           <div className="p-4 text-center">
-            <ExclamationCircleIcon className="w-8 h-8 mx-auto text-red-400" />
-            <p className="mt-2 text-xs text-red-500">{error}</p>
+            <ExclamationCircleIcon className="mx-auto h-8 w-8 text-ds-destructive/70" />
+            <p className="mt-2 text-xs text-ds-destructive">{error}</p>
             <button
               onClick={() => { fetchSessions(); fetchSummary(); }}
-              className="mt-2 text-xs text-indigo-500 hover:text-indigo-600"
+              className="mt-2 text-xs font-medium text-ds-primary hover:underline"
             >
               Try again
             </button>
           </div>
         ) : (
-          <div className="p-2 space-y-4">
+          <div className="space-y-4 p-2">
             {/* Active Sessions */}
             {activeSessions.length > 0 && (
               <div>
-                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-500">
+                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-ds-kicker text-ds-muted-foreground">
                   Active ({activeSessions.length})
                 </div>
                 <div className="space-y-1">
@@ -326,7 +326,7 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
             {/* Completed Sessions */}
             {completedSessions.length > 0 && (
               <div>
-                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-500">
+                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-ds-kicker text-ds-muted-foreground">
                   Recent ({completedSessions.length})
                 </div>
                 <div className="space-y-1">
@@ -344,9 +344,9 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
 
             {/* Empty State */}
             {sessions.length === 0 && !isLoading && (
-              <div className="text-center py-8 px-4">
-                <ChatBubbleLeftIcon className="w-8 h-8 mx-auto text-gray-300 dark:text-gray-600" />
-                <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
+              <div className="px-4 py-8 text-center">
+                <ChatBubbleLeftIcon className="mx-auto h-8 w-8 text-ds-muted-foreground/50" />
+                <p className="mt-2 text-xs text-ds-muted-foreground">
                   {searchQuery || statusFilter ? 'No sessions match your filters' : 'No sessions yet'}
                 </p>
               </div>
@@ -356,13 +356,13 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
       </div>
 
       {/* Footer Stats */}
-      <div className="p-3 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-500">
+      <div className="border-t border-ds-enterprise-line bg-ds-enterprise-raised p-3">
+        <div className="flex items-center justify-between text-[10px] text-ds-muted-foreground">
           <span>{summary?.total || sessions.length} total</span>
           <span>{summary?.active_now || activeSessions.length} active</span>
         </div>
         {summary && summary.avg_duration_seconds > 0 && (
-          <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-600">
+          <div className="mt-1 text-[10px] text-ds-muted-foreground">
             Avg duration: {formatDuration(Math.round(summary.avg_duration_seconds))}
           </div>
         )}

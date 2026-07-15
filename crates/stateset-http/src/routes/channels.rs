@@ -81,7 +81,7 @@ pub fn router() -> Router<AppState> {
         .route("/channels/{id}/lock", post(set_lock))
 }
 
-#[utoipa::path(post, path = "/api/v1/channels", tag = "channels",
+#[utoipa::path(post, operation_id = "channels_create", path = "/api/v1/channels", tag = "channels",
     request_body = CreateChannelRequest,
     responses((status = 201, body = ChannelResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -104,7 +104,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&ch))))
 }
 
-#[utoipa::path(get, path = "/api/v1/channels", tag = "channels",
+#[utoipa::path(get, operation_id = "channels_list", path = "/api/v1/channels", tag = "channels",
     params(ChannelFilterParams),
     responses((status = 200, body = ChannelListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -142,7 +142,7 @@ pub(crate) async fn list(
     Ok(Json(ChannelListResponse { channels: channels.iter().map(to_resp).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/channels/{id}", tag = "channels",
+#[utoipa::path(get, operation_id = "channels_get_one", path = "/api/v1/channels/{id}", tag = "channels",
     params(("id" = String, Path, description = "Channel ID")),
     responses((status = 200, body = ChannelResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -160,7 +160,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&ch)))
 }
 
-#[utoipa::path(put, path = "/api/v1/channels/{id}", tag = "channels",
+#[utoipa::path(put, operation_id = "channels_update", path = "/api/v1/channels/{id}", tag = "channels",
     request_body = UpdateChannelRequest,
     params(("id" = String, Path, description = "Channel ID")),
     responses((status = 200, body = ChannelResponse), (status = 403, body = ErrorBody)))]
@@ -189,7 +189,7 @@ pub(crate) async fn update(
     Ok(Json(to_resp(&ch)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/channels/{id}", tag = "channels",
+#[utoipa::path(delete, operation_id = "channels_delete_one", path = "/api/v1/channels/{id}", tag = "channels",
     params(("id" = String, Path, description = "Channel ID")),
     responses((status = 204, description = "Deleted"), (status = 403, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -204,7 +204,7 @@ pub(crate) async fn delete_one(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(post, path = "/api/v1/channels/{id}/lock", tag = "channels",
+#[utoipa::path(post, operation_id = "channels_set_lock", path = "/api/v1/channels/{id}/lock", tag = "channels",
     request_body = LockChannelRequest,
     params(("id" = String, Path, description = "Channel ID")),
     responses((status = 200, body = ChannelResponse)))]

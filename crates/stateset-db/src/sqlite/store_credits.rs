@@ -10,7 +10,8 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
     AdjustStoreCredit, CommerceError, CreateStoreCredit, Result, StoreCredit, StoreCreditFilter,
-    StoreCreditId, StoreCreditRepository, StoreCreditTransaction, StoreCreditTransactionId,
+    StoreCreditId, StoreCreditRepository, StoreCreditStatus, StoreCreditTransaction,
+    StoreCreditTransactionId,
 };
 
 #[derive(Debug)]
@@ -219,11 +220,20 @@ impl StoreCreditRepository for SqliteStoreCreditRepository {
         let now_str = Utc::now().to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
-            let current_balance_str: String = tx.query_row(
-                "SELECT current_balance FROM store_credits WHERE id = ?",
+            let (current_balance_str, status_str): (String, String) = tx.query_row(
+                "SELECT current_balance, status FROM store_credits WHERE id = ?",
                 [&id_str],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+
+            let status: StoreCreditStatus = parse_enum_row(&status_str, "store_credit", "status")?;
+            if matches!(status, StoreCreditStatus::Voided | StoreCreditStatus::Expired) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(
+                        "Cannot adjust a voided or expired store credit".to_string(),
+                    ),
+                )));
+            }
 
             let current_balance =
                 parse_decimal_row(&current_balance_str, "store_credit", "current_balance")?;
@@ -273,15 +283,45 @@ impl StoreCreditRepository for SqliteStoreCreditRepository {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<StoreCreditTransaction> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Apply amount must be positive".to_string(),
+            ));
+        }
+
         let id_str = id.to_string();
-        let now_str = Utc::now().to_rfc3339();
+        let now = Utc::now();
+        let now_str = now.to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
-            let current_balance_str: String = tx.query_row(
-                "SELECT current_balance FROM store_credits WHERE id = ?",
+            let (current_balance_str, status_str, expires_at_raw): (
+                String,
+                String,
+                Option<String>,
+            ) = tx.query_row(
+                "SELECT current_balance, status, expires_at FROM store_credits WHERE id = ?",
                 [&id_str],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
+
+            let status: StoreCreditStatus = parse_enum_row(&status_str, "store_credit", "status")?;
+            if status != StoreCreditStatus::Active {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Store credit is not active".to_string()),
+                )));
+            }
+
+            let expires_at = match expires_at_raw {
+                Some(s) if !s.is_empty() => {
+                    Some(parse_datetime_row(&s, "store_credit", "expires_at")?)
+                }
+                _ => None,
+            };
+            if expires_at.is_some_and(|exp| exp < now) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Store credit has expired".to_string()),
+                )));
+            }
 
             let current_balance =
                 parse_decimal_row(&current_balance_str, "store_credit", "current_balance")?;
@@ -353,7 +393,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use stateset_core::{CurrencyCode, CustomerId, StoreCreditReason, StoreCreditTransactionType};
 
-    fn test_repo() -> SqliteStoreCreditRepository {
+    fn test_db() -> SqliteDatabase {
         let db = SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("in-memory db");
         let conn = db.conn().expect("conn");
         conn.execute_batch(
@@ -383,7 +423,24 @@ mod tests {
             );",
         )
         .expect("create tables");
-        SqliteStoreCreditRepository::new(db.pool().clone())
+        db
+    }
+
+    fn test_repo() -> SqliteStoreCreditRepository {
+        SqliteStoreCreditRepository::new(test_db().pool().clone())
+    }
+
+    fn create_credit(repo: &SqliteStoreCreditRepository, amount: Decimal) -> StoreCredit {
+        repo.create(CreateStoreCredit {
+            customer_id: CustomerId::new(),
+            amount,
+            currency: CurrencyCode::USD,
+            reason: StoreCreditReason::Return,
+            reference_id: None,
+            note: None,
+            expires_at: None,
+        })
+        .expect("create")
     }
 
     #[test]
@@ -437,5 +494,113 @@ mod tests {
         let txns = repo.get_transactions(sc.id).expect("transactions");
         // Should have initial issue + apply = 2 transactions
         assert_eq!(txns.len(), 2);
+    }
+
+    #[test]
+    fn concurrent_applies_cannot_overspend() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(test_db());
+        let repo = SqliteStoreCreditRepository::new(db.pool().clone());
+        let sc = create_credit(&repo, dec!(50.00));
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let credit_id = sc.id;
+            handles.push(thread::spawn(move || {
+                let repo = SqliteStoreCreditRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.apply(credit_id, dec!(30.00), None)
+            }));
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly one concurrent apply should succeed: {results:?}");
+
+        let fetched = repo.get(sc.id).expect("get").expect("found");
+        assert_eq!(fetched.current_balance, dec!(20.00), "balance overspent under concurrency");
+    }
+
+    #[test]
+    fn apply_rejects_nonpositive_amount() {
+        let repo = test_repo();
+        let sc = create_credit(&repo, dec!(50.00));
+
+        // A negative apply must not mint balance.
+        assert!(repo.apply(sc.id, Decimal::ZERO, None).is_err());
+        assert!(repo.apply(sc.id, dec!(-10.00), None).is_err());
+
+        let fetched = repo.get(sc.id).expect("get").expect("found");
+        assert_eq!(fetched.current_balance, dec!(50.00));
+    }
+
+    #[test]
+    fn apply_rejects_date_expired_credit() {
+        let repo = test_repo();
+        let sc = repo
+            .create(CreateStoreCredit {
+                customer_id: CustomerId::new(),
+                amount: dec!(50.00),
+                currency: CurrencyCode::USD,
+                reason: StoreCreditReason::Return,
+                reference_id: None,
+                note: None,
+                expires_at: Some(Utc::now() - chrono::Duration::days(1)),
+            })
+            .expect("create");
+
+        // Status is still 'active' — only the expiry date has passed.
+        assert!(repo.apply(sc.id, dec!(10.00), None).is_err());
+
+        let fetched = repo.get(sc.id).expect("get").expect("found");
+        assert_eq!(fetched.current_balance, dec!(50.00));
+    }
+
+    #[test]
+    fn apply_rejects_voided_credit() {
+        let db = test_db();
+        let repo = SqliteStoreCreditRepository::new(db.pool().clone());
+        let sc = create_credit(&repo, dec!(50.00));
+
+        db.conn()
+            .expect("conn")
+            .execute("UPDATE store_credits SET status = 'voided' WHERE id = ?", [sc.id.to_string()])
+            .expect("void");
+
+        assert!(repo.apply(sc.id, dec!(10.00), None).is_err());
+
+        let fetched = repo.get(sc.id).expect("get").expect("found");
+        assert_eq!(fetched.current_balance, dec!(50.00));
+    }
+
+    #[test]
+    fn adjust_rejects_voided_credit() {
+        let db = test_db();
+        let repo = SqliteStoreCreditRepository::new(db.pool().clone());
+        let sc = create_credit(&repo, dec!(50.00));
+
+        db.conn()
+            .expect("conn")
+            .execute("UPDATE store_credits SET status = 'voided' WHERE id = ?", [sc.id.to_string()])
+            .expect("void");
+
+        // Adjusting a voided credit must not silently resurrect it.
+        assert!(
+            repo.adjust(
+                sc.id,
+                AdjustStoreCredit { amount: dec!(10.00), note: None, reference_id: None }
+            )
+            .is_err()
+        );
+
+        let fetched = repo.get(sc.id).expect("get").expect("found");
+        assert_eq!(fetched.status.to_string(), "voided");
+        assert_eq!(fetched.current_balance, dec!(50.00));
     }
 }

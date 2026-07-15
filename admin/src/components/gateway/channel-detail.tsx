@@ -1,16 +1,16 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import { AreaChart, ProgressBar } from '@tremor/react';
 import {
   Card,
-  Title,
-  Text,
-  Metric,
-  Grid,
-  AreaChart,
-  ProgressBar,
-  Badge,
-} from '@tremor/react';
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  MetricCard,
+  StatusPill,
+} from '@stateset/design';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getGatewayMetrics } from '@/lib/gateway-client';
@@ -80,16 +80,18 @@ export function ChannelDetail({ channelName, onBack }: ChannelDetailProps) {
         {onBack && (
           <button
             onClick={onBack}
-            className="flex items-center space-x-1 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+            className="flex items-center space-x-1 text-sm text-ds-muted-foreground hover:text-ds-foreground transition-colors"
           >
             <ArrowLeftIcon className="w-4 h-4" />
             <span>Back to channels</span>
           </button>
         )}
-        <Card className="p-8 text-center">
-          <Text className="text-gray-400">
-            No data available for channel: {channelName}
-          </Text>
+        <Card>
+          <CardContent className="p-8 text-center">
+            <p className="text-sm text-ds-muted-foreground">
+              No data available for channel: {channelName}
+            </p>
+          </CardContent>
         </Card>
       </div>
     );
@@ -106,7 +108,7 @@ export function ChannelDetail({ channelName, onBack }: ChannelDetailProps) {
       {onBack && (
         <button
           onClick={onBack}
-          className="flex items-center space-x-1 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+          className="flex items-center space-x-1 text-sm text-ds-muted-foreground hover:text-ds-foreground transition-colors"
         >
           <ArrowLeftIcon className="w-4 h-4" />
           <span>Back to channels</span>
@@ -114,76 +116,85 @@ export function ChannelDetail({ channelName, onBack }: ChannelDetailProps) {
       )}
 
       <div className="flex items-center justify-between">
-        <Title className="text-2xl">{displayName}</Title>
-        <Badge color={stats.lastMessageAt ? 'emerald' : 'gray'} size="sm">
+        <h3 className="font-ds-display text-2xl font-semibold text-ds-foreground">{displayName}</h3>
+        <StatusPill status={stats.lastMessageAt ? 'ok' : 'idle'}>
           {stats.lastMessageAt ? 'Online' : 'Idle'}
-        </Badge>
+        </StatusPill>
       </div>
 
       {/* KPI Row */}
-      <Grid numItems={2} numItemsLg={5} className="gap-4">
-        <Card decoration="top" decorationColor="indigo">
-          <Text>Messages</Text>
-          <Metric className="text-xl">{stats.messagesReceived.toLocaleString()}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="blue">
-          <Text>Responses</Text>
-          <Metric className="text-xl">{stats.responsesSent.toLocaleString()}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor={stats.errors > 0 ? 'red' : 'emerald'}>
-          <Text>Errors</Text>
-          <Metric className="text-xl">{stats.errors}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="amber">
-          <Text>Blocked</Text>
-          <Metric className="text-xl">{stats.blocked}</Metric>
-        </Card>
-        <Card decoration="top" decorationColor="emerald">
-          <Text>Avg Response</Text>
-          <Metric className="text-xl">{Math.round(stats.avgResponseMs)}ms</Metric>
-        </Card>
-      </Grid>
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <MetricCard
+          label="Messages"
+          value={stats.messagesReceived}
+          format="number"
+          tone="primary"
+        />
+        <MetricCard
+          label="Responses"
+          value={stats.responsesSent}
+          format="number"
+          tone="accent"
+        />
+        <MetricCard
+          label="Errors"
+          value={stats.errors}
+          tone={stats.errors > 0 ? 'danger' : 'success'}
+        />
+        <MetricCard label="Blocked" value={stats.blocked} tone="warning" />
+        <MetricCard
+          label="Avg Response"
+          value={`${Math.round(stats.avgResponseMs)}ms`}
+          tone="success"
+        />
+      </div>
 
       {/* Error Rate */}
       <Card>
-        <div className="flex items-center justify-between mb-2">
-          <Title className="text-lg">Error Rate</Title>
-          <Text className="font-semibold">{errorRate.toFixed(2)}%</Text>
-        </div>
-        <ProgressBar
-          value={Math.min(errorRate, 100)}
-          color={errorRate > 5 ? 'red' : errorRate > 1 ? 'amber' : 'emerald'}
-        />
+        <CardContent className="p-5">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Error Rate</h3>
+            <p className="text-sm font-semibold text-ds-foreground">{errorRate.toFixed(2)}%</p>
+          </div>
+          <ProgressBar
+            value={Math.min(errorRate, 100)}
+            color={errorRate > 5 ? 'red' : errorRate > 1 ? 'amber' : 'emerald'}
+          />
+        </CardContent>
       </Card>
 
       {/* Message Volume Chart */}
       <Card>
-        <Title>Message Volume (per interval)</Title>
-        <Text className="text-gray-500 mb-4">
-          New messages per 10-second polling interval
-        </Text>
-        {history.length > 1 ? (
-          <AreaChart
-            className="h-72"
-            data={history}
-            index="timestamp"
-            categories={['messagesReceived', 'responsesSent', 'errors']}
-            colors={['indigo', 'blue', 'red']}
-            showAnimation
-          />
-        ) : (
-          <div className="h-72 flex items-center justify-center">
-            <Text className="text-gray-400">Accumulating data...</Text>
-          </div>
-        )}
+        <CardHeader>
+          <CardTitle>Message Volume (per interval)</CardTitle>
+          <CardDescription>New messages per 10-second polling interval</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {history.length > 1 ? (
+            <AreaChart
+              className="h-72"
+              data={history}
+              index="timestamp"
+              categories={['messagesReceived', 'responsesSent', 'errors']}
+              colors={['indigo', 'emerald', 'violet']}
+              showAnimation
+            />
+          ) : (
+            <div className="h-72 flex items-center justify-center">
+              <p className="text-sm text-ds-muted-foreground">Accumulating data...</p>
+            </div>
+          )}
+        </CardContent>
       </Card>
 
       {/* Last Activity */}
       {stats.lastMessageAt && (
         <Card>
-          <Text className="text-gray-500">
-            Last activity: {formatRelativeTime(stats.lastMessageAt)}
-          </Text>
+          <CardContent className="p-5">
+            <p className="text-sm text-ds-muted-foreground">
+              Last activity: {formatRelativeTime(stats.lastMessageAt)}
+            </p>
+          </CardContent>
         </Card>
       )}
     </div>

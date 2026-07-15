@@ -1271,23 +1271,40 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn get_reorder_needed(&self) -> Result<Vec<StockLevel>> {
-        let skus = {
+        // `quantity_available` and `reorder_point` are TEXT decimals; comparing
+        // them in SQL with CAST(... AS REAL) coerces both operands to IEEE-754
+        // floats and can misclassify balances right at the reorder boundary,
+        // so the comparison happens on exact parsed `Decimal`s in Rust.
+        let candidates = {
             let conn = self.conn()?;
             let mut stmt = conn
                 .prepare(
-                    "SELECT DISTINCT i.sku FROM inventory_items i
+                    "SELECT i.sku, b.quantity_available, b.reorder_point
+                     FROM inventory_items i
                      JOIN inventory_balances b ON i.id = b.item_id
                      WHERE b.reorder_point IS NOT NULL
-                     AND CAST(b.quantity_available AS REAL) < CAST(b.reorder_point AS REAL)
                      AND i.is_active = 1",
                 )
                 .map_err(map_db_error)?;
 
-            stmt.query_map([], |row| row.get::<_, String>(0))
-                .map_err(map_db_error)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(map_db_error)?
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?
         };
+
+        let mut skus: Vec<String> = Vec::new();
+        for (sku, available, reorder_point) in candidates {
+            let available =
+                parse_decimal_strict(&available, "inventory_balance", "quantity_available")?;
+            let reorder_point =
+                parse_decimal_strict(&reorder_point, "inventory_balance", "reorder_point")?;
+            if available < reorder_point && !skus.contains(&sku) {
+                skus.push(sku);
+            }
+        }
 
         let mut result = Vec::with_capacity(skus.len());
         for sku in skus {
@@ -1907,6 +1924,43 @@ mod tests {
             reorder_point: Some(dec!(5)),
             safety_stock: Some(dec!(2)),
         }
+    }
+
+    #[test]
+    fn reorder_needed_compares_available_to_reorder_point_exactly() {
+        let repo = fresh_repo();
+        let below = repo.create_item(item("REORD-BELOW")).expect("create below");
+        let above = repo.create_item(item("REORD-ABOVE")).expect("create above");
+        {
+            let conn = repo.conn().expect("conn");
+            // Below the reorder point by 1e-18: both values round to the same
+            // f64, so a CAST-AS-REAL comparison would wrongly skip the reorder.
+            conn.execute(
+                "UPDATE inventory_balances
+                 SET quantity_available = '9.999999999999999999', reorder_point = '10'
+                 WHERE item_id = ?1",
+                rusqlite::params![below.id],
+            )
+            .expect("update below");
+            conn.execute(
+                "UPDATE inventory_balances
+                 SET quantity_available = '10.000000000000000001', reorder_point = '10'
+                 WHERE item_id = ?1",
+                rusqlite::params![above.id],
+            )
+            .expect("update above");
+        }
+
+        let needed = repo.get_reorder_needed().expect("ok");
+        let skus: Vec<&str> = needed.iter().map(|s| s.sku.as_str()).collect();
+        assert!(
+            skus.contains(&"REORD-BELOW"),
+            "9.999999999999999999 < 10 exactly, even though the f64s are equal"
+        );
+        assert!(
+            !skus.contains(&"REORD-ABOVE"),
+            "10.000000000000000001 is not below the reorder point"
+        );
     }
 
     #[test]

@@ -92,11 +92,6 @@ vi.mock('@tremor/react', () => {
     Card: Wrapper,
     Title: Wrapper,
     Text: Wrapper,
-    Tab: Wrapper,
-    TabGroup: Wrapper,
-    TabList: Wrapper,
-    TabPanel: Wrapper,
-    TabPanels: Wrapper,
     Grid: Wrapper,
     Metric: Wrapper,
     Badge: Wrapper,
@@ -104,6 +99,16 @@ vi.mock('@tremor/react', () => {
       <div data-testid="area-chart">{data.length}</div>
     ),
   };
+});
+
+// The component now uses the design system's (Radix-backed) Tabs, which only
+// mount the active panel. This test asserts content across multiple panels at
+// once to verify history accumulation, so render the ds Tabs parts as simple
+// passthroughs (everything else in @stateset/design stays real).
+vi.mock('@stateset/design', async (importActual) => {
+  const actual = await importActual<typeof import('@stateset/design')>();
+  const Pass = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
+  return { ...actual, Tabs: Pass, TabsList: Pass, TabsTrigger: Pass, TabsContent: Pass };
 });
 
 describe('MetricsDashboard', () => {

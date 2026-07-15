@@ -1,6 +1,6 @@
 # StateSet iCommerce Engine
 
-**The SQLite of Commerce** - An embedded, zero-dependency commerce engine for autonomous AI agents.
+**The SQLite of Commerce** - An embedded commerce engine for autonomous AI agents. No external services required — the engine, its database, and its event log run in your process.
 
 AI agents that reason, decide, and execute—replacing tickets, scripts, and manual operations across your entire commerce stack.
 
@@ -18,10 +18,11 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 > open spec and reference implementations of ICP-1.0 — the operational
 > lifecycle layer (quote, escrow, fulfillment, dispute, settlement)
 > that sits between checkout protocols (ACP/AP2) and payment rails
-> (x402/USDC). **40+ end-to-end tests pass on every CI run** across
-> HTTP handler, MCP server (Claude Desktop / Cursor / Windsurf), on-chain
-> custody contract, off-chain Settler daemon, and a cross-language
-> conformance suite. Start at **[ICP.md](./ICP.md)** or jump to the
+> (x402/USDC). **40+ end-to-end tests** across HTTP handler, MCP server
+> (Claude Desktop / Cursor / Windsurf), on-chain custody contract,
+> off-chain Settler daemon, and a cross-language conformance suite,
+> verified by the dedicated ICP conformance workflow whenever ICP code
+> changes. Start at **[ICP.md](./ICP.md)** or jump to the
 > **[partnership packet](./icp-spec/PACKET.md)**.
 
 ---
@@ -29,10 +30,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.6.0     # Python
-npm install @stateset/embedded@1.6.0     # Node.js
-npm install -g @stateset/cli@1.6.0       # CLI
-gem install stateset_embedded -v 1.6.0   # Ruby
+pip install stateset-embedded==1.7.0     # Python
+npm install @stateset/embedded@1.7.0     # Node.js
+npm install -g @stateset/cli@1.7.0       # CLI
+gem install stateset_embedded -v 1.7.0   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -71,7 +72,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.6.0](#whats-new-in-v160)
+- [What's New in v1.7.0](#whats-new-in-v170)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -167,7 +168,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.6.0 @stateset/cli@1.6.0
+npm install @stateset/embedded@1.7.0 @stateset/cli@1.7.0
 ```
 
 ```javascript
@@ -317,16 +318,39 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.6.0
+## What's New in v1.7.0
 
-**v1.6.0 completes three-language SDK symmetry on the ICP trust
-primitives.** The Rust and Python SDKs gain `verify_settlement_receipt`
-(mirroring the JS helper byte-for-byte), all three first-party SDKs now
-ship `registerWebhook` + `verifyWebhook` + `fetchChannelEvents` +
-`verifySettlementReceipt`, and operator-facing integration guides land
-under `icp-spec/guides/` (merchant integration, Settler implementation,
-ICPIP-0005 quickstart). See [`CHANGELOG.md`](./CHANGELOG.md) for the
-full entry.
+**v1.7.0 is a correctness and hardening release.**
+
+- **BREAKING: safe-by-default checkout.** `carts().complete()` now mints
+  orders as `Confirmed` with payment `Pending`; record payment through the
+  payments API. Out-of-band settlement (ACP, external PSPs) opts in
+  explicitly via the new `complete_settled_externally()` — on both
+  backends, `Commerce`, and `AsyncCommerce`. x402 checkout is unchanged.
+- **Exact-decimal money end to end.** Payment, refund, and invoice-payment
+  request amounts are `Decimal` on the wire (string or number), closing the
+  last IEEE-754 float path into the engine.
+- **Inventory reservation accounting fixes.** Committed
+  reserve/release/confirm operations can no longer surface as caller
+  errors under lock contention (previously a retrying caller could
+  double-release); found by the repaired oversell property test.
+- **Atomic checkout on Postgres.** Order promotion and cart completion
+  commit in a single transaction on both the standard and x402 paths.
+- **Security hardening.** Per-client HTTP rate limiting (keyed token
+  buckets, bounded memory), production-baseline startup warnings for
+  missing authz/rate-limit on non-loopback binds, and a fail-closed ICP
+  replay guard that never evicts live nonces under flood.
+- **Tighter CI.** `stateset-db` gains a ratcheting coverage floor and the
+  Postgres parity matrix auto-discovers its test files.
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for the full entry.
+
+**v1.6.0** completed three-language SDK symmetry on the ICP trust
+primitives: the Rust and Python SDKs gained `verify_settlement_receipt`
+(mirroring the JS helper byte-for-byte), all three first-party SDKs ship
+`registerWebhook` + `verifyWebhook` + `fetchChannelEvents` +
+`verifySettlementReceipt`, and operator-facing integration guides landed
+under `icp-spec/guides/`.
 
 ICP-1.0 ships **all seven core intent verbs** — 100% of the addressable
 commerce verb surface:
@@ -1038,6 +1062,24 @@ Order status updates enforce the core state machine (cancel before shipment, ref
 
 ## Production Notes
 
+**Security baseline for any non-loopback deployment** (the server warns at
+startup when these are missing):
+
+- **Authorization, not just authentication.** Bearer auth is on by default,
+  but without an authz config any valid token has full access to every
+  `/api/v1` route. Wire `ServerBuilder::with_authz(...)` (RBAC roles,
+  default-deny for unknown actors) so a leaked token has a scoped blast
+  radius.
+- **Per-client rate limiting.** Enable
+  `ServerBuilder::with_rate_limit(rps, burst)` — clients are keyed by peer
+  IP with independent token buckets, so one abusive client cannot starve
+  other tenants.
+- **Explicit CORS origins** via `STATESET_HTTP_ALLOWED_ORIGINS` (defaults
+  cover local development only), and a `/metrics` token or CIDR allowlist
+  for scrape access.
+
+Operational notes:
+
 - Payments are recorded as ledger events; integrate a PCI-compliant PSP for capture and store tokens/last4 only.
 - Sync is event-ordered and can surface conflicts; for order/payment state use a single writer or a sequenced event log.
 - Treat external processor IDs and webhook IDs as idempotency keys and de-dupe on ingest to avoid double charges/refunds.
@@ -1133,7 +1175,7 @@ Platform-specific notes that don't fit either:
   <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.6.0</version>
+    <version>1.7.0</version>
   </dependency>
   ```
 
@@ -1143,7 +1185,7 @@ Platform-specific notes that don't fit either:
   the autoloaded stubs throw at runtime.
 
 - **Swift** — Swift Package Manager is the supported path. CocoaPods is
-  community-maintained at `pod 'StateSet', '~> 1.6.0'`.
+  community-maintained at `pod 'StateSet', '~> 1.7.0'`.
 
 - **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
   that, `stateset --help` works anywhere.
@@ -1156,16 +1198,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.6.0"` | [docs.rs](https://docs.rs/stateset-sdk) |
-| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.6.0` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.7.0"` | [docs.rs](https://docs.rs/stateset-sdk) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.7.0` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
-| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.6.0'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
-| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.6.0")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
-| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.6.0")` | [GitHub](https://github.com/stateset/stateset-swift) |
-| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.6.0` / `<PackageReference Include="StateSet.Embedded" Version="1.6.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
-| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.6.0` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.7.0'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.7.0")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.7.0")` | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.7.0` / `<PackageReference Include="StateSet.Embedded" Version="1.7.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.7.0` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use

@@ -53,7 +53,7 @@ describe('Card', () => {
     );
     const card = screen.getByTestId('card');
     expect(card.className).toContain('border-t-4');
-    expect(card.className).toContain('border-t-red-500');
+    expect(card.className).toContain('border-t-ds-status-fail');
   });
 
   it('applies left decoration classes with default color', () => {
@@ -65,7 +65,7 @@ describe('Card', () => {
     );
     const card = screen.getByTestId('card');
     expect(card.className).toContain('border-l-4');
-    expect(card.className).toContain('border-l-indigo-500');
+    expect(card.className).toContain('border-l-ds-primary');
   });
 
   it('merges custom className', () => {

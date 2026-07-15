@@ -109,7 +109,7 @@ pub fn router() -> Router<AppState> {
         .route("/integration-mappings/{id}", get(get_one).put(update).delete(delete_one))
 }
 
-#[utoipa::path(post, path = "/api/v1/integration-mappings", tag = "integration_mappings",
+#[utoipa::path(post, operation_id = "integration_mappings_create", path = "/api/v1/integration-mappings", tag = "integration_mappings",
     request_body = CreateIntegrationMappingRequest,
     responses((status = 201, body = IntegrationMappingResponse)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -124,7 +124,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(to_resp(&m))))
 }
 
-#[utoipa::path(post, path = "/api/v1/integration-mappings/bulk", tag = "integration_mappings",
+#[utoipa::path(post, operation_id = "integration_mappings_bulk_create", path = "/api/v1/integration-mappings/bulk", tag = "integration_mappings",
     request_body = BulkCreateRequest,
     responses((status = 200, body = BulkResultResponse)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -140,7 +140,7 @@ pub(crate) async fn bulk_create(
     Ok(Json(BulkResultResponse { affected }))
 }
 
-#[utoipa::path(get, path = "/api/v1/integration-mappings", tag = "integration_mappings",
+#[utoipa::path(get, operation_id = "integration_mappings_list", path = "/api/v1/integration-mappings", tag = "integration_mappings",
     params(IntegrationMappingFilterParams),
     responses((status = 200, body = IntegrationMappingListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -171,7 +171,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/integration-mappings/resolve", tag = "integration_mappings",
+#[utoipa::path(get, operation_id = "integration_mappings_resolve", path = "/api/v1/integration-mappings/resolve", tag = "integration_mappings",
     params(ResolveParams),
     responses((status = 200, body = ResolveResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -192,7 +192,7 @@ pub(crate) async fn resolve(
     Ok(Json(ResolveResponse { internal_value }))
 }
 
-#[utoipa::path(get, path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
+#[utoipa::path(get, operation_id = "integration_mappings_get_one", path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
     params(("id" = String, Path, description = "Integration mapping ID")),
     responses((status = 200, body = IntegrationMappingResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -210,7 +210,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&m)))
 }
 
-#[utoipa::path(put, path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
+#[utoipa::path(put, operation_id = "integration_mappings_update", path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
     request_body = UpdateIntegrationMappingRequest,
     params(("id" = String, Path, description = "Integration mapping ID")),
     responses((status = 200, body = IntegrationMappingResponse)))]
@@ -230,7 +230,7 @@ pub(crate) async fn update(
     Ok(Json(to_resp(&c.integration_mappings().update(id, input)?)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
+#[utoipa::path(delete, operation_id = "integration_mappings_delete_one", path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
     params(("id" = String, Path, description = "Integration mapping ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]

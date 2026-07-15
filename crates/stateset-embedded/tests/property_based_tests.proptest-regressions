@@ -6,3 +6,8 @@
 # everyone who runs the test benefits from these saved cases.
 cc cae17c5403a0e89f367f08a7b006711ba75f432135292ffc0192ca229d8f170f # shrinks to initial_quantity = 0, reserve_quantities = [3056083906, 1238883390]
 cc 4e94b2e3c545a0fccb2c632968c446500d048e631a068aa7dca2adb7c7e9378d # shrinks to amount = -4
+cc c1f3c3bd8ee450a6e075de539d8ed09a4abfad86c72049585bbb7c2a694bfbd6 # shrinks to initial_quantity = 650, reserve_quantities = [365, 39, 170, 56, 663, 730, 640, 363, 673, 735, 59, 147, 751, 575, 378, 849, 990, 115, 270, 214, 302]
+cc 4f378d41112a84839abcf6121dabf563db826278a8b1572167829db93e15ffba # shrinks to initial_quantity = 979, reserve_quantities = [452, 688, 110, 541, 231, 494, 764, 356, 459, 307, 131, 579, 978, 764, 487, 299, 167, 406, 497, 610, 625, 439, 522, 407, 97, 799, 742, 32]
+cc b7c3c7112505ae40d3b897ed796927573e5bd46d3f5935f7210878e719071894 # shrinks to initial_quantity = 823, reserve_quantities = [353, 364, 565, 635, 222, 735, 592, 427, 350, 15, 197, 281, 474, 560, 305, 125, 580, 43, 587]
+cc 3c9d1c452f47e1f44db5034d514653fb0f07eff027be1653a8ab898bffa28cc3 # shrinks to initial_quantity = 312, reserve_quantities = [669, 51, 662, 200, 192, 396, 243, 361, 225, 40, 490, 408, 683, 147, 743, 982, 675, 1, 608, 456, 382, 151, 814, 620, 955, 754, 250, 290]
+cc 7d47767aaac069189b51c7acc5042fa827c92d0a15fc862eb1ed36c5bf8a38b9 # shrinks to initial_quantity = 928, reserve_quantities = [880, 488, 737, 631, 690, 180, 392, 799, 28, 428, 861, 735, 529, 257, 866, 223, 971, 579, 329, 427, 744, 712, 973, 693, 872, 256, 864, 835, 129, 228, 616, 267, 131, 944, 179, 406, 404, 781, 536, 37, 437, 297, 17, 653, 745, 769, 903]

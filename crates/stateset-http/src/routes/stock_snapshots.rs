@@ -117,7 +117,7 @@ pub fn router() -> Router<AppState> {
         .route("/stock-snapshots/{id}", get(get_one).delete(delete_one))
 }
 
-#[utoipa::path(post, path = "/api/v1/stock-snapshots", tag = "stock_snapshots",
+#[utoipa::path(post, operation_id = "stock_snapshots_capture", path = "/api/v1/stock-snapshots", tag = "stock_snapshots",
     request_body = CaptureRequest,
     responses((status = 201, body = SnapshotResponse), (status = 400, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
@@ -143,7 +143,7 @@ pub(crate) async fn capture(
     Ok((StatusCode::CREATED, Json(to_resp(&s))))
 }
 
-#[utoipa::path(get, path = "/api/v1/stock-snapshots", tag = "stock_snapshots",
+#[utoipa::path(get, operation_id = "stock_snapshots_list", path = "/api/v1/stock-snapshots", tag = "stock_snapshots",
     params(SnapshotFilterParams),
     responses((status = 200, body = SnapshotListResponse)))]
 #[tracing::instrument(skip(state, headers))]
@@ -163,7 +163,7 @@ pub(crate) async fn list(
     Ok(Json(SnapshotListResponse { snapshots: snapshots.iter().map(summary).collect(), total }))
 }
 
-#[utoipa::path(get, path = "/api/v1/stock-snapshots/latest", tag = "stock_snapshots",
+#[utoipa::path(get, operation_id = "stock_snapshots_latest", path = "/api/v1/stock-snapshots/latest", tag = "stock_snapshots",
     responses((status = 200, body = SnapshotResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn latest(
@@ -179,7 +179,7 @@ pub(crate) async fn latest(
     Ok(Json(to_resp(&s)))
 }
 
-#[utoipa::path(get, path = "/api/v1/stock-snapshots/{id}", tag = "stock_snapshots",
+#[utoipa::path(get, operation_id = "stock_snapshots_get_one", path = "/api/v1/stock-snapshots/{id}", tag = "stock_snapshots",
     params(("id" = String, Path, description = "Stock snapshot ID")),
     responses((status = 200, body = SnapshotResponse), (status = 404, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
@@ -197,7 +197,7 @@ pub(crate) async fn get_one(
     Ok(Json(to_resp(&s)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/stock-snapshots/{id}", tag = "stock_snapshots",
+#[utoipa::path(delete, operation_id = "stock_snapshots_delete_one", path = "/api/v1/stock-snapshots/{id}", tag = "stock_snapshots",
     params(("id" = String, Path, description = "Stock snapshot ID")),
     responses((status = 204, description = "Deleted")))]
 #[tracing::instrument(skip(state, headers))]
