@@ -459,8 +459,8 @@ impl PgCostAccountingRepository {
             .bind(&input.sku)
             .bind(cost_method.to_string())
             .bind(standard_cost)
-            .bind(Decimal::ZERO)
-            .bind(Decimal::ZERO)
+            .bind(standard_cost) // average_cost starts as standard (matches SQLite)
+            .bind(standard_cost) // last_cost starts as standard (matches SQLite)
             .bind(material_cost)
             .bind(labor_cost)
             .bind(overhead_cost)
@@ -526,15 +526,29 @@ impl PgCostAccountingRepository {
             .await?;
         }
 
-        let (current_qty, current_avg): (Decimal, Decimal) = sqlx::query_as(
-            "SELECT
-                COALESCE((SELECT SUM(quantity_on_hand) FROM inventory_items WHERE sku = $1), 0),
-                COALESCE(average_cost, 0)
-             FROM item_costs WHERE sku = $2",
+        // Lock the item_costs row and compute the new weighted average inside one
+        // transaction, so two concurrent receipts for the same SKU serialize
+        // instead of both reading the same `average_cost` and one clobbering the
+        // other — a lost update that corrupts the weighted-average cost.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let (current_avg,): (Decimal,) = sqlx::query_as(
+            "SELECT COALESCE(average_cost, 0) FROM item_costs WHERE sku = $1 FOR UPDATE",
         )
         .bind(sku)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        // On-hand quantity lives in `inventory_balances` (per location), keyed by
+        // `item_id`; `inventory_items` has no `quantity_on_hand` column, so the
+        // previous query errored on every call. Sum the balances for the SKU.
+        let (current_qty,): (Decimal,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(b.quantity_on_hand), 0) FROM inventory_balances b
+             JOIN inventory_items i ON b.item_id = i.id WHERE i.sku = $1",
+        )
         .bind(sku)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -552,9 +566,11 @@ impl PgCostAccountingRepository {
         .bind(unit_cost)
         .bind(now)
         .bind(sku)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_item_cost_async(sku).await?.ok_or(CommerceError::NotFound)
     }

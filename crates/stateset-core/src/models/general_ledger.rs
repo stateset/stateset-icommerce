@@ -622,6 +622,12 @@ pub struct AutoPostingConfig {
     pub shipping_revenue_account_id: Option<Uuid>,
     pub cogs_account_id: Uuid,
     pub bad_debt_expense_account_id: Option<Uuid>,
+    /// Auto-post a journal entry when fixed-asset depreciation is posted.
+    #[serde(default)]
+    pub auto_post_depreciation: bool,
+    /// Auto-post a journal entry when deferred revenue is recognized.
+    #[serde(default)]
+    pub auto_post_revenue_recognition: bool,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -832,6 +838,12 @@ pub struct CreateAutoPostingConfig {
     pub shipping_revenue_account_id: Option<Uuid>,
     pub cogs_account_id: Uuid,
     pub bad_debt_expense_account_id: Option<Uuid>,
+    /// Auto-post a journal entry when fixed-asset depreciation is posted (default off).
+    #[serde(default)]
+    pub auto_post_depreciation: bool,
+    /// Auto-post a journal entry when deferred revenue is recognized (default off).
+    #[serde(default)]
+    pub auto_post_revenue_recognition: bool,
 }
 
 // ============================================================================

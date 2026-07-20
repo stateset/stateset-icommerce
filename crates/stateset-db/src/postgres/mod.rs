@@ -18,22 +18,27 @@ mod credit;
 mod currency;
 mod custom_objects;
 mod customers;
+mod fixed_assets;
 mod fraud;
 mod fulfillment;
 mod general_ledger;
 mod gift_cards;
+mod inbound_shipments;
 mod inventory;
 mod invoices;
 mod lots;
 mod loyalty;
 mod orders;
 mod payments;
+mod print_stations;
+mod production_batches;
 mod products;
 mod promotions;
 mod purchase_orders;
 mod quality;
 mod receiving;
 mod returns;
+mod revenue_recognition;
 mod reviews;
 mod rewards;
 mod search_configs;
@@ -41,9 +46,15 @@ mod segments;
 mod serials;
 mod shipments;
 mod shipping_zones;
+mod stock_snapshots;
 mod store_credits;
 mod subscriptions;
+mod supplier_skus;
 mod tax;
+mod transfer_orders;
+mod units_of_measure;
+mod vendor_credits;
+mod vendor_returns;
 mod warehouse;
 mod warranties;
 mod wishlists;
@@ -68,22 +79,27 @@ pub use credit::*;
 pub use currency::*;
 pub use custom_objects::*;
 pub use customers::*;
+pub use fixed_assets::*;
 pub use fraud::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
 pub use gift_cards::*;
+pub use inbound_shipments::*;
 pub use inventory::*;
 pub use invoices::*;
 pub use lots::*;
 pub use loyalty::*;
 pub use orders::*;
 pub use payments::*;
+pub use print_stations::*;
+pub use production_batches::*;
 pub use products::*;
 pub use promotions::*;
 pub use purchase_orders::*;
 pub use quality::*;
 pub use receiving::*;
 pub use returns::*;
+pub use revenue_recognition::*;
 pub use reviews::*;
 pub use rewards::*;
 pub use search_configs::*;
@@ -91,9 +107,15 @@ pub use segments::*;
 pub use serials::*;
 pub use shipments::*;
 pub use shipping_zones::*;
+pub use stock_snapshots::*;
 pub use store_credits::*;
 pub use subscriptions::*;
+pub use supplier_skus::*;
 pub use tax::*;
+pub use transfer_orders::*;
+pub use units_of_measure::*;
+pub use vendor_credits::*;
+pub use vendor_returns::*;
 pub use warehouse::*;
 pub use warranties::*;
 pub use wishlists::*;
@@ -257,6 +279,29 @@ impl PostgresDatabase {
         migrations.push(("048_fraud", include_str!("migrations/048_fraud.sql")));
         migrations.push(("049_loyalty", include_str!("migrations/049_loyalty.sql")));
         migrations.push(("050_x402_pqc", include_str!("migrations/050_x402_pqc.sql")));
+        migrations.push(("051_loyalty_tiers", include_str!("migrations/051_loyalty_tiers.sql")));
+        migrations.push((
+            "052_wishlist_item_quantity",
+            include_str!("migrations/052_wishlist_item_quantity.sql"),
+        ));
+        migrations.push((
+            "053_remove_seeded_exchange_rates",
+            include_str!("migrations/053_remove_seeded_exchange_rates.sql"),
+        ));
+        migrations.push(("054_wms_entities", include_str!("migrations/054_wms_entities.sql")));
+        migrations.push((
+            "054_supply_chain_entities",
+            include_str!("migrations/054_supply_chain_entities.sql"),
+        ));
+        migrations.push((
+            "055_fixed_assets_revrec",
+            include_str!("migrations/055_fixed_assets_revrec.sql"),
+        ));
+        migrations.push((
+            "056_gl_auto_posting_flags",
+            include_str!("migrations/056_gl_auto_posting_flags.sql"),
+        ));
+        migrations.push(("057_cycle_counts", include_str!("migrations/057_cycle_counts.sql")));
 
         for (name, sql) in migrations {
             let mut tx =
@@ -333,6 +378,36 @@ impl PostgresDatabase {
     /// Get custom objects repository (custom states / metaobjects)
     pub fn custom_objects(&self) -> PgCustomObjectRepository {
         PgCustomObjectRepository::new(self.pool.clone())
+    }
+
+    /// Get production batch repository
+    pub fn production_batches(&self) -> PgProductionBatchRepository {
+        PgProductionBatchRepository::new(self.pool.clone())
+    }
+
+    /// Get supplier SKU repository
+    pub fn supplier_skus(&self) -> PgSupplierSkuRepository {
+        PgSupplierSkuRepository::new(self.pool.clone())
+    }
+
+    /// Get fixed asset repository
+    pub fn fixed_assets(&self) -> PgFixedAssetRepository {
+        PgFixedAssetRepository::new(self.pool.clone())
+    }
+
+    /// Get revenue recognition repository
+    pub fn revenue_recognition(&self) -> PgRevenueRecognitionRepository {
+        PgRevenueRecognitionRepository::new(self.pool.clone())
+    }
+
+    /// Get vendor return repository
+    pub fn vendor_returns(&self) -> PgVendorReturnRepository {
+        PgVendorReturnRepository::new(self.pool.clone())
+    }
+
+    /// Get vendor credit repository
+    pub fn vendor_credits(&self) -> PgVendorCreditRepository {
+        PgVendorCreditRepository::new(self.pool.clone())
     }
 
     /// Get return repository

@@ -304,14 +304,20 @@ impl PgOrderRepository {
 
         let order_number = format!("ORD-{}", order_number.0);
 
-        // Calculate total
+        // Order total is the sum of the per-line money totals, each rounded to
+        // the currency minor unit by `OrderItem::calculate_total` (the same
+        // helper that stores `order_items.total`), so the order foots to its
+        // line items and matches the SQLite backend and `update_order_total`.
         let total: Decimal = input
             .items
             .iter()
             .map(|i| {
-                let subtotal = i.unit_price * Decimal::from(i.quantity);
-                subtotal - i.discount.unwrap_or(Decimal::ZERO)
-                    + i.tax_amount.unwrap_or(Decimal::ZERO)
+                OrderItem::calculate_total(
+                    i.quantity,
+                    i.unit_price,
+                    i.discount.unwrap_or(Decimal::ZERO),
+                    i.tax_amount.unwrap_or(Decimal::ZERO),
+                )
             })
             .sum();
 
@@ -1048,14 +1054,19 @@ impl PgOrderRepository {
 
             let order_number = format!("ORD-{}", order_number.0);
 
-            // Calculate total
+            // Order total = sum of per-line money totals, each rounded to the
+            // currency minor unit by `OrderItem::calculate_total` (so it foots
+            // to the line items and matches the single-create path).
             let total: Decimal = input
                 .items
                 .iter()
                 .map(|i| {
-                    let subtotal = i.unit_price * Decimal::from(i.quantity);
-                    subtotal - i.discount.unwrap_or(Decimal::ZERO)
-                        + i.tax_amount.unwrap_or(Decimal::ZERO)
+                    OrderItem::calculate_total(
+                        i.quantity,
+                        i.unit_price,
+                        i.discount.unwrap_or(Decimal::ZERO),
+                        i.tax_amount.unwrap_or(Decimal::ZERO),
+                    )
                 })
                 .sum();
 

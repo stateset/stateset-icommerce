@@ -462,3 +462,249 @@ impl SerialReservation {
         self.confirmed_at.is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    // ============================================================================
+    // Test Helpers
+    // ============================================================================
+
+    const ALL_STATUSES: [SerialStatus; 13] = [
+        SerialStatus::InProduction,
+        SerialStatus::Available,
+        SerialStatus::Reserved,
+        SerialStatus::Shipped,
+        SerialStatus::Sold,
+        SerialStatus::Returned,
+        SerialStatus::InService,
+        SerialStatus::InWarranty,
+        SerialStatus::Quarantined,
+        SerialStatus::Scrapped,
+        SerialStatus::Recalled,
+        SerialStatus::Lost,
+        SerialStatus::Transferred,
+    ];
+
+    fn create_test_serial(status: SerialStatus) -> SerialNumber {
+        let now = Utc::now();
+        SerialNumber {
+            id: Uuid::new_v4(),
+            serial: "SN-0001".to_string(),
+            sku: "SKU-001".to_string(),
+            status,
+            lot_id: None,
+            lot_number: None,
+            current_location_id: None,
+            current_owner_id: None,
+            current_owner_type: None,
+            warranty_id: None,
+            manufactured_at: None,
+            received_at: None,
+            sold_at: None,
+            activated_at: None,
+            last_service_at: None,
+            notes: None,
+            attributes: serde_json::json!({}),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn create_test_reservation() -> SerialReservation {
+        SerialReservation {
+            id: Uuid::new_v4(),
+            serial_id: Uuid::new_v4(),
+            reference_type: "order".to_string(),
+            reference_id: Uuid::new_v4(),
+            reserved_by: None,
+            reserved_at: Utc::now(),
+            expires_at: None,
+            confirmed_at: None,
+            released_at: None,
+        }
+    }
+
+    // ============================================================================
+    // Status guards
+    // ============================================================================
+
+    #[test]
+    fn is_available_only_when_available() {
+        for status in ALL_STATUSES {
+            let serial = create_test_serial(status);
+            assert_eq!(serial.is_available(), status == SerialStatus::Available);
+        }
+    }
+
+    #[test]
+    fn can_reserve_only_from_available() {
+        for status in ALL_STATUSES {
+            let serial = create_test_serial(status);
+            assert_eq!(serial.can_reserve(), status == SerialStatus::Available, "status {status}");
+        }
+    }
+
+    #[test]
+    fn can_ship_from_available_or_reserved_only() {
+        for status in ALL_STATUSES {
+            let serial = create_test_serial(status);
+            let expected = matches!(status, SerialStatus::Available | SerialStatus::Reserved);
+            assert_eq!(serial.can_ship(), expected, "status {status}");
+        }
+    }
+
+    #[test]
+    fn can_return_only_from_sold_or_shipped() {
+        for status in ALL_STATUSES {
+            let serial = create_test_serial(status);
+            let expected = matches!(status, SerialStatus::Sold | SerialStatus::Shipped);
+            assert_eq!(serial.can_return(), expected, "status {status}");
+        }
+    }
+
+    #[test]
+    fn can_scrap_excludes_sold_shipped_scrapped() {
+        for status in ALL_STATUSES {
+            let serial = create_test_serial(status);
+            let expected = !matches!(
+                status,
+                SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped
+            );
+            assert_eq!(serial.can_scrap(), expected, "status {status}");
+        }
+    }
+
+    #[test]
+    fn is_with_customer_for_sold_and_shipped() {
+        assert!(create_test_serial(SerialStatus::Sold).is_with_customer());
+        assert!(create_test_serial(SerialStatus::Shipped).is_with_customer());
+        assert!(!create_test_serial(SerialStatus::Returned).is_with_customer());
+        assert!(!create_test_serial(SerialStatus::Available).is_with_customer());
+    }
+
+    // ============================================================================
+    // Activation and age
+    // ============================================================================
+
+    #[test]
+    fn is_activated_tracks_activated_at() {
+        let mut serial = create_test_serial(SerialStatus::Sold);
+        assert!(!serial.is_activated());
+        serial.activated_at = Some(Utc::now());
+        assert!(serial.is_activated());
+    }
+
+    #[test]
+    fn age_days_none_without_manufactured_at() {
+        let serial = create_test_serial(SerialStatus::Available);
+        assert_eq!(serial.age_days(), None);
+        assert_eq!(serial.days_since_sold(), None);
+    }
+
+    #[test]
+    fn age_days_and_days_since_sold_computed() {
+        let mut serial = create_test_serial(SerialStatus::Sold);
+        serial.manufactured_at = Some(Utc::now() - chrono::Duration::days(30));
+        serial.sold_at = Some(Utc::now() - chrono::Duration::days(10));
+        assert_eq!(serial.age_days(), Some(30));
+        assert_eq!(serial.days_since_sold(), Some(10));
+    }
+
+    // ============================================================================
+    // SerialReservation lifecycle
+    // ============================================================================
+
+    #[test]
+    fn fresh_reservation_is_active() {
+        let res = create_test_reservation();
+        assert!(res.is_active());
+        assert!(!res.is_expired());
+        assert!(!res.is_confirmed());
+    }
+
+    #[test]
+    fn released_reservation_is_not_active() {
+        let mut res = create_test_reservation();
+        res.released_at = Some(Utc::now());
+        assert!(!res.is_active());
+    }
+
+    #[test]
+    fn confirmed_reservation_is_not_active_but_confirmed() {
+        let mut res = create_test_reservation();
+        res.confirmed_at = Some(Utc::now());
+        assert!(!res.is_active());
+        assert!(res.is_confirmed());
+    }
+
+    #[test]
+    fn expired_reservation_is_expired_and_inactive() {
+        let mut res = create_test_reservation();
+        res.expires_at = Some(Utc::now() - chrono::Duration::seconds(1));
+        assert!(res.is_expired());
+        assert!(!res.is_active());
+    }
+
+    #[test]
+    fn confirmation_suppresses_expiry() {
+        let mut res = create_test_reservation();
+        res.expires_at = Some(Utc::now() - chrono::Duration::seconds(1));
+        res.confirmed_at = Some(Utc::now());
+        assert!(!res.is_expired());
+    }
+
+    #[test]
+    fn future_expiry_reservation_still_active() {
+        let mut res = create_test_reservation();
+        res.expires_at = Some(Utc::now() + chrono::Duration::hours(1));
+        assert!(!res.is_expired());
+        assert!(res.is_active());
+    }
+
+    // ============================================================================
+    // Enum Display / FromStr round-trips and defaults
+    // ============================================================================
+
+    #[test]
+    fn serial_status_display_from_str_round_trip() {
+        for status in ALL_STATUSES {
+            let parsed = SerialStatus::from_str(&status.to_string()).expect("round trip");
+            assert_eq!(parsed, status);
+        }
+    }
+
+    #[test]
+    fn serial_status_from_str_case_insensitive_and_unknown() {
+        assert_eq!(SerialStatus::from_str("IN_PRODUCTION"), Ok(SerialStatus::InProduction));
+        assert!(SerialStatus::from_str("nonsense").is_err());
+    }
+
+    #[test]
+    fn serial_event_type_round_trip() {
+        for t in [
+            SerialEventType::Created,
+            SerialEventType::LocationChanged,
+            SerialEventType::WarrantyClaimed,
+            SerialEventType::QuarantineReleased,
+            SerialEventType::AttributeUpdated,
+        ] {
+            assert_eq!(SerialEventType::from_str(&t.to_string()), Ok(t));
+        }
+        assert!(SerialEventType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn defaults_are_sane() {
+        assert_eq!(SerialStatus::default(), SerialStatus::Available);
+        assert_eq!(SerialEventType::default(), SerialEventType::Created);
+        let change = ChangeSerialStatus::default();
+        assert_eq!(change.serial_id, Uuid::nil());
+        assert_eq!(change.new_status, SerialStatus::Available);
+        let reserve = ReserveSerialNumber::default();
+        assert_eq!(reserve.serial_id, Uuid::nil());
+        assert!(reserve.reference_type.is_empty());
+    }
+}

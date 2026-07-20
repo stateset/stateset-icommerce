@@ -36,6 +36,12 @@ fn run() -> Result<()> {
         "01-aid-derivation" => run_01_aid_derivation(&input)?,
         "02-canonical-json" => run_02_canonical_json(&input)?,
         "03-signature-verification" => run_03_signature_verification(&input)?,
+        "04-escrow-lifecycle" => run_04_escrow_lifecycle(&input)?,
+        "05-intent-validation" => run_05_intent_validation(&input)?,
+        "06-quote-binding" => run_06_quote_binding(&input)?,
+        "07-settlement-receipts" => run_07_settlement_receipts(&input)?,
+        "08-timing" => run_08_timing(&input)?,
+        "09-ceilings" => run_09_ceilings(&input)?,
         other => {
             // Per iut.protocol.md: exit 2 + JSON on stderr signals SKIP.
             eprintln!(
@@ -49,6 +55,525 @@ fn run() -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{}", serde_json::to_string_pretty(&output).context("serialize output")?)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Test 09: Refund/payout ceilings — §6.2/§6.6 (reuses cmp_amount)
+// ---------------------------------------------------------------------------
+
+fn run_09_ceilings(input: &Value) -> Result<Value> {
+    let cases =
+        input.get("cases").and_then(Value::as_array).context("input.cases must be an array")?;
+    let mut decisions = serde_json::Map::new();
+    for case in cases {
+        let id = case.get("id").and_then(Value::as_str).context("case.id")?;
+        let kind = case.get("kind").and_then(Value::as_str).context("case.kind")?;
+        let value = case
+            .get("value")
+            .and_then(|m| m.get("amount"))
+            .and_then(Value::as_str)
+            .context("value.amount")?;
+        let ceiling = case
+            .get("ceiling")
+            .and_then(|m| m.get("amount"))
+            .and_then(Value::as_str)
+            .context("ceiling.amount")?;
+        let code = match kind {
+            "return" => "policy.return.exceeds_max_refund",
+            "payout" => "policy.payout.exceeds_max_per_payout",
+            other => return Err(anyhow::anyhow!("unknown ceiling kind: {other}")),
+        };
+        let decision = if cmp_amount(value, ceiling) == std::cmp::Ordering::Greater {
+            json!({"error": code})
+        } else {
+            json!({"valid": true})
+        };
+        decisions.insert(id.to_string(), decision);
+    }
+    Ok(json!({ "decisions": decisions }))
+}
+
+// ---------------------------------------------------------------------------
+// Test 08: Replay timing — ICP-1.0 §5.3 (strict parse + shared epoch algo)
+// ---------------------------------------------------------------------------
+
+const TIMING_WINDOW_MAX: i64 = 600; // §5.3 intent window ceiling, seconds
+
+/// Howard Hinnant's `days_from_civil` — exact, no leap seconds, positive years.
+const fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y2 = if m <= 2 { y - 1 } else { y };
+    let base = if y2 >= 0 { y2 } else { y2 - 399 };
+    let era = base / 400;
+    let yoe = y2 - era * 400;
+    let mm = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mm + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// Strict RFC-3339 second-precision UTC parser. Returns epoch seconds or None.
+/// Not chrono — the IUT stays date-library-free; the fixed format needs only
+/// range-checked field extraction.
+fn parse_epoch(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() != 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+        || b[19] != b'Z'
+    {
+        return None;
+    }
+    let digits = |lo: usize, hi: usize| -> Option<i64> {
+        let slice = s.get(lo..hi)?;
+        if slice.bytes().all(|c| c.is_ascii_digit()) { slice.parse::<i64>().ok() } else { None }
+    };
+    let (y, mo, d) = (digits(0, 4)?, digits(5, 7)?, digits(8, 10)?);
+    let (h, mi, se) = (digits(11, 13)?, digits(14, 16)?, digits(17, 19)?);
+    if !((1..=12).contains(&mo) && (1..=31).contains(&d) && h <= 23 && mi <= 59 && se <= 59) {
+        return None;
+    }
+    Some(days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se)
+}
+
+fn validate_timing(iat: &str, exp: &str, now: &str) -> Value {
+    let (Some(ti), Some(te), Some(tn)) = (parse_epoch(iat), parse_epoch(exp), parse_epoch(now))
+    else {
+        return json!({"error": "replay.timestamp_malformed"});
+    };
+    if te - ti > TIMING_WINDOW_MAX {
+        return json!({"error": "replay.window_too_long"});
+    }
+    if te < tn {
+        return json!({"error": "replay.expired"});
+    }
+    json!({"valid": true})
+}
+
+fn run_08_timing(input: &Value) -> Result<Value> {
+    let cases =
+        input.get("cases").and_then(Value::as_array).context("input.cases must be an array")?;
+    let mut validations = serde_json::Map::new();
+    for case in cases {
+        let id = case.get("id").and_then(Value::as_str).context("case.id")?;
+        let iat = case.get("iat").and_then(Value::as_str).unwrap_or_default();
+        let exp = case.get("exp").and_then(Value::as_str).unwrap_or_default();
+        let now = case.get("now").and_then(Value::as_str).unwrap_or_default();
+        validations.insert(id.to_string(), validate_timing(iat, exp, now));
+    }
+    Ok(json!({ "validations": validations }))
+}
+
+// ---------------------------------------------------------------------------
+// Test 07: Settlement receipts — ICP-1.0 §9 co-signed receipt verification
+// ---------------------------------------------------------------------------
+
+fn receipt_sig<'a>(receipt: &'a serde_json::Map<String, Value>, field: &str) -> Option<&'a str> {
+    receipt.get(field).and_then(|s| s.get("sig")).and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+fn verify_receipt(receipt: &Value, merchant_pk: &str, settler_pk: &str) -> Value {
+    let Some(obj) = receipt.as_object() else { return json!({"error": "format.missing_field"}) };
+    let Some(merchant_sig) = receipt_sig(obj, "merchant_signature") else {
+        return json!({"error": "format.missing_field"});
+    };
+    let Some(settler_sig) = receipt_sig(obj, "settler_signature") else {
+        return json!({"error": "format.missing_field"});
+    };
+
+    // Strip both signature fields; the signer signed the canonical bytes of
+    // the unsigned receipt body (§9).
+    let mut unsigned = obj.clone();
+    unsigned.remove("merchant_signature");
+    unsigned.remove("settler_signature");
+    let canonical = match canonicalize_json(&Value::Object(unsigned)) {
+        Ok(c) => c,
+        Err(_) => return json!({"error": "format.missing_field"}),
+    };
+
+    if !verify_one(&canonical, merchant_sig, merchant_pk) {
+        return json!({"error": "signature.invalid"});
+    }
+    if !verify_one(&canonical, settler_sig, settler_pk) {
+        return json!({"error": "settlement.settler_signature_invalid"});
+    }
+    json!({"valid": true})
+}
+
+fn run_07_settlement_receipts(input: &Value) -> Result<Value> {
+    let cases =
+        input.get("cases").and_then(Value::as_array).context("input.cases must be an array")?;
+    let mut verifications = serde_json::Map::new();
+    for case in cases {
+        let id = case.get("id").and_then(Value::as_str).context("case.id")?;
+        let receipt = case.get("receipt").context("case.receipt")?;
+        let merchant_pk =
+            case.get("merchant_pubkey_hex").and_then(Value::as_str).unwrap_or_default();
+        let settler_pk = case.get("settler_pubkey_hex").and_then(Value::as_str).unwrap_or_default();
+        verifications.insert(id.to_string(), verify_receipt(receipt, merchant_pk, settler_pk));
+    }
+    Ok(json!({ "verifications": verifications }))
+}
+
+// ---------------------------------------------------------------------------
+// Test 06: Quote binding — ICP-1.0 §11.4 max_total ceiling (exact decimal)
+// ---------------------------------------------------------------------------
+
+/// Compare two non-negative decimal strings. Returns Ordering. Exact — no
+/// float conversion (the spec forbids float money).
+fn cmp_amount(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (ra, fa) = a.split_once('.').unwrap_or((a, ""));
+    let (rb, fb) = b.split_once('.').unwrap_or((b, ""));
+    let ia = ra.trim_start_matches('0');
+    let ib = rb.trim_start_matches('0');
+    // Longer (non-zero-stripped) integer part is larger.
+    match ia.len().cmp(&ib.len()) {
+        Ordering::Equal => {}
+        other => return other,
+    }
+    match ia.cmp(ib) {
+        Ordering::Equal => {}
+        other => return other, // equal length → lexicographic == numeric
+    }
+    let n = fa.len().max(fb.len());
+    let pa = format!("{fa:0<n$}");
+    let pb = format!("{fb:0<n$}");
+    pa.cmp(&pb)
+}
+
+fn run_06_quote_binding(input: &Value) -> Result<Value> {
+    let cases =
+        input.get("cases").and_then(Value::as_array).context("input.cases must be an array")?;
+    let mut decisions = serde_json::Map::new();
+    for case in cases {
+        let id = case.get("id").and_then(Value::as_str).context("case.id")?;
+        let quote = case
+            .get("quote_total")
+            .and_then(|m| m.get("amount"))
+            .and_then(Value::as_str)
+            .context("quote_total.amount")?;
+        let max = case
+            .get("intent_max_total")
+            .and_then(|m| m.get("amount"))
+            .and_then(Value::as_str)
+            .context("intent_max_total.amount")?;
+        let decision = if cmp_amount(quote, max) == std::cmp::Ordering::Greater {
+            json!({"error": "policy.quote.exceeds_max_total"})
+        } else {
+            json!({"valid": true})
+        };
+        decisions.insert(id.to_string(), decision);
+    }
+    Ok(json!({ "decisions": decisions }))
+}
+
+// ---------------------------------------------------------------------------
+// Test 05: Intent validation — ICP-1.0 §6 intent envelope validation
+// ---------------------------------------------------------------------------
+
+struct IntentVerbSpec {
+    aids: &'static [&'static str],
+    money: &'static [&'static str],
+    items_required: bool,
+    required: &'static [&'static str],
+}
+
+fn intent_verb_spec(verb: &str) -> Option<IntentVerbSpec> {
+    Some(match verb {
+        "purchase.create" => IntentVerbSpec {
+            aids: &["buyer", "merchant"],
+            money: &["max_total"],
+            items_required: true,
+            required: &[
+                "v",
+                "verb",
+                "intent_id",
+                "buyer",
+                "merchant",
+                "settler",
+                "items",
+                "max_total",
+                "expiry",
+                "principal_binding",
+                "nonce",
+                "iat",
+                "exp",
+            ],
+        },
+        "inventory.query" => IntentVerbSpec {
+            aids: &["buyer", "merchant"],
+            money: &[],
+            items_required: false,
+            required: &[
+                "v",
+                "verb",
+                "intent_id",
+                "buyer",
+                "merchant",
+                "settler",
+                "principal_binding",
+                "nonce",
+                "iat",
+                "exp",
+            ],
+        },
+        "quote.request" => IntentVerbSpec {
+            aids: &["buyer", "merchant"],
+            money: &[],
+            items_required: true,
+            required: &[
+                "v",
+                "verb",
+                "intent_id",
+                "buyer",
+                "merchant",
+                "settler",
+                "items",
+                "principal_binding",
+                "nonce",
+                "iat",
+                "exp",
+            ],
+        },
+        "payout.request" => IntentVerbSpec {
+            aids: &["seller", "platform"],
+            money: &["amount"],
+            items_required: false,
+            required: &[
+                "v",
+                "verb",
+                "intent_id",
+                "seller",
+                "platform",
+                "settler",
+                "amount",
+                "destination",
+                "principal_binding",
+                "nonce",
+                "iat",
+                "exp",
+            ],
+        },
+        "subscription.create" => IntentVerbSpec {
+            aids: &["buyer", "merchant"],
+            money: &["max_total_per_period"],
+            items_required: false,
+            required: &[
+                "v",
+                "verb",
+                "intent_id",
+                "buyer",
+                "merchant",
+                "settler",
+                "service_id",
+                "cadence",
+                "max_total_per_period",
+                "first_charge_at",
+                "principal_binding",
+                "nonce",
+                "iat",
+                "exp",
+            ],
+        },
+        "subscription.cancel" => IntentVerbSpec {
+            aids: &["buyer", "merchant"],
+            money: &[],
+            items_required: false,
+            required: &[
+                "v",
+                "verb",
+                "intent_id",
+                "buyer",
+                "merchant",
+                "settler",
+                "subscription_id",
+                "effective",
+                "principal_binding",
+                "nonce",
+                "iat",
+                "exp",
+            ],
+        },
+        "purchase.return" => IntentVerbSpec {
+            aids: &["buyer", "merchant"],
+            money: &[],
+            items_required: true,
+            required: &[
+                "v",
+                "verb",
+                "intent_id",
+                "buyer",
+                "merchant",
+                "settler",
+                "original_settlement_id",
+                "items",
+                "desired_outcome",
+                "principal_binding",
+                "nonce",
+                "iat",
+                "exp",
+            ],
+        },
+        _ => return None,
+    })
+}
+
+/// AID pattern `^aid:v1:z[1-9A-HJ-NP-Za-km-z]{40,60}$` — checked without a
+/// regex crate to keep this IUT dependency-free.
+fn is_valid_aid(s: &str) -> bool {
+    let Some(body) = s.strip_prefix("aid:v1:z") else { return false };
+    (40..=60).contains(&body.len())
+        && body.chars().all(|c| c.is_ascii_alphanumeric() && !matches!(c, '0' | 'O' | 'I' | 'l'))
+}
+
+/// `SettlerID` pattern `^settler:[a-z0-9]+(\.[a-z0-9]+)*$`.
+fn is_valid_settler(s: &str) -> bool {
+    let Some(body) = s.strip_prefix("settler:") else { return false };
+    !body.is_empty()
+        && body.split('.').all(|seg| {
+            !seg.is_empty() && seg.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
+}
+
+/// Money amount pattern `^-?[0-9]+(\.[0-9]{1,18})?$`.
+fn is_valid_money_amount(s: &str) -> bool {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    match digits.split_once('.') {
+        None => !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()),
+        Some((int, frac)) => {
+            !int.is_empty()
+                && int.chars().all(|c| c.is_ascii_digit())
+                && (1..=18).contains(&frac.len())
+                && frac.chars().all(|c| c.is_ascii_digit())
+        }
+    }
+}
+
+fn validate_intent(intent: &Value) -> Value {
+    let Some(obj) = intent.as_object() else { return json!({"error": "format.bad_schema"}) };
+    if !obj.contains_key("v") {
+        return json!({"error": "format.missing_field"});
+    }
+    if obj.get("v").and_then(Value::as_str) != Some("icp-1.0") {
+        return json!({"error": "version.unsupported"});
+    }
+    if !obj.contains_key("verb") {
+        return json!({"error": "format.missing_field"});
+    }
+    let verb = obj.get("verb").and_then(Value::as_str).unwrap_or_default();
+    let Some(spec) = intent_verb_spec(verb) else { return json!({"error": "format.unknown_verb"}) };
+    for field in spec.required {
+        if !obj.contains_key(*field) {
+            return json!({"error": "format.missing_field"});
+        }
+    }
+    for field in spec.aids {
+        if !is_valid_aid(obj.get(*field).and_then(Value::as_str).unwrap_or_default()) {
+            return json!({"error": "format.bad_aid"});
+        }
+    }
+    if !is_valid_settler(obj.get("settler").and_then(Value::as_str).unwrap_or_default()) {
+        return json!({"error": "format.bad_settler_id"});
+    }
+    for field in spec.money {
+        let amount = obj
+            .get(*field)
+            .and_then(|m| m.get("amount"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if amount.is_empty() || !is_valid_money_amount(amount) {
+            return json!({"error": "format.bad_money"});
+        }
+    }
+    if spec.items_required {
+        match obj.get("items").and_then(Value::as_array) {
+            Some(items) if !items.is_empty() => {}
+            _ => return json!({"error": "format.bad_schema"}),
+        }
+    }
+    json!({"valid": true})
+}
+
+fn run_05_intent_validation(input: &Value) -> Result<Value> {
+    let cases =
+        input.get("cases").and_then(Value::as_array).context("input.cases must be an array")?;
+    let mut validations = serde_json::Map::new();
+    for case in cases {
+        let id = case.get("id").and_then(Value::as_str).context("case.id")?;
+        let intent = case.get("intent").context("case.intent")?;
+        validations.insert(id.to_string(), validate_intent(intent));
+    }
+    Ok(json!({ "validations": validations }))
+}
+
+// ---------------------------------------------------------------------------
+// Test 04: Escrow lifecycle — ICP-1.0 §8 state machine + event replay
+// ---------------------------------------------------------------------------
+
+/// The normative §8 transition table, encoded directly.
+fn escrow_step(state: &str, trigger: &str) -> Value {
+    let next = match (state, trigger) {
+        ("pending", "payment_confirmed") => Some("funded"),
+        ("funded", "fulfillment_confirmed_window_elapsed") => Some("released"),
+        ("funded", "dispute_raised") => Some("disputed"),
+        ("disputed", "resolution_favors_merchant") => Some("released"),
+        ("disputed", "resolution_favors_buyer") => Some("refunded"),
+        ("funded", "merchant_cancel_or_expiry") => Some("refunded"),
+        _ => None,
+    };
+    match next {
+        Some(next) => json!({ "state": next }),
+        None if state == "funded" && trigger == "payment_confirmed" => {
+            json!({ "error": "escrow.already_funded" })
+        }
+        None => json!({ "error": "escrow.wrong_state" }),
+    }
+}
+
+fn escrow_replay(events: &[Value]) -> Value {
+    let mut state = "pending".to_string();
+    for (index, event) in events.iter().enumerate() {
+        let seq = event.get("seq").and_then(Value::as_u64);
+        if seq != Some(index as u64) {
+            return json!({ "error": "escrow.seq_out_of_order" });
+        }
+        let trigger = event.get("trigger").and_then(Value::as_str).unwrap_or_default();
+        let step = escrow_step(&state, trigger);
+        if let Some(error) = step.get("error") {
+            return json!({ "error": error });
+        }
+        state = step.get("state").and_then(Value::as_str).unwrap_or_default().to_string();
+    }
+    json!({ "final_state": state })
+}
+
+fn run_04_escrow_lifecycle(input: &Value) -> Result<Value> {
+    let transition_cases = input
+        .get("transition_cases")
+        .and_then(Value::as_array)
+        .context("input.transition_cases must be an array")?;
+    let replay_cases = input
+        .get("replay_cases")
+        .and_then(Value::as_array)
+        .context("input.replay_cases must be an array")?;
+
+    let mut transitions = serde_json::Map::new();
+    for case in transition_cases {
+        let id = case.get("id").and_then(Value::as_str).context("case.id")?;
+        let from = case.get("from").and_then(Value::as_str).context("case.from")?;
+        let trigger = case.get("trigger").and_then(Value::as_str).context("case.trigger")?;
+        transitions.insert(id.to_string(), escrow_step(from, trigger));
+    }
+    let mut replays = serde_json::Map::new();
+    for case in replay_cases {
+        let id = case.get("id").and_then(Value::as_str).context("case.id")?;
+        let events = case.get("events").and_then(Value::as_array).context("case.events")?;
+        replays.insert(id.to_string(), escrow_replay(events));
+    }
+    Ok(json!({ "transitions": transitions, "replays": replays }))
 }
 
 // ---------------------------------------------------------------------------

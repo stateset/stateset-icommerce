@@ -22,6 +22,66 @@ pub struct SqliteReturnRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
+/// Validate a single return line against its order item, inside a write
+/// transaction, returning the item's `(sku, name, unit_price)` for the caller
+/// to record on the return.
+///
+/// Rejects the return when:
+/// - the order item does not exist,
+/// - the order item belongs to a different order than the one being returned, or
+/// - returning `return_qty` more units would exceed what was purchased, counting
+///   units already claimed by non-terminal returns (rejected/cancelled returns
+///   release their claim).
+///
+/// This guards against over-returning (and thus over-refunding) more units than
+/// were ordered, and against returning another order's items.
+fn validate_return_item_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+    order_item_id: &str,
+    return_qty: i64,
+) -> Result<(String, String, String)> {
+    let (sku, name, unit_price, oi_order_id, ordered_qty): (String, String, String, String, i64) =
+        tx.query_row(
+            "SELECT sku, name, unit_price, order_id, quantity FROM order_items WHERE id = ?",
+            [order_item_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                CommerceError::ValidationError(format!("Order item {order_item_id} not found"))
+            }
+            other => map_db_error(other),
+        })?;
+
+    if oi_order_id != order_id {
+        return Err(CommerceError::ValidationError(format!(
+            "Order item {order_item_id} does not belong to order {order_id}"
+        )));
+    }
+
+    // Units already returned for this order item, excluding rejected/cancelled
+    // returns (which release their claim on the ordered quantity).
+    let already_returned: i64 = tx
+        .query_row(
+            "SELECT COALESCE(SUM(ri.quantity), 0) FROM return_items ri
+             JOIN returns r ON ri.return_id = r.id
+             WHERE ri.order_item_id = ? AND r.status NOT IN ('rejected', 'cancelled')",
+            [order_item_id],
+            |row| row.get(0),
+        )
+        .map_err(map_db_error)?;
+
+    if return_qty + already_returned > ordered_qty {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot return {return_qty} of order item {order_item_id}: only {} remain returnable ({ordered_qty} ordered, {already_returned} already returned)",
+            ordered_qty - already_returned
+        )));
+    }
+
+    Ok((sku, name, unit_price))
+}
+
 impl SqliteReturnRepository {
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
@@ -248,14 +308,14 @@ impl ReturnRepository for SqliteReturnRepository {
         for item in &input.items {
             let item_id = Uuid::new_v4();
 
-            // Get order item details
-            let (sku, name, unit_price): (String, String, String) = tx
-                .query_row(
-                    "SELECT sku, name, unit_price FROM order_items WHERE id = ?",
-                    [item.order_item_id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .map_err(map_db_error)?;
+            // Validate the item belongs to this order and the return quantity
+            // does not exceed what remains returnable, then get its details.
+            let (sku, name, unit_price) = validate_return_item_tx(
+                &tx,
+                &input.order_id.to_string(),
+                &item.order_item_id.to_string(),
+                i64::from(item.quantity),
+            )?;
 
             let refund_amount = parse_decimal(&unit_price, "order_item", "unit_price")?
                 * Decimal::from(item.quantity);
@@ -538,14 +598,11 @@ impl ReturnRepository for SqliteReturnRepository {
 
         sql.push_str(" ORDER BY created_at DESC, id DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if filter.after_cursor.is_none() {
-            if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {offset}"));
-            }
-        }
+        // Offset pagination applies only in non-cursor mode; the helper emits
+        // `LIMIT -1 OFFSET n` when an offset is set without a limit (SQLite rejects
+        // a bare OFFSET).
+        let offset = if filter.after_cursor.is_none() { filter.offset } else { None };
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -735,14 +792,15 @@ impl ReturnRepository for SqliteReturnRepository {
             for item in &input.items {
                 let item_id = Uuid::new_v4();
 
-                // Get order item details
-                let (sku, name, unit_price): (String, String, String) = tx
-                    .query_row(
-                        "SELECT sku, name, unit_price FROM order_items WHERE id = ?",
-                        [item.order_item_id.to_string()],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                    )
-                    .map_err(map_db_error)?;
+                // Validate the item belongs to this order and the return
+                // quantity does not exceed what remains returnable, then get its
+                // details.
+                let (sku, name, unit_price) = validate_return_item_tx(
+                    &tx,
+                    &input.order_id.to_string(),
+                    &item.order_item_id.to_string(),
+                    i64::from(item.quantity),
+                )?;
 
                 let refund_amount = parse_decimal(&unit_price, "order_item", "unit_price")?
                     * Decimal::from(item.quantity);

@@ -1,0 +1,49 @@
+{
+  "decisions": {
+    "c01_under": {
+      "valid": true
+    },
+    "c02_equal": {
+      "valid": true
+    },
+    "c03_over_by_a_cent": {
+      "error": "policy.quote.exceeds_max_total"
+    },
+    "c04_trailing_zero_eq": {
+      "valid": true
+    },
+    "c05_trailing_zero_eq_r": {
+      "valid": true
+    },
+    "c06_18digit_over": {
+      "error": "policy.quote.exceeds_max_total"
+    },
+    "c07_bigint_over": {
+      "error": "policy.quote.exceeds_max_total"
+    },
+    "c08_bigint_under": {
+      "valid": true
+    },
+    "c09_string_trap_under": {
+      "valid": true
+    },
+    "c10_string_trap_over": {
+      "error": "policy.quote.exceeds_max_total"
+    },
+    "c11_zero_quote": {
+      "valid": true
+    },
+    "c12_integer_form_eq": {
+      "valid": true
+    },
+    "c13_integer_over": {
+      "error": "policy.quote.exceeds_max_total"
+    },
+    "c14_leading_zeros_eq": {
+      "valid": true
+    }
+  },
+  "_provenance": {
+    "note": "Generated from ICP-1.0 \u00a711.4 (max_total ceiling) and schemas/error-codes.md (policy.quote.exceeds_max_total). Amounts are same-currency non-negative decimal strings; the comparison is exact (no floats). Case c09 (9.9 vs 10.0) fails any implementation that compares amounts as strings rather than decimals."
+  }
+}

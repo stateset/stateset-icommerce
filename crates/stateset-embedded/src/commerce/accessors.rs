@@ -1184,6 +1184,18 @@ impl Commerce {
         crate::SupplierSkus::new(self.db.clone())
     }
 
+    /// Access fixed asset register operations.
+    #[must_use]
+    pub fn fixed_assets(&self) -> crate::FixedAssets {
+        crate::FixedAssets::new(self.db.clone())
+    }
+
+    /// Access revenue recognition (ASC 606) operations.
+    #[must_use]
+    pub fn revenue_recognition(&self) -> crate::RevenueRecognition {
+        crate::RevenueRecognition::new(self.db.clone())
+    }
+
     /// Access vendor return operations.
     #[must_use]
     pub fn vendor_returns(&self) -> crate::VendorReturns {

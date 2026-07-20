@@ -684,14 +684,20 @@ impl PgCreditRepository {
             ));
         }
 
-        // Check the limit before releasing the reservation, so a rejected
-        // charge does not destroy the hold. The check involves only
-        // current_balance and credit_limit, which the release does not touch.
+        // The limit check and the balance write must be atomic and serialized:
+        // otherwise concurrent charges each read the same balance, both pass the
+        // limit check, and both commit — together exceeding the credit limit.
+        // Lock the account row FOR UPDATE for the duration of the transaction so
+        // concurrent charges serialize on it. A rejected charge (limit exceeded)
+        // returns before the transaction commits, so it changes nothing and the
+        // reservation hold is preserved; the release, ledger entry, and
+        // available-credit recompute run after commit.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let (credit_limit, current_balance): (Decimal, Decimal) = sqlx::query_as(
-            "SELECT credit_limit, current_balance FROM credit_accounts WHERE customer_id = $1",
+            "SELECT credit_limit, current_balance FROM credit_accounts WHERE customer_id = $1 FOR UPDATE",
         )
         .bind(customer_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
@@ -702,16 +708,17 @@ impl PgCreditRepository {
             )));
         }
 
-        self.release_credit_reservation_async(customer_id, order_id).await?;
-
         sqlx::query(
             "UPDATE credit_accounts SET current_balance = current_balance + $1 WHERE customer_id = $2",
         )
         .bind(amount)
         .bind(customer_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.release_credit_reservation_async(customer_id, order_id).await?;
 
         self.record_transaction_async(RecordCreditTransaction {
             customer_id: customer_id.into(),
@@ -1116,6 +1123,12 @@ impl PgCreditRepository {
         amount: Decimal,
         reference_id: Option<Uuid>,
     ) -> Result<CreditAccount> {
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Payment amount must be positive".to_string(),
+            ));
+        }
+
         sqlx::query(
             "UPDATE credit_accounts SET current_balance = GREATEST(0, current_balance - $1)
              WHERE customer_id = $2",

@@ -41,13 +41,16 @@ pub fn verify_event_signature(
 
 /// Generate a new Ed25519 keypair
 ///
-/// Returns (`private_key`, `public_key`) as 32-byte arrays.
+/// Returns (`private_key`, `public_key`). The private key is wrapped in
+/// [`Zeroizing`] so it is scrubbed from memory on drop; it derefs to
+/// `[u8; 32]` for use with the signing APIs. Callers that copy the bytes
+/// out of the wrapper own the hygiene of that copy.
 #[must_use]
-pub fn generate_keypair() -> ([u8; 32], [u8; 32]) {
+pub fn generate_keypair() -> (zeroize::Zeroizing<[u8; 32]>, [u8; 32]) {
     let mut rng = rand::thread_rng();
     let signing_key = SigningKey::generate(&mut rng);
     let verifying_key = signing_key.verifying_key();
-    (signing_key.to_bytes(), verifying_key.to_bytes())
+    (zeroize::Zeroizing::new(signing_key.to_bytes()), verifying_key.to_bytes())
 }
 
 #[cfg(test)]

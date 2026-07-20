@@ -16,6 +16,7 @@ use super::{
     parse_uuid_row,
     sum_decimal_query,
     uuid_params,
+    with_immediate_transaction,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -278,6 +279,32 @@ impl SqlitePurchaseOrderRepository {
         Ok(items)
     }
 
+    /// Load the PO's current status and reject the update when the state
+    /// machine (`PurchaseOrderStatus::can_transition_to`) forbids it.
+    fn ensure_transition(
+        conn: &rusqlite::Connection,
+        id: PurchaseOrderId,
+        target: PurchaseOrderStatus,
+    ) -> Result<()> {
+        let status: String = conn
+            .query_row("SELECT status FROM purchase_orders WHERE id = ?", [id.to_string()], |row| {
+                row.get(0)
+            })
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                other => map_db_error(other),
+            })?;
+        let current: PurchaseOrderStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid purchase_order.status '{status}': {e}"))
+        })?;
+        if !current.can_transition_to(target) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot transition purchase order from {current} to {target}"
+            )));
+        }
+        Ok(())
+    }
+
     fn get_po_with_conn(
         conn: &rusqlite::Connection,
         id: PurchaseOrderId,
@@ -480,12 +507,11 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         sql.push_str(" ORDER BY name ASC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-            if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {offset}"));
-            }
-        }
+        // Match Postgres: default the page size to 100 and always honor the
+        // offset (SQLite previously applied offset only when a limit was set).
+        let limit = filter.limit.unwrap_or(100);
+        let offset = filter.offset.unwrap_or(0);
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let bind_refs: Vec<&dyn rusqlite::ToSql> =
@@ -686,9 +712,12 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         sql.push_str(" ORDER BY order_date DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
+        // Apply pagination the same way Postgres does: default the page size to
+        // 100 and always honor the offset (SQLite previously ignored `offset` and
+        // had no default cap, so it returned a different page than Postgres).
+        let limit = filter.limit.unwrap_or(100);
+        let offset = filter.offset.unwrap_or(0);
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -740,6 +769,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn submit_for_approval(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
+        Self::ensure_transition(&conn, id, PurchaseOrderStatus::PendingApproval)?;
         let now = chrono::Utc::now();
         let rows_affected = conn
             .execute(
@@ -759,6 +789,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn approve(&self, id: PurchaseOrderId, approved_by: &str) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
+        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Approved)?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, approved_by = ?, approved_at = ?, updated_at = ? WHERE id = ?",
@@ -769,6 +800,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn send(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
+        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Sent)?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, sent_at = ?, updated_at = ? WHERE id = ?",
@@ -789,6 +821,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         supplier_reference: Option<&str>,
     ) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
+        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Acknowledged)?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, supplier_reference = COALESCE(?, supplier_reference), updated_at = ? WHERE id = ?",
@@ -799,6 +832,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn hold(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
+        Self::ensure_transition(&conn, id, PurchaseOrderStatus::OnHold)?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
@@ -810,6 +844,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn cancel(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
+        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Cancelled)?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
@@ -824,128 +859,136 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         id: PurchaseOrderId,
         items: ReceivePurchaseOrderItems,
     ) -> Result<PurchaseOrder> {
-        let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
 
-        let status: String = tx
-            .query_row("SELECT status FROM purchase_orders WHERE id = ?", [id.to_string()], |row| {
-                row.get::<_, String>(0)
-            })
-            .map_err(map_db_error)?;
-        let current_status: PurchaseOrderStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!("Invalid purchase_order.status '{status}': {e}"))
-        })?;
+        // `receive` is a read-check-write of each item's `quantity_received`.
+        // Run it under an IMMEDIATE (retrying) transaction so concurrent receipts
+        // serialize and every one lands — a plain deferred transaction lets
+        // simultaneous receipts race and drop each other (matching the atomic
+        // conditional UPDATE the Postgres backend uses). Domain errors are carried
+        // out via `ToSqlConversionFailure` so they are not retried as lock errors.
+        let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
 
-        for item in items.items {
-            if item.quantity_received <= Decimal::ZERO {
-                return Err(CommerceError::ValidationError(
-                    "Received quantity must be greater than zero".to_string(),
-                ));
-            }
+        with_immediate_transaction(&self.pool, |tx| {
+            let status: String = tx.query_row(
+                "SELECT status FROM purchase_orders WHERE id = ?",
+                [id.to_string()],
+                |row| row.get::<_, String>(0),
+            )?;
+            let current_status: PurchaseOrderStatus = status.parse().map_err(|e| {
+                smuggle(CommerceError::DatabaseError(format!(
+                    "Invalid purchase_order.status '{status}': {e}"
+                )))
+            })?;
 
-            let (ordered_str, received_str): (String, String) = tx
-                .query_row(
+            for item in &items.items {
+                if item.quantity_received <= Decimal::ZERO {
+                    return Err(smuggle(CommerceError::ValidationError(
+                        "Received quantity must be greater than zero".to_string(),
+                    )));
+                }
+
+                let (ordered_str, received_str): (String, String) = tx.query_row(
                     "SELECT quantity_ordered, quantity_received
                      FROM purchase_order_items
                      WHERE id = ?1 AND purchase_order_id = ?2",
                     params![item.item_id.to_string(), id.to_string()],
                     |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+
+                let ordered = parse_decimal_with_context(
+                    &ordered_str,
+                    "purchase_order_item",
+                    "quantity_ordered",
                 )
-                .map_err(map_db_error)?;
+                .map_err(smuggle)?;
+                let received = parse_decimal_with_context(
+                    &received_str,
+                    "purchase_order_item",
+                    "quantity_received",
+                )
+                .map_err(smuggle)?;
+                let new_received = received + item.quantity_received;
 
-            let ordered = parse_decimal_with_context(
-                &ordered_str,
-                "purchase_order_item",
-                "quantity_ordered",
-            )?;
-            let received = parse_decimal_with_context(
-                &received_str,
-                "purchase_order_item",
-                "quantity_received",
-            )?;
-            let new_received = received + item.quantity_received;
+                if new_received > ordered {
+                    return Err(smuggle(CommerceError::ValidationError(format!(
+                        "Receiving {} would exceed ordered quantity {} for item {}",
+                        new_received, ordered, item.item_id
+                    ))));
+                }
 
-            if new_received > ordered {
-                return Err(CommerceError::ValidationError(format!(
-                    "Receiving {} would exceed ordered quantity {} for item {}",
-                    new_received, ordered, item.item_id
-                )));
+                tx.execute(
+                    "UPDATE purchase_order_items
+                     SET quantity_received = ?, updated_at = ?
+                     WHERE id = ? AND purchase_order_id = ?",
+                    params![
+                        new_received.to_string(),
+                        now.to_rfc3339(),
+                        item.item_id.to_string(),
+                        id.to_string()
+                    ],
+                )?;
             }
 
-            tx.execute(
-                "UPDATE purchase_order_items
-                 SET quantity_received = ?, updated_at = ?
-                 WHERE id = ? AND purchase_order_id = ?",
-                params![
-                    new_received.to_string(),
-                    now.to_rfc3339(),
-                    item.item_id.to_string(),
-                    id.to_string()
-                ],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        // Check if fully or partially received
-        let mut has_items = false;
-        let mut all_received = true;
-        let mut any_received = false;
-        {
-            let mut stmt = tx
-                .prepare(
+            // Check if fully or partially received
+            let mut has_items = false;
+            let mut all_received = true;
+            let mut any_received = false;
+            {
+                let mut stmt = tx.prepare(
                     "SELECT quantity_ordered, quantity_received
                      FROM purchase_order_items
                      WHERE purchase_order_id = ?",
-                )
-                .map_err(map_db_error)?;
-            let rows = stmt
-                .query_map([id.to_string()], |row| {
+                )?;
+                let rows = stmt.query_map([id.to_string()], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map_err(map_db_error)?;
+                })?;
 
-            for row in rows {
-                let (ordered, received) = row.map_err(map_db_error)?;
-                let ordered_dec = parse_decimal_with_context(
-                    &ordered,
-                    "purchase_order_item",
-                    "quantity_ordered",
-                )?;
-                let received_dec = parse_decimal_with_context(
-                    &received,
-                    "purchase_order_item",
-                    "quantity_received",
-                )?;
+                for row in rows {
+                    let (ordered, received) = row?;
+                    let ordered_dec = parse_decimal_with_context(
+                        &ordered,
+                        "purchase_order_item",
+                        "quantity_ordered",
+                    )
+                    .map_err(smuggle)?;
+                    let received_dec = parse_decimal_with_context(
+                        &received,
+                        "purchase_order_item",
+                        "quantity_received",
+                    )
+                    .map_err(smuggle)?;
 
-                has_items = true;
-                all_received &= received_dec >= ordered_dec;
-                any_received |= received_dec > Decimal::ZERO;
+                    has_items = true;
+                    all_received &= received_dec >= ordered_dec;
+                    any_received |= received_dec > Decimal::ZERO;
+                }
             }
-        }
 
-        let new_status = if !has_items {
-            current_status
-        } else if all_received {
-            PurchaseOrderStatus::Received
-        } else if any_received {
-            PurchaseOrderStatus::PartiallyReceived
-        } else {
-            current_status
-        };
+            let new_status = if !has_items {
+                current_status
+            } else if all_received {
+                PurchaseOrderStatus::Received
+            } else if any_received {
+                PurchaseOrderStatus::PartiallyReceived
+            } else {
+                current_status
+            };
 
-        tx.execute(
-            "UPDATE purchase_orders SET status = ?, delivered_date = CASE WHEN ? = 'received' THEN ? ELSE delivered_date END, updated_at = ? WHERE id = ?",
-            params![new_status.to_string(), new_status.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+            tx.execute(
+                "UPDATE purchase_orders SET status = ?, delivered_date = CASE WHEN ? = 'received' THEN ? ELSE delivered_date END, updated_at = ? WHERE id = ?",
+                params![new_status.to_string(), new_status.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+            )?;
 
-        tx.commit().map_err(map_db_error)?;
-
-        Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+            Self::get_po_with_conn(tx, id)
+                .map_err(smuggle)?
+                .ok_or_else(|| smuggle(CommerceError::NotFound))
+        })
     }
 
     fn complete(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
+        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Completed)?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
@@ -1423,7 +1466,8 @@ mod tests {
     use rust_decimal_macros::dec;
     use stateset_core::{
         CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PurchaseOrderFilter,
-        PurchaseOrderRepository, PurchaseOrderStatus, SupplierFilter,
+        PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItem,
+        ReceivePurchaseOrderItems, SupplierFilter,
     };
 
     fn fresh_repo() -> SqlitePurchaseOrderRepository {
@@ -1490,6 +1534,30 @@ mod tests {
     }
 
     #[test]
+    fn list_suppliers_applies_offset_and_default_limit() {
+        let repo = fresh_repo();
+        make_supplier(&repo, "S-a");
+        make_supplier(&repo, "S-b");
+        make_supplier(&repo, "S-c");
+
+        // All three by default (ordered by name ASC).
+        assert_eq!(repo.list_suppliers(SupplierFilter::default()).expect("all").len(), 3);
+
+        // offset skips rows even when no explicit limit is given (Postgres applies
+        // offset; SQLite used to ignore it unless a limit was also set).
+        let offset1 = repo
+            .list_suppliers(SupplierFilter { offset: Some(1), ..Default::default() })
+            .expect("offset");
+        assert_eq!(offset1.len(), 2, "offset must skip rows");
+
+        // offset past the end returns nothing.
+        let past = repo
+            .list_suppliers(SupplierFilter { offset: Some(10), ..Default::default() })
+            .expect("past");
+        assert!(past.is_empty(), "offset past the end returns nothing");
+    }
+
+    #[test]
     fn create_po_starts_in_draft_with_lines() {
         let repo = fresh_repo();
         let supplier = make_supplier(&repo, "ACME");
@@ -1539,8 +1607,13 @@ mod tests {
                 ..Default::default()
             })
             .expect("create");
+        repo.submit_for_approval(po.id).expect("submit");
         let approved = repo.approve(po.id, "manager").expect("approve");
         assert_eq!(approved.status, PurchaseOrderStatus::Approved);
+
+        // Guard: an illegal transition (Approved → PendingApproval) is rejected.
+        let err = repo.submit_for_approval(po.id).expect_err("approved cannot re-enter approval");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
     }
 
     #[test]
@@ -1589,6 +1662,148 @@ mod tests {
     }
 
     #[test]
+    fn receive_updates_quantities_and_rejects_over_receipt() {
+        let repo = fresh_repo();
+        let s = make_supplier(&repo, "RCV");
+        let po = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item("SKU-Q", dec!(10), dec!(1))],
+                ..Default::default()
+            })
+            .expect("create po");
+        let po_id = po.id;
+        let item_id = po.items[0].id;
+        let recv = |qty: Decimal| {
+            repo.receive(
+                po_id,
+                ReceivePurchaseOrderItems {
+                    items: vec![ReceivePurchaseOrderItem {
+                        item_id,
+                        quantity_received: qty,
+                        notes: None,
+                    }],
+                    notes: None,
+                },
+            )
+        };
+
+        // Zero quantity is rejected.
+        assert!(recv(dec!(0)).is_err(), "zero quantity must be rejected");
+
+        // A partial receipt records the quantity and marks the PO PartiallyReceived.
+        let after = recv(dec!(4)).expect("partial receive");
+        assert_eq!(after.items[0].quantity_received, dec!(4));
+        assert_eq!(after.status, PurchaseOrderStatus::PartiallyReceived);
+
+        // Receiving more than the remaining (4 + 7 > 10) is rejected.
+        assert!(recv(dec!(7)).is_err(), "over-receipt must be rejected");
+
+        // Receiving exactly the remaining 6 fully receives the PO.
+        let done = recv(dec!(6)).expect("final receive");
+        assert_eq!(done.items[0].quantity_received, dec!(10));
+        assert_eq!(done.status, PurchaseOrderStatus::Received);
+    }
+
+    #[test]
+    fn receive_accumulates_concurrent_partial_receipts_without_lost_updates() {
+        use std::sync::{Arc, Barrier};
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let s = make_supplier(&db.purchase_orders(), "RACE");
+        let po = db
+            .purchase_orders()
+            .create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item("SKU-R", dec!(100), dec!(1))],
+                ..Default::default()
+            })
+            .expect("create po");
+        let po_id = po.id;
+        let item_id = po.items[0].id;
+
+        // Fire many concurrent partial receipts of 2 each (all individually valid
+        // against ordered 100). Every one that returns Ok must have actually added
+        // its 2 to quantity_received; a racy read-check-write with an absolute
+        // write would lose some, leaving received < 2 * successes.
+        let n = 8;
+        let barrier = Arc::new(Barrier::new(n));
+        let handles: Vec<_> = (0..n)
+            .map(|_| {
+                let db = Arc::clone(&db);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    db.purchase_orders().receive(
+                        po_id,
+                        ReceivePurchaseOrderItems {
+                            items: vec![ReceivePurchaseOrderItem {
+                                item_id,
+                                quantity_received: dec!(2),
+                                notes: None,
+                            }],
+                            notes: None,
+                        },
+                    )
+                })
+            })
+            .collect();
+
+        let results: Vec<_> =
+            handles.into_iter().map(|h| h.join().expect("thread panicked")).collect();
+        // A transient lock error is acceptable only if the caller retries; the
+        // retrying immediate transaction makes every receipt land.
+        assert!(
+            results.iter().all(|r| r.is_ok()
+                || format!("{:?}", r.as_ref().unwrap_err()).to_lowercase().contains("lock")),
+            "unexpected non-lock failure: {results:?}"
+        );
+
+        // Every one of the n receipts of 2 must land — no receipt lost to an
+        // unretried lock conflict.
+        let po = db.purchase_orders().get(po_id).expect("get").expect("po exists");
+        assert_eq!(
+            po.items[0].quantity_received,
+            Decimal::from(n as u64) * dec!(2),
+            "all {n} receipts of 2 must accumulate, got {}",
+            po.items[0].quantity_received
+        );
+    }
+
+    #[test]
+    fn list_applies_offset_and_pagination() {
+        let repo = fresh_repo();
+        let s = make_supplier(&repo, "PAGER");
+        for i in 0..3 {
+            repo.create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item(&format!("SKU-{i}"), dec!(1), dec!(1))],
+                ..Default::default()
+            })
+            .expect("create po");
+        }
+
+        let base = PurchaseOrderFilter { supplier_id: Some(s.id), ..Default::default() };
+
+        // No pagination → all three.
+        assert_eq!(repo.list(base.clone()).expect("all").len(), 3);
+
+        // offset must skip rows (Postgres applies it; SQLite used to ignore it).
+        let offset1 = repo.list(PurchaseOrderFilter { offset: Some(1), ..base }).expect("offset");
+        assert_eq!(offset1.len(), 2, "offset must skip rows");
+
+        // limit + offset selects a page.
+        let page = repo
+            .list(PurchaseOrderFilter { limit: Some(2), offset: Some(1), ..base })
+            .expect("page");
+        assert_eq!(page.len(), 2);
+
+        // offset past the end returns nothing.
+        let past = repo.list(PurchaseOrderFilter { offset: Some(10), ..base }).expect("past");
+        assert!(past.is_empty(), "offset past the end returns nothing");
+    }
+
+    #[test]
     fn list_filters_by_status() {
         let repo = fresh_repo();
         let s = make_supplier(&repo, "ACME");
@@ -1606,6 +1821,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("c2");
+        repo.submit_for_approval(po_to_approve.id).expect("submit");
         repo.approve(po_to_approve.id, "manager").expect("approve");
 
         let drafts = repo

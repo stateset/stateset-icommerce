@@ -407,18 +407,34 @@ impl PgPurchaseOrderRepository {
 
     pub async fn list_suppliers_async(&self, filter: SupplierFilter) -> Result<Vec<Supplier>> {
         let limit = filter.limit.unwrap_or(100) as i64;
+        let offset = filter.offset.unwrap_or(0) as i64;
         let mut query = String::from("SELECT * FROM suppliers WHERE 1=1");
+        let mut param_idx = 1;
 
+        // Honor the same filters as the SQLite backend (previously Postgres only
+        // applied active_only and silently ignored name/country).
+        if filter.name.is_some() {
+            query.push_str(&format!(" AND name ILIKE ${param_idx}"));
+            param_idx += 1;
+        }
+        if filter.country.is_some() {
+            query.push_str(&format!(" AND country = ${param_idx}"));
+            param_idx += 1;
+        }
         if filter.active_only.unwrap_or(false) {
             query.push_str(" AND is_active = true");
         }
 
-        query.push_str(&format!(" ORDER BY name ASC LIMIT {}", limit));
+        query.push_str(&format!(" ORDER BY name ASC LIMIT ${param_idx} OFFSET ${}", param_idx + 1));
 
-        let rows = sqlx::query_as::<_, SupplierRow>(&query)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut q = sqlx::query_as::<_, SupplierRow>(&query);
+        if let Some(name) = filter.name {
+            q = q.bind(format!("%{name}%"));
+        }
+        if let Some(country) = filter.country {
+            q = q.bind(country);
+        }
+        let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         let mut suppliers = Vec::with_capacity(rows.len());
         for row in rows {

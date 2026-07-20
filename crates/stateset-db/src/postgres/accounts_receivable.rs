@@ -639,7 +639,10 @@ impl PgAccountsReceivableRepository {
             builder.push(condition);
         }
 
-        builder.push(" ORDER BY total_outstanding DESC");
+        // customer_id is a total-order tiebreaker so equal balances have a
+        // stable, unique ordering — otherwise LIMIT/OFFSET pagination can skip or
+        // duplicate rows (matches the SQLite backend's sort).
+        builder.push(" ORDER BY total_outstanding DESC, i.customer_id ASC");
 
         if let Some(limit) = filter.limit {
             builder.push(" LIMIT ").push_bind(limit as i64);
@@ -1572,8 +1575,12 @@ impl PgAccountsReceivableRepository {
     }
 
     pub async fn get_average_days_to_pay_async(&self, customer_id: Uuid) -> Result<Option<i32>> {
+        // Use the FRACTIONAL day difference (total seconds / 86400), matching the
+        // SQLite backend's `JULIANDAY(applied) - JULIANDAY(invoice)`. `EXTRACT(DAY
+        // FROM interval)` returns only the whole-day component, dropping the hours,
+        // which floors each invoice's latency before averaging and diverges.
         let avg: Option<f64> = sqlx::query_scalar(
-            "SELECT AVG(EXTRACT(DAY FROM (pa.applied_date - i.invoice_date)))
+            "SELECT AVG(EXTRACT(EPOCH FROM (pa.applied_date - i.invoice_date)) / 86400.0)
              FROM ar_payment_applications pa
              JOIN invoices i ON pa.invoice_id = i.id
              WHERE i.customer_id = $1 AND i.status = 'paid'",

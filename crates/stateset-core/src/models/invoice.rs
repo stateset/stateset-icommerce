@@ -422,7 +422,60 @@ pub fn generate_invoice_number() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::generate_invoice_number;
+    use super::*;
+    use chrono::Duration;
+    use rust_decimal_macros::dec;
+
+    // ========================================================================
+    // Test Helpers
+    // ========================================================================
+
+    fn create_test_invoice(status: InvoiceStatus, due_in_days: i64) -> Invoice {
+        let now = Utc::now();
+        Invoice {
+            id: InvoiceId::new(),
+            invoice_number: generate_invoice_number(),
+            customer_id: CustomerId::new(),
+            order_id: None,
+            status,
+            invoice_type: InvoiceType::Standard,
+            invoice_date: now,
+            due_date: now + Duration::days(due_in_days),
+            payment_terms: None,
+            currency: CurrencyCode::USD,
+            billing_name: None,
+            billing_email: None,
+            billing_address: None,
+            billing_city: None,
+            billing_state: None,
+            billing_postal_code: None,
+            billing_country: None,
+            subtotal: dec!(100.00),
+            discount_amount: Decimal::ZERO,
+            discount_percent: None,
+            tax_amount: dec!(8.00),
+            tax_rate: None,
+            shipping_amount: Decimal::ZERO,
+            total: dec!(108.00),
+            amount_paid: Decimal::ZERO,
+            balance_due: dec!(108.00),
+            po_number: None,
+            notes: None,
+            terms: None,
+            footer: None,
+            sent_at: None,
+            viewed_at: None,
+            paid_at: None,
+            voided_at: None,
+            items: vec![],
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    // ========================================================================
+    // Number Generation
+    // ========================================================================
 
     #[test]
     fn generated_invoice_numbers_include_entropy_suffix() {
@@ -432,5 +485,146 @@ mod tests {
         assert!(first.starts_with("INV-"));
         assert!(first.len() > "INV-20260101120000000".len());
         assert_ne!(first, second);
+    }
+
+    // ========================================================================
+    // Balance Math
+    // ========================================================================
+
+    #[test]
+    fn calculate_balance_with_no_payments_equals_total() {
+        let invoice = create_test_invoice(InvoiceStatus::Sent, 30);
+        assert_eq!(invoice.calculate_balance(), dec!(108.00));
+    }
+
+    #[test]
+    fn calculate_balance_after_partial_payment() {
+        let mut invoice = create_test_invoice(InvoiceStatus::PartiallyPaid, 30);
+        invoice.amount_paid = dec!(50.00);
+        assert_eq!(invoice.calculate_balance(), dec!(58.00));
+    }
+
+    #[test]
+    fn calculate_balance_when_fully_paid_is_zero() {
+        let mut invoice = create_test_invoice(InvoiceStatus::Paid, 30);
+        invoice.amount_paid = dec!(108.00);
+        assert_eq!(invoice.calculate_balance(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn calculate_balance_on_overpayment_is_negative() {
+        let mut invoice = create_test_invoice(InvoiceStatus::Paid, 30);
+        invoice.amount_paid = dec!(120.00);
+        assert_eq!(invoice.calculate_balance(), dec!(-12.00));
+    }
+
+    // ========================================================================
+    // Overdue Logic
+    // ========================================================================
+
+    #[test]
+    fn unpaid_invoice_past_due_date_is_overdue() {
+        let invoice = create_test_invoice(InvoiceStatus::Sent, -1);
+        assert!(invoice.is_overdue());
+    }
+
+    #[test]
+    fn unpaid_invoice_before_due_date_is_not_overdue() {
+        let invoice = create_test_invoice(InvoiceStatus::Sent, 30);
+        assert!(!invoice.is_overdue());
+    }
+
+    #[test]
+    fn paid_invoice_is_never_overdue() {
+        let invoice = create_test_invoice(InvoiceStatus::Paid, -90);
+        assert!(!invoice.is_overdue());
+    }
+
+    #[test]
+    fn voided_invoice_is_never_overdue() {
+        let invoice = create_test_invoice(InvoiceStatus::Voided, -90);
+        assert!(!invoice.is_overdue());
+    }
+
+    #[test]
+    fn partially_paid_invoice_past_due_is_overdue() {
+        let mut invoice = create_test_invoice(InvoiceStatus::PartiallyPaid, -5);
+        invoice.amount_paid = dec!(50.00);
+        assert!(invoice.is_overdue());
+    }
+
+    #[test]
+    fn days_until_due_is_positive_before_due_date() {
+        let invoice = create_test_invoice(InvoiceStatus::Sent, 30);
+        let days = invoice.days_until_due();
+        assert!((29..=30).contains(&days), "expected ~30 days, got {days}");
+    }
+
+    #[test]
+    fn days_until_due_is_negative_when_overdue() {
+        let invoice = create_test_invoice(InvoiceStatus::Sent, -10);
+        let days = invoice.days_until_due();
+        assert!(days <= -10, "expected <= -10 days, got {days}");
+    }
+
+    // ========================================================================
+    // Enum Round-Trips
+    // ========================================================================
+
+    #[test]
+    fn invoice_status_round_trips_through_strings() {
+        for status in [
+            InvoiceStatus::Draft,
+            InvoiceStatus::Sent,
+            InvoiceStatus::Viewed,
+            InvoiceStatus::PartiallyPaid,
+            InvoiceStatus::Paid,
+            InvoiceStatus::Overdue,
+            InvoiceStatus::Voided,
+            InvoiceStatus::WrittenOff,
+            InvoiceStatus::Disputed,
+        ] {
+            let parsed: InvoiceStatus =
+                status.to_string().parse().expect("status should round-trip");
+            assert_eq!(parsed, status);
+        }
+    }
+
+    #[test]
+    fn invoice_status_parse_is_case_insensitive_and_rejects_unknown() {
+        assert_eq!("PAID".parse::<InvoiceStatus>(), Ok(InvoiceStatus::Paid));
+        assert_eq!("Partially_Paid".parse::<InvoiceStatus>(), Ok(InvoiceStatus::PartiallyPaid));
+        assert!("bogus".parse::<InvoiceStatus>().is_err());
+    }
+
+    #[test]
+    fn invoice_type_round_trips_through_strings() {
+        for invoice_type in [
+            InvoiceType::Standard,
+            InvoiceType::CreditMemo,
+            InvoiceType::DebitMemo,
+            InvoiceType::Proforma,
+            InvoiceType::Recurring,
+            InvoiceType::Final,
+        ] {
+            let parsed: InvoiceType =
+                invoice_type.to_string().parse().expect("type should round-trip");
+            assert_eq!(parsed, invoice_type);
+        }
+    }
+
+    #[test]
+    fn invoice_type_accepts_note_aliases() {
+        assert_eq!("credit_note".parse::<InvoiceType>(), Ok(InvoiceType::CreditMemo));
+        assert_eq!("debit_note".parse::<InvoiceType>(), Ok(InvoiceType::DebitMemo));
+        assert!("unknown".parse::<InvoiceType>().is_err());
+    }
+
+    #[test]
+    fn invoice_status_serde_round_trips_snake_case() {
+        let json = serde_json::to_string(&InvoiceStatus::PartiallyPaid).expect("serialize");
+        assert_eq!(json, "\"partially_paid\"");
+        let back: InvoiceStatus = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, InvoiceStatus::PartiallyPaid);
     }
 }

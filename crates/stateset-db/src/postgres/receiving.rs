@@ -526,13 +526,30 @@ impl PgReceivingRepository {
         }
 
         let now = Utc::now();
+
+        // Complete the receipt header and mark its non-rejected line items
+        // `received` in one transaction (matching the SQLite backend, which marks
+        // items received on completion — the Postgres path previously updated only
+        // the header, leaving items in their prior status).
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         sqlx::query("UPDATE receipts SET status = $1, completed_date = $2 WHERE id = $3")
             .bind(ReceiptStatus::Received.to_string())
             .bind(now)
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        sqlx::query(
+            "UPDATE receipt_items SET status = 'received' WHERE receipt_id = $1 AND status != 'rejected'",
+        )
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_receipt_async(id)
             .await?
@@ -542,8 +559,11 @@ impl PgReceivingRepository {
     pub async fn cancel_receipt_async(&self, id: Uuid) -> Result<Receipt> {
         let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
 
-        if existing.status == ReceiptStatus::Received {
-            return Err(CommerceError::ValidationError("Cannot cancel a received receipt".into()));
+        if !existing.status.can_cancel() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot cancel a receipt in {} status (goods already received)",
+                existing.status
+            )));
         }
 
         sqlx::query("UPDATE receipts SET status = $1 WHERE id = $2")

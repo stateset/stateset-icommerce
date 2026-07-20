@@ -718,6 +718,32 @@ impl PgPaymentRepository {
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        // Lock the refund row and read its CURRENT status so concurrent
+        // completions serialize and only one folds the refund into the payment.
+        let (current_status,): (String,) =
+            sqlx::query_as("SELECT status FROM refunds WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let current_status: RefundStatus = current_status.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid refund status '{current_status}'"))
+        })?;
+
+        // Idempotent: completing an already-completed refund is a no-op (a
+        // duplicated payment-processor webhook or a retry must NOT re-add the
+        // amount to the payment's `amount_refunded`).
+        if current_status == RefundStatus::Completed {
+            return self.get_refund_async(id).await?.ok_or(CommerceError::NotFound);
+        }
+        // A failed/cancelled refund is terminal and cannot be completed.
+        if current_status.is_terminal() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot complete a {current_status} refund"
+            )));
+        }
+
         sqlx::query(
             "UPDATE refunds SET status = $1, refunded_at = $2, updated_at = $3 WHERE id = $4",
         )

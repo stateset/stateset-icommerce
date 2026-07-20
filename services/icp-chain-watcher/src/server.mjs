@@ -174,8 +174,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     settlerUrl: SETTLER_URL,
     startBlock: process.env.START_BLOCK ? Number(process.env.START_BLOCK) : null,
   });
-  startHealthServer(watcher);
+  const healthServer = startHealthServer(watcher);
   process.stderr.write(`icp-chain-watcher: rpc=${RPC_URL} contract=${CONTRACT_ADDRESS} settler=${SETTLER_URL}\n`);
+
+  // Graceful shutdown: cursor state is already persisted after every poll,
+  // so stopping cleanly just means closing the health listener and exiting
+  // before the next poll begins.
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.on(signal, () => {
+      process.stderr.write(`icp-chain-watcher: ${signal} received, shutting down\n`);
+      healthServer.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 3000).unref();
+    });
+  }
+
   watcher.run().catch((err) => {
     process.stderr.write(`fatal: ${err.message}\n`);
     process.exit(1);

@@ -1,0 +1,37 @@
+{
+  "decisions": {
+    "ret01_under": {
+      "valid": true
+    },
+    "ret02_equal": {
+      "valid": true
+    },
+    "ret03_over": {
+      "error": "policy.return.exceeds_max_refund"
+    },
+    "ret04_decimal_trap": {
+      "valid": true
+    },
+    "ret05_trailing_zero": {
+      "valid": true
+    },
+    "pay01_under": {
+      "valid": true
+    },
+    "pay02_equal": {
+      "valid": true
+    },
+    "pay03_over": {
+      "error": "policy.payout.exceeds_max_per_payout"
+    },
+    "pay04_bigint_over": {
+      "error": "policy.payout.exceeds_max_per_payout"
+    },
+    "pay05_integer_form": {
+      "valid": true
+    }
+  },
+  "_provenance": {
+    "note": "Generated from the \u00a711.4-family authoritative ceilings: purchase.return refund.amount <= max_refund (policy.return.exceeds_max_refund) and payout.request amount <= PrincipalBinding max_per_payout (policy.payout.exceeds_max_per_payout). Same exact-decimal comparison as 06-quote-binding, dispatched on `kind`. Same-currency non-negative amounts."
+  }
+}

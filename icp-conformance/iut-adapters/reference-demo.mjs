@@ -163,6 +163,264 @@ function run03SignatureVerification(input) {
 }
 
 // ===========================================================================
+// 04-escrow-lifecycle — ICP-1.0 §8 state machine + event replay
+// ===========================================================================
+
+// The normative §8 transition table, encoded directly.
+const ESCROW_TRANSITIONS = {
+  'pending|payment_confirmed': 'funded',
+  'funded|fulfillment_confirmed_window_elapsed': 'released',
+  'funded|dispute_raised': 'disputed',
+  'disputed|resolution_favors_merchant': 'released',
+  'disputed|resolution_favors_buyer': 'refunded',
+  'funded|merchant_cancel_or_expiry': 'refunded',
+};
+
+function escrowStep(state, trigger) {
+  const next = ESCROW_TRANSITIONS[`${state}|${trigger}`];
+  if (next) return { state: next };
+  if (state === 'funded' && trigger === 'payment_confirmed') {
+    return { error: 'escrow.already_funded' };
+  }
+  return { error: 'escrow.wrong_state' };
+}
+
+function escrowReplay(events) {
+  let state = 'pending';
+  for (let i = 0; i < events.length; i++) {
+    if (events[i].seq !== i) return { error: 'escrow.seq_out_of_order' };
+    const step = escrowStep(state, events[i].trigger);
+    if (step.error) return { error: step.error };
+    state = step.state;
+  }
+  return { final_state: state };
+}
+
+function run04EscrowLifecycle(input) {
+  const transitions = {};
+  for (const c of input.transition_cases) {
+    transitions[c.id] = escrowStep(c.from, c.trigger);
+  }
+  const replays = {};
+  for (const c of input.replay_cases) {
+    replays[c.id] = escrowReplay(c.events);
+  }
+  return { transitions, replays };
+}
+
+// ===========================================================================
+// 05-intent-validation — ICP-1.0 §6 intent envelope validation
+// ===========================================================================
+
+const AID_RE = /^aid:v1:z[1-9A-HJ-NP-Za-km-z]{40,60}$/;
+const SETTLER_RE = /^settler:[a-z0-9]+(\.[a-z0-9]+)*$/;
+const MONEY_RE = /^-?[0-9]+(\.[0-9]{1,18})?$/;
+
+// Per-verb: AID-typed fields, top-level Money fields, whether `items` is
+// required, and the full required-field list from the §6 schemas.
+const INTENT_VERBS = {
+  'purchase.create': { aids: ['buyer', 'merchant'], money: ['max_total'], itemsRequired: true,
+    required: ['v', 'verb', 'intent_id', 'buyer', 'merchant', 'settler', 'items', 'max_total', 'expiry', 'principal_binding', 'nonce', 'iat', 'exp'] },
+  'inventory.query': { aids: ['buyer', 'merchant'], money: [], itemsRequired: false,
+    required: ['v', 'verb', 'intent_id', 'buyer', 'merchant', 'settler', 'principal_binding', 'nonce', 'iat', 'exp'] },
+  'quote.request': { aids: ['buyer', 'merchant'], money: [], itemsRequired: true,
+    required: ['v', 'verb', 'intent_id', 'buyer', 'merchant', 'settler', 'items', 'principal_binding', 'nonce', 'iat', 'exp'] },
+  'payout.request': { aids: ['seller', 'platform'], money: ['amount'], itemsRequired: false,
+    required: ['v', 'verb', 'intent_id', 'seller', 'platform', 'settler', 'amount', 'destination', 'principal_binding', 'nonce', 'iat', 'exp'] },
+  'subscription.create': { aids: ['buyer', 'merchant'], money: ['max_total_per_period'], itemsRequired: false,
+    required: ['v', 'verb', 'intent_id', 'buyer', 'merchant', 'settler', 'service_id', 'cadence', 'max_total_per_period', 'first_charge_at', 'principal_binding', 'nonce', 'iat', 'exp'] },
+  'subscription.cancel': { aids: ['buyer', 'merchant'], money: [], itemsRequired: false,
+    required: ['v', 'verb', 'intent_id', 'buyer', 'merchant', 'settler', 'subscription_id', 'effective', 'principal_binding', 'nonce', 'iat', 'exp'] },
+  'purchase.return': { aids: ['buyer', 'merchant'], money: [], itemsRequired: true,
+    required: ['v', 'verb', 'intent_id', 'buyer', 'merchant', 'settler', 'original_settlement_id', 'items', 'desired_outcome', 'principal_binding', 'nonce', 'iat', 'exp'] },
+};
+
+function has(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function validateIntent(intent) {
+  if (typeof intent !== 'object' || intent === null) return { error: 'format.bad_schema' };
+  if (!has(intent, 'v')) return { error: 'format.missing_field' };
+  if (intent.v !== 'icp-1.0') return { error: 'version.unsupported' };
+  if (!has(intent, 'verb')) return { error: 'format.missing_field' };
+  const spec = INTENT_VERBS[intent.verb];
+  if (!spec) return { error: 'format.unknown_verb' };
+  for (const field of spec.required) {
+    if (!has(intent, field)) return { error: 'format.missing_field' };
+  }
+  for (const field of spec.aids) {
+    if (!AID_RE.test(String(intent[field]))) return { error: 'format.bad_aid' };
+  }
+  if (!SETTLER_RE.test(String(intent.settler))) return { error: 'format.bad_settler_id' };
+  for (const field of spec.money) {
+    const m = intent[field];
+    if (typeof m !== 'object' || m === null || !MONEY_RE.test(String(m.amount)))
+      return { error: 'format.bad_money' };
+  }
+  if (spec.itemsRequired) {
+    if (!Array.isArray(intent.items) || intent.items.length < 1) return { error: 'format.bad_schema' };
+  }
+  return { valid: true };
+}
+
+function run05IntentValidation(input) {
+  const validations = {};
+  for (const c of input.cases) {
+    validations[c.id] = validateIntent(c.intent);
+  }
+  return { validations };
+}
+
+// ===========================================================================
+// 06-quote-binding — ICP-1.0 §11.4 max_total ceiling (exact decimal compare)
+// ===========================================================================
+
+// Compare two non-negative decimal strings (^[0-9]+(\.[0-9]{1,18})?$).
+// Returns -1, 0, or 1. Exact — no Number/float conversion.
+function cmpAmount(a, b) {
+  const [ra, fa = ''] = a.split('.');
+  const [rb, fb = ''] = b.split('.');
+  const ia = ra.replace(/^0+/, '') || '0';
+  const ib = rb.replace(/^0+/, '') || '0';
+  if (ia.length !== ib.length) return ia.length < ib.length ? -1 : 1;
+  if (ia !== ib) return ia < ib ? -1 : 1; // equal length → lexicographic == numeric
+  const n = Math.max(fa.length, fb.length);
+  const pa = fa.padEnd(n, '0');
+  const pb = fb.padEnd(n, '0');
+  if (pa === pb) return 0;
+  return pa < pb ? -1 : 1;
+}
+
+function run06QuoteBinding(input) {
+  const decisions = {};
+  for (const c of input.cases) {
+    const exceeds = cmpAmount(c.quote_total.amount, c.intent_max_total.amount) > 0;
+    decisions[c.id] = exceeds ? { error: 'policy.quote.exceeds_max_total' } : { valid: true };
+  }
+  return { decisions };
+}
+
+// ===========================================================================
+// 07-settlement-receipts — ICP-1.0 §9 co-signed receipt verification
+// ===========================================================================
+
+// Verify a raw-hex Ed25519 signature over `canonical` (same envelope trick as
+// run03: wrap the raw pubkey in an SPKI header so node:crypto accepts it).
+function verifyEd25519Hex(canonical, sigHex, pubkeyHex) {
+  try {
+    const sigBytes = Buffer.from(sigHex, 'hex');
+    if (sigBytes.length !== 64) return false;
+    const pubRaw = Buffer.from(pubkeyHex, 'hex');
+    if (pubRaw.length !== 32) return false;
+    const spkiPrefix = Buffer.from('302a300506032b6570032100', 'hex');
+    const pubKey = createPublicKey({
+      key: Buffer.concat([spkiPrefix, pubRaw]),
+      format: 'der',
+      type: 'spki',
+    });
+    return verify(null, Buffer.from(canonical), pubKey, sigBytes);
+  } catch (_) {
+    return false;
+  }
+}
+
+function verifyReceipt(receipt, merchantPubkeyHex, settlerPubkeyHex) {
+  if (typeof receipt !== 'object' || receipt === null) {
+    return { error: 'format.missing_field' };
+  }
+  const ms = receipt.merchant_signature;
+  if (!ms || !ms.sig) return { error: 'format.missing_field' };
+  const ss = receipt.settler_signature;
+  if (!ss || !ss.sig) return { error: 'format.missing_field' };
+
+  // Strip both signature fields and re-canonicalize; the signer signed the
+  // canonical bytes of the unsigned receipt body (§9).
+  const { merchant_signature, settler_signature, ...unsigned } = receipt; // eslint-disable-line no-unused-vars
+  const canonical = canonicalJson(unsigned);
+
+  if (!verifyEd25519Hex(canonical, ms.sig, merchantPubkeyHex)) {
+    return { error: 'signature.invalid' };
+  }
+  if (!verifyEd25519Hex(canonical, ss.sig, settlerPubkeyHex)) {
+    return { error: 'settlement.settler_signature_invalid' };
+  }
+  return { valid: true };
+}
+
+function run07SettlementReceipts(input) {
+  const verifications = {};
+  for (const c of input.cases) {
+    verifications[c.id] = verifyReceipt(c.receipt, c.merchant_pubkey_hex, c.settler_pubkey_hex);
+  }
+  return { verifications };
+}
+
+// ===========================================================================
+// 08-timing — ICP-1.0 §5.3 replay window (strict parse + shared epoch algo)
+// ===========================================================================
+
+const TIMING_WINDOW_MAX = 600; // §5.3 intent window ceiling, seconds
+const TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/;
+
+// Howard Hinnant's days_from_civil — exact, no leap seconds, positive years.
+function daysFromCivil(y, m, d) {
+  const y2 = m <= 2 ? y - 1 : y;
+  const era = Math.floor((y2 >= 0 ? y2 : y2 - 399) / 400);
+  const yoe = y2 - era * 400;
+  const doy = Math.floor((153 * (m > 2 ? m - 3 : m + 9) + 2) / 5) + d - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+// Strict RFC-3339 second-precision UTC parser. Returns epoch seconds or null.
+// Deliberately not Date.parse (lenient — accepts "2026-07-14" etc.).
+function parseEpoch(s) {
+  if (typeof s !== 'string') return null;
+  const m = TS_RE.exec(s);
+  if (!m) return null;
+  const [y, mo, d, h, mi, se] = m.slice(1).map(Number);
+  if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && se <= 59)) return null;
+  return daysFromCivil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se;
+}
+
+function validateTiming(iat, exp, now) {
+  const ti = parseEpoch(iat);
+  const te = parseEpoch(exp);
+  const tn = parseEpoch(now);
+  if (ti === null || te === null || tn === null) return { error: 'replay.timestamp_malformed' };
+  if (te - ti > TIMING_WINDOW_MAX) return { error: 'replay.window_too_long' };
+  if (te < tn) return { error: 'replay.expired' };
+  return { valid: true };
+}
+
+function run08Timing(input) {
+  const validations = {};
+  for (const c of input.cases) {
+    validations[c.id] = validateTiming(c.iat, c.exp, c.now);
+  }
+  return { validations };
+}
+
+// ===========================================================================
+// 09-ceilings — refund/payout authoritative ceilings (reuses cmpAmount)
+// ===========================================================================
+
+const CEILING_CODE = {
+  return: 'policy.return.exceeds_max_refund',
+  payout: 'policy.payout.exceeds_max_per_payout',
+};
+
+function run09Ceilings(input) {
+  const decisions = {};
+  for (const c of input.cases) {
+    const exceeds = cmpAmount(c.value.amount, c.ceiling.amount) > 0;
+    decisions[c.id] = exceeds ? { error: CEILING_CODE[c.kind] } : { valid: true };
+  }
+  return { decisions };
+}
+
+// ===========================================================================
 // Main
 // ===========================================================================
 
@@ -191,6 +449,24 @@ try {
       break;
     case '03-signature-verification':
       output = run03SignatureVerification(input);
+      break;
+    case '04-escrow-lifecycle':
+      output = run04EscrowLifecycle(input);
+      break;
+    case '05-intent-validation':
+      output = run05IntentValidation(input);
+      break;
+    case '06-quote-binding':
+      output = run06QuoteBinding(input);
+      break;
+    case '07-settlement-receipts':
+      output = run07SettlementReceipts(input);
+      break;
+    case '08-timing':
+      output = run08Timing(input);
+      break;
+    case '09-ceilings':
+      output = run09Ceilings(input);
       break;
     default:
       process.stderr.write(JSON.stringify({ error: 'unsupported', reason: `no handler for ${testName}` }) + '\n');

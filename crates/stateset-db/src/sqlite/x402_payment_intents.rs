@@ -685,6 +685,24 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             conditions.push("asset = ?".to_string());
             params.push(Box::new(asset.to_string().to_lowercase()));
         }
+        // Mirror `list`'s remaining predicates so a filtered count matches the
+        // filtered list (and Postgres, which applies all of these in count).
+        if let Some(order_id) = filter.order_id {
+            conditions.push("order_id = ?".to_string());
+            params.push(Box::new(order_id.to_string()));
+        }
+        if let Some(batch_id) = filter.batch_id {
+            conditions.push("batch_id = ?".to_string());
+            params.push(Box::new(batch_id.to_string()));
+        }
+        if let Some(ref from) = filter.from_date {
+            conditions.push("created_at >= ?".to_string());
+            params.push(Box::new(from.to_rfc3339()));
+        }
+        if let Some(ref to) = filter.to_date {
+            conditions.push("created_at <= ?".to_string());
+            params.push(Box::new(to.to_rfc3339()));
+        }
 
         let sql =
             format!("SELECT COUNT(*) FROM x402_payment_intents WHERE {}", conditions.join(" AND "));

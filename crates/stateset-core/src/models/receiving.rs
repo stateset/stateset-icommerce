@@ -137,6 +137,19 @@ pub enum ReceiptStatus {
     Cancelled,
 }
 
+impl ReceiptStatus {
+    /// Whether a receipt in this status may still be cancelled.
+    ///
+    /// A receipt can only be cancelled before its goods are received — once it
+    /// reaches `Received` (or a later inspecting/put-away/completed state, or is
+    /// already cancelled) the goods are physically on hand, so it must not be
+    /// cancelled. Both backends gate `cancel_receipt` on this so they agree.
+    #[must_use]
+    pub const fn can_cancel(self) -> bool {
+        matches!(self, Self::Expected | Self::InProgress)
+    }
+}
+
 impl FromStr for ReceiptStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {

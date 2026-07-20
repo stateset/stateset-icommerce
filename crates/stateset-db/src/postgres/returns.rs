@@ -6,9 +6,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    BatchResult, CommerceError, CreateReturn, CreateReturnItem, CustomerId, ItemCondition, OrderId,
-    OrderItemId, Result, Return, ReturnFilter, ReturnId, ReturnItem, ReturnReason,
-    ReturnRepository, ReturnStatus, UpdateReturn, validate_batch_size,
+    BatchResult, CommerceError, CreateReturn, CustomerId, ItemCondition, OrderId, OrderItemId,
+    Result, Return, ReturnFilter, ReturnId, ReturnItem, ReturnReason, ReturnRepository,
+    ReturnStatus, UpdateReturn, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -16,6 +16,65 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct PgReturnRepository {
     pool: PgPool,
+}
+
+/// Validate a single return line against its order item, on the given
+/// connection (typically a transaction), returning the item's
+/// `(sku, name, unit_price)` for the caller to record on the return.
+///
+/// Rejects the return when:
+/// - the order item does not exist,
+/// - the order item belongs to a different order than the one being returned, or
+/// - returning `return_qty` more units would exceed what was purchased, counting
+///   units already claimed by non-terminal returns (rejected/cancelled returns
+///   release their claim).
+///
+/// This guards against over-returning (and thus over-refunding) more units than
+/// were ordered, and against returning another order's items.
+async fn validate_return_item_pg(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    order_item_id: Uuid,
+    return_qty: i32,
+) -> Result<(String, String, Decimal)> {
+    let (sku, name, unit_price, oi_order_id, ordered_qty): (String, String, Decimal, Uuid, i32) =
+        sqlx::query_as(
+            "SELECT sku, name, unit_price, order_id, quantity FROM order_items WHERE id = $1",
+        )
+        .bind(order_item_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(map_db_error)?
+        .ok_or_else(|| {
+            CommerceError::ValidationError(format!("Order item {order_item_id} not found"))
+        })?;
+
+    if oi_order_id != order_id {
+        return Err(CommerceError::ValidationError(format!(
+            "Order item {order_item_id} does not belong to order {order_id}"
+        )));
+    }
+
+    // Units already returned for this order item, excluding rejected/cancelled
+    // returns (which release their claim on the ordered quantity).
+    let (already_returned,): (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(ri.quantity), 0) FROM return_items ri
+         JOIN returns r ON ri.return_id = r.id
+         WHERE ri.order_item_id = $1 AND r.status NOT IN ('rejected', 'cancelled')",
+    )
+    .bind(order_item_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+
+    if i64::from(return_qty) + already_returned > i64::from(ordered_qty) {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot return {return_qty} of order item {order_item_id}: only {} remain returnable ({ordered_qty} ordered, {already_returned} already returned)",
+            i64::from(ordered_qty) - already_returned
+        )));
+    }
+
+    Ok((sku, name, unit_price))
 }
 
 #[derive(FromRow)]
@@ -139,10 +198,15 @@ impl PgReturnRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        // Run header + item inserts in a single transaction so a rejected item
+        // (e.g. an over-return) rolls back the whole return rather than leaving
+        // a partially-created return behind.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         // Get customer_id from order
         let order_info: (Uuid,) = sqlx::query_as("SELECT customer_id FROM orders WHERE id = $1")
             .bind(input.order_id.into_uuid())
-            .fetch_one(&self.pool)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(|_| CommerceError::OrderNotFound(input.order_id.into_uuid()))?;
 
@@ -163,16 +227,59 @@ impl PgReturnRepository {
         .bind(&input.notes)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         // Create return items
-        let mut items = Vec::new();
-        for item_input in input.items {
-            let item = self.create_item_internal(id, item_input).await?;
-            items.push(item);
+        let mut items = Vec::with_capacity(input.items.len());
+        for item_input in &input.items {
+            let item_id = Uuid::new_v4();
+
+            // Validate the item belongs to this order and the return quantity
+            // does not exceed what remains returnable, then get its details.
+            let (sku, name, unit_price) = validate_return_item_pg(
+                tx.as_mut(),
+                input.order_id.into_uuid(),
+                item_input.order_item_id.into_uuid(),
+                item_input.quantity,
+            )
+            .await?;
+
+            let refund = unit_price * Decimal::from(item_input.quantity);
+            let condition = item_input.condition.unwrap_or(ItemCondition::New);
+
+            sqlx::query(
+                r#"
+                INSERT INTO return_items (id, return_id, order_item_id, sku, name, quantity, condition, refund_amount)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                "#,
+            )
+            .bind(item_id)
+            .bind(id)
+            .bind(item_input.order_item_id.into_uuid())
+            .bind(&sku)
+            .bind(&name)
+            .bind(item_input.quantity)
+            .bind(condition.to_string())
+            .bind(refund)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            items.push(ReturnItem {
+                id: item_id,
+                return_id: ReturnId::from(id),
+                order_item_id: item_input.order_item_id,
+                sku,
+                name,
+                quantity: item_input.quantity,
+                condition,
+                refund_amount: refund,
+            });
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(Return {
             id: ReturnId::from(id),
@@ -190,54 +297,6 @@ impl PgReturnRepository {
             version: 1,
             created_at: now,
             updated_at: now,
-        })
-    }
-
-    async fn create_item_internal(
-        &self,
-        return_id: Uuid,
-        input: CreateReturnItem,
-    ) -> Result<ReturnItem> {
-        let id = Uuid::new_v4();
-
-        // Get order item details
-        let item_info: (String, String, Decimal) =
-            sqlx::query_as("SELECT sku, name, unit_price FROM order_items WHERE id = $1")
-                .bind(input.order_item_id.into_uuid())
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?;
-
-        let refund = item_info.2 * Decimal::from(input.quantity);
-        let condition = input.condition.unwrap_or(ItemCondition::New);
-
-        sqlx::query(
-            r#"
-            INSERT INTO return_items (id, return_id, order_item_id, sku, name, quantity, condition, refund_amount)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-        )
-        .bind(id)
-        .bind(return_id)
-        .bind(input.order_item_id.into_uuid())
-        .bind(&item_info.0)
-        .bind(&item_info.1)
-        .bind(input.quantity)
-        .bind(condition.to_string())
-        .bind(refund)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        Ok(ReturnItem {
-            id,
-            return_id: ReturnId::from(return_id),
-            order_item_id: input.order_item_id,
-            sku: item_info.0,
-            name: item_info.1,
-            quantity: input.quantity,
-            condition,
-            refund_amount: refund,
         })
     }
 
@@ -572,15 +631,18 @@ impl PgReturnRepository {
             for item_input in input.items.clone() {
                 let item_id = Uuid::new_v4();
 
-                // Get order item details
-                let item_info: (String, String, Decimal) =
-                    sqlx::query_as("SELECT sku, name, unit_price FROM order_items WHERE id = $1")
-                        .bind(item_input.order_item_id.into_uuid())
-                        .fetch_one(tx.as_mut())
-                        .await
-                        .map_err(map_db_error)?;
+                // Validate the item belongs to this order and the return
+                // quantity does not exceed what remains returnable, then get its
+                // details.
+                let (sku, name, unit_price) = validate_return_item_pg(
+                    tx.as_mut(),
+                    input.order_id.into_uuid(),
+                    item_input.order_item_id.into_uuid(),
+                    item_input.quantity,
+                )
+                .await?;
 
-                let refund = item_info.2 * Decimal::from(item_input.quantity);
+                let refund = unit_price * Decimal::from(item_input.quantity);
                 let condition = item_input.condition.unwrap_or(ItemCondition::New);
 
                 sqlx::query(
@@ -592,8 +654,8 @@ impl PgReturnRepository {
                 .bind(item_id)
                 .bind(id)
                 .bind(item_input.order_item_id.into_uuid())
-                .bind(&item_info.0)
-                .bind(&item_info.1)
+                .bind(&sku)
+                .bind(&name)
                 .bind(item_input.quantity)
                 .bind(condition.to_string())
                 .bind(refund)
@@ -605,8 +667,8 @@ impl PgReturnRepository {
                     id: item_id,
                     return_id: ReturnId::from(id),
                     order_item_id: item_input.order_item_id,
-                    sku: item_info.0,
-                    name: item_info.1,
+                    sku,
+                    name,
                     quantity: item_input.quantity,
                     condition,
                     refund_amount: refund,

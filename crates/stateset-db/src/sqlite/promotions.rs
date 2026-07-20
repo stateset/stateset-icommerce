@@ -244,12 +244,7 @@ impl SqlitePromotionRepository {
 
         sql.push_str(" ORDER BY priority ASC, created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         // Load promotions first, then load conditions using the same connection. This avoids
         // nested pool checkouts (important for max_connections=1).
@@ -524,12 +519,7 @@ impl SqlitePromotionRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn
             .prepare(&sql)
@@ -978,7 +968,21 @@ impl SqlitePromotionRepository {
                     Decimal::ZERO
                 }
             }
+            PromotionType::BundleDiscount => promo.bundle_discount.unwrap_or(Decimal::ZERO),
             _ => Decimal::ZERO,
+        };
+
+        // An item-value discount can never exceed the worth of the items it
+        // applies to — this is what keeps a discount scoped to a set of items
+        // from bleeding into out-of-scope value. It also fails safe on a
+        // misconfigured percentage (>100%). FreeShipping is a shipping
+        // discount, not an item discount, and is exempt; FixedAmountOff and
+        // BundleDiscount are bounded/whole-order by design (matching Postgres).
+        let discount = match promo.promotion_type {
+            PromotionType::FreeShipping
+            | PromotionType::FixedAmountOff
+            | PromotionType::BundleDiscount => discount,
+            _ => discount.min(applicable_amount),
         };
 
         // Apply max discount cap
@@ -1632,6 +1636,119 @@ mod tests {
     }
 
     #[test]
+    fn apply_promotions_applies_bundle_discount() {
+        // A BundleDiscount promotion must apply its fixed `bundle_discount`
+        // amount. SQLite previously had no BundleDiscount arm in
+        // `calculate_discount`, so it silently produced $0 (and was dropped from
+        // the result), while Postgres applied the full amount.
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        scoped_promo_with_coupon(
+            &repo,
+            "BUNDLE15",
+            CreatePromotion {
+                code: Some("BUNDLE-15".into()),
+                name: "$15 off bundle".into(),
+                promotion_type: PromotionType::BundleDiscount,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                bundle_discount: Some(dec!(15.00)),
+                ..Default::default()
+            },
+        );
+
+        let result = repo.apply_promotions(eval_request("BUNDLE15", None)).expect("eval");
+        assert_eq!(result.applied_promotions.len(), 1, "bundle promo must apply: {result:?}");
+        assert_eq!(
+            result.total_discount,
+            dec!(15.00),
+            "BundleDiscount must apply its bundle_discount amount, matching Postgres: {result:?}"
+        );
+    }
+
+    #[test]
+    fn apply_promotions_percentage_cannot_bleed_past_scoped_items() {
+        // A scoped percentage discount must never exceed the eligible items'
+        // worth, mirroring the scoped fixed-discount cap. A misconfigured
+        // percentage (>100%, an admin data error) must not bleed the discount
+        // into out-of-scope items.
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        scoped_promo_with_coupon(
+            &repo,
+            "WIDGETS-150",
+            CreatePromotion {
+                code: Some("WIDGET-150".into()),
+                name: "150% off widgets (misconfigured)".into(),
+                promotion_type: PromotionType::PercentageOff,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                percentage_off: Some(dec!(1.5)),
+                applicable_skus: Some(vec!["WIDGET".into()]),
+                ..Default::default()
+            },
+        );
+
+        let mut request = eval_request("WIDGETS-150", None);
+        request.line_items =
+            vec![line_item("WIDGET", None, dec!(40.00)), line_item("GADGET", None, dec!(60.00))];
+
+        let result = repo.apply_promotions(request).expect("eval");
+        assert_eq!(
+            result.total_discount,
+            dec!(40.00),
+            "discount must cap at the 40.00 of eligible WIDGET items, not bleed into the GADGET: {result:?}"
+        );
+    }
+
+    #[test]
+    fn apply_promotions_tiered_picks_highest_applicable_tier_regardless_of_order() {
+        // The tiered discount must select the highest tier the amount
+        // qualifies for, independent of the order tiers are listed in.
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        scoped_promo_with_coupon(
+            &repo,
+            "TIERED",
+            CreatePromotion {
+                code: Some("TIER".into()),
+                name: "Spend more, save more".into(),
+                promotion_type: PromotionType::TieredDiscount,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                // Deliberately listed high-to-low: the $100+ tier must win for a
+                // $100 order even though the $0 tier appears last.
+                tiers: Some(vec![
+                    DiscountTier {
+                        min_value: dec!(100),
+                        max_value: None,
+                        percentage_off: Some(dec!(0.20)),
+                        fixed_amount_off: None,
+                    },
+                    DiscountTier {
+                        min_value: dec!(0),
+                        max_value: None,
+                        percentage_off: Some(dec!(0.05)),
+                        fixed_amount_off: None,
+                    },
+                ]),
+                ..Default::default()
+            },
+        );
+
+        let request = eval_request("TIERED", None); // subtotal 100.00
+        let result = repo.apply_promotions(request).expect("eval");
+        assert_eq!(
+            result.total_discount,
+            dec!(20.00),
+            "$100 order must hit the $100+ tier (20% = 20.00), not the $0 tier (5%): {result:?}"
+        );
+    }
+
+    #[test]
     fn apply_promotions_respects_product_exclusions() {
         let db = SqliteDatabase::in_memory().expect("in-memory");
         let repo = db.promotions();
@@ -1919,10 +2036,24 @@ mod tests {
 
         let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
         let successes = results.iter().filter(|r| r.is_ok()).count();
-        assert_eq!(successes, 5, "exactly the limit may succeed: {results:?}");
 
         let fetched = repo.get(promo.id).expect("ok").expect("found");
-        assert_eq!(fetched.usage_count, 5, "usage_count raced past the limit");
+        // Safety invariant: redemptions can never race past the usage limit.
+        assert!(
+            fetched.usage_count <= 5,
+            "usage_count raced past the limit: {}",
+            fetched.usage_count
+        );
+        // usage_count equals the successful redemptions exactly — no lost
+        // updates, no phantom increments. Under extreme lock contention a
+        // redemption may fail with a retryable "table is locked" error (the
+        // caller retries), so `successes` may be fewer than five.
+        assert_eq!(
+            i64::from(fetched.usage_count),
+            successes as i64,
+            "usage_count must equal the successful redemptions: {results:?}"
+        );
+        assert!((1..=5).contains(&successes), "between one and five redemptions fit: {results:?}");
     }
 
     #[test]

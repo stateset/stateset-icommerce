@@ -1,0 +1,567 @@
+{
+  "test": "05-intent-validation",
+  "cases": [
+    {
+      "id": "v01_inventory_query_valid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "inventory.query",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8"
+      }
+    },
+    {
+      "id": "v02_payout_request_valid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "payout.request",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "seller": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "platform": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "amount": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "destination": "placeholder_destination"
+      }
+    },
+    {
+      "id": "v03_purchase_create_valid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "v04_purchase_return_valid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.return",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "original_settlement_id": "placeholder_original_settlement_id",
+        "desired_outcome": "placeholder_desired_outcome"
+      }
+    },
+    {
+      "id": "v05_quote_request_valid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "quote.request",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "v06_subscription_cancel_valid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "subscription.cancel",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "subscription_id": "placeholder_subscription_id",
+        "effective": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "v07_subscription_create_valid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "subscription.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total_per_period": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "service_id": "placeholder_service_id",
+        "cadence": "placeholder_cadence",
+        "first_charge_at": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n01_missing_v",
+      "intent": {
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n02_wrong_version",
+      "intent": {
+        "v": "icp-0.9",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n03_missing_verb",
+      "intent": {
+        "v": "icp-1.0",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n04_unknown_verb",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.teleport",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n05_missing_settler",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n06_missing_items",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n07_bad_buyer_aid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "not-an-aid",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n08_bad_merchant_aid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zSHORT",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n09_bad_settler_id",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:Circle_USDC",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n10_bad_money",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.0.0",
+          "currency": "USDC"
+        },
+        "items": [
+          {
+            "sku": "WIDGET-001",
+            "quantity": 2,
+            "unit_price": {
+              "amount": "29.99",
+              "currency": "USDC"
+            }
+          }
+        ],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n11_empty_items",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "purchase.create",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "buyer": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "merchant": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "max_total": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "items": [],
+        "expiry": "2026-05-10T18:00:00Z"
+      }
+    },
+    {
+      "id": "n12_bad_seller_aid",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "payout.request",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "seller": "seller-123",
+        "platform": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "amount": {
+          "amount": "65.00",
+          "currency": "USDC"
+        },
+        "destination": "placeholder_destination"
+      }
+    },
+    {
+      "id": "n13_missing_amount",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "payout.request",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "seller": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "platform": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "destination": "placeholder_destination"
+      }
+    },
+    {
+      "id": "n14_bad_amount_money",
+      "intent": {
+        "v": "icp-1.0",
+        "verb": "payout.request",
+        "intent_id": "icp_int_01HXYZTESTVECTOR0000000001",
+        "settler": "settler:circle.usdc.base",
+        "principal_binding": {
+          "agent": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b"
+        },
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "iat": "2026-05-10T17:50:00Z",
+        "exp": "2026-05-10T18:00:00Z",
+        "seller": "aid:v1:z8aiPxVDKT12yzrWon2VrLRE9VDWiR82NqPaUDJv6Mz6b",
+        "platform": "aid:v1:zb6zM6vJDUaPqN28RiWDV9ERLrV2noWrzy21TKDVxPia8",
+        "amount": {
+          "amount": "abc",
+          "currency": "USDC"
+        },
+        "destination": "placeholder_destination"
+      }
+    }
+  ]
+}

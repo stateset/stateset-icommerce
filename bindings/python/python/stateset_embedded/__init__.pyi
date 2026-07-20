@@ -56,6 +56,36 @@ class Commerce:
         ...
 
     @property
+    def gift_cards(self) -> GiftCards:
+        """Get the gift cards API."""
+        ...
+
+    @property
+    def loyalty(self) -> Loyalty:
+        """Get the loyalty API."""
+        ...
+
+    @property
+    def store_credits(self) -> StoreCredits:
+        """Get the store credits API."""
+        ...
+
+    @property
+    def reviews(self) -> Reviews:
+        """Get the product reviews API."""
+        ...
+
+    @property
+    def wishlists(self) -> Wishlists:
+        """Get the wishlists API."""
+        ...
+
+    @property
+    def segments(self) -> Segments:
+        """Get the customer segments API."""
+        ...
+
+    @property
     def payments(self) -> Payments:
         """Get the payments API."""
         ...
@@ -1040,6 +1070,592 @@ class Returns:
     def count(self) -> int:
         """Count returns."""
         ...
+
+# ============================================================================
+# Gift Cards  (money as exact decimal strings)
+# ============================================================================
+
+class GiftCard:
+    """A gift card. Balances are exact decimal strings (e.g. "50.00")."""
+
+    id: str
+    code: str
+    initial_balance: str
+    current_balance: str
+    currency: str
+    status: str
+    recipient_email: Optional[str]
+    sender_name: Optional[str]
+    message: Optional[str]
+    expires_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+class GiftCardTransaction:
+    """A gift card charge or refund. Amounts are exact decimal strings."""
+
+    id: str
+    gift_card_id: str
+    amount: str
+    balance_after: str
+    transaction_type: str
+    reference_id: Optional[str]
+    created_at: str
+
+class GiftCards:
+    """Gift card operations."""
+
+    def is_supported(self) -> bool:
+        """Whether the gift-cards backend is available on this engine build."""
+        ...
+
+    def create(
+        self,
+        initial_balance: str,
+        currency: str,
+        code: Optional[str] = None,
+        recipient_email: Optional[str] = None,
+        sender_name: Optional[str] = None,
+        message: Optional[str] = None,
+        expires_at: Optional[str] = None,
+    ) -> GiftCard:
+        """Create a gift card (money amounts are exact decimal strings)."""
+        ...
+
+    def get(self, id: str) -> Optional[GiftCard]:
+        """Get a gift card by ID."""
+        ...
+
+    def get_by_code(self, code: str) -> Optional[GiftCard]:
+        """Get a gift card by its redemption code."""
+        ...
+
+    def update(
+        self,
+        id: str,
+        status: Optional[str] = None,
+        recipient_email: Optional[str] = None,
+    ) -> GiftCard:
+        """Update a gift card's status and/or recipient email."""
+        ...
+
+    def list(
+        self,
+        status: Optional[str] = None,
+        code: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[GiftCard]:
+        """List gift cards, optionally filtered."""
+        ...
+
+    def charge(
+        self, id: str, amount: str, reference_id: Optional[str] = None
+    ) -> GiftCardTransaction:
+        """Charge (debit) an amount from a gift card."""
+        ...
+
+    def refund(
+        self, id: str, amount: str, reference_id: Optional[str] = None
+    ) -> GiftCardTransaction:
+        """Refund (credit) an amount to a gift card."""
+        ...
+
+    def disable(self, id: str) -> GiftCard:
+        """Disable a gift card so it can no longer be used."""
+        ...
+
+    def get_transactions(self, gift_card_id: str) -> List[GiftCardTransaction]:
+        """Get the transaction history for a gift card."""
+        ...
+
+# ============================================================================
+# Store Credits  (money as exact decimal strings)
+# ============================================================================
+
+class StoreCredit:
+    """A customer store credit. Balances are exact decimal strings."""
+
+    id: str
+    customer_id: str
+    original_balance: str
+    current_balance: str
+    currency: str
+    status: str
+    reason: str
+    reference_id: Optional[str]
+    note: Optional[str]
+    expires_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+class StoreCreditTransaction:
+    """A store credit ledger entry. Amounts are exact decimal strings
+    (positive = credit, negative = debit)."""
+
+    id: str
+    store_credit_id: str
+    amount: str
+    balance_after: str
+    transaction_type: str
+    reference_id: Optional[str]
+    created_at: str
+
+class StoreCredits:
+    """Store credit operations."""
+
+    def is_supported(self) -> bool:
+        """Whether the store-credits backend is available on this engine build."""
+        ...
+
+    def create(
+        self,
+        customer_id: str,
+        amount: str,
+        currency: str,
+        reason: Optional[str] = None,
+        reference_id: Optional[str] = None,
+        note: Optional[str] = None,
+        expires_at: Optional[str] = None,
+    ) -> StoreCredit:
+        """Issue a store credit to a customer (money amounts are exact decimal strings)."""
+        ...
+
+    def get(self, id: str) -> Optional[StoreCredit]:
+        """Get a store credit by ID."""
+        ...
+
+    def list(
+        self,
+        customer_id: Optional[str] = None,
+        status: Optional[str] = None,
+        reason: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[StoreCredit]:
+        """List store credits, optionally filtered."""
+        ...
+
+    def adjust(
+        self,
+        id: str,
+        amount: str,
+        note: Optional[str] = None,
+        reference_id: Optional[str] = None,
+    ) -> StoreCredit:
+        """Adjust a store credit balance (signed decimal string; may not go below zero)."""
+        ...
+
+    def apply(
+        self, id: str, amount: str, reference_id: Optional[str] = None
+    ) -> StoreCreditTransaction:
+        """Apply (redeem) an amount from a store credit."""
+        ...
+
+    def get_transactions(self, store_credit_id: str) -> List[StoreCreditTransaction]:
+        """Get the transaction history for a store credit."""
+        ...
+
+# ============================================================================
+# Product reviews
+# ============================================================================
+
+class Review:
+    """A product review."""
+
+    id: str
+    product_id: str
+    customer_id: str
+    rating: int
+    title: Optional[str]
+    body: Optional[str]
+    status: str
+    verified_purchase: bool
+    helpful_count: int
+    reported_count: int
+    created_at: str
+    updated_at: str
+
+class ReviewSummary:
+    """Aggregate rating summary for a product."""
+
+    product_id: str
+    average_rating: float
+    total_reviews: int
+    rating_distribution: List[int]
+
+class Reviews:
+    """Product review operations."""
+
+    def is_supported(self) -> bool:
+        """Whether the reviews backend is available on this engine build."""
+        ...
+
+    def create(
+        self,
+        product_id: str,
+        customer_id: str,
+        rating: int,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        verified_purchase: bool = False,
+    ) -> Review:
+        """Create a product review (rating is 1-5)."""
+        ...
+
+    def get(self, id: str) -> Optional[Review]:
+        """Get a review by ID."""
+        ...
+
+    def update(
+        self,
+        id: str,
+        rating: Optional[int] = None,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Review:
+        """Update a review's rating, title, body, and/or moderation status."""
+        ...
+
+    def list(
+        self,
+        product_id: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        status: Optional[str] = None,
+        min_rating: Optional[int] = None,
+        verified_only: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Review]:
+        """List reviews, optionally filtered."""
+        ...
+
+    def delete(self, id: str) -> None:
+        """Delete a review."""
+        ...
+
+    def get_summary(self, product_id: str) -> ReviewSummary:
+        """Aggregate rating summary for a product (average, total, distribution)."""
+        ...
+
+    def mark_helpful(self, id: str) -> None:
+        """Increment the helpful counter on a review."""
+        ...
+
+    def mark_reported(self, id: str) -> None:
+        """Increment the reported counter on a review."""
+        ...
+
+# ============================================================================
+# Wishlists
+# ============================================================================
+
+class WishlistItem:
+    """An item on a wishlist."""
+
+    product_id: str
+    variant_id: Optional[str]
+    added_at: str
+    note: Optional[str]
+    quantity: int
+    priority: Optional[int]
+
+class Wishlist:
+    """A customer wishlist with its items."""
+
+    id: str
+    customer_id: str
+    name: str
+    is_public: bool
+    items: List[WishlistItem]
+    created_at: str
+    updated_at: str
+
+class Wishlists:
+    """Wishlist operations."""
+
+    def is_supported(self) -> bool:
+        """Whether the wishlists backend is available on this engine build."""
+        ...
+
+    def create(self, customer_id: str, name: str, is_public: bool = False) -> Wishlist:
+        """Create a wishlist for a customer."""
+        ...
+
+    def get(self, id: str) -> Optional[Wishlist]:
+        """Get a wishlist by ID."""
+        ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        is_public: Optional[bool] = None,
+    ) -> Wishlist:
+        """Rename a wishlist and/or change its visibility."""
+        ...
+
+    def list(
+        self,
+        customer_id: Optional[str] = None,
+        is_public: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Wishlist]:
+        """List wishlists, optionally filtered."""
+        ...
+
+    def delete(self, id: str) -> None:
+        """Delete a wishlist."""
+        ...
+
+    def add_item(
+        self,
+        wishlist_id: str,
+        product_id: str,
+        variant_id: Optional[str] = None,
+        note: Optional[str] = None,
+        quantity: Optional[int] = None,
+        priority: Optional[int] = None,
+    ) -> WishlistItem:
+        """Add a product to a wishlist, returning the added item."""
+        ...
+
+    def remove_item(self, wishlist_id: str, product_id: str) -> None:
+        """Remove a product from a wishlist."""
+        ...
+
+# ============================================================================
+# Customer segments
+# ============================================================================
+
+class SegmentRuleInput:
+    """A segment rule (field/operator/value) passed to create/update."""
+
+    field: str
+    operator: str
+    value: str
+
+    def __init__(self, field: str, operator: str, value: str) -> None: ...
+
+class SegmentRule:
+    """A segment rule returned on a segment."""
+
+    field: str
+    operator: str
+    value: str
+
+class Segment:
+    """A customer segment with its rules."""
+
+    id: str
+    name: str
+    description: Optional[str]
+    segment_type: str
+    rules: List[SegmentRule]
+    member_count: int
+    created_at: str
+    updated_at: str
+
+class SegmentMembership:
+    """A customer's membership in a segment."""
+
+    segment_id: str
+    customer_id: str
+    joined_at: str
+
+class Segments:
+    """Customer segment operations."""
+
+    def is_supported(self) -> bool:
+        """Whether the segments backend is available on this engine build."""
+        ...
+
+    def create(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        segment_type: Optional[str] = None,
+        rules: List[SegmentRuleInput] = ...,
+    ) -> Segment:
+        """Create a customer segment (segment_type is 'static' or 'dynamic')."""
+        ...
+
+    def get(self, id: str) -> Optional[Segment]:
+        """Get a segment by ID."""
+        ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        rules: Optional[List[SegmentRuleInput]] = None,
+    ) -> Segment:
+        """Update a segment's name, description, and/or rules."""
+        ...
+
+    def list(
+        self,
+        segment_type: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Segment]:
+        """List segments, optionally filtered."""
+        ...
+
+    def delete(self, id: str) -> None:
+        """Delete a segment."""
+        ...
+
+    def add_member(self, segment_id: str, customer_id: str) -> SegmentMembership:
+        """Add a customer to a (static) segment."""
+        ...
+
+    def remove_member(self, segment_id: str, customer_id: str) -> None:
+        """Remove a customer from a segment."""
+        ...
+
+    def list_members(
+        self,
+        segment_id: str,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[SegmentMembership]:
+        """List a segment's members."""
+        ...
+
+    def is_member(self, segment_id: str, customer_id: str) -> bool:
+        """Whether a customer is a member of a segment."""
+        ...
+
+# ============================================================================
+# Loyalty  (points are integers; reward value is an exact decimal string)
+# ============================================================================
+
+class LoyaltyTierInput:
+    """A loyalty tier passed to create_program."""
+
+    name: str
+    min_points: int
+    multiplier: float
+    perks: List[str]
+
+    def __init__(
+        self,
+        name: str,
+        min_points: int = 0,
+        multiplier: float = 1.0,
+        perks: List[str] = ...,
+    ) -> None: ...
+
+class LoyaltyTier:
+    """A loyalty tier returned on a program."""
+
+    name: str
+    min_points: int
+    multiplier: float
+    perks: List[str]
+
+class LoyaltyProgram:
+    id: str
+    name: str
+    description: Optional[str]
+    points_per_dollar: int
+    tiers: List[LoyaltyTier]
+    status: str
+    created_at: str
+    updated_at: str
+
+class LoyaltyAccount:
+    id: str
+    customer_id: str
+    program_id: str
+    points_balance: int
+    lifetime_points: int
+    tier: str
+    created_at: str
+    updated_at: str
+
+class LoyaltyTransaction:
+    id: str
+    account_id: str
+    points: int
+    transaction_type: str
+    reference_id: Optional[str]
+    description: Optional[str]
+    created_at: str
+
+class Reward:
+    id: str
+    program_id: str
+    name: str
+    description: Optional[str]
+    points_cost: int
+    reward_type: str
+    value: Optional[str]
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+class Loyalty:
+    """Loyalty program operations."""
+
+    def is_supported(self) -> bool: ...
+    def create_program(
+        self,
+        name: str,
+        points_per_dollar: int,
+        description: Optional[str] = None,
+        tiers: List[LoyaltyTierInput] = ...,
+    ) -> LoyaltyProgram: ...
+    def get_program(self, id: str) -> Optional[LoyaltyProgram]: ...
+    def list_programs(self) -> List[LoyaltyProgram]: ...
+    def enroll(self, customer_id: str, program_id: str) -> LoyaltyAccount: ...
+    def get_account(self, id: str) -> Optional[LoyaltyAccount]: ...
+    def get_account_by_customer(
+        self, customer_id: str, program_id: str
+    ) -> Optional[LoyaltyAccount]: ...
+    def list_accounts(
+        self,
+        customer_id: Optional[str] = None,
+        program_id: Optional[str] = None,
+        tier: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[LoyaltyAccount]: ...
+    def adjust_points(
+        self,
+        account_id: str,
+        points: int,
+        transaction_type: str,
+        reference_id: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> LoyaltyTransaction: ...
+    def get_transactions(
+        self, account_id: str, limit: Optional[int] = None
+    ) -> List[LoyaltyTransaction]: ...
+    def create_reward(
+        self,
+        program_id: str,
+        name: str,
+        points_cost: int,
+        reward_type: str,
+        description: Optional[str] = None,
+        value: Optional[str] = None,
+    ) -> Reward: ...
+    def get_reward(self, id: str) -> Optional[Reward]: ...
+    def list_rewards(
+        self,
+        program_id: Optional[str] = None,
+        reward_type: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Reward]: ...
+    def delete_reward(self, id: str) -> None: ...
 
 # ============================================================================
 # Payments

@@ -628,3 +628,310 @@ pub const fn suggest_dunning_letter(bucket: AgingBucket) -> Option<DunningLetter
         AgingBucket::DaysOver90 => Some(DunningLetterType::DemandLetter),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+    use rust_decimal_macros::dec;
+
+    // ========================================================================
+    // Test Helpers
+    // ========================================================================
+
+    /// Due date that is `days` past due as of now (negative = due in future).
+    fn due_days_ago(days: i64) -> DateTime<Utc> {
+        Utc::now() - Duration::days(days)
+    }
+
+    fn create_test_aging_summary() -> ArAgingSummary {
+        ArAgingSummary {
+            current: dec!(500.00),
+            days_1_30: dec!(200.00),
+            days_31_60: dec!(150.00),
+            days_61_90: dec!(100.00),
+            days_over_90: dec!(50.00),
+            total: dec!(1000.00),
+            as_of_date: Utc::now(),
+        }
+    }
+
+    fn create_test_customer_aging() -> CustomerArAging {
+        CustomerArAging {
+            customer_id: Uuid::new_v4(),
+            customer_name: Some("Acme".to_string()),
+            customer_email: None,
+            current: Decimal::ZERO,
+            days_1_30: Decimal::ZERO,
+            days_31_60: Decimal::ZERO,
+            days_61_90: Decimal::ZERO,
+            days_over_90: Decimal::ZERO,
+            total_outstanding: Decimal::ZERO,
+            invoice_count: 0,
+            oldest_invoice_date: None,
+            last_payment_date: None,
+        }
+    }
+
+    fn create_test_credit_memo(status: CreditMemoStatus, unapplied: Decimal) -> CreditMemo {
+        let now = Utc::now();
+        CreditMemo {
+            id: Uuid::new_v4(),
+            credit_memo_number: generate_credit_memo_number(),
+            customer_id: Uuid::new_v4(),
+            original_invoice_id: None,
+            reason: CreditMemoReason::ReturnedGoods,
+            amount: dec!(100.00),
+            applied_amount: dec!(100.00) - unapplied,
+            unapplied_amount: unapplied,
+            status,
+            notes: None,
+            issue_date: now,
+            gl_journal_entry_id: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    // ========================================================================
+    // Aging Bucket Classification Edges
+    // ========================================================================
+
+    #[test]
+    fn due_in_future_is_current() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(-5)), AgingBucket::Current);
+    }
+
+    #[test]
+    fn due_today_is_current() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(0)), AgingBucket::Current);
+    }
+
+    #[test]
+    fn one_day_overdue_is_days_1_to_30() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(1)), AgingBucket::Days1To30);
+    }
+
+    #[test]
+    fn thirty_days_overdue_is_days_1_to_30() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(30)), AgingBucket::Days1To30);
+    }
+
+    #[test]
+    fn thirty_one_days_overdue_is_days_31_to_60() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(31)), AgingBucket::Days31To60);
+    }
+
+    #[test]
+    fn sixty_days_overdue_is_days_31_to_60() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(60)), AgingBucket::Days31To60);
+    }
+
+    #[test]
+    fn sixty_one_days_overdue_is_days_61_to_90() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(61)), AgingBucket::Days61To90);
+    }
+
+    #[test]
+    fn ninety_days_overdue_is_days_61_to_90() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(90)), AgingBucket::Days61To90);
+    }
+
+    #[test]
+    fn ninety_one_days_overdue_is_over_90() {
+        assert_eq!(calculate_aging_bucket(due_days_ago(91)), AgingBucket::DaysOver90);
+        assert_eq!(calculate_aging_bucket(due_days_ago(365)), AgingBucket::DaysOver90);
+    }
+
+    // ========================================================================
+    // Dunning Suggestions
+    // ========================================================================
+
+    #[test]
+    fn dunning_letter_escalates_with_aging() {
+        assert_eq!(suggest_dunning_letter(AgingBucket::Current), None);
+        assert_eq!(
+            suggest_dunning_letter(AgingBucket::Days1To30),
+            Some(DunningLetterType::Reminder1)
+        );
+        assert_eq!(
+            suggest_dunning_letter(AgingBucket::Days31To60),
+            Some(DunningLetterType::Reminder2)
+        );
+        assert_eq!(
+            suggest_dunning_letter(AgingBucket::Days61To90),
+            Some(DunningLetterType::Reminder3)
+        );
+        assert_eq!(
+            suggest_dunning_letter(AgingBucket::DaysOver90),
+            Some(DunningLetterType::DemandLetter)
+        );
+    }
+
+    // ========================================================================
+    // Aging Summary Math
+    // ========================================================================
+
+    #[test]
+    fn aging_summary_total_overdue_excludes_current() {
+        let summary = create_test_aging_summary();
+        assert_eq!(summary.total_overdue(), dec!(500.00));
+    }
+
+    #[test]
+    fn aging_summary_overdue_percentage() {
+        let summary = create_test_aging_summary();
+        assert_eq!(summary.overdue_percentage(), dec!(50.00));
+    }
+
+    #[test]
+    fn empty_aging_summary_has_zero_overdue_percentage() {
+        let summary = ArAgingSummary::new();
+        assert_eq!(summary.total_overdue(), Decimal::ZERO);
+        assert_eq!(summary.overdue_percentage(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn customer_aging_worst_bucket_picks_oldest_nonzero() {
+        let mut aging = create_test_customer_aging();
+        assert_eq!(aging.worst_aging_bucket(), AgingBucket::Current);
+
+        aging.days_1_30 = dec!(10.00);
+        assert_eq!(aging.worst_aging_bucket(), AgingBucket::Days1To30);
+
+        aging.days_31_60 = dec!(10.00);
+        assert_eq!(aging.worst_aging_bucket(), AgingBucket::Days31To60);
+
+        aging.days_61_90 = dec!(10.00);
+        assert_eq!(aging.worst_aging_bucket(), AgingBucket::Days61To90);
+
+        aging.days_over_90 = dec!(0.01);
+        assert_eq!(aging.worst_aging_bucket(), AgingBucket::DaysOver90);
+        assert_eq!(aging.total_overdue(), dec!(30.01));
+    }
+
+    // ========================================================================
+    // Credit Memos and Write-Offs
+    // ========================================================================
+
+    #[test]
+    fn open_credit_memo_with_balance_can_apply() {
+        let memo = create_test_credit_memo(CreditMemoStatus::Open, dec!(100.00));
+        assert!(memo.can_apply());
+
+        let partial = create_test_credit_memo(CreditMemoStatus::PartiallyApplied, dec!(25.00));
+        assert!(partial.can_apply());
+    }
+
+    #[test]
+    fn exhausted_or_voided_credit_memo_cannot_apply() {
+        assert!(
+            !create_test_credit_memo(CreditMemoStatus::FullyApplied, Decimal::ZERO).can_apply()
+        );
+        assert!(!create_test_credit_memo(CreditMemoStatus::Voided, dec!(100.00)).can_apply());
+        // Open but no unapplied balance left
+        assert!(!create_test_credit_memo(CreditMemoStatus::Open, Decimal::ZERO).can_apply());
+    }
+
+    #[test]
+    fn write_off_reversed_only_when_timestamp_set() {
+        let now = Utc::now();
+        let mut write_off = WriteOff {
+            id: Uuid::new_v4(),
+            write_off_number: generate_write_off_number(),
+            invoice_id: Uuid::new_v4(),
+            customer_id: Uuid::new_v4(),
+            amount: dec!(42.00),
+            reason: WriteOffReason::Uncollectible,
+            notes: None,
+            write_off_date: now,
+            approved_by: None,
+            approved_at: None,
+            reversed_at: None,
+            gl_journal_entry_id: None,
+            created_at: now,
+        };
+        assert!(!write_off.is_reversed());
+        write_off.reversed_at = Some(now);
+        assert!(write_off.is_reversed());
+    }
+
+    // ========================================================================
+    // Enum Round-Trips
+    // ========================================================================
+
+    #[test]
+    fn aging_bucket_round_trips_through_strings() {
+        for bucket in [
+            AgingBucket::Current,
+            AgingBucket::Days1To30,
+            AgingBucket::Days31To60,
+            AgingBucket::Days61To90,
+            AgingBucket::DaysOver90,
+        ] {
+            let parsed: AgingBucket = bucket.to_string().parse().expect("bucket should round-trip");
+            assert_eq!(parsed, bucket);
+        }
+        assert_eq!(AgingBucket::Days1To30.to_string(), "1_30");
+        assert_eq!("days_1_to_30".parse::<AgingBucket>(), Ok(AgingBucket::Days1To30));
+    }
+
+    #[test]
+    fn collection_status_round_trips_through_strings() {
+        for status in [
+            CollectionStatus::None,
+            CollectionStatus::Reminder1Sent,
+            CollectionStatus::Reminder3Sent,
+            CollectionStatus::InCollections,
+            CollectionStatus::SentToAgency,
+            CollectionStatus::WrittenOff,
+            CollectionStatus::PromiseToPay,
+            CollectionStatus::PaymentPlan,
+        ] {
+            let parsed: CollectionStatus =
+                status.to_string().parse().expect("status should round-trip");
+            assert_eq!(parsed, status);
+        }
+    }
+
+    #[test]
+    fn write_off_and_credit_memo_enums_round_trip() {
+        for reason in [
+            WriteOffReason::Uncollectible,
+            WriteOffReason::Bankruptcy,
+            WriteOffReason::SmallBalance,
+            WriteOffReason::Other,
+        ] {
+            let parsed: WriteOffReason =
+                reason.to_string().parse().expect("reason should round-trip");
+            assert_eq!(parsed, reason);
+        }
+        for status in [
+            CreditMemoStatus::Open,
+            CreditMemoStatus::PartiallyApplied,
+            CreditMemoStatus::FullyApplied,
+            CreditMemoStatus::Voided,
+        ] {
+            let parsed: CreditMemoStatus =
+                status.to_string().parse().expect("status should round-trip");
+            assert_eq!(parsed, status);
+        }
+    }
+
+    // ========================================================================
+    // Reference Numbers
+    // ========================================================================
+
+    #[test]
+    fn generated_reference_numbers_are_prefixed_and_unique() {
+        let wo1 = generate_write_off_number();
+        let wo2 = generate_write_off_number();
+        assert!(wo1.starts_with("WO-"));
+        assert_ne!(wo1, wo2);
+
+        let cm1 = generate_credit_memo_number();
+        let cm2 = generate_credit_memo_number();
+        assert!(cm1.starts_with("CM-"));
+        assert_ne!(cm1, cm2);
+    }
+}

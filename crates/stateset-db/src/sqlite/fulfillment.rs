@@ -3,6 +3,7 @@
 use crate::sqlite::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
     parse_decimal_row, parse_enum_row, parse_uuid, parse_uuid_opt_row, parse_uuid_row,
+    with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -118,6 +119,20 @@ impl SqliteFulfillmentRepository {
                 "updated_at",
             )?,
         })
+    }
+
+    /// Read a single pick task by id from within a transaction (returns
+    /// `NotFound` smuggled through `rusqlite::Error` if it does not exist).
+    fn read_pick_by_id_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id_str: &str,
+    ) -> std::result::Result<PickTask, rusqlite::Error> {
+        let mut stmt = tx.prepare("SELECT * FROM pick_tasks WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id_str])?;
+        match rows.next()? {
+            Some(row) => Self::row_to_pick(row),
+            None => Err(rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))),
+        }
     }
 
     fn row_to_pack(row: &rusqlite::Row<'_>) -> rusqlite::Result<PackTask> {
@@ -545,49 +560,77 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     }
 
     fn complete_pick(&self, input: CompletePick) -> Result<PickTask> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
         let short_qty = input.quantity_short.unwrap_or(Decimal::ZERO);
         let status =
             if short_qty > Decimal::ZERO { PickStatus::Short } else { PickStatus::Completed };
+        let pick_id_str = input.pick_id.to_string();
 
-        conn.execute(
-            "UPDATE pick_tasks SET status = ?1, quantity_picked = ?2, quantity_short = ?3,
-             lot_id = COALESCE(?4, lot_id), serial_number = COALESCE(?5, serial_number),
-             completed_at = ?6 WHERE id = ?7",
-            params![
-                status.to_string(),
-                input.quantity_picked.to_string(),
-                short_qty.to_string(),
-                input.lot_id.map(|id| id.to_string()),
-                input.serial_number,
-                now,
-                input.pick_id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        // The status read, guards, pick UPDATE and wave-counter increment all run
+        // inside ONE `IMMEDIATE` transaction so concurrent completions serialize
+        // and only a real state transition folds into the wave counter.
+        with_immediate_transaction(&self.pool, |tx| {
+            let (status_str, requested_str): (String, String) = tx
+                .query_row(
+                    "SELECT status, quantity_requested FROM pick_tasks WHERE id = ?1",
+                    params![pick_id_str],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
+                    }
+                    other => other,
+                })?;
+            let current_status: PickStatus = parse_enum_row(&status_str, "pick_task", "status")?;
+            let requested = parse_decimal_row(&requested_str, "pick_task", "quantity_requested")?;
 
-        let pick = {
-            let mut stmt =
-                conn.prepare("SELECT * FROM pick_tasks WHERE id = ?1").map_err(map_db_error)?;
-            let mut rows = stmt.query(params![input.pick_id.to_string()]).map_err(map_db_error)?;
-
-            if let Some(row) = rows.next().map_err(map_db_error)? {
-                Self::row_to_pick(row).map_err(map_db_error)?
-            } else {
-                return Err(CommerceError::NotFound);
+            // A pick that is already finalized (Completed/Short) has already
+            // incremented the wave's completed_pick_count; re-completing it must
+            // be an idempotent no-op, never a double-count.
+            if matches!(current_status, PickStatus::Completed | PickStatus::Short) {
+                return Self::read_pick_by_id_tx(tx, &pick_id_str);
             }
-        };
+            // A cancelled pick cannot be completed.
+            if current_status == PickStatus::Cancelled {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Cannot complete a cancelled pick task".into()),
+                )));
+            }
+            // Over-pick guard: cannot pick more than was requested.
+            if input.quantity_picked > requested {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "Cannot pick {} of pick task {}: only {} were requested",
+                        input.quantity_picked, input.pick_id, requested
+                    )),
+                )));
+            }
 
-        if let Some(wave_id) = pick.wave_id {
-            conn.execute(
-                "UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = ?1",
-                params![wave_id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
+            tx.execute(
+                "UPDATE pick_tasks SET status = ?1, quantity_picked = ?2, quantity_short = ?3,
+                 lot_id = COALESCE(?4, lot_id), serial_number = COALESCE(?5, serial_number),
+                 completed_at = ?6 WHERE id = ?7",
+                params![
+                    status.to_string(),
+                    input.quantity_picked.to_string(),
+                    short_qty.to_string(),
+                    input.lot_id.map(|id| id.to_string()),
+                    input.serial_number,
+                    now,
+                    pick_id_str,
+                ],
+            )?;
 
-        Ok(pick)
+            let pick = Self::read_pick_by_id_tx(tx, &pick_id_str)?;
+            if let Some(wave_id) = pick.wave_id {
+                tx.execute(
+                    "UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = ?1",
+                    params![wave_id.to_string()],
+                )?;
+            }
+            Ok(pick)
+        })
     }
 
     fn report_short(&self, id: Uuid, short_qty: Decimal, reason: &str) -> Result<PickTask> {

@@ -1,6 +1,6 @@
 //! PostgreSQL implementation of cart/checkout repository
 
-use super::{PgCustomerRepository, PgOrderRepository, map_db_error};
+use super::{PgCustomerRepository, PgOrderRepository, PgPromotionRepository, map_db_error};
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use sqlx::{FromRow, postgres::PgPool};
@@ -8,10 +8,10 @@ use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
     CreateCustomer, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentType,
-    OrderStatus, PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
-    ShippingRate, UpdateCart, UpdateCartItem, X402Asset, X402AwaitingSettlementData,
-    X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
-    X402PaymentRequiredData, validate_batch_size,
+    OrderStatus, PaymentStatus, PromotionType, Result, SetCartPayment, SetCartShipping,
+    SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem, X402Asset,
+    X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData, X402IntentStatus,
+    X402Network, X402PaymentRequiredData, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -396,7 +396,18 @@ impl PgCartRepository {
         .map_err(map_db_error)?;
 
         let (tax_amount, shipping_amount, discount_amount) = row;
-        let grand_total = subtotal + tax_amount + shipping_amount - discount_amount;
+
+        // Round the subtotal to the currency minor unit explicitly (rather than
+        // relying on the DECIMAL(12,2) column to coerce), so the rounding
+        // strategy matches the SQLite backend exactly.
+        let subtotal = subtotal.round_dp(2);
+
+        // Clamp at zero: a discount larger than subtotal + tax + shipping must
+        // not produce a negative total (which would charge the buyer a negative
+        // amount at checkout).
+        let grand_total = (subtotal + tax_amount + shipping_amount - discount_amount)
+            .round_dp(2)
+            .max(Decimal::ZERO);
 
         sqlx::query(
             "UPDATE carts SET subtotal = $1, grand_total = $2, updated_at = $3 WHERE id = $4",
@@ -838,7 +849,7 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        let grand_total = subtotal + tax + shipping - discount;
+        let grand_total = (subtotal + tax + shipping - discount).max(Decimal::ZERO);
 
         sqlx::query(
             "UPDATE carts SET subtotal = $1, grand_total = $2, updated_at = $3 WHERE id = $4",
@@ -946,7 +957,7 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        let grand_total = subtotal + cart_tax + shipping - discount_cart;
+        let grand_total = (subtotal + cart_tax + shipping - discount_cart).max(Decimal::ZERO);
 
         sqlx::query(
             "UPDATE carts SET subtotal = $1, grand_total = $2, updated_at = $3 WHERE id = $4",
@@ -1004,7 +1015,7 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        let grand_total = subtotal + tax + shipping - discount;
+        let grand_total = (subtotal + tax + shipping - discount).max(Decimal::ZERO);
 
         sqlx::query(
             "UPDATE carts SET subtotal = $1, grand_total = $2, updated_at = $3 WHERE id = $4",
@@ -1314,15 +1325,59 @@ impl PgCartRepository {
     }
 
     pub async fn apply_discount_async(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET coupon_code = $1, updated_at = $2 WHERE id = $3")
-            .bind(coupon_code)
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // Get the cart first to calculate the discount off its subtotal.
+        let cart = self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)?;
 
-        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
+        // Look up the coupon and its promotion. An unknown coupon is rejected
+        // (rather than silently stamped onto the cart).
+        let promo_repo = PgPromotionRepository::new(self.pool.clone());
+        let coupon = promo_repo.get_coupon_by_code_async(coupon_code).await?.ok_or_else(|| {
+            CommerceError::ValidationError(format!("Invalid coupon code: {coupon_code}"))
+        })?;
+
+        let promotion = promo_repo
+            .get_async(coupon.promotion_id)
+            .await?
+            .ok_or_else(|| CommerceError::ValidationError("Promotion not found".into()))?;
+
+        // Calculate the discount based on promotion type (mirrors the SQLite
+        // backend so the two agree to the cent).
+        let subtotal = cart.subtotal;
+        let discount_amount = match promotion.promotion_type {
+            PromotionType::PercentageOff => {
+                let percentage = promotion.percentage_off.unwrap_or(Decimal::ZERO);
+                let discount = subtotal * percentage;
+                // Apply max discount cap if set.
+                if let Some(max) = promotion.max_discount_amount {
+                    discount.min(max)
+                } else {
+                    discount
+                }
+            }
+            PromotionType::FixedAmountOff => {
+                promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
+            }
+            _ => Decimal::ZERO, // Other types not fully implemented
+        };
+
+        let discount_description = promotion.name;
+
+        // Update the cart with the coupon + computed discount.
+        sqlx::query(
+            "UPDATE carts SET coupon_code = $1, discount_amount = $2, discount_description = $3,
+             updated_at = $4 WHERE id = $5",
+        )
+        .bind(coupon_code)
+        .bind(discount_amount)
+        .bind(&discount_description)
+        .bind(Utc::now())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        // Recalculate totals (grand_total reflects the new discount) and return.
+        self.recalculate_async(id).await
     }
 
     pub async fn remove_discount_async(&self, id: Uuid) -> Result<Cart> {

@@ -73,19 +73,20 @@ use stateset_core::{
     AgentValidationRepository, AnalyticsRepository, BackorderRepository, BomRepository,
     CartRepository, ChannelRepository, CommerceError, CompanyRepository, CostAccountingRepository,
     CreditRepository, CurrencyRepository, CustomObjectRepository, CustomerRepository,
-    EdiDocumentRepository, FraudRepository, FulfillmentRepository, GeneralLedgerRepository,
-    GiftCardRepository, InboundShipmentRepository, IntegrationFieldMappingRepository,
-    IntegrationMappingRepository, InventoryRepository, InvoiceRepository, LotRepository,
-    LoyaltyProgramRepository, OrderRepository, PaymentObligationRepository, PaymentRepository,
-    PrepaymentRepository, PriceLevelRepository, PriceScheduleRepository, PrintStationRepository,
-    ProductRepository, ProductionBatchRepository, PromotionRepository, PurchaseOrderRepository,
-    PurgatoryRepository, QualityRepository, ReceivingRepository, Result, ReturnRepository,
-    ReviewRepository, RewardRepository, SearchConfigRepository, SegmentRepository,
-    SerialRepository, ShipmentRepository, ShippingZoneRepository, StockSnapshotRepository,
-    StoreCreditRepository, SubscriptionRepository, SupplierSkuRepository, TaxRepository,
-    TopologySnapshotRepository, TransferOrderRepository, UnitOfMeasureRepository,
-    VendorCreditRepository, VendorReturnRepository, WarehouseRepository, WarrantyRepository,
-    WishlistRepository, WorkOrderRepository, X402CreditRepository, X402PaymentIntentRepository,
+    EdiDocumentRepository, FixedAssetRepository, FraudRepository, FulfillmentRepository,
+    GeneralLedgerRepository, GiftCardRepository, InboundShipmentRepository,
+    IntegrationFieldMappingRepository, IntegrationMappingRepository, InventoryRepository,
+    InvoiceRepository, LotRepository, LoyaltyProgramRepository, OrderRepository,
+    PaymentObligationRepository, PaymentRepository, PrepaymentRepository, PriceLevelRepository,
+    PriceScheduleRepository, PrintStationRepository, ProductRepository, ProductionBatchRepository,
+    PromotionRepository, PurchaseOrderRepository, PurgatoryRepository, QualityRepository,
+    ReceivingRepository, Result, ReturnRepository, RevenueRecognitionRepository, ReviewRepository,
+    RewardRepository, SearchConfigRepository, SegmentRepository, SerialRepository,
+    ShipmentRepository, ShippingZoneRepository, StockSnapshotRepository, StoreCreditRepository,
+    SubscriptionRepository, SupplierSkuRepository, TaxRepository, TopologySnapshotRepository,
+    TransferOrderRepository, UnitOfMeasureRepository, VendorCreditRepository,
+    VendorReturnRepository, WarehouseRepository, WarrantyRepository, WishlistRepository,
+    WorkOrderRepository, X402CreditRepository, X402PaymentIntentRepository,
     ZoneShippingMethodRepository,
 };
 
@@ -199,6 +200,8 @@ pub enum DatabaseCapability {
     Purgatory,
     PrintStations,
     EdiDocuments,
+    FixedAssets,
+    RevenueRecognition,
     IntegrationFieldMappings,
     TopologySnapshots,
     StockSnapshots,
@@ -236,6 +239,8 @@ impl DatabaseCapability {
             Self::Purgatory => "purgatory",
             Self::PrintStations => "print_stations",
             Self::EdiDocuments => "edi_documents",
+            Self::FixedAssets => "fixed_assets",
+            Self::RevenueRecognition => "revenue_recognition",
             Self::IntegrationFieldMappings => "integration_field_mappings",
             Self::TopologySnapshots => "topology_snapshots",
             Self::StockSnapshots => "stock_snapshots",
@@ -418,6 +423,10 @@ pub trait Database: Send + Sync {
     fn topology_snapshots(&self) -> Box<dyn TopologySnapshotRepository + '_>;
     /// Get the stock snapshot repository
     fn stock_snapshots(&self) -> Box<dyn StockSnapshotRepository + '_>;
+    /// Get the fixed asset repository
+    fn fixed_assets(&self) -> Box<dyn FixedAssetRepository + '_>;
+    /// Get the revenue recognition repository
+    fn revenue_recognition(&self) -> Box<dyn RevenueRecognitionRepository + '_>;
 }
 
 /// Extension trait for database transaction support.
@@ -550,6 +559,8 @@ trait NewDomainRepositoryFactory {
     fn integration_field_mappings_repo(&self) -> Box<dyn IntegrationFieldMappingRepository + '_>;
     fn topology_snapshots_repo(&self) -> Box<dyn TopologySnapshotRepository + '_>;
     fn stock_snapshots_repo(&self) -> Box<dyn StockSnapshotRepository + '_>;
+    fn fixed_assets_repo(&self) -> Box<dyn FixedAssetRepository + '_>;
+    fn revenue_recognition_repo(&self) -> Box<dyn RevenueRecognitionRepository + '_>;
 }
 
 #[cfg(feature = "sqlite")]
@@ -681,6 +692,14 @@ impl NewDomainRepositoryFactory for SqliteDatabase {
     fn stock_snapshots_repo(&self) -> Box<dyn StockSnapshotRepository + '_> {
         Box::new(self.stock_snapshots())
     }
+
+    fn fixed_assets_repo(&self) -> Box<dyn FixedAssetRepository + '_> {
+        Box::new(self.fixed_assets())
+    }
+
+    fn revenue_recognition_repo(&self) -> Box<dyn RevenueRecognitionRepository + '_> {
+        Box::new(self.revenue_recognition())
+    }
 }
 
 #[cfg(feature = "postgres")]
@@ -811,6 +830,14 @@ impl NewDomainRepositoryFactory for PostgresDatabase {
 
     fn stock_snapshots_repo(&self) -> Box<dyn StockSnapshotRepository + '_> {
         Box::new(crate::unsupported_repositories::UnsupportedStockSnapshotRepository)
+    }
+
+    fn fixed_assets_repo(&self) -> Box<dyn FixedAssetRepository + '_> {
+        Box::new(self.fixed_assets())
+    }
+
+    fn revenue_recognition_repo(&self) -> Box<dyn RevenueRecognitionRepository + '_> {
+        Box::new(self.revenue_recognition())
     }
 }
 
@@ -1112,6 +1139,14 @@ macro_rules! impl_database_accessors {
             fn stock_snapshots(&self) -> Box<dyn StockSnapshotRepository + '_> {
                 crate::NewDomainRepositoryFactory::stock_snapshots_repo(self)
             }
+
+            fn fixed_assets(&self) -> Box<dyn FixedAssetRepository + '_> {
+                crate::NewDomainRepositoryFactory::fixed_assets_repo(self)
+            }
+
+            fn revenue_recognition(&self) -> Box<dyn RevenueRecognitionRepository + '_> {
+                crate::NewDomainRepositoryFactory::revenue_recognition_repo(self)
+            }
         }
     };
     (@backend_name SqliteDatabase) => {
@@ -1132,7 +1167,9 @@ macro_rules! impl_database_accessors {
             | DatabaseCapability::Rewards
             | DatabaseCapability::SearchConfigs
             | DatabaseCapability::LoyaltyPrograms
-            | DatabaseCapability::Fraud => true,
+            | DatabaseCapability::Fraud
+            | DatabaseCapability::FixedAssets
+            | DatabaseCapability::RevenueRecognition => true,
             DatabaseCapability::GiftCards
             | DatabaseCapability::StoreCredits
             | DatabaseCapability::Reviews

@@ -369,14 +369,11 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         sql.push_str(" ORDER BY created_at DESC, id DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if filter.after_cursor.is_none() {
-            if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {offset}"));
-            }
-        }
+        // Offset pagination applies only in non-cursor mode; the helper emits
+        // `LIMIT -1 OFFSET n` when an offset is set without a limit (SQLite rejects
+        // a bare OFFSET).
+        let offset = if filter.after_cursor.is_none() { filter.offset } else { None };
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();

@@ -571,6 +571,26 @@ impl PgWarrantyRepository {
             query.push_str(&format!(" AND customer_id = ${}", param_idx));
             param_idx += 1;
         }
+        if filter.order_id.is_some() {
+            query.push_str(&format!(" AND order_id = ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.product_id.is_some() {
+            query.push_str(&format!(" AND product_id = ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.sku.is_some() {
+            query.push_str(&format!(" AND sku = ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.serial_number.is_some() {
+            query.push_str(&format!(" AND serial_number = ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.warranty_type.is_some() {
+            query.push_str(&format!(" AND warranty_type = ${}", param_idx));
+            param_idx += 1;
+        }
         if filter.status.is_some() {
             query.push_str(&format!(" AND status = ${}", param_idx));
             param_idx += 1;
@@ -589,6 +609,21 @@ impl PgWarrantyRepository {
 
         if let Some(customer_id) = filter.customer_id {
             q = q.bind(customer_id.into_uuid());
+        }
+        if let Some(order_id) = filter.order_id {
+            q = q.bind(order_id.into_uuid());
+        }
+        if let Some(product_id) = filter.product_id {
+            q = q.bind(product_id.into_uuid());
+        }
+        if let Some(sku) = filter.sku {
+            q = q.bind(sku);
+        }
+        if let Some(serial_number) = filter.serial_number {
+            q = q.bind(serial_number);
+        }
+        if let Some(warranty_type) = filter.warranty_type {
+            q = q.bind(warranty_type.to_string());
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());
@@ -1037,14 +1072,52 @@ impl PgWarrantyRepository {
             query.push_str(&format!(" AND customer_id = ${}", param_idx));
             param_idx += 1;
         }
+        if filter.order_id.is_some() {
+            query.push_str(&format!(" AND order_id = ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.product_id.is_some() {
+            query.push_str(&format!(" AND product_id = ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.sku.is_some() {
+            query.push_str(&format!(" AND sku = ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.serial_number.is_some() {
+            query.push_str(&format!(" AND serial_number = ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.warranty_type.is_some() {
+            query.push_str(&format!(" AND warranty_type = ${}", param_idx));
+            param_idx += 1;
+        }
         if filter.status.is_some() {
             query.push_str(&format!(" AND status = ${}", param_idx));
+        }
+        if filter.active_only.unwrap_or(false) {
+            query.push_str(" AND status = 'active' AND (end_date IS NULL OR end_date > NOW())");
         }
 
         let mut q = sqlx::query_as::<_, (i64,)>(&query);
 
         if let Some(customer_id) = filter.customer_id {
             q = q.bind(customer_id.into_uuid());
+        }
+        if let Some(order_id) = filter.order_id {
+            q = q.bind(order_id.into_uuid());
+        }
+        if let Some(product_id) = filter.product_id {
+            q = q.bind(product_id.into_uuid());
+        }
+        if let Some(sku) = filter.sku {
+            q = q.bind(sku);
+        }
+        if let Some(serial_number) = filter.serial_number {
+            q = q.bind(serial_number);
+        }
+        if let Some(warranty_type) = filter.warranty_type {
+            q = q.bind(warranty_type.to_string());
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());

@@ -563,6 +563,45 @@ impl PgFulfillmentRepository {
         let status =
             if short_qty > Decimal::ZERO { PickStatus::Short } else { PickStatus::Completed };
 
+        // The status read, guards, pick UPDATE and wave-counter increment all run
+        // inside one transaction (with `SELECT ... FOR UPDATE`) so concurrent
+        // completions serialize and only a real state transition folds into the
+        // wave counter.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let (status_str, requested): (String, Decimal) = sqlx::query_as(
+            "SELECT status, quantity_requested FROM pick_tasks WHERE id = $1 FOR UPDATE",
+        )
+        .bind(input.pick_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let current_status: PickStatus = status_str.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid pick status '{status_str}'"))
+        })?;
+
+        // A pick that is already finalized (Completed/Short) has already
+        // incremented the wave counter; re-completing it must be an idempotent
+        // no-op, never a double-count.
+        if matches!(current_status, PickStatus::Completed | PickStatus::Short) {
+            drop(tx);
+            return self.get_pick_async(input.pick_id).await?.ok_or(CommerceError::NotFound);
+        }
+        // A cancelled pick cannot be completed.
+        if current_status == PickStatus::Cancelled {
+            return Err(CommerceError::ValidationError(
+                "Cannot complete a cancelled pick task".into(),
+            ));
+        }
+        // Over-pick guard: cannot pick more than was requested.
+        if input.quantity_picked > requested {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot pick {} of pick task {}: only {} were requested",
+                input.quantity_picked, input.pick_id, requested
+            )));
+        }
+
         sqlx::query(
             r#"
             UPDATE pick_tasks SET
@@ -582,20 +621,27 @@ impl PgFulfillmentRepository {
         .bind(&input.serial_number)
         .bind(now)
         .bind(input.pick_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        let pick = self.get_pick_async(input.pick_id).await?.ok_or(CommerceError::NotFound)?;
-        if let Some(wave_id) = pick.wave_id {
+        let wave_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT wave_id FROM pick_tasks WHERE id = $1")
+                .bind(input.pick_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if let Some(wave_id) = wave_id {
             sqlx::query(
                 "UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = $1",
             )
             .bind(wave_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_pick_async(input.pick_id)
             .await?

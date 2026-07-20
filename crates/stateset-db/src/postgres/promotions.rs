@@ -1043,6 +1043,25 @@ impl PgPromotionRepository {
         // leave an orphaned usage row.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        // Lock the promotion row for the duration of the transaction so
+        // concurrent redemptions of the same promotion serialize. The
+        // per-customer limit below is a COUNT-then-INSERT against the usage
+        // ledger with no row of its own to lock; without this, two simultaneous
+        // redemptions for the same (promotion, customer) both read the ledger
+        // before either inserts and both pass the check. The SQLite backend
+        // serializes the equivalent path via BEGIN IMMEDIATE.
+        let locked: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM promotions WHERE id = $1 FOR UPDATE")
+                .bind(promotion_id.into_uuid())
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if locked.is_none() {
+            return Err(CommerceError::ValidationError(
+                "Promotion not found or usage limit reached".to_string(),
+            ));
+        }
+
         // Per-customer limits (promotion and coupon), enforced against the
         // usage ledger inside the same transaction. Anonymous usage (no
         // customer_id) cannot be attributed and is not limited here.
@@ -1361,7 +1380,23 @@ impl PgPromotionRepository {
             _ => Decimal::ZERO,
         };
 
-        Ok(discount)
+        // An item-value discount can never exceed the worth of the items it
+        // applies to — keeps a scoped discount from bleeding into out-of-scope
+        // value and fails safe on a misconfigured percentage (>100%).
+        // FreeShipping is a shipping discount; FixedAmountOff and
+        // BundleDiscount are bounded/whole-order by design — all exempt.
+        let discount = match promo.promotion_type {
+            PromotionType::FreeShipping
+            | PromotionType::FixedAmountOff
+            | PromotionType::BundleDiscount => discount,
+            _ => discount.min(applicable_amount),
+        };
+
+        // Honor the per-promotion max-discount cap and round to cents, matching
+        // the SQLite backend (previously the Postgres path did neither).
+        let discount =
+            if let Some(max) = promo.max_discount_amount { discount.min(max) } else { discount };
+        Ok(discount.round_dp(2))
     }
 
     fn calculate_tiered_discount(&self, tiers: &Vec<DiscountTier>, amount: Decimal) -> Decimal {
@@ -1369,14 +1404,22 @@ impl PgPromotionRepository {
         let mut applicable_tier: Option<&DiscountTier> = None;
 
         for tier in tiers {
-            let min = tier.min_value;
-            if amount >= min {
+            if amount >= tier.min_value {
                 if let Some(max) = tier.max_value {
                     if amount <= max {
                         applicable_tier = Some(tier);
                     }
                 } else {
-                    applicable_tier = Some(tier);
+                    // Open-ended tier: keep the highest floor that applies, so
+                    // selection does not depend on the order tiers are listed
+                    // in (matches the SQLite backend).
+                    let is_better = match applicable_tier {
+                        Some(current) => tier.min_value > current.min_value,
+                        None => true,
+                    };
+                    if is_better {
+                        applicable_tier = Some(tier);
+                    }
                 }
             }
         }

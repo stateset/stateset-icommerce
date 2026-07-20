@@ -168,12 +168,7 @@ impl FraudRepository for SqliteFraudRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
@@ -315,12 +310,7 @@ impl FraudRepository for SqliteFraudRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();

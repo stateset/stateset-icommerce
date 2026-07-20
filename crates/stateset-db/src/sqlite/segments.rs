@@ -173,12 +173,7 @@ impl SegmentRepository for SqliteSegmentRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
@@ -260,12 +255,7 @@ impl SegmentRepository for SqliteSegmentRepository {
             "SELECT * FROM segment_memberships WHERE segment_id = ? ORDER BY joined_at DESC"
                 .to_string();
 
-        if let Some(limit) = limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, limit, offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
@@ -382,5 +372,41 @@ mod tests {
         repo.remove_member(segment.id, c1).expect("remove c1");
         assert!(!repo.is_member(segment.id, c1).expect("not member"));
         assert_eq!(repo.count_members(segment.id).expect("count after remove"), 1);
+    }
+
+    #[test]
+    fn rules_round_trip() {
+        // Guards against the tiers-class bug: a modeled Vec field that is
+        // persisted but never asserted round-trip. Segments store rules as a
+        // JSON column; verify a non-empty rule set survives create + re-read.
+        use stateset_core::{SegmentOperator, SegmentRule};
+
+        let repo = test_repo();
+        let created = repo
+            .create(CreateSegment {
+                name: "High spenders".into(),
+                description: None,
+                segment_type: SegmentType::Dynamic,
+                rules: vec![
+                    SegmentRule {
+                        field: "lifetime_value".into(),
+                        operator: SegmentOperator::Gte,
+                        value: "1000".into(),
+                    },
+                    SegmentRule {
+                        field: "country".into(),
+                        operator: SegmentOperator::Eq,
+                        value: "US".into(),
+                    },
+                ],
+            })
+            .expect("create");
+        assert_eq!(created.rules.len(), 2, "rules returned on create");
+
+        let fetched = repo.get(created.id).expect("get").expect("found");
+        assert_eq!(fetched.rules.len(), 2, "rules survive a re-read");
+        assert_eq!(fetched.rules[0].field, "lifetime_value");
+        assert_eq!(fetched.rules[0].operator, SegmentOperator::Gte);
+        assert_eq!(fetched.rules[1].value, "US");
     }
 }

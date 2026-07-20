@@ -180,7 +180,9 @@ impl SqliteTaxRepository {
             query.push_str(" AND active = 1");
         }
 
-        query.push_str(" ORDER BY country_code, state_code, level, name");
+        // Deterministic, backend-identical order (COALESCE so a NULL state_code
+        // sorts consistently with the Postgres backend). Must match Postgres.
+        query.push_str(" ORDER BY country_code, COALESCE(state_code, ''), level, name");
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
         let params: Vec<&dyn rusqlite::ToSql> =
@@ -1110,12 +1112,19 @@ impl SqliteTaxRepository {
             }
         }
 
-        // Round tax
+        // Round tax using the configured rounding mode.
         let decimal_places = settings.decimal_places as u32;
-        let total_tax = total_tax.round_dp(decimal_places);
-        let shipping_tax = shipping_tax.round_dp(decimal_places);
+        let strategy = settings.rounding_strategy();
+        let total_tax = total_tax.round_dp_with_strategy(decimal_places, strategy);
+        let shipping_tax = shipping_tax.round_dp_with_strategy(decimal_places, strategy);
 
         let total = subtotal + total_tax + request.shipping_amount.unwrap_or_default();
+
+        // Emit jurisdictions in a stable order (by code, then id) rather than
+        // the HashMap's iteration order, which varies run-to-run and between the
+        // SQLite and Postgres backends — the tax result must be deterministic.
+        let mut jurisdictions: Vec<JurisdictionSummary> = jurisdictions_map.into_values().collect();
+        jurisdictions.sort_by(|a, b| a.code.cmp(&b.code).then_with(|| a.id.cmp(&b.id)));
 
         Ok(TaxCalculationResult {
             id: Uuid::new_v4(),
@@ -1127,7 +1136,7 @@ impl SqliteTaxRepository {
             line_item_taxes,
             exemptions_applied: !exemptions.is_empty(),
             exemption_details: None, // Could populate if needed
-            jurisdictions: jurisdictions_map.into_values().collect(),
+            jurisdictions,
             calculated_at: now,
             is_estimate: true,
         })
@@ -1267,8 +1276,9 @@ mod tests {
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ExemptionType, JurisdictionLevel,
-        ProductTaxCategory, TaxJurisdictionFilter, TaxRateFilter, TaxType,
+        CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, CurrencyCode, ExemptionType,
+        JurisdictionLevel, ProductTaxCategory, TaxAddress, TaxCalculationRequest,
+        TaxJurisdictionFilter, TaxLineItem, TaxRateFilter, TaxType,
     };
 
     fn fresh_repo() -> SqliteTaxRepository {
@@ -1362,6 +1372,46 @@ mod tests {
     }
 
     #[test]
+    fn list_jurisdictions_orders_by_country_then_state() {
+        let repo = fresh_repo();
+        // Two jurisdictions in different countries where ordering by country and
+        // ordering by name DISAGREE, so the sort key is observable. Postgres used
+        // to order only by (level, name), which would put XB (Apple) first.
+        repo.create_jurisdiction(CreateTaxJurisdiction {
+            parent_id: None,
+            name: "Zebra".into(),
+            code: "XA-1".into(),
+            level: JurisdictionLevel::State,
+            country_code: "XA".into(),
+            state_code: Some("X1".into()),
+            county: None,
+            city: None,
+            postal_codes: vec![],
+        })
+        .expect("xa");
+        repo.create_jurisdiction(CreateTaxJurisdiction {
+            parent_id: None,
+            name: "Apple".into(),
+            code: "XB-1".into(),
+            level: JurisdictionLevel::State,
+            country_code: "XB".into(),
+            state_code: Some("X2".into()),
+            county: None,
+            city: None,
+            postal_codes: vec![],
+        })
+        .expect("xb");
+
+        let all = repo.list_jurisdictions(TaxJurisdictionFilter::default()).expect("list");
+        let mine: Vec<&str> = all
+            .iter()
+            .filter(|j| j.country_code == "XA" || j.country_code == "XB")
+            .map(|j| j.country_code.as_str())
+            .collect();
+        assert_eq!(mine, vec!["XA", "XB"], "must order by country_code, not by name");
+    }
+
+    #[test]
     fn create_rate_round_trips() {
         let repo = fresh_repo();
         let j = make_state_jur(&repo, "CA");
@@ -1369,6 +1419,68 @@ mod tests {
         assert_eq!(r.rate, dec!(0.0725));
         let by_id = repo.get_rate(r.id).expect("ok").expect("found");
         assert_eq!(by_id.id, r.id);
+    }
+
+    fn single_item_request(
+        country: &str,
+        state: &str,
+        unit_price: Decimal,
+    ) -> TaxCalculationRequest {
+        TaxCalculationRequest {
+            line_items: vec![TaxLineItem {
+                id: "line-1".into(),
+                sku: None,
+                product_id: None,
+                quantity: dec!(1),
+                unit_price,
+                discount_amount: Decimal::ZERO,
+                tax_category: ProductTaxCategory::Standard,
+                tax_code: None,
+                description: None,
+            }],
+            shipping_address: TaxAddress {
+                line1: None,
+                line2: None,
+                city: None,
+                state: Some(state.into()),
+                postal_code: None,
+                country: country.into(),
+            },
+            billing_address: None,
+            customer_id: None,
+            shipping_amount: None,
+            currency: CurrencyCode::USD,
+            transaction_date: Some(NaiveDate::from_ymd_opt(2026, 6, 1).expect("date")),
+            prices_include_tax: false,
+        }
+    }
+
+    #[test]
+    fn calculate_tax_honors_configured_rounding_mode() {
+        // A $2.50 line at 5% yields exactly $0.125 of tax — a rounding midpoint.
+        // half_up rounds it to 0.13; half_even (banker's, required by some
+        // jurisdictions) rounds to 0.12 because the retained digit (2) is even.
+        // The configured rounding_mode must actually change the result.
+        let repo = fresh_repo();
+        let j = make_state_jur(&repo, "CA");
+        make_rate(&repo, j.id, dec!(0.05));
+        let request = single_item_request("ZZ", "CA", dec!(2.50));
+
+        let mut settings = repo.get_settings().expect("settings");
+        settings.rounding_mode = "half_even".into();
+        repo.update_settings(settings).expect("update settings");
+        let even = repo.calculate_tax(request.clone()).expect("calc");
+        assert_eq!(
+            even.total_tax,
+            dec!(0.12),
+            "half_even must round $0.125 down to 0.12 (retained digit is even): {even:?}"
+        );
+
+        let mut settings = repo.get_settings().expect("settings");
+        settings.rounding_mode = "half_up".into();
+        repo.update_settings(settings).expect("update settings");
+        let up = repo.calculate_tax(request).expect("calc");
+        assert_eq!(up.total_tax, dec!(0.13), "half_up must round $0.125 up to 0.13: {up:?}");
     }
 
     #[test]
@@ -1384,6 +1496,45 @@ mod tests {
             .list_rates(TaxRateFilter { jurisdiction_id: Some(j_a.id), ..Default::default() })
             .expect("a");
         assert_eq!(a_rates.len(), 2);
+    }
+
+    #[test]
+    fn calculate_tax_returns_jurisdictions_in_stable_order() {
+        // The jurisdictions summary must be emitted in a stable, backend-agnostic
+        // order (by code) rather than the tax engine's internal HashMap order,
+        // so the same input always produces the same result.
+        let repo = fresh_repo();
+        // Country-level ZZ plus state-level ZZ-CA, each taxing the item.
+        let country = repo
+            .create_jurisdiction(CreateTaxJurisdiction {
+                parent_id: None,
+                name: "ZZ Country".into(),
+                code: "ZZ".into(),
+                level: JurisdictionLevel::Country,
+                country_code: "ZZ".into(),
+                state_code: None,
+                county: None,
+                city: None,
+                postal_codes: vec![],
+            })
+            .expect("create country");
+        make_rate(&repo, country.id, dec!(0.05));
+        let state = make_state_jur(&repo, "CA"); // code ZZ-CA
+        make_rate(&repo, state.id, dec!(0.03));
+
+        let result =
+            repo.calculate_tax(single_item_request("ZZ", "CA", dec!(100.00))).expect("calc");
+
+        let codes: Vec<&str> = result.jurisdictions.iter().map(|j| j.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            vec!["ZZ", "ZZ-CA"],
+            "jurisdictions must be returned in stable code order: {codes:?}"
+        );
+        assert!(
+            result.jurisdictions.windows(2).all(|w| w[0].code <= w[1].code),
+            "jurisdictions must be sorted by code"
+        );
     }
 
     #[test]

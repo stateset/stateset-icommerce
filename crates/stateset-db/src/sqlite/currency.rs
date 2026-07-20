@@ -4,7 +4,7 @@ use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 use stateset_core::{
     CommerceError, ConversionResult, ConvertCurrency, Currency, ExchangeRate, ExchangeRateFilter,
     Result, SetExchangeRate, StoreCurrencySettings,
@@ -16,6 +16,14 @@ use super::{
     parse_enum_row, parse_json_row, parse_uuid_row, uuid_params,
 };
 use stateset_core::{BatchResult, validate_batch_size};
+
+/// Fractional digits of precision for stored exchange rates.
+///
+/// Postgres stores `exchange_rates.rate` as `DECIMAL(20, 10)`, which rounds any
+/// higher-precision rate to 10 dp (half away from zero). SQLite stores the rate
+/// as TEXT with no such constraint, so we round explicitly to keep conversions
+/// identical across backends.
+const RATE_SCALE: u32 = 10;
 
 /// SQLite currency repository
 #[derive(Debug)]
@@ -190,6 +198,11 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         let now = Utc::now();
         let source = input.source.unwrap_or_else(|| "manual".into());
 
+        // Round to the same scale Postgres enforces via `DECIMAL(20, 10)` so a
+        // high-precision rate converts identically on both backends.
+        let rate =
+            input.rate.round_dp_with_strategy(RATE_SCALE, RoundingStrategy::MidpointAwayFromZero);
+
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -206,7 +219,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                     id.to_string(),
                     input.base_currency.code(),
                     input.quote_currency.code(),
-                    input.rate.to_string(),
+                    rate.to_string(),
                     source,
                     now.to_rfc3339(),
                     now.to_rfc3339(),
@@ -223,7 +236,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                     Uuid::new_v4().to_string(),
                     input.base_currency.code(),
                     input.quote_currency.code(),
-                    input.rate.to_string(),
+                    rate.to_string(),
                     source,
                     now.to_rfc3339()
                 ],
@@ -374,6 +387,11 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
             let id = Uuid::new_v4();
             let source = input.source.clone().unwrap_or_else(|| "manual".into());
 
+            // Match Postgres `DECIMAL(20, 10)` precision (see `RATE_SCALE`).
+            let rate = input
+                .rate
+                .round_dp_with_strategy(RATE_SCALE, RoundingStrategy::MidpointAwayFromZero);
+
             // Upsert the rate
             tx.execute(
                 "INSERT INTO exchange_rates (id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at)
@@ -387,7 +405,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                     id.to_string(),
                     input.base_currency.code(),
                     input.quote_currency.code(),
-                    input.rate.to_string(),
+                    rate.to_string(),
                     source,
                     now.to_rfc3339(),
                     now.to_rfc3339(),
@@ -404,7 +422,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                     Uuid::new_v4().to_string(),
                     input.base_currency.code(),
                     input.quote_currency.code(),
-                    input.rate.to_string(),
+                    rate.to_string(),
                     source,
                     now.to_rfc3339()
                 ],

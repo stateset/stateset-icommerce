@@ -5,9 +5,10 @@
 use rust_decimal_macros::dec;
 use stateset_core::CurrencyCode;
 use stateset_embedded::{
-    BillingInterval, CancelSubscription, Commerce, CreateCustomer, CreateSubscription,
-    CreateSubscriptionPlan, CustomerId, PauseSubscription, PlanStatus, SkipBillingCycle,
-    SubscriptionFilter, SubscriptionPlanFilter, SubscriptionStatus, UpdateSubscriptionPlan,
+    BillingCycleStatus, BillingInterval, CancelSubscription, Commerce, CreateCustomer,
+    CreateSubscription, CreateSubscriptionPlan, CustomerId, PauseSubscription, PlanStatus,
+    SkipBillingCycle, SubscriptionFilter, SubscriptionPlanFilter, SubscriptionStatus,
+    UpdateSubscriptionPlan,
 };
 use uuid::Uuid;
 
@@ -1166,4 +1167,75 @@ fn test_get_nonexistent_plan() {
     let result = commerce.subscriptions().get_plan(Uuid::new_v4()).expect("Should not error");
 
     assert!(result.is_none());
+}
+
+/// Marking a billing cycle failed increments its dunning `retry_count` and stamps
+/// `billed_at` (SQLite — parity with the Postgres backend).
+#[test]
+fn test_failed_billing_cycle_increments_retry_and_stamps_billed_at() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+    let plan_id = create_active_plan(&commerce, "Retry Plan", dec!(9.99));
+    let sub = commerce
+        .subscriptions()
+        .subscribe(CreateSubscription { customer_id, plan_id, ..Default::default() })
+        .expect("subscribe");
+
+    let now = chrono::Utc::now();
+    let cycle = commerce
+        .subscriptions()
+        .create_billing_cycle(sub.id, 1, now, now + chrono::Duration::days(30))
+        .expect("create billing cycle");
+    assert_eq!(cycle.retry_count, 0);
+    assert!(cycle.billed_at.is_none());
+
+    let c1 = commerce
+        .subscriptions()
+        .update_billing_cycle_status(cycle.id, BillingCycleStatus::Failed)
+        .expect("mark failed 1");
+    assert_eq!(c1.retry_count, 1, "a failed cycle must increment retry_count");
+    assert!(c1.billed_at.is_some(), "a failed cycle must stamp billed_at");
+
+    let c2 = commerce
+        .subscriptions()
+        .update_billing_cycle_status(cycle.id, BillingCycleStatus::Failed)
+        .expect("mark failed 2");
+    assert_eq!(c2.retry_count, 2, "each failure must increment retry_count");
+}
+
+/// Pausing a subscription clears its scheduled `next_billing_date` (a paused sub
+/// isn't billed), and resuming recomputes it. SQLite previously left the stale
+/// date in place while Postgres cleared it — this pins them to the same behavior.
+#[test]
+fn test_pause_clears_next_billing_date_and_resume_restores_it() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+    let plan_id = create_active_plan(&commerce, "Pause Plan", dec!(9.99));
+    let sub = commerce
+        .subscriptions()
+        .subscribe(CreateSubscription {
+            customer_id,
+            plan_id,
+            skip_trial: Some(true),
+            ..Default::default()
+        })
+        .expect("subscribe");
+    assert!(
+        sub.next_billing_date.is_some(),
+        "an active subscription has a scheduled next billing date"
+    );
+
+    let paused = commerce
+        .subscriptions()
+        .pause(sub.id, PauseSubscription::default())
+        .expect("pause subscription");
+    assert_eq!(paused.status, SubscriptionStatus::Paused);
+    assert!(
+        paused.next_billing_date.is_none(),
+        "a paused subscription must have no scheduled next billing date"
+    );
+
+    let resumed = commerce.subscriptions().resume(sub.id).expect("resume subscription");
+    assert_eq!(resumed.status, SubscriptionStatus::Active);
+    assert!(resumed.next_billing_date.is_some(), "resume recomputes the next billing date");
 }

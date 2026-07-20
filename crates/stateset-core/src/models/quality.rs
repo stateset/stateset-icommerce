@@ -663,3 +663,358 @@ impl QualityHold {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+    use std::str::FromStr;
+
+    // ============================================================================
+    // Test Helpers
+    // ============================================================================
+
+    fn create_test_inspection(status: InspectionStatus) -> Inspection {
+        let now = Utc::now();
+        Inspection {
+            id: Uuid::new_v4(),
+            inspection_number: "INSP-001".to_string(),
+            inspection_type: InspectionType::Receiving,
+            reference_type: "receipt".to_string(),
+            reference_id: Uuid::new_v4(),
+            status,
+            inspector_id: None,
+            scheduled_at: None,
+            started_at: None,
+            completed_at: None,
+            notes: None,
+            items: Vec::new(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn create_test_item(
+        result: InspectionResult,
+        inspected: Decimal,
+        passed: Decimal,
+    ) -> InspectionItem {
+        InspectionItem {
+            id: Uuid::new_v4(),
+            inspection_id: Uuid::new_v4(),
+            sku: "SKU-001".to_string(),
+            lot_number: None,
+            serial_number: None,
+            quantity_inspected: inspected,
+            quantity_passed: passed,
+            quantity_failed: inspected - passed,
+            defect_codes: Vec::new(),
+            measurements: None,
+            result,
+            notes: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    fn create_test_ncr(status: NcrStatus, disposition: Option<Disposition>) -> NonConformance {
+        let now = Utc::now();
+        NonConformance {
+            id: Uuid::new_v4(),
+            ncr_number: "NCR-001".to_string(),
+            inspection_id: None,
+            source: NonConformanceSource::Inspection,
+            severity: Severity::Minor,
+            status,
+            sku: "SKU-001".to_string(),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(5),
+            description: "Defect".to_string(),
+            root_cause: None,
+            corrective_action: None,
+            preventive_action: None,
+            disposition,
+            disposition_quantity: None,
+            assigned_to: None,
+            created_at: now,
+            updated_at: now,
+            closed_at: None,
+        }
+    }
+
+    fn create_test_hold() -> QualityHold {
+        QualityHold {
+            id: Uuid::new_v4(),
+            sku: "SKU-001".to_string(),
+            lot_number: None,
+            serial_number: None,
+            location_id: None,
+            quantity_held: dec!(10),
+            reason: "inspection pending".to_string(),
+            hold_type: HoldType::QualityInspection,
+            ncr_id: None,
+            inspection_id: None,
+            placed_by: "qa".to_string(),
+            released_by: None,
+            release_notes: None,
+            placed_at: Utc::now(),
+            released_at: None,
+            expires_at: None,
+        }
+    }
+
+    // ============================================================================
+    // Inspection lifecycle guards
+    // ============================================================================
+
+    #[test]
+    fn can_start_from_pending_and_scheduled_only() {
+        for status in [
+            InspectionStatus::Pending,
+            InspectionStatus::Scheduled,
+            InspectionStatus::InProgress,
+            InspectionStatus::Passed,
+            InspectionStatus::Failed,
+            InspectionStatus::PartialPass,
+            InspectionStatus::OnHold,
+            InspectionStatus::Cancelled,
+        ] {
+            let insp = create_test_inspection(status);
+            let expected =
+                matches!(status, InspectionStatus::Pending | InspectionStatus::Scheduled);
+            assert_eq!(insp.can_start(), expected, "status {status}");
+        }
+    }
+
+    #[test]
+    fn can_complete_only_from_in_progress() {
+        assert!(create_test_inspection(InspectionStatus::InProgress).can_complete());
+        assert!(!create_test_inspection(InspectionStatus::Pending).can_complete());
+        assert!(!create_test_inspection(InspectionStatus::Passed).can_complete());
+        assert!(!create_test_inspection(InspectionStatus::Cancelled).can_complete());
+    }
+
+    #[test]
+    fn all_items_inspected_vacuously_true_when_empty() {
+        assert!(create_test_inspection(InspectionStatus::InProgress).all_items_inspected());
+    }
+
+    #[test]
+    fn all_items_inspected_false_with_pending_item() {
+        let mut insp = create_test_inspection(InspectionStatus::InProgress);
+        insp.items.push(create_test_item(InspectionResult::Pass, dec!(10), dec!(10)));
+        insp.items.push(create_test_item(InspectionResult::Pending, dec!(5), dec!(0)));
+        assert!(!insp.all_items_inspected());
+        insp.items.pop();
+        assert!(insp.all_items_inspected());
+    }
+
+    // ============================================================================
+    // pass_rate
+    // ============================================================================
+
+    #[test]
+    fn pass_rate_none_when_nothing_inspected() {
+        let insp = create_test_inspection(InspectionStatus::InProgress);
+        assert_eq!(insp.pass_rate(), None);
+        let mut zero = create_test_inspection(InspectionStatus::InProgress);
+        zero.items.push(create_test_item(InspectionResult::Pending, Decimal::ZERO, Decimal::ZERO));
+        assert_eq!(zero.pass_rate(), None);
+    }
+
+    #[test]
+    fn pass_rate_computes_percentage() {
+        let mut insp = create_test_inspection(InspectionStatus::InProgress);
+        insp.items.push(create_test_item(InspectionResult::Pass, dec!(60), dec!(60)));
+        insp.items.push(create_test_item(InspectionResult::Fail, dec!(40), dec!(15)));
+        assert_eq!(insp.pass_rate(), Some(dec!(75)));
+    }
+
+    #[test]
+    fn pass_rate_zero_when_all_failed() {
+        let mut insp = create_test_inspection(InspectionStatus::InProgress);
+        insp.items.push(create_test_item(InspectionResult::Fail, dec!(10), Decimal::ZERO));
+        assert_eq!(insp.pass_rate(), Some(Decimal::ZERO));
+    }
+
+    // ============================================================================
+    // calculate_overall_result
+    // ============================================================================
+
+    #[test]
+    fn overall_result_in_progress_when_empty_or_pending() {
+        let insp = create_test_inspection(InspectionStatus::InProgress);
+        assert_eq!(insp.calculate_overall_result(), InspectionStatus::InProgress);
+        let mut pending = create_test_inspection(InspectionStatus::InProgress);
+        pending.items.push(create_test_item(InspectionResult::Pending, dec!(1), Decimal::ZERO));
+        assert_eq!(pending.calculate_overall_result(), InspectionStatus::InProgress);
+    }
+
+    #[test]
+    fn overall_result_passed_when_all_pass() {
+        let mut insp = create_test_inspection(InspectionStatus::InProgress);
+        insp.items.push(create_test_item(InspectionResult::Pass, dec!(5), dec!(5)));
+        insp.items.push(create_test_item(InspectionResult::Pass, dec!(3), dec!(3)));
+        assert_eq!(insp.calculate_overall_result(), InspectionStatus::Passed);
+    }
+
+    #[test]
+    fn overall_result_partial_pass_when_mixed() {
+        let mut insp = create_test_inspection(InspectionStatus::InProgress);
+        insp.items.push(create_test_item(InspectionResult::Pass, dec!(5), dec!(5)));
+        insp.items.push(create_test_item(InspectionResult::Fail, dec!(5), Decimal::ZERO));
+        assert_eq!(insp.calculate_overall_result(), InspectionStatus::PartialPass);
+    }
+
+    #[test]
+    fn overall_result_conditional_pass_counts_as_partial() {
+        let mut insp = create_test_inspection(InspectionStatus::InProgress);
+        insp.items.push(create_test_item(InspectionResult::ConditionalPass, dec!(5), dec!(5)));
+        assert_eq!(insp.calculate_overall_result(), InspectionStatus::PartialPass);
+    }
+
+    #[test]
+    fn overall_result_failed_when_all_fail() {
+        let mut insp = create_test_inspection(InspectionStatus::InProgress);
+        insp.items.push(create_test_item(InspectionResult::Fail, dec!(5), Decimal::ZERO));
+        assert_eq!(insp.calculate_overall_result(), InspectionStatus::Failed);
+    }
+
+    // ============================================================================
+    // NonConformance
+    // ============================================================================
+
+    #[test]
+    fn ncr_can_close_requires_late_status_and_disposition() {
+        for status in
+            [NcrStatus::Verification, NcrStatus::CorrectiveAction, NcrStatus::PreventiveAction]
+        {
+            assert!(create_test_ncr(status, Some(Disposition::Rework)).can_close());
+            assert!(!create_test_ncr(status, None).can_close(), "no disposition, {status}");
+        }
+    }
+
+    #[test]
+    fn ncr_cannot_close_from_early_or_terminal_statuses() {
+        for status in [
+            NcrStatus::Open,
+            NcrStatus::UnderReview,
+            NcrStatus::PendingDisposition,
+            NcrStatus::Closed,
+            NcrStatus::Cancelled,
+        ] {
+            assert!(!create_test_ncr(status, Some(Disposition::Scrap)).can_close(), "{status}");
+        }
+    }
+
+    #[test]
+    fn ncr_requires_immediate_action_only_for_critical() {
+        let mut ncr = create_test_ncr(NcrStatus::Open, None);
+        assert!(!ncr.requires_immediate_action());
+        ncr.severity = Severity::Critical;
+        assert!(ncr.requires_immediate_action());
+        ncr.severity = Severity::Major;
+        assert!(!ncr.requires_immediate_action());
+    }
+
+    #[test]
+    fn ncr_has_disposition() {
+        assert!(!create_test_ncr(NcrStatus::Open, None).has_disposition());
+        assert!(create_test_ncr(NcrStatus::Open, Some(Disposition::UseAsIs)).has_disposition());
+    }
+
+    // ============================================================================
+    // QualityHold
+    // ============================================================================
+
+    #[test]
+    fn hold_is_active_until_released() {
+        let mut hold = create_test_hold();
+        assert!(hold.is_active());
+        hold.released_at = Some(Utc::now());
+        assert!(!hold.is_active());
+    }
+
+    #[test]
+    fn hold_is_expired_only_past_expiry_and_unreleased() {
+        let mut hold = create_test_hold();
+        assert!(!hold.is_expired()); // no expiry
+        hold.expires_at = Some(Utc::now() + chrono::Duration::hours(1));
+        assert!(!hold.is_expired()); // future expiry
+        hold.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
+        assert!(hold.is_expired()); // past expiry, not released
+        hold.released_at = Some(Utc::now());
+        assert!(!hold.is_expired()); // released holds are not "expired"
+    }
+
+    // ============================================================================
+    // Enum Display / FromStr round-trips and defaults
+    // ============================================================================
+
+    #[test]
+    fn ncr_status_display_from_str_round_trip() {
+        for status in [
+            NcrStatus::Open,
+            NcrStatus::UnderReview,
+            NcrStatus::PendingDisposition,
+            NcrStatus::CorrectiveAction,
+            NcrStatus::PreventiveAction,
+            NcrStatus::Verification,
+            NcrStatus::Closed,
+            NcrStatus::Cancelled,
+        ] {
+            assert_eq!(NcrStatus::from_str(&status.to_string()), Ok(status));
+        }
+        assert_eq!(NcrStatus::from_str("UNDER_REVIEW"), Ok(NcrStatus::UnderReview));
+        assert!(NcrStatus::from_str("bogus").is_err());
+    }
+
+    #[test]
+    fn inspection_status_round_trip() {
+        for status in [
+            InspectionStatus::Pending,
+            InspectionStatus::InProgress,
+            InspectionStatus::PartialPass,
+            InspectionStatus::OnHold,
+        ] {
+            assert_eq!(InspectionStatus::from_str(&status.to_string()), Ok(status));
+        }
+        assert!(InspectionStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn inspection_type_and_result_round_trip() {
+        for t in [InspectionType::Incoming, InspectionType::InProcess, InspectionType::Return] {
+            assert_eq!(InspectionType::from_str(&t.to_string()), Ok(t));
+        }
+        for r in [InspectionResult::Pass, InspectionResult::ConditionalPass] {
+            assert_eq!(InspectionResult::from_str(&r.to_string()), Ok(r));
+        }
+    }
+
+    #[test]
+    fn disposition_and_hold_type_round_trip() {
+        for d in [Disposition::UseAsIs, Disposition::ReturnToVendor, Disposition::SortAndScreen] {
+            assert_eq!(Disposition::from_str(&d.to_string()), Ok(d));
+        }
+        for h in [HoldType::QualityInspection, HoldType::RegulatoryHold, HoldType::Quarantine] {
+            assert_eq!(HoldType::from_str(&h.to_string()), Ok(h));
+        }
+    }
+
+    #[test]
+    fn defaults_are_sane() {
+        assert_eq!(InspectionType::default(), InspectionType::Incoming);
+        assert_eq!(InspectionStatus::default(), InspectionStatus::Pending);
+        assert_eq!(InspectionResult::default(), InspectionResult::Pending);
+        assert_eq!(NcrStatus::default(), NcrStatus::Open);
+        assert_eq!(Severity::default(), Severity::Minor);
+        assert_eq!(HoldType::default(), HoldType::QualityInspection);
+        let create = CreateNonConformance::default();
+        assert_eq!(create.quantity_affected, Decimal::ZERO);
+        assert!(create.sku.is_empty());
+        let hold = CreateQualityHold::default();
+        assert_eq!(hold.quantity, Decimal::ZERO);
+        assert!(hold.placed_by.is_empty());
+    }
+}

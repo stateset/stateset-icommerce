@@ -484,13 +484,21 @@ impl PgWorkOrderRepository {
         }
 
         let now = Utc::now();
+
+        // Read-modify-write of `quantity_completed` inside one transaction, with
+        // `SELECT … FOR UPDATE` locking the row, so two concurrent `complete`
+        // calls serialize instead of both reading the same starting quantity and
+        // one overwriting the other (a lost update that under-counts completed
+        // units).
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         let existing: (Decimal, Decimal, Option<DateTime<Utc>>) = sqlx::query_as(
             "SELECT quantity_completed, quantity_to_build, actual_end
              FROM manufacturing_work_orders
-             WHERE id = $1",
+             WHERE id = $1 FOR UPDATE",
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
@@ -510,9 +518,11 @@ impl PgWorkOrderRepository {
         .bind(new_actual_end)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }

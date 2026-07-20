@@ -376,12 +376,7 @@ impl PaymentRepository for SqlitePaymentRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -589,6 +584,34 @@ impl PaymentRepository for SqlitePaymentRepository {
         let now = chrono::Utc::now();
 
         with_immediate_transaction(&self.pool, |tx| {
+            // Read the CURRENT status inside the write transaction so concurrent
+            // completions serialize on the IMMEDIATE lock and only one of them
+            // folds the refund into the payment.
+            let current_status: RefundStatus = parse_enum_row(
+                &tx.query_row(
+                    "SELECT status FROM refunds WHERE id = ?",
+                    params![id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )?,
+                "refund",
+                "status",
+            )?;
+
+            // Idempotent: completing an already-completed refund is a no-op (a
+            // duplicated payment-processor webhook or a retry must NOT re-add the
+            // amount to the payment's `amount_refunded`).
+            if current_status == RefundStatus::Completed {
+                return Ok(());
+            }
+            // A failed/cancelled refund is terminal and cannot be completed.
+            if current_status.is_terminal() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "Cannot complete a {current_status} refund"
+                    )),
+                )));
+            }
+
             tx.execute(
                 "UPDATE refunds SET status = ?, refunded_at = ?, updated_at = ? WHERE id = ?",
                 params![

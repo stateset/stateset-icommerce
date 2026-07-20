@@ -15,6 +15,7 @@ use uuid::Uuid;
 use super::{
     map_db_error, parse_datetime_opt, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
+    with_immediate_transaction,
 };
 
 fn row_to_backorder_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Backorder> {
@@ -409,49 +410,78 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn fulfill_backorder(&self, input: FulfillBackorder) -> Result<Backorder> {
-        let now = Utc::now();
-        let id = Uuid::new_v4();
-
-        let backorder = self.get_backorder(input.backorder_id)?.ok_or(CommerceError::NotFound)?;
-
-        if input.quantity > backorder.quantity_remaining {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot fulfill {} - only {} remaining",
-                input.quantity, backorder.quantity_remaining
-            )));
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Fulfillment quantity must be greater than zero".to_string(),
+            ));
         }
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let now = Utc::now();
+        let fulfillment_id = Uuid::new_v4();
+        let backorder_id_str = input.backorder_id.to_string();
 
-            // Record fulfillment
-            conn.execute(
-                "INSERT INTO backorder_fulfillments (id, backorder_id, quantity, source_type,
-                    source_id, notes, fulfilled_at, fulfilled_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    input.backorder_id.to_string(),
-                    input.quantity.to_string(),
-                    input.source_type.to_string(),
-                    input.source_id.map(|id| id.to_string()),
-                    input.notes,
-                    now.to_rfc3339(),
-                    input.fulfilled_by,
-                ],
-            )
-            .map_err(map_db_error)?;
+        // The status/quantity read, the guards, the fulfillment INSERT and the
+        // backorder UPDATE all run inside ONE `IMMEDIATE` transaction, so
+        // concurrent fulfillments serialize (no lost update / over-fulfill) and a
+        // failed UPDATE can't leave an orphaned fulfillment row.
+        with_immediate_transaction(&self.pool, |tx| {
+            let (status_str, remaining_str, fulfilled_str): (String, String, String) = tx
+                .query_row(
+                    "SELECT status, quantity_remaining, quantity_fulfilled FROM backorders WHERE id = ?",
+                    [&backorder_id_str],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
+                    }
+                    other => other,
+                })?;
+            let status: BackorderStatus = parse_enum_row(&status_str, "backorder", "status")?;
+            let remaining = parse_decimal_row(&remaining_str, "backorder", "quantity_remaining")?;
+            let fulfilled = parse_decimal_row(&fulfilled_str, "backorder", "quantity_fulfilled")?;
 
-            // Update backorder quantities and status
-            let new_fulfilled = backorder.quantity_fulfilled + input.quantity;
-            let new_remaining = backorder.quantity_remaining - input.quantity;
+            // A cancelled or already-fulfilled backorder cannot be fulfilled.
+            if matches!(status, BackorderStatus::Cancelled | BackorderStatus::Fulfilled) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Backorder cannot be fulfilled".to_string()),
+                )));
+            }
+            // Cannot fulfill more units than remain.
+            if input.quantity > remaining {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "Cannot fulfill {} - only {} remaining",
+                        input.quantity, remaining
+                    )),
+                )));
+            }
+
+            let new_fulfilled = fulfilled + input.quantity;
+            let new_remaining = remaining - input.quantity;
             let new_status = if new_remaining <= Decimal::ZERO {
                 BackorderStatus::Fulfilled
             } else {
                 BackorderStatus::PartiallyFulfilled
             };
 
-            conn.execute(
+            tx.execute(
+                "INSERT INTO backorder_fulfillments (id, backorder_id, quantity, source_type,
+                    source_id, notes, fulfilled_at, fulfilled_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    fulfillment_id.to_string(),
+                    backorder_id_str,
+                    input.quantity.to_string(),
+                    input.source_type.to_string(),
+                    input.source_id.map(|id| id.to_string()),
+                    input.notes.as_deref(),
+                    now.to_rfc3339(),
+                    input.fulfilled_by.as_deref(),
+                ],
+            )?;
+
+            tx.execute(
                 "UPDATE backorders SET quantity_fulfilled = ?, quantity_remaining = ?, status = ?, updated_at = ?
                  WHERE id = ?",
                 rusqlite::params![
@@ -459,10 +489,11 @@ impl BackorderRepository for SqliteBackorderRepository {
                     new_remaining.to_string(),
                     new_status.to_string(),
                     now.to_rfc3339(),
-                    input.backorder_id.to_string(),
+                    backorder_id_str,
                 ],
-            ).map_err(map_db_error)?;
-        }
+            )?;
+            Ok(())
+        })?;
 
         self.get_backorder(input.backorder_id)?.ok_or(CommerceError::NotFound)
     }

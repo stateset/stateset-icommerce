@@ -203,5 +203,15 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("054_topology_snapshots", include_str!("../migrations/054_topology_snapshots.sql")),
         // Stock snapshots (point-in-time inventory) + lines.
         ("055_stock_snapshots", include_str!("../migrations/055_stock_snapshots.sql")),
+        ("056_rewards", include_str!("../migrations/056_rewards.sql")),
+        ("057_loyalty_tiers", include_str!("../migrations/057_loyalty_tiers.sql")),
+        ("058_wishlist_item_fields", include_str!("../migrations/058_wishlist_item_fields.sql")),
+        ("059_fraud", include_str!("../migrations/059_fraud.sql")),
+        // Fixed asset register + revenue recognition (ASC 606).
+        ("060_fixed_assets_revrec", include_str!("../migrations/060_fixed_assets_revrec.sql")),
+        // Auto-posting flags for depreciation and revenue recognition.
+        ("061_gl_auto_posting_flags", include_str!("../migrations/061_gl_auto_posting_flags.sql")),
+        // Cycle counts + lines.
+        ("062_cycle_counts", include_str!("../migrations/062_cycle_counts.sql")),
     ]
 }

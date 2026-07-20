@@ -1231,12 +1231,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         sql.push_str(" ORDER BY sku");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();

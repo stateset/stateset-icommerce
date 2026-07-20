@@ -1,0 +1,13 @@
+-- Remove the hardcoded seeded exchange rates.
+--
+-- 005_currency seeded 9 FX rates with source='seed'. Those rates are static and
+-- quickly go stale, so converting currency at them silently uses an out-of-date
+-- rate. The SQLite backend never seeded rates (convert() returns "No exchange
+-- rate found" until rates are set explicitly), and that explicit-rate behavior
+-- is the intended, safer default on both backends.
+--
+-- Removing only source='seed' rows is safe: set_rate upserts with
+-- source='manual' (or a caller-supplied source), so any rate a user has set —
+-- even for a pair that was originally seeded — no longer has source='seed' and
+-- is preserved.
+DELETE FROM exchange_rates WHERE source = 'seed';

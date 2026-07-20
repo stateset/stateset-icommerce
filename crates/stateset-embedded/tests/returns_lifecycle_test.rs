@@ -350,7 +350,6 @@ fn test_return_count() {
 fn test_return_all_reasons() {
     let commerce = Commerce::new(":memory:").expect("init");
     let customer_id = create_test_customer(&commerce);
-    let order = create_delivered_order(&commerce, customer_id);
 
     let reasons = vec![
         ReturnReason::Defective,
@@ -364,6 +363,9 @@ fn test_return_all_reasons() {
     ];
 
     for reason in reasons {
+        // A fresh order per reason so each return stays within the purchased
+        // quantity (the engine now rejects returning more than was ordered).
+        let order = create_delivered_order(&commerce, customer_id);
         let ret = commerce
             .returns()
             .create(CreateReturn {
@@ -538,4 +540,95 @@ fn test_return_multiple_items() {
         .expect("create multi-item return");
 
     assert_eq!(ret.items.len(), 2, "Return should have 2 items");
+}
+
+// ============================================================================
+// Over-return integrity: cannot return more than was purchased
+// ============================================================================
+
+#[test]
+fn test_return_rejects_more_than_ordered_quantity() {
+    let commerce = Commerce::new(":memory:").expect("init");
+    let customer_id = create_test_customer(&commerce);
+    let order = create_delivered_order(&commerce, customer_id);
+    // item[0] was ordered with quantity 3.
+    let item = &order.items[0];
+
+    let err = commerce
+        .returns()
+        .create(CreateReturn {
+            order_id: order.id,
+            reason: ReturnReason::Defective,
+            items: vec![CreateReturnItem {
+                order_item_id: item.id,
+                quantity: 5, // more than the 3 ordered
+                condition: Some(ItemCondition::Defective),
+            }],
+            ..Default::default()
+        })
+        .expect_err("returning more than ordered must be rejected");
+    let msg = format!("{err}").to_lowercase();
+    assert!(msg.contains("returnable") || msg.contains("return"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_return_rejects_cumulative_over_return() {
+    let commerce = Commerce::new(":memory:").expect("init");
+    let customer_id = create_test_customer(&commerce);
+    let order = create_delivered_order(&commerce, customer_id);
+    let item_id = order.items[0].id; // ordered quantity 3
+
+    // Return all 3 units first.
+    commerce
+        .returns()
+        .create(CreateReturn {
+            order_id: order.id,
+            reason: ReturnReason::Defective,
+            items: vec![CreateReturnItem {
+                order_item_id: item_id,
+                quantity: 3,
+                condition: Some(ItemCondition::Defective),
+            }],
+            ..Default::default()
+        })
+        .expect("first return of all 3 units");
+
+    // A second return of even 1 more unit must be rejected — nothing remains.
+    commerce
+        .returns()
+        .create(CreateReturn {
+            order_id: order.id,
+            reason: ReturnReason::Defective,
+            items: vec![CreateReturnItem {
+                order_item_id: item_id,
+                quantity: 1,
+                condition: Some(ItemCondition::Defective),
+            }],
+            ..Default::default()
+        })
+        .expect_err("returning past the ordered quantity across returns must be rejected");
+}
+
+#[test]
+fn test_return_rejects_item_from_another_order() {
+    let commerce = Commerce::new(":memory:").expect("init");
+    let customer_id = create_test_customer(&commerce);
+    let order_a = create_delivered_order(&commerce, customer_id);
+    let order_b = create_delivered_order(&commerce, customer_id);
+
+    // Try to return order B's item against order A.
+    let foreign_item_id = order_b.items[0].id;
+    commerce
+        .returns()
+        .create(CreateReturn {
+            order_id: order_a.id,
+            reason: ReturnReason::Defective,
+            items: vec![CreateReturnItem {
+                order_item_id: foreign_item_id,
+                quantity: 1,
+                condition: Some(ItemCondition::Defective),
+            }],
+            ..Default::default()
+        })
+        .expect_err("returning an item that belongs to another order must be rejected");
 }

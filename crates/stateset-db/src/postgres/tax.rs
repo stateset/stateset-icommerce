@@ -446,7 +446,10 @@ impl PgTaxRepository {
             query.push_str(" AND active = true");
         }
 
-        query.push_str(" ORDER BY level, name");
+        // Deterministic, backend-identical order: group by country then state
+        // (COALESCE so a NULL state_code sorts consistently with SQLite), then
+        // level and name. Must match the SQLite backend's ORDER BY.
+        query.push_str(" ORDER BY country_code, COALESCE(state_code, ''), level, name");
 
         let mut q = sqlx::query_as::<_, TaxJurisdictionRow>(&query);
 
@@ -1014,9 +1017,16 @@ impl PgTaxRepository {
         }
 
         let decimal_places = settings.decimal_places as u32;
-        let total_tax = total_tax.round_dp(decimal_places);
-        let shipping_tax = shipping_tax.round_dp(decimal_places);
+        let strategy = settings.rounding_strategy();
+        let total_tax = total_tax.round_dp_with_strategy(decimal_places, strategy);
+        let shipping_tax = shipping_tax.round_dp_with_strategy(decimal_places, strategy);
         let total = subtotal + total_tax + request.shipping_amount.unwrap_or_default();
+
+        // Emit jurisdictions in a stable order (by code, then id) rather than
+        // the HashMap's iteration order, which varies run-to-run and between the
+        // SQLite and Postgres backends — the tax result must be deterministic.
+        let mut jurisdictions: Vec<JurisdictionSummary> = jurisdictions_map.into_values().collect();
+        jurisdictions.sort_by(|a, b| a.code.cmp(&b.code).then_with(|| a.id.cmp(&b.id)));
 
         Ok(TaxCalculationResult {
             id: Uuid::new_v4(),
@@ -1028,7 +1038,7 @@ impl PgTaxRepository {
             line_item_taxes,
             exemptions_applied: !exemptions.is_empty(),
             exemption_details: None,
-            jurisdictions: jurisdictions_map.into_values().collect(),
+            jurisdictions,
             calculated_at: now,
             is_estimate: true,
         })

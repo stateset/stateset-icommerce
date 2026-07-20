@@ -212,6 +212,73 @@ impl AccountsPayable {
     }
 
     // ========================================================================
+    // Three-Way Match
+    // ========================================================================
+
+    /// Perform a three-way match (purchase order vs receipts vs bill) for a bill.
+    ///
+    /// Loads the bill's linked purchase order lines and every non-cancelled
+    /// receipt recorded against that PO, then compares ordered quantity/cost,
+    /// received quantity, and billed quantity/cost line by line. The result is
+    /// computed on read and never persisted.
+    ///
+    /// `tolerance_percent` is a relative tolerance (e.g. `dec!(5)` allows 5%
+    /// deviation); `None` means exact matching.
+    ///
+    /// Returns [`stateset_core::MatchStatus::NotRequired`] when the bill has no
+    /// purchase order, and an error if the bill does not exist.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use stateset_embedded::Commerce;
+    /// use rust_decimal_macros::dec;
+    /// use uuid::Uuid;
+    ///
+    /// let commerce = Commerce::new(":memory:")?;
+    /// let result = commerce.accounts_payable().three_way_match(Uuid::new_v4(), Some(dec!(5)))?;
+    /// println!("match status: {:?}", result.match_status);
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    pub fn three_way_match(
+        &self,
+        bill_id: Uuid,
+        tolerance_percent: Option<Decimal>,
+    ) -> Result<stateset_core::ThreeWayMatchResult> {
+        let bill = self
+            .db
+            .accounts_payable()
+            .get_bill(bill_id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
+
+        let Some(po_id) = bill.purchase_order_id else {
+            return Ok(stateset_core::ThreeWayMatchResult::not_required());
+        };
+
+        let bill_lines = self.db.accounts_payable().get_bill_items(bill_id)?;
+        let po_items = self.db.purchase_orders().get_items(po_id.into())?;
+
+        let receipts = self.db.receiving().list_receipts(stateset_core::ReceiptFilter {
+            reference_id: Some(po_id),
+            ..Default::default()
+        })?;
+        let mut receipt_items = Vec::new();
+        for receipt in receipts {
+            if receipt.status == stateset_core::ReceiptStatus::Cancelled {
+                continue;
+            }
+            receipt_items.extend(self.db.receiving().get_receipt_items(receipt.id)?);
+        }
+
+        Ok(stateset_core::perform_three_way_match(
+            &po_items,
+            &receipt_items,
+            &bill_lines,
+            tolerance_percent.unwrap_or(Decimal::ZERO),
+        ))
+    }
+
+    // ========================================================================
     // Payment Operations
     // ========================================================================
 

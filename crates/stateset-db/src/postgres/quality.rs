@@ -658,6 +658,27 @@ impl PgQualityRepository {
         &self,
         input: RecordInspectionResult,
     ) -> Result<InspectionItem> {
+        if input.quantity_passed < Decimal::ZERO || input.quantity_failed < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Inspection passed/failed quantities must not be negative".to_string(),
+            ));
+        }
+
+        // The passed + failed counts cannot exceed the quantity inspected.
+        let quantity_inspected: Decimal =
+            sqlx::query_scalar("SELECT quantity_inspected FROM inspection_items WHERE id = $1")
+                .bind(input.item_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        if input.quantity_passed + input.quantity_failed > quantity_inspected {
+            return Err(CommerceError::ValidationError(format!(
+                "Inspection result exceeds inspected quantity: {} passed + {} failed > {} inspected",
+                input.quantity_passed, input.quantity_failed, quantity_inspected
+            )));
+        }
+
         let defect_codes = serde_json::to_value(&input.defect_codes).unwrap_or_default();
         let measurements = input
             .measurements

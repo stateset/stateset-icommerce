@@ -2102,6 +2102,343 @@ export declare function aesGcmEncrypt(plaintext: Buffer, key: Buffer, aad: Buffe
 export declare function aesGcmDecrypt(encrypted: Buffer, key: Buffer, aad: Buffer): Buffer
 /** Compute Merkle root from an array of 32-byte leaf hashes */
 export declare function merkleRoot(leaves: Array<Buffer>): Buffer
+export interface CreateGiftCardInput {
+  /** Redemption code (auto-generated if omitted) */
+  code?: string
+  /** Initial balance as an exact decimal string, e.g. "50.00" */
+  initialBalance: string
+  /** Currency code, e.g. "USD" */
+  currency: string
+  recipientEmail?: string
+  senderName?: string
+  message?: string
+  /** RFC 3339 expiry timestamp */
+  expiresAt?: string
+}
+export interface UpdateGiftCardInput {
+  status?: string
+  recipientEmail?: string
+}
+export interface GiftCardFilterInput {
+  status?: string
+  code?: string
+  limit?: number
+  offset?: number
+}
+export interface GiftCardOutput {
+  id: string
+  code: string
+  /** Exact decimal string */
+  initialBalance: string
+  /** Exact decimal string */
+  currentBalance: string
+  currency: string
+  status: string
+  recipientEmail?: string
+  senderName?: string
+  message?: string
+  expiresAt?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface GiftCardTransactionOutput {
+  id: string
+  giftCardId: string
+  /** Exact decimal string */
+  amount: string
+  /** Exact decimal string */
+  balanceAfter: string
+  transactionType: string
+  referenceId?: string
+  createdAt: string
+}
+export interface CreateStoreCreditInput {
+  /** Customer UUID that owns the credit */
+  customerId: string
+  /** Amount to issue as an exact decimal string, e.g. "25.00" */
+  amount: string
+  /** Currency code, e.g. "USD" */
+  currency: string
+  /**
+   * Reason: return, loyalty, compensation, promotion, manual, gift_card
+   * (defaults to "return")
+   */
+  reason?: string
+  referenceId?: string
+  note?: string
+  /** RFC 3339 expiry timestamp (None = never expires) */
+  expiresAt?: string
+}
+export interface AdjustStoreCreditInput {
+  /**
+   * Signed adjustment as an exact decimal string ("10.00" adds, "-10.00"
+   * subtracts). The balance may not be driven below zero.
+   */
+  amount: string
+  note?: string
+  referenceId?: string
+}
+export interface StoreCreditFilterInput {
+  customerId?: string
+  status?: string
+  reason?: string
+  limit?: number
+  offset?: number
+}
+export interface StoreCreditOutput {
+  id: string
+  customerId: string
+  /** Exact decimal string */
+  originalBalance: string
+  /** Exact decimal string */
+  currentBalance: string
+  currency: string
+  status: string
+  reason: string
+  referenceId?: string
+  note?: string
+  expiresAt?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface StoreCreditTransactionOutput {
+  id: string
+  storeCreditId: string
+  /** Exact decimal string (positive = credit, negative = debit) */
+  amount: string
+  /** Exact decimal string */
+  balanceAfter: string
+  transactionType: string
+  referenceId?: string
+  createdAt: string
+}
+export interface CreateReviewInput {
+  productId: string
+  customerId: string
+  /** Star rating 1–5 */
+  rating: number
+  title?: string
+  body?: string
+  verifiedPurchase?: boolean
+}
+export interface UpdateReviewInput {
+  rating?: number
+  title?: string
+  body?: string
+  /** Moderation status: pending, approved, rejected, flagged */
+  status?: string
+}
+export interface ReviewFilterInput {
+  productId?: string
+  customerId?: string
+  status?: string
+  minRating?: number
+  verifiedOnly?: boolean
+  limit?: number
+  offset?: number
+}
+export interface ReviewOutput {
+  id: string
+  productId: string
+  customerId: string
+  rating: number
+  title?: string
+  body?: string
+  status: string
+  verifiedPurchase: boolean
+  helpfulCount: number
+  reportedCount: number
+  createdAt: string
+  updatedAt: string
+}
+export interface ReviewSummaryOutput {
+  productId: string
+  averageRating: number
+  totalReviews: number
+  /** Counts for 1★, 2★, 3★, 4★, 5★ (index 0 = 1 star) */
+  ratingDistribution: Array<number>
+}
+export interface CreateWishlistInput {
+  customerId: string
+  name: string
+  isPublic?: boolean
+}
+export interface UpdateWishlistInput {
+  name?: string
+  isPublic?: boolean
+}
+export interface AddWishlistItemInput {
+  productId: string
+  variantId?: string
+  note?: string
+  quantity?: number
+  priority?: number
+}
+export interface WishlistFilterInput {
+  customerId?: string
+  isPublic?: boolean
+  limit?: number
+  offset?: number
+}
+export interface WishlistItemOutput {
+  productId: string
+  variantId?: string
+  addedAt: string
+  note?: string
+  quantity: number
+  priority?: number
+}
+export interface WishlistOutput {
+  id: string
+  customerId: string
+  name: string
+  isPublic: boolean
+  items: Array<WishlistItemOutput>
+  createdAt: string
+  updatedAt: string
+}
+export interface SegmentRuleInput {
+  field: string
+  /**
+   * One of: eq, neq, gt, gte, lt, lte, contains, in, between, starts_with,
+   * ends_with
+   */
+  operator: string
+  value: string
+}
+export interface SegmentRuleOutput {
+  field: string
+  operator: string
+  value: string
+}
+export interface CreateSegmentInput {
+  name: string
+  description?: string
+  /** "static" (default) or "dynamic" */
+  segmentType?: string
+  rules?: Array<SegmentRuleInput>
+}
+export interface UpdateSegmentInput {
+  name?: string
+  description?: string
+  rules?: Array<SegmentRuleInput>
+}
+export interface SegmentFilterInput {
+  segmentType?: string
+  name?: string
+  limit?: number
+  offset?: number
+}
+export interface SegmentOutput {
+  id: string
+  name: string
+  description?: string
+  segmentType: string
+  rules: Array<SegmentRuleOutput>
+  memberCount: number
+  createdAt: string
+  updatedAt: string
+}
+export interface SegmentMembershipOutput {
+  segmentId: string
+  customerId: string
+  joinedAt: string
+}
+export interface LoyaltyTierInput {
+  name: string
+  minPoints: number
+  multiplier: number
+  perks: Array<string>
+}
+export interface LoyaltyTierOutput {
+  name: string
+  minPoints: number
+  multiplier: number
+  perks: Array<string>
+}
+export interface CreateLoyaltyProgramInput {
+  name: string
+  description?: string
+  pointsPerDollar: number
+  tiers?: Array<LoyaltyTierInput>
+}
+export interface LoyaltyProgramOutput {
+  id: string
+  name: string
+  description?: string
+  pointsPerDollar: number
+  tiers: Array<LoyaltyTierOutput>
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+export interface EnrollCustomerInput {
+  customerId: string
+  programId: string
+}
+export interface LoyaltyAccountOutput {
+  id: string
+  customerId: string
+  programId: string
+  pointsBalance: number
+  lifetimePoints: number
+  tier: string
+  createdAt: string
+  updatedAt: string
+}
+export interface AdjustPointsInput {
+  accountId: string
+  points: number
+  /** Transaction type, e.g. "earn", "redeem", "adjust", "expire" */
+  transactionType: string
+  referenceId?: string
+  description?: string
+}
+export interface LoyaltyTransactionOutput {
+  id: string
+  accountId: string
+  points: number
+  transactionType: string
+  referenceId?: string
+  description?: string
+  createdAt: string
+}
+export interface CreateRewardInput {
+  programId: string
+  name: string
+  description?: string
+  pointsCost: number
+  /** Reward type, e.g. "discount", "free_product", "free_shipping" */
+  rewardType: string
+  /** Monetary value as an exact decimal string (optional) */
+  value?: string
+}
+export interface RewardOutput {
+  id: string
+  programId: string
+  name: string
+  description?: string
+  pointsCost: number
+  rewardType: string
+  value?: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface LoyaltyAccountFilterInput {
+  customerId?: string
+  programId?: string
+  tier?: string
+  limit?: number
+  offset?: number
+}
+export interface RewardFilterInput {
+  programId?: string
+  rewardType?: string
+  isActive?: boolean
+  limit?: number
+  offset?: number
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -2123,6 +2460,18 @@ export declare class Commerce {
   get inventory(): Inventory
   /** Get the returns API */
   get returns(): Returns
+  /** Get the gift cards API */
+  get giftCards(): GiftCards
+  /** Get the loyalty API */
+  get loyalty(): Loyalty
+  /** Get the store credits API */
+  get storeCredits(): StoreCredits
+  /** Get the product reviews API */
+  get reviews(): Reviews
+  /** Get the wishlists API */
+  get wishlists(): Wishlists
+  /** Get the customer segments API */
+  get segments(): Segments
   /** Get the payments API */
   get payments(): Payments
   /** Get the x402 payment protocol API */
@@ -2911,4 +3260,84 @@ export declare class VectorSearch {
   clear(entityType: string): Promise<number>
   /** Clear all embeddings */
   clearAll(): Promise<number>
+}
+export declare class GiftCards {
+  /** Whether the gift-cards backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateGiftCardInput): Promise<GiftCardOutput>
+  get(id: string): Promise<GiftCardOutput | null>
+  getByCode(code: string): Promise<GiftCardOutput | null>
+  update(id: string, input: UpdateGiftCardInput): Promise<GiftCardOutput>
+  list(filter?: GiftCardFilterInput | undefined | null): Promise<Array<GiftCardOutput>>
+  charge(id: string, amount: string, referenceId?: string | undefined | null): Promise<GiftCardTransactionOutput>
+  refund(id: string, amount: string, referenceId?: string | undefined | null): Promise<GiftCardTransactionOutput>
+  disable(id: string): Promise<GiftCardOutput>
+  getTransactions(giftCardId: string): Promise<Array<GiftCardTransactionOutput>>
+}
+export declare class StoreCredits {
+  /** Whether the store-credits backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateStoreCreditInput): Promise<StoreCreditOutput>
+  get(id: string): Promise<StoreCreditOutput | null>
+  list(filter?: StoreCreditFilterInput | undefined | null): Promise<Array<StoreCreditOutput>>
+  adjust(id: string, input: AdjustStoreCreditInput): Promise<StoreCreditOutput>
+  /** Apply (redeem) an amount from the credit, returning the ledger transaction. */
+  apply(id: string, amount: string, referenceId?: string | undefined | null): Promise<StoreCreditTransactionOutput>
+  getTransactions(storeCreditId: string): Promise<Array<StoreCreditTransactionOutput>>
+}
+export declare class Reviews {
+  /** Whether the reviews backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateReviewInput): Promise<ReviewOutput>
+  get(id: string): Promise<ReviewOutput | null>
+  update(id: string, input: UpdateReviewInput): Promise<ReviewOutput>
+  list(filter?: ReviewFilterInput | undefined | null): Promise<Array<ReviewOutput>>
+  delete(id: string): Promise<void>
+  /** Aggregate rating summary for a product (average, total, star distribution). */
+  getSummary(productId: string): Promise<ReviewSummaryOutput>
+  markHelpful(id: string): Promise<void>
+  markReported(id: string): Promise<void>
+}
+export declare class Wishlists {
+  /** Whether the wishlists backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateWishlistInput): Promise<WishlistOutput>
+  get(id: string): Promise<WishlistOutput | null>
+  update(id: string, input: UpdateWishlistInput): Promise<WishlistOutput>
+  list(filter?: WishlistFilterInput | undefined | null): Promise<Array<WishlistOutput>>
+  delete(id: string): Promise<void>
+  /** Add a product to a wishlist, returning the added item. */
+  addItem(wishlistId: string, item: AddWishlistItemInput): Promise<WishlistItemOutput>
+  removeItem(wishlistId: string, productId: string): Promise<void>
+}
+export declare class Segments {
+  /** Whether the segments backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateSegmentInput): Promise<SegmentOutput>
+  get(id: string): Promise<SegmentOutput | null>
+  update(id: string, input: UpdateSegmentInput): Promise<SegmentOutput>
+  list(filter?: SegmentFilterInput | undefined | null): Promise<Array<SegmentOutput>>
+  delete(id: string): Promise<void>
+  /** Add a customer to a (static) segment, returning the membership record. */
+  addMember(segmentId: string, customerId: string): Promise<SegmentMembershipOutput>
+  removeMember(segmentId: string, customerId: string): Promise<void>
+  listMembers(segmentId: string, limit?: number | undefined | null, offset?: number | undefined | null): Promise<Array<SegmentMembershipOutput>>
+  isMember(segmentId: string, customerId: string): Promise<boolean>
+}
+export declare class Loyalty {
+  /** Whether the loyalty backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  createProgram(input: CreateLoyaltyProgramInput): Promise<LoyaltyProgramOutput>
+  getProgram(id: string): Promise<LoyaltyProgramOutput | null>
+  listPrograms(): Promise<Array<LoyaltyProgramOutput>>
+  enroll(input: EnrollCustomerInput): Promise<LoyaltyAccountOutput>
+  getAccount(id: string): Promise<LoyaltyAccountOutput | null>
+  getAccountByCustomer(customerId: string, programId: string): Promise<LoyaltyAccountOutput | null>
+  listAccounts(filter?: LoyaltyAccountFilterInput | undefined | null): Promise<Array<LoyaltyAccountOutput>>
+  adjustPoints(input: AdjustPointsInput): Promise<LoyaltyTransactionOutput>
+  getTransactions(accountId: string, limit?: number | undefined | null): Promise<Array<LoyaltyTransactionOutput>>
+  createReward(input: CreateRewardInput): Promise<RewardOutput>
+  getReward(id: string): Promise<RewardOutput | null>
+  listRewards(filter?: RewardFilterInput | undefined | null): Promise<Array<RewardOutput>>
+  deleteReward(id: string): Promise<void>
 }

@@ -1,0 +1,187 @@
+{
+  "test": "07-settlement-receipts",
+  "cases": [
+    {
+      "id": "r01_valid_released",
+      "receipt": {
+        "escrow_id": "0xE5C70W000000000000000000000000000000000000000000000000000000abcd",
+        "final_state": "released",
+        "amount": "125.00",
+        "currency": "USDC",
+        "rail": "circle.usdc.base",
+        "rail_txid": "0xdeadbeefcafe",
+        "settled_at": "2026-07-14T12:00:00Z",
+        "merchant_signature": {
+          "alg": "ed25519",
+          "kid": "merchant-1",
+          "sig": "d11ab18d200e10e08189fb7b26bf8376cf7541861c31b608a67b7a08be825a6bb13c8b6f045dab9a06ddcbbb32f66cee1849d274625f59a7e333b9fabbe4e002"
+        },
+        "settler_signature": {
+          "alg": "ed25519",
+          "kid": "settler-1",
+          "sig": "4c551027aa194f2a71d78ba065b2862b7118ed828a946866f2826cda87b2f2ba26b5d7efac39c3eefd88cb0459986060e1a2bf5d3a27db145fc6f38b0d93ab09"
+        }
+      },
+      "merchant_pubkey_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "settler_pubkey_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    },
+    {
+      "id": "r08_valid_refunded",
+      "receipt": {
+        "escrow_id": "0xE5C70W000000000000000000000000000000000000000000000000000000abcd",
+        "final_state": "refunded",
+        "amount": "125.00",
+        "currency": "USDC",
+        "rail": "circle.usdc.base",
+        "rail_txid": "0xdeadbeefcafe",
+        "settled_at": "2026-07-14T12:00:00Z",
+        "merchant_signature": {
+          "alg": "ed25519",
+          "kid": "merchant-1",
+          "sig": "d8bd817619ac438da2232c68753d8a683b7f70b091e1ef19f44274bcc021bbe40eb0bad2c1f21f4b14d89ce379ce9bbbf959b27ca30d5889400776175316ce06"
+        },
+        "settler_signature": {
+          "alg": "ed25519",
+          "kid": "settler-1",
+          "sig": "3b7a8854c9a19dd5bbbebfbd6a850ea4c96477366f5c895b9f3bcf3e344a592b0410606dfb2fa2c67cc19810c8eba5f671d659f48a3b3d9d94ff5c4921a2140e"
+        }
+      },
+      "merchant_pubkey_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "settler_pubkey_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    },
+    {
+      "id": "r02_missing_merchant_sig",
+      "receipt": {
+        "escrow_id": "0xE5C70W000000000000000000000000000000000000000000000000000000abcd",
+        "final_state": "released",
+        "amount": "125.00",
+        "currency": "USDC",
+        "rail": "circle.usdc.base",
+        "rail_txid": "0xdeadbeefcafe",
+        "settled_at": "2026-07-14T12:00:00Z",
+        "settler_signature": {
+          "alg": "ed25519",
+          "kid": "settler-1",
+          "sig": "4c551027aa194f2a71d78ba065b2862b7118ed828a946866f2826cda87b2f2ba26b5d7efac39c3eefd88cb0459986060e1a2bf5d3a27db145fc6f38b0d93ab09"
+        }
+      },
+      "merchant_pubkey_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "settler_pubkey_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    },
+    {
+      "id": "r03_missing_settler_sig",
+      "receipt": {
+        "escrow_id": "0xE5C70W000000000000000000000000000000000000000000000000000000abcd",
+        "final_state": "released",
+        "amount": "125.00",
+        "currency": "USDC",
+        "rail": "circle.usdc.base",
+        "rail_txid": "0xdeadbeefcafe",
+        "settled_at": "2026-07-14T12:00:00Z",
+        "merchant_signature": {
+          "alg": "ed25519",
+          "kid": "merchant-1",
+          "sig": "d11ab18d200e10e08189fb7b26bf8376cf7541861c31b608a67b7a08be825a6bb13c8b6f045dab9a06ddcbbb32f66cee1849d274625f59a7e333b9fabbe4e002"
+        }
+      },
+      "merchant_pubkey_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "settler_pubkey_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    },
+    {
+      "id": "r04_tampered_merchant_sig",
+      "receipt": {
+        "escrow_id": "0xE5C70W000000000000000000000000000000000000000000000000000000abcd",
+        "final_state": "released",
+        "amount": "125.00",
+        "currency": "USDC",
+        "rail": "circle.usdc.base",
+        "rail_txid": "0xdeadbeefcafe",
+        "settled_at": "2026-07-14T12:00:00Z",
+        "merchant_signature": {
+          "alg": "ed25519",
+          "kid": "merchant-1",
+          "sig": "001ab18d200e10e08189fb7b26bf8376cf7541861c31b608a67b7a08be825a6bb13c8b6f045dab9a06ddcbbb32f66cee1849d274625f59a7e333b9fabbe4e002"
+        },
+        "settler_signature": {
+          "alg": "ed25519",
+          "kid": "settler-1",
+          "sig": "4c551027aa194f2a71d78ba065b2862b7118ed828a946866f2826cda87b2f2ba26b5d7efac39c3eefd88cb0459986060e1a2bf5d3a27db145fc6f38b0d93ab09"
+        }
+      },
+      "merchant_pubkey_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "settler_pubkey_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    },
+    {
+      "id": "r05_tampered_settler_sig",
+      "receipt": {
+        "escrow_id": "0xE5C70W000000000000000000000000000000000000000000000000000000abcd",
+        "final_state": "released",
+        "amount": "125.00",
+        "currency": "USDC",
+        "rail": "circle.usdc.base",
+        "rail_txid": "0xdeadbeefcafe",
+        "settled_at": "2026-07-14T12:00:00Z",
+        "merchant_signature": {
+          "alg": "ed25519",
+          "kid": "merchant-1",
+          "sig": "d11ab18d200e10e08189fb7b26bf8376cf7541861c31b608a67b7a08be825a6bb13c8b6f045dab9a06ddcbbb32f66cee1849d274625f59a7e333b9fabbe4e002"
+        },
+        "settler_signature": {
+          "alg": "ed25519",
+          "kid": "settler-1",
+          "sig": "00551027aa194f2a71d78ba065b2862b7118ed828a946866f2826cda87b2f2ba26b5d7efac39c3eefd88cb0459986060e1a2bf5d3a27db145fc6f38b0d93ab09"
+        }
+      },
+      "merchant_pubkey_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "settler_pubkey_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    },
+    {
+      "id": "r06_tampered_amount",
+      "receipt": {
+        "escrow_id": "0xE5C70W000000000000000000000000000000000000000000000000000000abcd",
+        "final_state": "released",
+        "amount": "1.00",
+        "currency": "USDC",
+        "rail": "circle.usdc.base",
+        "rail_txid": "0xdeadbeefcafe",
+        "settled_at": "2026-07-14T12:00:00Z",
+        "merchant_signature": {
+          "alg": "ed25519",
+          "kid": "merchant-1",
+          "sig": "d11ab18d200e10e08189fb7b26bf8376cf7541861c31b608a67b7a08be825a6bb13c8b6f045dab9a06ddcbbb32f66cee1849d274625f59a7e333b9fabbe4e002"
+        },
+        "settler_signature": {
+          "alg": "ed25519",
+          "kid": "settler-1",
+          "sig": "4c551027aa194f2a71d78ba065b2862b7118ed828a946866f2826cda87b2f2ba26b5d7efac39c3eefd88cb0459986060e1a2bf5d3a27db145fc6f38b0d93ab09"
+        }
+      },
+      "merchant_pubkey_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "settler_pubkey_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    },
+    {
+      "id": "r07_wrong_merchant_pubkey",
+      "receipt": {
+        "escrow_id": "0xE5C70W000000000000000000000000000000000000000000000000000000abcd",
+        "final_state": "released",
+        "amount": "125.00",
+        "currency": "USDC",
+        "rail": "circle.usdc.base",
+        "rail_txid": "0xdeadbeefcafe",
+        "settled_at": "2026-07-14T12:00:00Z",
+        "merchant_signature": {
+          "alg": "ed25519",
+          "kid": "merchant-1",
+          "sig": "d11ab18d200e10e08189fb7b26bf8376cf7541861c31b608a67b7a08be825a6bb13c8b6f045dab9a06ddcbbb32f66cee1849d274625f59a7e333b9fabbe4e002"
+        },
+        "settler_signature": {
+          "alg": "ed25519",
+          "kid": "settler-1",
+          "sig": "4c551027aa194f2a71d78ba065b2862b7118ed828a946866f2826cda87b2f2ba26b5d7efac39c3eefd88cb0459986060e1a2bf5d3a27db145fc6f38b0d93ab09"
+        }
+      },
+      "merchant_pubkey_hex": "17cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+      "settler_pubkey_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    }
+  ]
+}

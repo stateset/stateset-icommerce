@@ -195,12 +195,7 @@ impl SqliteSubscriptionRepository {
 
             sql.push_str(" ORDER BY created_at DESC");
 
-            if let Some(limit) = filter.limit {
-                sql.push_str(&format!(" LIMIT {limit}"));
-            }
-            if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {offset}"));
-            }
+            crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
             let mut stmt = conn
                 .prepare(&sql)
@@ -679,12 +674,7 @@ impl SqliteSubscriptionRepository {
 
             sql.push_str(" ORDER BY created_at DESC");
 
-            if let Some(limit) = filter.limit {
-                sql.push_str(&format!(" LIMIT {limit}"));
-            }
-            if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {offset}"));
-            }
+            crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
             let mut stmt = conn
                 .prepare(&sql)
@@ -807,6 +797,7 @@ impl SqliteSubscriptionRepository {
                     status = 'paused',
                     paused_at = ?1,
                     resume_at = ?2,
+                    next_billing_date = NULL,
                     updated_at = ?3
                  WHERE id = ?4",
                 rusqlite::params![
@@ -1183,15 +1174,22 @@ impl SqliteSubscriptionRepository {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
         }
-
-        sql.push_str(" ORDER BY cycle_number DESC");
-
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
+        // `period_start`/`period_end` are stored as RFC3339 timestamps (as is the
+        // bound value), so the string comparison is chronological — matching
+        // Postgres, which filters `period_start >= from_date` / `period_end <= to_date`.
+        if let Some(from_date) = &filter.from_date {
+            sql.push_str(" AND period_start >= ?");
+            params.push(Box::new(from_date.to_rfc3339()));
         }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
+        if let Some(to_date) = &filter.to_date {
+            sql.push_str(" AND period_end <= ?");
+            params.push(Box::new(to_date.to_rfc3339()));
         }
+
+        // Order by period, matching Postgres (not `cycle_number`).
+        sql.push_str(" ORDER BY period_start DESC");
+
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn
             .prepare(&sql)
@@ -1732,7 +1730,123 @@ mod tests {
     use super::SqliteSubscriptionRepository;
     use crate::SqliteDatabase;
     use rust_decimal_macros::dec;
-    use stateset_core::{BillingInterval, CommerceError, CreateSubscriptionPlan};
+    use stateset_core::{
+        BillingCycleFilter, BillingInterval, CommerceError, CreateBillingCycle, CreateSubscription,
+        CreateSubscriptionPlan, CustomerId,
+    };
+
+    fn create_subscription_input(
+        customer_id: CustomerId,
+        plan_id: uuid::Uuid,
+    ) -> CreateSubscription {
+        CreateSubscription {
+            customer_id,
+            plan_id,
+            items: None,
+            price: None,
+            payment_method_id: None,
+            shipping_address: None,
+            billing_address: None,
+            skip_trial: None,
+            start_date: None,
+            coupon_code: None,
+            metadata: None,
+        }
+    }
+
+    fn seed_customer(repo: &SqliteSubscriptionRepository, id: CustomerId) {
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "INSERT INTO customers (id, email, first_name, last_name) VALUES (?1, ?2, 'Sub', 'Scriber')",
+            rusqlite::params![id.to_string(), format!("sub-{id}@example.com")],
+        )
+        .expect("seed customer");
+    }
+
+    #[test]
+    fn create_subscription_seeds_an_initial_billing_cycle() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let customer = CustomerId::new();
+        seed_customer(&repo, customer);
+        let plan = repo.create_plan(plan_input()).expect("create plan");
+        repo.activate_plan(plan.id).expect("activate plan");
+        let sub = repo
+            .create_subscription(create_subscription_input(customer, plan.id))
+            .expect("create subscription");
+
+        // A new subscription's current period is cycle 1 (matching Postgres, which
+        // used to create no billing cycle at all).
+        let cycles = repo
+            .list_billing_cycles(BillingCycleFilter {
+                subscription_id: Some(sub.id),
+                ..Default::default()
+            })
+            .expect("list cycles");
+        assert_eq!(cycles.len(), 1, "a new subscription must have an initial billing cycle");
+        assert_eq!(cycles[0].cycle_number, 1);
+    }
+
+    #[test]
+    fn list_billing_cycles_filters_by_date_and_orders_by_period_start() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let customer = CustomerId::new();
+        seed_customer(&repo, customer);
+        let plan = repo.create_plan(plan_input()).expect("create plan");
+        repo.activate_plan(plan.id).expect("activate plan");
+        // create_subscription seeds cycle 1 with period_start = now.
+        let sub = repo
+            .create_subscription(create_subscription_input(customer, plan.id))
+            .expect("create subscription");
+
+        let dt = |s: &str| s.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+        // Two explicit past cycles with known, well-separated period windows (2020),
+        // so the comparison against the auto-seeded cycle 1 (period_start = now) is
+        // unambiguous regardless of when the test runs.
+        repo.create_billing_cycle(CreateBillingCycle {
+            subscription_id: sub.id,
+            cycle_number: 2,
+            period_start: dt("2020-01-15T00:00:00Z"),
+            period_end: dt("2020-01-31T00:00:00Z"),
+        })
+        .expect("cycle 2");
+        repo.create_billing_cycle(CreateBillingCycle {
+            subscription_id: sub.id,
+            cycle_number: 3,
+            period_start: dt("2020-02-15T00:00:00Z"),
+            period_end: dt("2020-02-28T00:00:00Z"),
+        })
+        .expect("cycle 3");
+
+        let base = || BillingCycleFilter { subscription_id: Some(sub.id), ..Default::default() };
+
+        // from_date/to_date must scope by the period (previously dropped on SQLite,
+        // so every cycle was returned).
+        let jan = repo
+            .list_billing_cycles(BillingCycleFilter {
+                from_date: Some(dt("2020-01-01T00:00:00Z")),
+                to_date: Some(dt("2020-01-31T00:00:00Z")),
+                ..base()
+            })
+            .expect("list jan");
+        assert_eq!(jan.len(), 1, "date window should select only cycle 2");
+        assert_eq!(jan[0].cycle_number, 2);
+
+        let janfeb = repo
+            .list_billing_cycles(BillingCycleFilter {
+                from_date: Some(dt("2020-01-01T00:00:00Z")),
+                to_date: Some(dt("2020-02-28T00:00:00Z")),
+                ..base()
+            })
+            .expect("list jan-feb");
+        assert_eq!(janfeb.len(), 2, "date window should select cycles 2 and 3");
+
+        // Ordering is by period_start DESC (matching Postgres): the auto-seeded cycle
+        // 1 (period_start = now) sorts first, ahead of the 2020 cycles — even though
+        // it has the lowest cycle_number (which the old `cycle_number DESC` put last).
+        let all = repo.list_billing_cycles(base()).expect("list all");
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].cycle_number, 1, "newest period_start (cycle 1) must sort first");
+    }
 
     fn plan_input() -> CreateSubscriptionPlan {
         CreateSubscriptionPlan {

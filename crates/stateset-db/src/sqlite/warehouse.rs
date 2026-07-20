@@ -3,8 +3,9 @@
 //! Provides full warehouse, zone, location, and inventory movement functionality.
 
 use crate::sqlite::{
-    map_db_error, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
-    parse_decimal_strict, parse_enum_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_json_row, parse_uuid_opt_row,
+    parse_uuid_row, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -14,9 +15,10 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use stateset_core::{
-    AdjustLocationInventory, BatchResult, CommerceError, CreateLocation, CreateWarehouse,
-    CreateZone, Location, LocationFilter, LocationInventory, LocationInventoryFilter,
-    LocationMovement, MoveInventory, MovementFilter, MovementType, Result, UpdateLocation,
+    AdjustLocationInventory, BatchResult, CommerceError, CreateCycleCount, CreateLocation,
+    CreateWarehouse, CreateZone, CycleCount, CycleCountFilter, CycleCountLine, CycleCountStatus,
+    Location, LocationFilter, LocationInventory, LocationInventoryFilter, LocationMovement,
+    MoveInventory, MovementFilter, MovementType, RecordCycleCountLine, Result, UpdateLocation,
     UpdateWarehouse, UpdateZone, Warehouse, WarehouseFilter, WarehouseRepository, Zone,
 };
 
@@ -206,6 +208,133 @@ impl SqliteWarehouseRepository {
         })
     }
 
+    // Helper to parse a cycle count header from a row (lines loaded separately)
+    fn row_to_cycle_count_header(row: &rusqlite::Row<'_>) -> rusqlite::Result<CycleCount> {
+        Ok(CycleCount {
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "cycle_count", "id")?,
+            warehouse_id: row.get("warehouse_id")?,
+            location_id: row.get("location_id")?,
+            status: parse_enum_row(&row.get::<_, String>("status")?, "cycle_count", "status")?,
+            scheduled_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("scheduled_date")?,
+                "cycle_count",
+                "scheduled_date",
+            )?,
+            counted_by: row.get("counted_by")?,
+            lines: Vec::new(),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "cycle_count",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "cycle_count",
+                "updated_at",
+            )?,
+            completed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("completed_at")?,
+                "cycle_count",
+                "completed_at",
+            )?,
+        })
+    }
+
+    // Helper to parse a cycle count line from a row. Lot-less lines store
+    // lot_id = '' (NOT NULL), matching the location_inventory convention.
+    fn row_to_cycle_count_line(row: &rusqlite::Row<'_>) -> rusqlite::Result<CycleCountLine> {
+        let lot_raw: String = row.get("lot_id")?;
+        let lot_id = if lot_raw.is_empty() {
+            None
+        } else {
+            Some(parse_uuid_row(&lot_raw, "cycle_count_line", "lot_id")?)
+        };
+        Ok(CycleCountLine {
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "cycle_count_line", "id")?,
+            cycle_count_id: parse_uuid_row(
+                &row.get::<_, String>("cycle_count_id")?,
+                "cycle_count_line",
+                "cycle_count_id",
+            )?,
+            sku: row.get("sku")?,
+            lot_id,
+            expected_quantity: parse_decimal_row(
+                &row.get::<_, String>("expected_quantity")?,
+                "cycle_count_line",
+                "expected_quantity",
+            )?,
+            counted_quantity: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("counted_quantity")?,
+                "cycle_count_line",
+                "counted_quantity",
+            )?,
+            variance: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("variance")?,
+                "cycle_count_line",
+                "variance",
+            )?,
+        })
+    }
+
+    fn load_cycle_count_lines(
+        conn: &rusqlite::Connection,
+        id: Uuid,
+    ) -> Result<Vec<CycleCountLine>> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM cycle_count_lines WHERE cycle_count_id = ?1 ORDER BY sku, lot_id",
+            )
+            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+        let mut lines = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            lines.push(Self::row_to_cycle_count_line(row).map_err(map_db_error)?);
+        }
+        Ok(lines)
+    }
+
+    fn get_cycle_count_on(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<CycleCount>> {
+        let mut stmt =
+            conn.prepare("SELECT * FROM cycle_counts WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+        let Some(row) = rows.next().map_err(map_db_error)? else {
+            return Ok(None);
+        };
+        let mut cc = Self::row_to_cycle_count_header(row).map_err(map_db_error)?;
+        drop(rows);
+        drop(stmt);
+        cc.lines = Self::load_cycle_count_lines(conn, id)?;
+        Ok(Some(cc))
+    }
+
+    /// Update a cycle count's status after verifying the transition is legal.
+    fn transition_cycle_count(
+        &self,
+        id: Uuid,
+        next: CycleCountStatus,
+        set_completed_at: bool,
+    ) -> Result<CycleCount> {
+        let conn = self.conn()?;
+        let current = Self::get_cycle_count_on(&conn, id)?.ok_or(CommerceError::NotFound)?;
+        if !current.status.can_transition_to(next) {
+            return Err(CommerceError::ValidationError(format!(
+                "cannot transition cycle count from {} to {next}",
+                current.status
+            )));
+        }
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE cycle_counts SET status = ?1, updated_at = ?2,
+                 completed_at = CASE WHEN ?3 THEN ?2 ELSE completed_at END
+             WHERE id = ?4",
+            params![next.to_string(), now, set_completed_at, id.to_string()],
+        )
+        .map_err(map_db_error)?;
+        Self::get_cycle_count_on(&conn, id)?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve updated cycle count".into())
+        })
+    }
+
     // Generate location code from parts
     fn generate_location_code(input: &CreateLocation) -> String {
         let parts: Vec<&str> = [
@@ -366,13 +495,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         sql.push_str(" ORDER BY name");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -670,13 +793,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         sql.push_str(" ORDER BY code");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -734,6 +851,28 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             params_vec.push(Box::new(loc_type.to_string()));
         }
 
+        // Honor the same predicates as `list_locations`, so `count_locations(f)`
+        // always equals `list_locations(f).len()` (and matches Postgres).
+        if let Some(zone) = filter.zone {
+            sql.push_str(" AND zone = ?");
+            params_vec.push(Box::new(zone));
+        }
+
+        if let Some(aisle) = filter.aisle {
+            sql.push_str(" AND aisle = ?");
+            params_vec.push(Box::new(aisle));
+        }
+
+        if let Some(pickable) = filter.is_pickable {
+            sql.push_str(" AND is_pickable = ?");
+            params_vec.push(Box::new(i32::from(pickable)));
+        }
+
+        if let Some(receivable) = filter.is_receivable {
+            sql.push_str(" AND is_receivable = ?");
+            params_vec.push(Box::new(i32::from(receivable)));
+        }
+
         if let Some(active) = filter.is_active {
             sql.push_str(" AND is_active = ?");
             params_vec.push(Box::new(i32::from(active)));
@@ -749,9 +888,11 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn get_locations_for_warehouse(&self, warehouse_id: i32) -> Result<Vec<Location>> {
+        // Return ALL locations for the warehouse (active and inactive), matching
+        // the Postgres backend and the trait contract; callers that want only
+        // active/pickable/receivable locations use the dedicated accessors.
         self.list_locations(LocationFilter {
             warehouse_id: Some(warehouse_id),
-            is_active: Some(true),
             ..Default::default()
         })
     }
@@ -862,7 +1003,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let now = Utc::now();
         let now_str = now.to_rfc3339();
         let lot_id_str = input.lot_id.map(|id| id.to_string());
-        let lot_key = lot_id_str.clone().unwrap_or_default();
+        let lot_key = lot_id_str.unwrap_or_default();
 
         // Try to get existing inventory
         let existing: Option<(String, String)> = conn
@@ -907,7 +1048,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 params![
                     input.location_id,
                     input.sku,
-                    lot_id_str,
+                    lot_key,
                     input.quantity.to_string(),
                     now_str,
                 ],
@@ -951,137 +1092,147 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn move_inventory(&self, input: MoveInventory) -> Result<LocationMovement> {
-        let conn = self.conn()?;
         let now = Utc::now();
         let now_str = now.to_rfc3339();
         let lot_id_str = input.lot_id.map(|id| id.to_string());
         let lot_key = lot_id_str.clone().unwrap_or_default();
+        let movement_id = Uuid::new_v4();
 
-        // Get source inventory
-        let (source_on_hand, source_reserved): (String, String) = conn
-            .query_row(
+        // A move is a source-decrement + destination-increment + movement-insert.
+        // Run all three atomically inside one IMMEDIATE (retrying) transaction so a
+        // failure partway (e.g. a bad destination) can never leave stock destroyed
+        // at the source with nothing credited to the destination — the Postgres
+        // backend already wraps the move in a transaction. Domain errors are
+        // carried out via `ToSqlConversionFailure` so they are not retried.
+        let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+
+        with_immediate_transaction(&self.pool, |tx| {
+            // Get source inventory
+            let (source_on_hand, source_reserved): (String, String) = match tx.query_row(
                 "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
                  WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
                 params![input.from_location_id, input.sku, lot_key],
                 |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|_| CommerceError::NotFound)?;
+            ) {
+                Ok(v) => v,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Err(smuggle(CommerceError::NotFound));
+                }
+                Err(e) => return Err(e),
+            };
 
-        let on_hand =
-            parse_decimal_strict(&source_on_hand, "location_inventory", "quantity_on_hand")?;
-        let reserved =
-            parse_decimal_strict(&source_reserved, "location_inventory", "quantity_reserved")?;
-        let available = on_hand - reserved;
+            let on_hand =
+                parse_decimal_strict(&source_on_hand, "location_inventory", "quantity_on_hand")
+                    .map_err(smuggle)?;
+            let reserved =
+                parse_decimal_strict(&source_reserved, "location_inventory", "quantity_reserved")
+                    .map_err(smuggle)?;
+            let available = on_hand - reserved;
 
-        if input.quantity > available {
-            return Err(CommerceError::ValidationError(format!(
-                "Insufficient available quantity. Requested: {}, Available: {}",
-                input.quantity, available
-            )));
-        }
+            if input.quantity > available {
+                return Err(smuggle(CommerceError::ValidationError(format!(
+                    "Insufficient available quantity. Requested: {}, Available: {}",
+                    input.quantity, available
+                ))));
+            }
 
-        // Reduce source location
-        let new_source_qty = on_hand - input.quantity;
-        conn.execute(
-            "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
-             WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-            params![
-                new_source_qty.to_string(),
-                now_str,
-                input.from_location_id,
-                input.sku,
-                lot_key,
-            ],
-        )
-        .map_err(map_db_error)?;
+            // Reduce source location
+            let new_source_qty = on_hand - input.quantity;
+            tx.execute(
+                "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
+                 WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
+                params![
+                    new_source_qty.to_string(),
+                    now_str,
+                    input.from_location_id,
+                    input.sku,
+                    lot_key,
+                ],
+            )?;
 
-        // Increase destination location
-        let dest_exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM location_inventory WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
-                params![input.to_location_id, input.sku, lot_key],
-                |_| Ok(true),
-            )
-            .unwrap_or(false);
-
-        if dest_exists {
-            // `quantity_on_hand` is a TEXT column (migration 016), so adding in
-            // SQL ('CAST(quantity_on_hand AS REAL) + ?1') would coerce both
-            // operands to IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004).
-            // Read the destination's current quantity, add with
-            // `rust_decimal::Decimal` in Rust, and write the exact precomputed
-            // string back as a bound parameter.
-            let dest_on_hand: String = conn
+            // Increase destination location
+            let dest_exists: bool = tx
                 .query_row(
+                    "SELECT 1 FROM location_inventory WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
+                    params![input.to_location_id, input.sku, lot_key],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+
+            if dest_exists {
+                // `quantity_on_hand` is a TEXT column (migration 016), so adding in
+                // SQL ('CAST(quantity_on_hand AS REAL) + ?1') would coerce both
+                // operands to IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004).
+                // Read the destination's current quantity, add with
+                // `rust_decimal::Decimal` in Rust, and write the exact precomputed
+                // string back as a bound parameter.
+                let dest_on_hand: String = tx.query_row(
                     "SELECT quantity_on_hand FROM location_inventory
                      WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
                     params![input.to_location_id, input.sku, lot_key],
                     |row| row.get(0),
-                )
-                .map_err(map_db_error)?;
-            let new_dest_qty =
-                parse_decimal_strict(&dest_on_hand, "location_inventory", "quantity_on_hand")?
-                    + input.quantity;
-            conn.execute(
-                "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
-                 WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
+                )?;
+                let new_dest_qty =
+                    parse_decimal_strict(&dest_on_hand, "location_inventory", "quantity_on_hand")
+                        .map_err(smuggle)?
+                        + input.quantity;
+                tx.execute(
+                    "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
+                     WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
+                    params![
+                        new_dest_qty.to_string(),
+                        now_str,
+                        input.to_location_id,
+                        input.sku,
+                        lot_key,
+                    ],
+                )?;
+            } else {
+                tx.execute(
+                    "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, '0', ?5)",
+                    params![
+                        input.to_location_id,
+                        input.sku,
+                        lot_key,
+                        input.quantity.to_string(),
+                        now_str,
+                    ],
+                )?;
+            }
+
+            // Record the movement
+            tx.execute(
+                "INSERT INTO inventory_movements (id, movement_type, from_location_id, to_location_id, sku, lot_id, quantity, reason, performed_by, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
-                    new_dest_qty.to_string(),
-                    now_str,
-                    input.to_location_id,
-                    input.sku,
-                    lot_key,
-                ],
-            )
-            .map_err(map_db_error)?;
-        } else {
-            conn.execute(
-                "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, '0', ?5)",
-                params![
+                    movement_id.to_string(),
+                    MovementType::Transfer.to_string(),
+                    input.from_location_id,
                     input.to_location_id,
                     input.sku,
                     lot_id_str,
                     input.quantity.to_string(),
+                    input.reason,
+                    input.performed_by,
                     now_str,
                 ],
-            )
-            .map_err(map_db_error)?;
-        }
+            )?;
 
-        // Record the movement
-        let movement_id = Uuid::new_v4();
-        conn.execute(
-            "INSERT INTO inventory_movements (id, movement_type, from_location_id, to_location_id, sku, lot_id, quantity, reason, performed_by, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                movement_id.to_string(),
-                MovementType::Transfer.to_string(),
-                input.from_location_id,
-                input.to_location_id,
-                input.sku,
-                lot_id_str,
-                input.quantity.to_string(),
-                input.reason,
-                input.performed_by,
-                now_str,
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        Ok(LocationMovement {
-            id: movement_id,
-            movement_type: MovementType::Transfer,
-            from_location_id: Some(input.from_location_id),
-            to_location_id: Some(input.to_location_id),
-            sku: input.sku,
-            lot_id: input.lot_id,
-            quantity: input.quantity,
-            reference_type: None,
-            reference_id: None,
-            reason: input.reason,
-            performed_by: input.performed_by,
-            created_at: now,
+            Ok(LocationMovement {
+                id: movement_id,
+                movement_type: MovementType::Transfer,
+                from_location_id: Some(input.from_location_id),
+                to_location_id: Some(input.to_location_id),
+                sku: input.sku.clone(),
+                lot_id: input.lot_id,
+                quantity: input.quantity,
+                reference_type: None,
+                reference_id: None,
+                reason: input.reason.clone(),
+                performed_by: input.performed_by.clone(),
+                created_at: now,
+            })
         })
     }
 
@@ -1126,13 +1277,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let has_quantity = filter.has_quantity == Some(true);
 
         if !has_quantity {
-            if let Some(limit) = filter.limit {
-                sql.push_str(&format!(" LIMIT {limit}"));
-            }
-
-            if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {offset}"));
-            }
+            crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -1217,13 +1362,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         sql.push_str(" ORDER BY m.created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1299,6 +1438,272 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         }
         Ok(locations)
     }
+
+    // ========================================================================
+    // Cycle Count Operations
+    // ========================================================================
+
+    fn create_cycle_count(&self, input: CreateCycleCount) -> Result<CycleCount> {
+        input.validate()?;
+        let conn = self.conn()?;
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO cycle_counts (id, warehouse_id, location_id, status, scheduled_date, counted_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![
+                id.to_string(),
+                input.warehouse_id,
+                input.location_id,
+                CycleCountStatus::Draft.to_string(),
+                input.scheduled_date.map(|d| d.to_rfc3339()),
+                input.counted_by,
+                now,
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        for line in &input.lines {
+            conn.execute(
+                "INSERT INTO cycle_count_lines (id, cycle_count_id, sku, lot_id, expected_quantity)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    id.to_string(),
+                    line.sku,
+                    line.lot_id.map(|l| l.to_string()).unwrap_or_default(),
+                    line.expected_quantity.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
+
+        Self::get_cycle_count_on(&conn, id)?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve created cycle count".into())
+        })
+    }
+
+    fn get_cycle_count(&self, id: Uuid) -> Result<Option<CycleCount>> {
+        let conn = self.conn()?;
+        Self::get_cycle_count_on(&conn, id)
+    }
+
+    fn list_cycle_counts(&self, filter: CycleCountFilter) -> Result<Vec<CycleCount>> {
+        let conn = self.conn()?;
+        let mut sql = "SELECT * FROM cycle_counts WHERE 1=1".to_string();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(warehouse_id) = filter.warehouse_id {
+            sql.push_str(" AND warehouse_id = ?");
+            params_vec.push(Box::new(warehouse_id));
+        }
+        if let Some(location_id) = filter.location_id {
+            sql.push_str(" AND location_id = ?");
+            params_vec.push(Box::new(location_id));
+        }
+        if let Some(status) = filter.status {
+            sql.push_str(" AND status = ?");
+            params_vec.push(Box::new(status.to_string()));
+        }
+
+        sql.push_str(" ORDER BY created_at DESC");
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+        let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
+
+        let mut counts = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            counts.push(Self::row_to_cycle_count_header(row).map_err(map_db_error)?);
+        }
+        drop(rows);
+        drop(stmt);
+
+        for cc in &mut counts {
+            cc.lines = Self::load_cycle_count_lines(&conn, cc.id)?;
+        }
+        Ok(counts)
+    }
+
+    fn start_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        self.transition_cycle_count(id, CycleCountStatus::InProgress, false)
+    }
+
+    fn record_cycle_counts(
+        &self,
+        id: Uuid,
+        counts: Vec<RecordCycleCountLine>,
+    ) -> Result<CycleCount> {
+        for count in &counts {
+            count.validate()?;
+        }
+        let conn = self.conn()?;
+        let existing = Self::get_cycle_count_on(&conn, id)?.ok_or(CommerceError::NotFound)?;
+        if existing.status != CycleCountStatus::InProgress {
+            return Err(CommerceError::ValidationError(format!(
+                "counts can only be recorded on an in_progress cycle count (status: {})",
+                existing.status
+            )));
+        }
+
+        let now = Utc::now().to_rfc3339();
+        for count in &counts {
+            let lot_key = count.lot_id.map(|l| l.to_string()).unwrap_or_default();
+            let line = existing
+                .lines
+                .iter()
+                .find(|l| l.sku == count.sku && l.lot_id == count.lot_id)
+                .ok_or_else(|| {
+                    CommerceError::ValidationError(format!(
+                        "cycle count has no line for sku {} (lot: {lot_key:?})",
+                        count.sku
+                    ))
+                })?;
+            let variance = count.counted_quantity - line.expected_quantity;
+            conn.execute(
+                "UPDATE cycle_count_lines SET counted_quantity = ?1, variance = ?2
+                 WHERE cycle_count_id = ?3 AND sku = ?4 AND lot_id = ?5",
+                params![
+                    count.counted_quantity.to_string(),
+                    variance.to_string(),
+                    id.to_string(),
+                    count.sku,
+                    lot_key,
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
+        conn.execute(
+            "UPDATE cycle_counts SET updated_at = ?1 WHERE id = ?2",
+            params![now, id.to_string()],
+        )
+        .map_err(map_db_error)?;
+
+        Self::get_cycle_count_on(&conn, id)?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve updated cycle count".into())
+        })
+    }
+
+    fn complete_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+
+        // Completion applies every non-zero variance as an inventory adjustment
+        // plus a `cycle_count` movement, then flips the status — all atomically.
+        with_immediate_transaction(&self.pool, |tx| {
+            let existing = Self::get_cycle_count_on(tx, id)
+                .map_err(smuggle)?
+                .ok_or_else(|| smuggle(CommerceError::NotFound))?;
+            if !existing.status.can_transition_to(CycleCountStatus::Completed) {
+                return Err(smuggle(CommerceError::ValidationError(format!(
+                    "cannot complete cycle count in status {}",
+                    existing.status
+                ))));
+            }
+
+            let now = Utc::now();
+            let now_str = now.to_rfc3339();
+
+            for line in &existing.lines {
+                let counted = line.counted_quantity.ok_or_else(|| {
+                    smuggle(CommerceError::ValidationError(format!(
+                        "cycle count line for sku {} has no recorded count",
+                        line.sku
+                    )))
+                })?;
+                let variance = counted - line.expected_quantity;
+                // Persist the final variance even when zero.
+                tx.execute(
+                    "UPDATE cycle_count_lines SET variance = ?1 WHERE id = ?2",
+                    params![variance.to_string(), line.id.to_string()],
+                )?;
+                if variance == Decimal::ZERO {
+                    continue;
+                }
+                let location_id = existing.location_id.ok_or_else(|| {
+                    smuggle(CommerceError::ValidationError(
+                        "cycle count has no location_id; cannot apply variance adjustments".into(),
+                    ))
+                })?;
+                let lot_key = line.lot_id.map(|l| l.to_string()).unwrap_or_default();
+
+                // Adjust location_inventory (same path as adjust_inventory).
+                let current: Option<String> = tx
+                    .query_row(
+                        "SELECT quantity_on_hand FROM location_inventory
+                         WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
+                        params![location_id, line.sku, lot_key],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                if let Some(oh_str) = current {
+                    let on_hand =
+                        parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")
+                            .map_err(smuggle)?;
+                    let new_qty = on_hand + variance;
+                    if new_qty < Decimal::ZERO {
+                        return Err(smuggle(CommerceError::ValidationError(format!(
+                            "cycle count adjustment for sku {} would result in negative inventory",
+                            line.sku
+                        ))));
+                    }
+                    tx.execute(
+                        "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
+                         WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
+                        params![new_qty.to_string(), now_str, location_id, line.sku, lot_key],
+                    )?;
+                } else {
+                    if variance < Decimal::ZERO {
+                        return Err(smuggle(CommerceError::ValidationError(format!(
+                            "cycle count adjustment for sku {} would result in negative inventory",
+                            line.sku
+                        ))));
+                    }
+                    tx.execute(
+                        "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, '0', ?5)",
+                        params![location_id, line.sku, lot_key, variance.to_string(), now_str],
+                    )?;
+                }
+
+                // Record the movement as a cycle_count adjustment.
+                tx.execute(
+                    "INSERT INTO inventory_movements (id, movement_type, to_location_id, sku, lot_id, quantity, reference_type, reference_id, reason, performed_by, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        MovementType::CycleCount.to_string(),
+                        location_id,
+                        line.sku,
+                        line.lot_id.map(|l| l.to_string()),
+                        variance.to_string(),
+                        "cycle_count",
+                        existing.id.to_string(),
+                        "Cycle count variance",
+                        existing.counted_by.as_deref(),
+                        now_str,
+                    ],
+                )?;
+            }
+
+            tx.execute(
+                "UPDATE cycle_counts SET status = ?1, updated_at = ?2, completed_at = ?2 WHERE id = ?3",
+                params![CycleCountStatus::Completed.to_string(), now_str, id.to_string()],
+            )?;
+
+            Self::get_cycle_count_on(tx, id).map_err(smuggle)?.ok_or_else(|| {
+                smuggle(CommerceError::DatabaseError(
+                    "Failed to retrieve completed cycle count".into(),
+                ))
+            })
+        })
+    }
+
+    fn cancel_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        self.transition_cycle_count(id, CycleCountStatus::Cancelled, false)
+    }
 }
 
 #[cfg(test)]
@@ -1367,6 +1772,166 @@ mod tests {
             params![location_id, sku, qty],
         )
         .expect("seed inventory");
+    }
+
+    #[test]
+    fn cycle_count_flow_applies_variance_adjustment_exactly() {
+        use stateset_core::{
+            CreateCycleCount, CreateCycleCountLine, CycleCountStatus, MovementFilter, MovementType,
+            RecordCycleCountLine,
+        };
+
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-CC");
+        let loc = make_loc(&repo, wh.id, "L-CC");
+        seed_inventory(&repo, loc.id, "CC-SKU", "10");
+
+        let cc = repo
+            .create_cycle_count(CreateCycleCount {
+                warehouse_id: wh.id,
+                location_id: Some(loc.id),
+                scheduled_date: None,
+                counted_by: Some("counter".into()),
+                lines: vec![CreateCycleCountLine {
+                    sku: "CC-SKU".into(),
+                    lot_id: None,
+                    expected_quantity: dec!(10),
+                }],
+            })
+            .expect("create cycle count");
+        assert_eq!(cc.status, CycleCountStatus::Draft);
+        assert_eq!(cc.lines.len(), 1);
+
+        // Cannot complete from draft.
+        assert!(repo.complete_cycle_count(cc.id).is_err());
+
+        let cc = repo.start_cycle_count(cc.id).expect("start");
+        assert_eq!(cc.status, CycleCountStatus::InProgress);
+
+        // Record a short count: 7.5 counted vs 10 expected → variance -2.5.
+        let cc = repo
+            .record_cycle_counts(
+                cc.id,
+                vec![RecordCycleCountLine {
+                    sku: "CC-SKU".into(),
+                    lot_id: None,
+                    counted_quantity: dec!(7.5),
+                }],
+            )
+            .expect("record counts");
+        assert_eq!(cc.lines[0].counted_quantity, Some(dec!(7.5)));
+        assert_eq!(cc.lines[0].variance, Some(dec!(-2.5)));
+
+        let cc = repo.complete_cycle_count(cc.id).expect("complete");
+        assert_eq!(cc.status, CycleCountStatus::Completed);
+        assert!(cc.completed_at.is_some());
+
+        // Adjustment applied exactly: 10 - 2.5 = 7.5 on hand.
+        let inv = repo.get_location_inventory(loc.id).expect("inventory");
+        let row = inv.iter().find(|i| i.sku == "CC-SKU").expect("row");
+        assert_eq!(row.quantity_on_hand, dec!(7.5));
+
+        // A cycle_count movement was recorded referencing the count.
+        let movements = repo
+            .get_movements(MovementFilter {
+                movement_type: Some(MovementType::CycleCount),
+                sku: Some("CC-SKU".into()),
+                ..Default::default()
+            })
+            .expect("movements");
+        assert_eq!(movements.len(), 1);
+        assert_eq!(movements[0].quantity, dec!(-2.5));
+        assert_eq!(movements[0].reference_id, Some(cc.id));
+        assert_eq!(movements[0].reference_type.as_deref(), Some("cycle_count"));
+
+        // Terminal: cannot cancel or restart a completed count.
+        assert!(repo.cancel_cycle_count(cc.id).is_err());
+        assert!(repo.start_cycle_count(cc.id).is_err());
+    }
+
+    #[test]
+    fn cycle_count_cancel_applies_no_adjustments() {
+        use stateset_core::{
+            CreateCycleCount, CreateCycleCountLine, CycleCountFilter, CycleCountStatus,
+            RecordCycleCountLine,
+        };
+
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-CCX");
+        let loc = make_loc(&repo, wh.id, "L-CCX");
+        seed_inventory(&repo, loc.id, "CCX-SKU", "5");
+
+        let cc = repo
+            .create_cycle_count(CreateCycleCount {
+                warehouse_id: wh.id,
+                location_id: Some(loc.id),
+                scheduled_date: None,
+                counted_by: None,
+                lines: vec![CreateCycleCountLine {
+                    sku: "CCX-SKU".into(),
+                    lot_id: None,
+                    expected_quantity: dec!(5),
+                }],
+            })
+            .expect("create");
+        let cc = repo.start_cycle_count(cc.id).expect("start");
+        repo.record_cycle_counts(
+            cc.id,
+            vec![RecordCycleCountLine {
+                sku: "CCX-SKU".into(),
+                lot_id: None,
+                counted_quantity: dec!(2),
+            }],
+        )
+        .expect("record");
+
+        let cc = repo.cancel_cycle_count(cc.id).expect("cancel");
+        assert_eq!(cc.status, CycleCountStatus::Cancelled);
+
+        // Inventory untouched.
+        let inv = repo.get_location_inventory(loc.id).expect("inventory");
+        assert_eq!(inv[0].quantity_on_hand, dec!(5));
+
+        // Filter by status finds it.
+        let listed = repo
+            .list_cycle_counts(CycleCountFilter {
+                warehouse_id: Some(wh.id),
+                status: Some(CycleCountStatus::Cancelled),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, cc.id);
+    }
+
+    #[test]
+    fn move_inventory_is_atomic_when_destination_write_fails() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-ATOMIC");
+        let src = make_loc(&repo, wh.id, "SRC");
+        seed_inventory(&repo, src.id, "SKU-M", "10");
+
+        // Move to a destination location id that does not exist. The source is
+        // decremented first, then the destination write fails — the whole move
+        // must roll back, leaving the source stock intact (never destroyed).
+        let result = repo.move_inventory(MoveInventory {
+            from_location_id: src.id,
+            to_location_id: 999_999,
+            sku: "SKU-M".into(),
+            lot_id: None,
+            quantity: dec!(3),
+            reason: None,
+            performed_by: None,
+        });
+        assert!(result.is_err(), "move to a non-existent destination must fail");
+
+        let src_inv = repo.get_location_inventory(src.id).expect("inventory");
+        let row = src_inv.iter().find(|i| i.sku == "SKU-M").expect("source inventory still exists");
+        assert_eq!(
+            row.quantity_on_hand,
+            dec!(10),
+            "source must not lose stock when a move fails partway"
+        );
     }
 
     #[test]
@@ -1592,6 +2157,66 @@ mod tests {
     }
 
     #[test]
+    fn count_locations_honors_same_filters_as_list_locations() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-CNT");
+        // Zone A: pickable + receivable.
+        repo.create_location(CreateLocation {
+            warehouse_id: wh.id,
+            code: Some("A-PK".into()),
+            location_type: LocationType::Bulk,
+            zone: Some("A".into()),
+            aisle: Some("01".into()),
+            is_pickable: Some(true),
+            is_receivable: Some(true),
+            ..Default::default()
+        })
+        .expect("loc a");
+        // Zone B: neither pickable nor receivable.
+        repo.create_location(CreateLocation {
+            warehouse_id: wh.id,
+            code: Some("B-NPK".into()),
+            location_type: LocationType::Quarantine,
+            zone: Some("B".into()),
+            aisle: Some("02".into()),
+            is_pickable: Some(false),
+            is_receivable: Some(false),
+            ..Default::default()
+        })
+        .expect("loc b");
+
+        // Every predicate `list_locations` honors, `count_locations` must honor
+        // too — each of these filters must select exactly one location.
+        for filter in [
+            LocationFilter {
+                warehouse_id: Some(wh.id),
+                is_pickable: Some(true),
+                ..Default::default()
+            },
+            LocationFilter {
+                warehouse_id: Some(wh.id),
+                is_receivable: Some(true),
+                ..Default::default()
+            },
+            LocationFilter {
+                warehouse_id: Some(wh.id),
+                zone: Some("A".into()),
+                ..Default::default()
+            },
+            LocationFilter {
+                warehouse_id: Some(wh.id),
+                aisle: Some("01".into()),
+                ..Default::default()
+            },
+        ] {
+            let listed = repo.list_locations(filter.clone()).expect("list").len() as u64;
+            let counted = repo.count_locations(filter).expect("count");
+            assert_eq!(counted, listed, "count_locations must match list_locations for {counted}");
+            assert_eq!(counted, 1, "exactly one location should match");
+        }
+    }
+
+    #[test]
     fn get_locations_for_warehouse_returns_all() {
         let repo = fresh_repo();
         let wh = make_wh(&repo, "WH-ALL");
@@ -1599,6 +2224,28 @@ mod tests {
         make_loc(&repo, wh.id, "L2");
         let locs = repo.get_locations_for_warehouse(wh.id).expect("ok");
         assert_eq!(locs.len(), 2);
+    }
+
+    #[test]
+    fn get_locations_for_warehouse_includes_inactive() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-INACT");
+        let active = make_loc(&repo, wh.id, "ACT");
+        let inactive = make_loc(&repo, wh.id, "INACT");
+        repo.update_location(
+            inactive.id,
+            UpdateLocation { is_active: Some(false), ..Default::default() },
+        )
+        .expect("deactivate");
+
+        // `get_locations_for_warehouse` returns ALL locations (matching Postgres
+        // and the trait contract) — active AND inactive. Filtered subsets have
+        // their own accessors (get_pickable_locations / get_receivable_locations).
+        let locs = repo.get_locations_for_warehouse(wh.id).expect("ok");
+        let ids: Vec<i32> = locs.iter().map(|l| l.id).collect();
+        assert_eq!(locs.len(), 2, "must return active AND inactive locations: {ids:?}");
+        assert!(ids.contains(&active.id));
+        assert!(ids.contains(&inactive.id));
     }
 
     #[test]

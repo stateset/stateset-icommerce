@@ -10,7 +10,7 @@
 
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    AddCarton, AddCartonItem, Commerce, CreateCustomer, CreateLocation, CreateOrder,
+    AddCarton, AddCartonItem, Commerce, CompletePick, CreateCustomer, CreateLocation, CreateOrder,
     CreateOrderItem, CreatePackTask, CreatePickTask, CreateProduct, CreateShipTask,
     CreateWarehouse, CreateWave, FulfillmentId, LocationType, OrderId, OrderItemId, PackStatus,
     PackTaskFilter, PackageType, PickStatus, PickTaskFilter, ShipStatus, ShipTaskFilter,
@@ -1410,4 +1410,59 @@ fn test_wave_with_different_priorities() {
 
     assert_eq!(wave_high.priority, 1);
     assert_eq!(wave_low.priority, 10);
+}
+
+// ============================================================================
+// complete_pick idempotency + over-pick guard
+// ============================================================================
+
+/// Build a `CompletePick` for `pick_id` picking `qty` units (no shortage).
+const fn complete_pick_input(pick_id: Uuid, qty: rust_decimal::Decimal) -> CompletePick {
+    CompletePick {
+        pick_id,
+        quantity_picked: qty,
+        quantity_short: None,
+        short_reason: None,
+        lot_id: None,
+        serial_number: None,
+        completed_by: None,
+    }
+}
+
+/// Completing a pick must reject picking more than was requested, and must be
+/// idempotent: a duplicate completion (e.g. a double-scan) must not
+/// double-increment the wave's `completed_pick_count`.
+#[test]
+fn complete_pick_is_idempotent_and_rejects_over_pick() {
+    let ctx = TestContext::new();
+    let order_id = ctx.create_order();
+    let wave = ctx.create_wave(vec![order_id]);
+    let pick = ctx.create_pick(Some(wave.id), order_id, "PICK-SKU-1", dec!(5));
+
+    // Over-pick guard: cannot pick 6 of a 5-unit request.
+    let err = ctx
+        .commerce
+        .fulfillment()
+        .complete_pick(complete_pick_input(pick.id, dec!(6)))
+        .expect_err("over-pick must be rejected");
+    assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "got {err:?}");
+
+    // Complete normally: wave counter goes to 1.
+    ctx.commerce
+        .fulfillment()
+        .complete_pick(complete_pick_input(pick.id, dec!(5)))
+        .expect("complete pick");
+    let wave_1 = ctx.commerce.fulfillment().get_wave(wave.id).expect("get").expect("exists");
+    assert_eq!(wave_1.completed_pick_count, 1);
+
+    // Duplicate completion must be idempotent — no double-increment.
+    ctx.commerce
+        .fulfillment()
+        .complete_pick(complete_pick_input(pick.id, dec!(5)))
+        .expect("re-complete is idempotent");
+    let wave_2 = ctx.commerce.fulfillment().get_wave(wave.id).expect("get").expect("exists");
+    assert_eq!(
+        wave_2.completed_pick_count, 1,
+        "duplicate complete_pick must not double-increment the wave counter"
+    );
 }

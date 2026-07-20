@@ -161,15 +161,16 @@ impl ReviewRepository for SqliteReviewRepository {
             sql.push_str(" AND rating >= ?");
             params.push(Box::new(min_rating as i32));
         }
+        if let Some(verified_only) = filter.verified_only {
+            // `verified_purchase` is stored as INTEGER (0/1); Postgres applies this
+            // filter too.
+            sql.push_str(" AND verified_purchase = ?");
+            params.push(Box::new(verified_only as i32));
+        }
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
@@ -324,6 +325,41 @@ mod tests {
         let reviews =
             repo.list(ReviewFilter { product_id: Some(product_id), ..Default::default() }).unwrap();
         assert_eq!(reviews.len(), 3);
+    }
+
+    #[test]
+    fn list_filters_by_verified_only() {
+        let repo = test_repo();
+        let product_id = ProductId::new();
+        repo.create(CreateReview {
+            product_id,
+            customer_id: CustomerId::new(),
+            rating: 5,
+            title: None,
+            body: None,
+            verified_purchase: true,
+        })
+        .unwrap();
+        repo.create(CreateReview {
+            product_id,
+            customer_id: CustomerId::new(),
+            rating: 4,
+            title: None,
+            body: None,
+            verified_purchase: false,
+        })
+        .unwrap();
+
+        // Postgres applies `verified_only`; SQLite must too.
+        let verified = repo
+            .list(ReviewFilter {
+                product_id: Some(product_id),
+                verified_only: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(verified.len(), 1, "verified_only must filter to verified-purchase reviews");
+        assert!(verified[0].verified_purchase);
     }
 
     #[test]

@@ -6,9 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    AdjustLocationInventory, BatchResult, CommerceError, CreateLocation, CreateWarehouse,
-    CreateZone, Location, LocationFilter, LocationInventory, LocationInventoryFilter,
-    LocationMovement, LocationType, MoveInventory, MovementFilter, MovementType, Result,
+    AdjustLocationInventory, BatchResult, CommerceError, CreateCycleCount, CreateLocation,
+    CreateWarehouse, CreateZone, CycleCount, CycleCountFilter, CycleCountLine, CycleCountStatus,
+    Location, LocationFilter, LocationInventory, LocationInventoryFilter, LocationMovement,
+    LocationType, MoveInventory, MovementFilter, MovementType, RecordCycleCountLine, Result,
     UpdateLocation, UpdateWarehouse, UpdateZone, Warehouse, WarehouseAddress, WarehouseFilter,
     WarehouseRepository, WarehouseType, Zone, validate_batch_size,
 };
@@ -73,6 +74,30 @@ struct LocationInventoryRow {
     quantity_on_hand: Decimal,
     quantity_reserved: Decimal,
     updated_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct CycleCountRow {
+    id: Uuid,
+    warehouse_id: i32,
+    location_id: Option<i32>,
+    status: String,
+    scheduled_date: Option<DateTime<Utc>>,
+    counted_by: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    completed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(FromRow)]
+struct CycleCountLineRow {
+    id: Uuid,
+    cycle_count_id: Uuid,
+    sku: String,
+    lot_id: Uuid,
+    expected_quantity: Decimal,
+    counted_quantity: Option<Decimal>,
+    variance: Option<Decimal>,
 }
 
 #[derive(FromRow)]
@@ -913,8 +938,12 @@ impl PgWarehouseRepository {
         let now = Utc::now();
         let lot_key = Self::lot_key(input.lot_id);
 
+        // Lock the source row (`FOR UPDATE`) before the availability guard so
+        // concurrent moves of the same (location, sku, lot) serialize and cannot both
+        // pass the guard and over-transfer the source into negative stock. SQLite
+        // achieves the same via an IMMEDIATE write transaction.
         let (source_on_hand, source_reserved) = sqlx::query_as::<_, (Decimal, Decimal)>(
-            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3",
+            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
         )
         .bind(input.from_location_id)
         .bind(&input.sku)
@@ -1175,6 +1204,345 @@ impl PgWarehouseRepository {
 
         rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()
     }
+
+    // ========================================================================
+    // Cycle counts
+    // ========================================================================
+
+    fn row_to_cycle_count(row: CycleCountRow) -> Result<CycleCount> {
+        let status: CycleCountStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid cycle_count.status '{}': {}",
+                row.status, e
+            ))
+        })?;
+        Ok(CycleCount {
+            id: row.id,
+            warehouse_id: row.warehouse_id,
+            location_id: row.location_id,
+            status,
+            scheduled_date: row.scheduled_date,
+            counted_by: row.counted_by,
+            lines: Vec::new(),
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            completed_at: row.completed_at,
+        })
+    }
+
+    fn row_to_cycle_count_line(row: CycleCountLineRow) -> CycleCountLine {
+        let lot_id = if row.lot_id == Uuid::nil() { None } else { Some(row.lot_id) };
+        CycleCountLine {
+            id: row.id,
+            cycle_count_id: row.cycle_count_id,
+            sku: row.sku,
+            lot_id,
+            expected_quantity: row.expected_quantity,
+            counted_quantity: row.counted_quantity,
+            variance: row.variance,
+        }
+    }
+
+    async fn load_cycle_count_lines<'e, E>(executor: E, id: Uuid) -> Result<Vec<CycleCountLine>>
+    where
+        E: sqlx::Executor<'e, Database = Postgres>,
+    {
+        let rows = sqlx::query_as::<_, CycleCountLineRow>(
+            "SELECT * FROM cycle_count_lines WHERE cycle_count_id = $1 ORDER BY sku, lot_id",
+        )
+        .bind(id)
+        .fetch_all(executor)
+        .await
+        .map_err(map_db_error)?;
+        Ok(rows.into_iter().map(Self::row_to_cycle_count_line).collect())
+    }
+
+    pub async fn get_cycle_count_async(&self, id: Uuid) -> Result<Option<CycleCount>> {
+        let row = sqlx::query_as::<_, CycleCountRow>("SELECT * FROM cycle_counts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        let Some(row) = row else { return Ok(None) };
+        let mut cc = Self::row_to_cycle_count(row)?;
+        cc.lines = Self::load_cycle_count_lines(&self.pool, id).await?;
+        Ok(Some(cc))
+    }
+
+    pub async fn create_cycle_count_async(&self, input: CreateCycleCount) -> Result<CycleCount> {
+        input.validate()?;
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        sqlx::query(
+            "INSERT INTO cycle_counts (id, warehouse_id, location_id, status, scheduled_date, counted_by, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$7)",
+        )
+        .bind(id)
+        .bind(input.warehouse_id)
+        .bind(input.location_id)
+        .bind(CycleCountStatus::Draft.to_string())
+        .bind(input.scheduled_date)
+        .bind(&input.counted_by)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        for line in &input.lines {
+            sqlx::query(
+                "INSERT INTO cycle_count_lines (id, cycle_count_id, sku, lot_id, expected_quantity)
+                 VALUES ($1,$2,$3,$4,$5)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(id)
+            .bind(&line.sku)
+            .bind(Self::lot_key(line.lot_id))
+            .bind(line.expected_quantity)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_cycle_count_async(id).await?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve created cycle count".into())
+        })
+    }
+
+    pub async fn list_cycle_counts_async(
+        &self,
+        filter: CycleCountFilter,
+    ) -> Result<Vec<CycleCount>> {
+        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM cycle_counts WHERE 1=1");
+        if let Some(warehouse_id) = filter.warehouse_id {
+            builder.push(" AND warehouse_id = ").push_bind(warehouse_id);
+        }
+        if let Some(location_id) = filter.location_id {
+            builder.push(" AND location_id = ").push_bind(location_id);
+        }
+        if let Some(status) = filter.status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        builder.push(" ORDER BY created_at DESC");
+        builder.push(" LIMIT ").push_bind(i64::from(filter.limit.unwrap_or(50)));
+        builder.push(" OFFSET ").push_bind(i64::from(filter.offset.unwrap_or(0)));
+
+        let rows = builder
+            .build_query_as::<CycleCountRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        let mut counts =
+            rows.into_iter().map(Self::row_to_cycle_count).collect::<Result<Vec<_>>>()?;
+        for cc in &mut counts {
+            cc.lines = Self::load_cycle_count_lines(&self.pool, cc.id).await?;
+        }
+        Ok(counts)
+    }
+
+    async fn transition_cycle_count_async(
+        &self,
+        id: Uuid,
+        next: CycleCountStatus,
+    ) -> Result<CycleCount> {
+        let current = self.get_cycle_count_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if !current.status.can_transition_to(next) {
+            return Err(CommerceError::ValidationError(format!(
+                "cannot transition cycle count from {} to {next}",
+                current.status
+            )));
+        }
+        sqlx::query("UPDATE cycle_counts SET status = $1, updated_at = $2 WHERE id = $3")
+            .bind(next.to_string())
+            .bind(Utc::now())
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        self.get_cycle_count_async(id).await?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve updated cycle count".into())
+        })
+    }
+
+    pub async fn record_cycle_counts_async(
+        &self,
+        id: Uuid,
+        counts: Vec<RecordCycleCountLine>,
+    ) -> Result<CycleCount> {
+        for count in &counts {
+            count.validate()?;
+        }
+        let existing = self.get_cycle_count_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if existing.status != CycleCountStatus::InProgress {
+            return Err(CommerceError::ValidationError(format!(
+                "counts can only be recorded on an in_progress cycle count (status: {})",
+                existing.status
+            )));
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        for count in &counts {
+            let line = existing
+                .lines
+                .iter()
+                .find(|l| l.sku == count.sku && l.lot_id == count.lot_id)
+                .ok_or_else(|| {
+                    CommerceError::ValidationError(format!(
+                        "cycle count has no line for sku {} (lot: {:?})",
+                        count.sku, count.lot_id
+                    ))
+                })?;
+            let variance = count.counted_quantity - line.expected_quantity;
+            sqlx::query(
+                "UPDATE cycle_count_lines SET counted_quantity = $1, variance = $2
+                 WHERE cycle_count_id = $3 AND sku = $4 AND lot_id = $5",
+            )
+            .bind(count.counted_quantity)
+            .bind(variance)
+            .bind(id)
+            .bind(&count.sku)
+            .bind(Self::lot_key(count.lot_id))
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+        sqlx::query("UPDATE cycle_counts SET updated_at = $1 WHERE id = $2")
+            .bind(Utc::now())
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_cycle_count_async(id).await?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve updated cycle count".into())
+        })
+    }
+
+    pub async fn complete_cycle_count_async(&self, id: Uuid) -> Result<CycleCount> {
+        let existing = self.get_cycle_count_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if !existing.status.can_transition_to(CycleCountStatus::Completed) {
+            return Err(CommerceError::ValidationError(format!(
+                "cannot complete cycle count in status {}",
+                existing.status
+            )));
+        }
+
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        for line in &existing.lines {
+            let counted = line.counted_quantity.ok_or_else(|| {
+                CommerceError::ValidationError(format!(
+                    "cycle count line for sku {} has no recorded count",
+                    line.sku
+                ))
+            })?;
+            let variance = counted - line.expected_quantity;
+            sqlx::query("UPDATE cycle_count_lines SET variance = $1 WHERE id = $2")
+                .bind(variance)
+                .bind(line.id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            if variance == Decimal::ZERO {
+                continue;
+            }
+            let location_id = existing.location_id.ok_or_else(|| {
+                CommerceError::ValidationError(
+                    "cycle count has no location_id; cannot apply variance adjustments".into(),
+                )
+            })?;
+            let lot_key = Self::lot_key(line.lot_id);
+
+            // Adjust location_inventory (same path as adjust_inventory), with a
+            // row lock so concurrent writers serialize.
+            let current: Option<Decimal> = sqlx::query_scalar(
+                "SELECT quantity_on_hand FROM location_inventory
+                 WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
+            )
+            .bind(location_id)
+            .bind(&line.sku)
+            .bind(lot_key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            let new_qty = current.unwrap_or(Decimal::ZERO) + variance;
+            if new_qty < Decimal::ZERO {
+                return Err(CommerceError::ValidationError(format!(
+                    "cycle count adjustment for sku {} would result in negative inventory",
+                    line.sku
+                )));
+            }
+            if current.is_some() {
+                sqlx::query(
+                    "UPDATE location_inventory SET quantity_on_hand = $1, updated_at = $2
+                     WHERE location_id = $3 AND sku = $4 AND lot_id = $5",
+                )
+                .bind(new_qty)
+                .bind(now)
+                .bind(location_id)
+                .bind(&line.sku)
+                .bind(lot_key)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            } else {
+                sqlx::query(
+                    "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+                     VALUES ($1,$2,$3,$4,0,$5)",
+                )
+                .bind(location_id)
+                .bind(&line.sku)
+                .bind(lot_key)
+                .bind(new_qty)
+                .bind(now)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            }
+
+            sqlx::query(
+                "INSERT INTO inventory_movements (
+                    id, movement_type, to_location_id, sku, lot_id, quantity,
+                    reference_type, reference_id, reason, performed_by, created_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(MovementType::CycleCount.to_string())
+            .bind(location_id)
+            .bind(&line.sku)
+            .bind(line.lot_id)
+            .bind(variance)
+            .bind("cycle_count")
+            .bind(existing.id)
+            .bind("Cycle count variance")
+            .bind(&existing.counted_by)
+            .bind(now)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+
+        sqlx::query(
+            "UPDATE cycle_counts SET status = $1, updated_at = $2, completed_at = $2 WHERE id = $3",
+        )
+        .bind(CycleCountStatus::Completed.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_cycle_count_async(id).await?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve completed cycle count".into())
+        })
+    }
 }
 
 impl WarehouseRepository for PgWarehouseRepository {
@@ -1307,5 +1675,37 @@ impl WarehouseRepository for PgWarehouseRepository {
 
     fn get_locations_batch(&self, ids: Vec<i32>) -> Result<Vec<Location>> {
         block_on(self.get_locations_batch_async(ids))
+    }
+
+    fn create_cycle_count(&self, input: CreateCycleCount) -> Result<CycleCount> {
+        block_on(self.create_cycle_count_async(input))
+    }
+
+    fn get_cycle_count(&self, id: Uuid) -> Result<Option<CycleCount>> {
+        block_on(self.get_cycle_count_async(id))
+    }
+
+    fn list_cycle_counts(&self, filter: CycleCountFilter) -> Result<Vec<CycleCount>> {
+        block_on(self.list_cycle_counts_async(filter))
+    }
+
+    fn start_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        block_on(self.transition_cycle_count_async(id, CycleCountStatus::InProgress))
+    }
+
+    fn record_cycle_counts(
+        &self,
+        id: Uuid,
+        counts: Vec<RecordCycleCountLine>,
+    ) -> Result<CycleCount> {
+        block_on(self.record_cycle_counts_async(id, counts))
+    }
+
+    fn complete_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        block_on(self.complete_cycle_count_async(id))
+    }
+
+    fn cancel_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        block_on(self.transition_cycle_count_async(id, CycleCountStatus::Cancelled))
     }
 }

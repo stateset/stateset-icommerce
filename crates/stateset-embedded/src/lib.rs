@@ -153,6 +153,7 @@ mod custom_objects;
 mod customers;
 mod edi_documents;
 mod erc8004;
+mod fixed_assets;
 mod fraud;
 mod fulfillment;
 mod general_ledger;
@@ -179,6 +180,7 @@ mod purgatory;
 mod quality;
 mod receiving;
 mod returns;
+mod revenue_recognition;
 mod reviews;
 mod search_config;
 mod segments;
@@ -244,6 +246,7 @@ pub use custom_objects::CustomObjects;
 pub use customers::Customers;
 pub use edi_documents::EdiDocuments;
 pub use erc8004::Erc8004;
+pub use fixed_assets::FixedAssets;
 pub use fraud::Fraud;
 pub use fulfillment::Fulfillment;
 pub use general_ledger::GeneralLedger;
@@ -270,6 +273,7 @@ pub use purgatory::Purgatory;
 pub use quality::Quality;
 pub use receiving::Receiving;
 pub use returns::Returns;
+pub use revenue_recognition::RevenueRecognition;
 pub use reviews::Reviews;
 pub use search_config::SearchConfigs;
 pub use segments::Segments;
@@ -499,6 +503,9 @@ pub use stateset_core::{
     CreateCustomObjectType,
     CreateCustomer,
     CreateCustomerAddress,
+    // Cycle count types
+    CreateCycleCount,
+    CreateCycleCountLine,
     CreateDefectCode,
     // Fraud types
     CreateFraudAssessment,
@@ -621,6 +628,10 @@ pub use stateset_core::{
     CustomerMetrics,
     CustomerStatement,
     CustomerStatus,
+    CycleCount,
+    CycleCountFilter,
+    CycleCountLine,
+    CycleCountStatus,
     DateRange,
     DefectCode,
     DemandForecast,
@@ -788,6 +799,7 @@ pub use stateset_core::{
     ReceivePurchaseOrderItems,
     RecordCostVariance,
     RecordCreditTransaction,
+    RecordCycleCountLine,
     RecordInspectionResult,
     RecordInvoicePayment,
     Refund,

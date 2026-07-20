@@ -8,7 +8,7 @@
 //! - Compound and tiered tax rules
 
 use chrono::{DateTime, NaiveDate, Utc};
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 use serde::{Deserialize, Serialize};
 use stateset_primitives::{CurrencyCode, ProductId};
 use strum::{Display, EnumString};
@@ -590,7 +590,9 @@ pub struct TaxSettings {
     pub origin_address: Option<TaxAddress>,
     /// Default product tax category
     pub default_product_category: ProductTaxCategory,
-    /// Rounding mode (up, down, `half_up`, `half_down`)
+    /// Rounding mode applied to computed tax amounts. One of `half_up`
+    /// (default), `half_even`/`bankers`, `half_down`, `up`, `down`/`truncate`,
+    /// `ceil`, or `floor`. See [`Self::rounding_strategy`].
     pub rounding_mode: String,
     /// Decimal places for tax amounts
     pub decimal_places: i32,
@@ -623,6 +625,32 @@ impl Default for TaxSettings {
             provider_credentials: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+        }
+    }
+}
+
+impl TaxSettings {
+    /// Resolve the configured [`rounding_mode`](Self::rounding_mode) string to a
+    /// concrete [`RoundingStrategy`] for rounding computed tax amounts.
+    ///
+    /// Recognized modes (case- and surrounding-whitespace-insensitive):
+    /// `half_up` (round half away from zero — the default and conventional
+    /// retail tax rounding), `half_even`/`bankers` (round half to even),
+    /// `half_down`, `up`, `down`/`truncate`, `ceil`, and `floor`. Any
+    /// unrecognized or empty value falls back to `half_up`.
+    #[must_use]
+    pub fn rounding_strategy(&self) -> RoundingStrategy {
+        match self.rounding_mode.trim().to_ascii_lowercase().as_str() {
+            "half_even" | "half_to_even" | "bankers" | "banker" => {
+                RoundingStrategy::MidpointNearestEven
+            }
+            "half_down" => RoundingStrategy::MidpointTowardZero,
+            "up" | "away_from_zero" => RoundingStrategy::AwayFromZero,
+            "down" | "truncate" | "toward_zero" => RoundingStrategy::ToZero,
+            "ceil" | "ceiling" => RoundingStrategy::ToPositiveInfinity,
+            "floor" => RoundingStrategy::ToNegativeInfinity,
+            // "half_up" and any unrecognized value: round half away from zero.
+            _ => RoundingStrategy::MidpointAwayFromZero,
         }
     }
 }
@@ -1143,5 +1171,31 @@ mod tests {
     fn jurisdiction_level_from_str() {
         assert_eq!(JurisdictionLevel::from_str("state").unwrap(), JurisdictionLevel::State);
         assert!(JurisdictionLevel::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn tax_settings_rounding_strategy_maps_modes() {
+        use rust_decimal::RoundingStrategy;
+        let strat = |mode: &str| {
+            let s = TaxSettings { rounding_mode: mode.to_string(), ..Default::default() };
+            s.rounding_strategy()
+        };
+        assert_eq!(strat("half_up"), RoundingStrategy::MidpointAwayFromZero);
+        assert_eq!(strat("half_even"), RoundingStrategy::MidpointNearestEven);
+        assert_eq!(strat("bankers"), RoundingStrategy::MidpointNearestEven);
+        assert_eq!(strat("half_down"), RoundingStrategy::MidpointTowardZero);
+        assert_eq!(strat("up"), RoundingStrategy::AwayFromZero);
+        assert_eq!(strat("down"), RoundingStrategy::ToZero);
+        assert_eq!(strat("truncate"), RoundingStrategy::ToZero);
+        assert_eq!(strat("ceil"), RoundingStrategy::ToPositiveInfinity);
+        assert_eq!(strat("floor"), RoundingStrategy::ToNegativeInfinity);
+        // Case- and whitespace-insensitive.
+        assert_eq!(strat("  Half_Even "), RoundingStrategy::MidpointNearestEven);
+        // Unknown and the documented default both resolve to half_up.
+        assert_eq!(strat("wat"), RoundingStrategy::MidpointAwayFromZero);
+        assert_eq!(
+            TaxSettings::default().rounding_strategy(),
+            RoundingStrategy::MidpointAwayFromZero
+        );
     }
 }

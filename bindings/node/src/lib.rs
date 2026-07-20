@@ -132,6 +132,42 @@ impl Commerce {
         Returns { commerce: self.inner.clone() }
     }
 
+    /// Get the gift cards API
+    #[napi(getter)]
+    pub fn gift_cards(&self) -> GiftCards {
+        GiftCards { commerce: self.inner.clone() }
+    }
+
+    /// Get the loyalty API
+    #[napi(getter)]
+    pub fn loyalty(&self) -> Loyalty {
+        Loyalty { commerce: self.inner.clone() }
+    }
+
+    /// Get the store credits API
+    #[napi(getter)]
+    pub fn store_credits(&self) -> StoreCredits {
+        StoreCredits { commerce: self.inner.clone() }
+    }
+
+    /// Get the product reviews API
+    #[napi(getter)]
+    pub fn reviews(&self) -> Reviews {
+        Reviews { commerce: self.inner.clone() }
+    }
+
+    /// Get the wishlists API
+    #[napi(getter)]
+    pub fn wishlists(&self) -> Wishlists {
+        Wishlists { commerce: self.inner.clone() }
+    }
+
+    /// Get the customer segments API
+    #[napi(getter)]
+    pub fn segments(&self) -> Segments {
+        Segments { commerce: self.inner.clone() }
+    }
+
     /// Get the payments API
     #[napi(getter)]
     pub fn payments(&self) -> Payments {
@@ -13185,4 +13221,1844 @@ pub fn merkle_root(leaves: Vec<Buffer>) -> Result<Buffer> {
     let leaf_arrays = leaf_arrays?;
     let root = stateset_crypto::merkle::compute_merkle_root(&leaf_arrays);
     Ok(Buffer::from(root.as_slice()))
+}
+
+// ============================================================================
+// Gift Cards  (money represented as exact decimal STRINGS, not f64 — new code
+// avoids the precision loss of the binding's older f64 money fields)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateGiftCardInput {
+    /// Redemption code (auto-generated if omitted)
+    pub code: Option<String>,
+    /// Initial balance as an exact decimal string, e.g. "50.00"
+    pub initial_balance: String,
+    /// Currency code, e.g. "USD"
+    pub currency: String,
+    pub recipient_email: Option<String>,
+    pub sender_name: Option<String>,
+    pub message: Option<String>,
+    /// RFC 3339 expiry timestamp
+    pub expires_at: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateGiftCardInput {
+    pub status: Option<String>,
+    pub recipient_email: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GiftCardFilterInput {
+    pub status: Option<String>,
+    pub code: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GiftCardOutput {
+    pub id: String,
+    pub code: String,
+    /// Exact decimal string
+    pub initial_balance: String,
+    /// Exact decimal string
+    pub current_balance: String,
+    pub currency: String,
+    pub status: String,
+    pub recipient_email: Option<String>,
+    pub sender_name: Option<String>,
+    pub message: Option<String>,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::GiftCard> for GiftCardOutput {
+    fn from(g: stateset_core::GiftCard) -> Self {
+        Self {
+            id: g.id.to_string(),
+            code: g.code,
+            initial_balance: g.initial_balance.to_string(),
+            current_balance: g.current_balance.to_string(),
+            currency: g.currency.to_string(),
+            status: format!("{}", g.status),
+            recipient_email: g.recipient_email,
+            sender_name: g.sender_name,
+            message: g.message,
+            expires_at: g.expires_at.map(|d| d.to_rfc3339()),
+            created_at: g.created_at.to_rfc3339(),
+            updated_at: g.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GiftCardTransactionOutput {
+    pub id: String,
+    pub gift_card_id: String,
+    /// Exact decimal string
+    pub amount: String,
+    /// Exact decimal string
+    pub balance_after: String,
+    pub transaction_type: String,
+    pub reference_id: Option<String>,
+    pub created_at: String,
+}
+
+impl From<stateset_core::GiftCardTransaction> for GiftCardTransactionOutput {
+    fn from(t: stateset_core::GiftCardTransaction) -> Self {
+        Self {
+            id: t.id.to_string(),
+            gift_card_id: t.gift_card_id.to_string(),
+            amount: t.amount.to_string(),
+            balance_after: t.balance_after.to_string(),
+            transaction_type: format!("{}", t.transaction_type),
+            reference_id: t.reference_id,
+            created_at: t.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct GiftCards {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl GiftCards {
+    /// Whether the gift-cards backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.gift_cards().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateGiftCardInput) -> Result<GiftCardOutput> {
+        let commerce = self.commerce.lock().await;
+        let initial_balance = input
+            .initial_balance
+            .parse::<Decimal>()
+            .map_err(|_| Error::from_reason("Invalid initial_balance decimal"))?;
+        let currency = input
+            .currency
+            .parse::<CurrencyCode>()
+            .map_err(|_| Error::from_reason("Invalid currency code"))?;
+        let expires_at = match input.expires_at.as_deref() {
+            Some(s) => Some(
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(|_| Error::from_reason("Invalid expires_at RFC 3339 timestamp"))?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+        let card = commerce
+            .gift_cards()
+            .create(stateset_core::CreateGiftCard {
+                code: input.code,
+                initial_balance,
+                currency,
+                recipient_email: input.recipient_email,
+                sender_name: input.sender_name,
+                message: input.message,
+                expires_at,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create gift card: {}", e)))?;
+        Ok(card.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<GiftCardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let card = commerce
+            .gift_cards()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get gift card: {}", e)))?;
+        Ok(card.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn get_by_code(&self, code: String) -> Result<Option<GiftCardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let card = commerce
+            .gift_cards()
+            .get_by_code(&code)
+            .map_err(|e| Error::from_reason(format!("Failed to get gift card by code: {}", e)))?;
+        Ok(card.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateGiftCardInput) -> Result<GiftCardOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let status = match input.status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::GiftCardStatus>()
+                    .map_err(|_| Error::from_reason("Invalid gift card status"))?,
+            ),
+            None => None,
+        };
+        let card = commerce
+            .gift_cards()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateGiftCard {
+                    status,
+                    recipient_email: input.recipient_email,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update gift card: {}", e)))?;
+        Ok(card.into())
+    }
+
+    #[napi]
+    pub async fn list(&self, filter: Option<GiftCardFilterInput>) -> Result<Vec<GiftCardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or(GiftCardFilterInput {
+            status: None,
+            code: None,
+            limit: None,
+            offset: None,
+        });
+        let status = match filter.status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::GiftCardStatus>()
+                    .map_err(|_| Error::from_reason("Invalid gift card status"))?,
+            ),
+            None => None,
+        };
+        let cards = commerce
+            .gift_cards()
+            .list(stateset_core::GiftCardFilter {
+                status,
+                code: filter.code,
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list gift cards: {}", e)))?;
+        Ok(cards.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn charge(
+        &self,
+        id: String,
+        amount: String,
+        reference_id: Option<String>,
+    ) -> Result<GiftCardTransactionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let amount =
+            amount.parse::<Decimal>().map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+        let txn = commerce
+            .gift_cards()
+            .charge(uuid.into(), amount, reference_id)
+            .map_err(|e| Error::from_reason(format!("Failed to charge gift card: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    #[napi]
+    pub async fn refund(
+        &self,
+        id: String,
+        amount: String,
+        reference_id: Option<String>,
+    ) -> Result<GiftCardTransactionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let amount =
+            amount.parse::<Decimal>().map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+        let txn = commerce
+            .gift_cards()
+            .refund(uuid.into(), amount, reference_id)
+            .map_err(|e| Error::from_reason(format!("Failed to refund gift card: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    #[napi]
+    pub async fn disable(&self, id: String) -> Result<GiftCardOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let card = commerce
+            .gift_cards()
+            .disable(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to disable gift card: {}", e)))?;
+        Ok(card.into())
+    }
+
+    #[napi]
+    pub async fn get_transactions(
+        &self,
+        gift_card_id: String,
+    ) -> Result<Vec<GiftCardTransactionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            gift_card_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let txns = commerce
+            .gift_cards()
+            .get_transactions(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get transactions: {}", e)))?;
+        Ok(txns.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Store credits  (all monetary values cross as exact decimal strings)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateStoreCreditInput {
+    /// Customer UUID that owns the credit
+    pub customer_id: String,
+    /// Amount to issue as an exact decimal string, e.g. "25.00"
+    pub amount: String,
+    /// Currency code, e.g. "USD"
+    pub currency: String,
+    /// Reason: return, loyalty, compensation, promotion, manual, gift_card
+    /// (defaults to "return")
+    pub reason: Option<String>,
+    pub reference_id: Option<String>,
+    pub note: Option<String>,
+    /// RFC 3339 expiry timestamp (None = never expires)
+    pub expires_at: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AdjustStoreCreditInput {
+    /// Signed adjustment as an exact decimal string ("10.00" adds, "-10.00"
+    /// subtracts). The balance may not be driven below zero.
+    pub amount: String,
+    pub note: Option<String>,
+    pub reference_id: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StoreCreditFilterInput {
+    pub customer_id: Option<String>,
+    pub status: Option<String>,
+    pub reason: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StoreCreditOutput {
+    pub id: String,
+    pub customer_id: String,
+    /// Exact decimal string
+    pub original_balance: String,
+    /// Exact decimal string
+    pub current_balance: String,
+    pub currency: String,
+    pub status: String,
+    pub reason: String,
+    pub reference_id: Option<String>,
+    pub note: Option<String>,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::StoreCredit> for StoreCreditOutput {
+    fn from(c: stateset_core::StoreCredit) -> Self {
+        Self {
+            id: c.id.to_string(),
+            customer_id: c.customer_id.to_string(),
+            original_balance: c.original_balance.to_string(),
+            current_balance: c.current_balance.to_string(),
+            currency: c.currency.to_string(),
+            status: format!("{}", c.status),
+            reason: format!("{}", c.reason),
+            reference_id: c.reference_id,
+            note: c.note,
+            expires_at: c.expires_at.map(|d| d.to_rfc3339()),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StoreCreditTransactionOutput {
+    pub id: String,
+    pub store_credit_id: String,
+    /// Exact decimal string (positive = credit, negative = debit)
+    pub amount: String,
+    /// Exact decimal string
+    pub balance_after: String,
+    pub transaction_type: String,
+    pub reference_id: Option<String>,
+    pub created_at: String,
+}
+
+impl From<stateset_core::StoreCreditTransaction> for StoreCreditTransactionOutput {
+    fn from(t: stateset_core::StoreCreditTransaction) -> Self {
+        Self {
+            id: t.id.to_string(),
+            store_credit_id: t.store_credit_id.to_string(),
+            amount: t.amount.to_string(),
+            balance_after: t.balance_after.to_string(),
+            transaction_type: format!("{}", t.transaction_type),
+            reference_id: t.reference_id,
+            created_at: t.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct StoreCredits {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl StoreCredits {
+    /// Whether the store-credits backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.store_credits().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateStoreCreditInput) -> Result<StoreCreditOutput> {
+        let commerce = self.commerce.lock().await;
+        let customer_uuid: uuid::Uuid =
+            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let amount = input
+            .amount
+            .parse::<Decimal>()
+            .map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+        let currency = input
+            .currency
+            .parse::<CurrencyCode>()
+            .map_err(|_| Error::from_reason("Invalid currency code"))?;
+        let reason = match input.reason.as_deref() {
+            Some(s) => s
+                .parse::<stateset_core::StoreCreditReason>()
+                .map_err(|_| Error::from_reason("Invalid store credit reason"))?,
+            None => stateset_core::StoreCreditReason::default(),
+        };
+        let expires_at = match input.expires_at.as_deref() {
+            Some(s) => Some(
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(|_| Error::from_reason("Invalid expires_at RFC 3339 timestamp"))?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+        let credit = commerce
+            .store_credits()
+            .create(stateset_core::CreateStoreCredit {
+                customer_id: customer_uuid.into(),
+                amount,
+                currency,
+                reason,
+                reference_id: input.reference_id,
+                note: input.note,
+                expires_at,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create store credit: {}", e)))?;
+        Ok(credit.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<StoreCreditOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let credit = commerce
+            .store_credits()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get store credit: {}", e)))?;
+        Ok(credit.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<StoreCreditFilterInput>,
+    ) -> Result<Vec<StoreCreditOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or(StoreCreditFilterInput {
+            customer_id: None,
+            status: None,
+            reason: None,
+            limit: None,
+            offset: None,
+        });
+        let customer_id = match filter.customer_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| Error::from_reason("Invalid customer UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let status = match filter.status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::StoreCreditStatus>()
+                    .map_err(|_| Error::from_reason("Invalid store credit status"))?,
+            ),
+            None => None,
+        };
+        let reason = match filter.reason.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::StoreCreditReason>()
+                    .map_err(|_| Error::from_reason("Invalid store credit reason"))?,
+            ),
+            None => None,
+        };
+        let credits = commerce
+            .store_credits()
+            .list(stateset_core::StoreCreditFilter {
+                customer_id,
+                status,
+                reason,
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list store credits: {}", e)))?;
+        Ok(credits.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn adjust(
+        &self,
+        id: String,
+        input: AdjustStoreCreditInput,
+    ) -> Result<StoreCreditOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let amount = input
+            .amount
+            .parse::<Decimal>()
+            .map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+        let credit = commerce
+            .store_credits()
+            .adjust(
+                uuid.into(),
+                stateset_core::AdjustStoreCredit {
+                    amount,
+                    note: input.note,
+                    reference_id: input.reference_id,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to adjust store credit: {}", e)))?;
+        Ok(credit.into())
+    }
+
+    /// Apply (redeem) an amount from the credit, returning the ledger transaction.
+    #[napi]
+    pub async fn apply(
+        &self,
+        id: String,
+        amount: String,
+        reference_id: Option<String>,
+    ) -> Result<StoreCreditTransactionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let amount =
+            amount.parse::<Decimal>().map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+        let txn = commerce
+            .store_credits()
+            .apply(uuid.into(), amount, reference_id)
+            .map_err(|e| Error::from_reason(format!("Failed to apply store credit: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    #[napi]
+    pub async fn get_transactions(
+        &self,
+        store_credit_id: String,
+    ) -> Result<Vec<StoreCreditTransactionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            store_credit_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let txns = commerce
+            .store_credits()
+            .get_transactions(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get transactions: {}", e)))?;
+        Ok(txns.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Product reviews
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateReviewInput {
+    pub product_id: String,
+    pub customer_id: String,
+    /// Star rating 1–5
+    pub rating: u32,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub verified_purchase: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateReviewInput {
+    pub rating: Option<u32>,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    /// Moderation status: pending, approved, rejected, flagged
+    pub status: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct ReviewFilterInput {
+    pub product_id: Option<String>,
+    pub customer_id: Option<String>,
+    pub status: Option<String>,
+    pub min_rating: Option<u32>,
+    pub verified_only: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ReviewOutput {
+    pub id: String,
+    pub product_id: String,
+    pub customer_id: String,
+    pub rating: u32,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub status: String,
+    pub verified_purchase: bool,
+    pub helpful_count: u32,
+    pub reported_count: u32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Review> for ReviewOutput {
+    fn from(r: stateset_core::Review) -> Self {
+        Self {
+            id: r.id.to_string(),
+            product_id: r.product_id.to_string(),
+            customer_id: r.customer_id.to_string(),
+            rating: u32::from(r.rating),
+            title: r.title,
+            body: r.body,
+            status: format!("{}", r.status),
+            verified_purchase: r.verified_purchase,
+            helpful_count: r.helpful_count,
+            reported_count: r.reported_count,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ReviewSummaryOutput {
+    pub product_id: String,
+    pub average_rating: f64,
+    pub total_reviews: i64,
+    /// Counts for 1★, 2★, 3★, 4★, 5★ (index 0 = 1 star)
+    pub rating_distribution: Vec<u32>,
+}
+
+impl From<stateset_core::ReviewSummary> for ReviewSummaryOutput {
+    fn from(s: stateset_core::ReviewSummary) -> Self {
+        Self {
+            product_id: s.product_id.to_string(),
+            average_rating: s.average_rating,
+            total_reviews: s.total_reviews as i64,
+            rating_distribution: s.rating_distribution.to_vec(),
+        }
+    }
+}
+
+#[napi]
+pub struct Reviews {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Reviews {
+    /// Whether the reviews backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.reviews().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateReviewInput) -> Result<ReviewOutput> {
+        let commerce = self.commerce.lock().await;
+        let product_id: uuid::Uuid =
+            input.product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+        let customer_id: uuid::Uuid =
+            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let rating = u8::try_from(input.rating)
+            .map_err(|_| Error::from_reason("rating must be between 1 and 5"))?;
+        let review = commerce
+            .reviews()
+            .create(stateset_core::CreateReview {
+                product_id: product_id.into(),
+                customer_id: customer_id.into(),
+                rating,
+                title: input.title,
+                body: input.body,
+                verified_purchase: input.verified_purchase.unwrap_or(false),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create review: {}", e)))?;
+        Ok(review.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<ReviewOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let review = commerce
+            .reviews()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get review: {}", e)))?;
+        Ok(review.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateReviewInput) -> Result<ReviewOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let rating = match input.rating {
+            Some(r) => Some(
+                u8::try_from(r)
+                    .map_err(|_| Error::from_reason("rating must be between 1 and 5"))?,
+            ),
+            None => None,
+        };
+        let status = match input.status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::ReviewStatus>()
+                    .map_err(|_| Error::from_reason("Invalid review status"))?,
+            ),
+            None => None,
+        };
+        let review = commerce
+            .reviews()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateReview {
+                    rating,
+                    title: input.title.map(Some),
+                    body: input.body.map(Some),
+                    status,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update review: {}", e)))?;
+        Ok(review.into())
+    }
+
+    #[napi]
+    pub async fn list(&self, filter: Option<ReviewFilterInput>) -> Result<Vec<ReviewOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or_default();
+        let product_id = match filter.product_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| Error::from_reason("Invalid product UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let customer_id = match filter.customer_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| Error::from_reason("Invalid customer UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let status = match filter.status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::ReviewStatus>()
+                    .map_err(|_| Error::from_reason("Invalid review status"))?,
+            ),
+            None => None,
+        };
+        let min_rating = match filter.min_rating {
+            Some(r) => {
+                Some(u8::try_from(r).map_err(|_| Error::from_reason("min_rating out of range"))?)
+            }
+            None => None,
+        };
+        let reviews = commerce
+            .reviews()
+            .list(stateset_core::ReviewFilter {
+                product_id,
+                customer_id,
+                status,
+                min_rating,
+                verified_only: filter.verified_only,
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list reviews: {}", e)))?;
+        Ok(reviews.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .reviews()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete review: {}", e)))?;
+        Ok(())
+    }
+
+    /// Aggregate rating summary for a product (average, total, star distribution).
+    #[napi]
+    pub async fn get_summary(&self, product_id: String) -> Result<ReviewSummaryOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+        let summary = commerce
+            .reviews()
+            .get_summary(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get review summary: {}", e)))?;
+        Ok(summary.into())
+    }
+
+    #[napi]
+    pub async fn mark_helpful(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .reviews()
+            .mark_helpful(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to mark review helpful: {}", e)))?;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn mark_reported(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .reviews()
+            .mark_reported(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to mark review reported: {}", e)))?;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Wishlists
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateWishlistInput {
+    pub customer_id: String,
+    pub name: String,
+    pub is_public: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateWishlistInput {
+    pub name: Option<String>,
+    pub is_public: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AddWishlistItemInput {
+    pub product_id: String,
+    pub variant_id: Option<String>,
+    pub note: Option<String>,
+    pub quantity: Option<u32>,
+    pub priority: Option<i32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct WishlistFilterInput {
+    pub customer_id: Option<String>,
+    pub is_public: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct WishlistItemOutput {
+    pub product_id: String,
+    pub variant_id: Option<String>,
+    pub added_at: String,
+    pub note: Option<String>,
+    pub quantity: u32,
+    pub priority: Option<i32>,
+}
+
+impl From<stateset_core::WishlistItem> for WishlistItemOutput {
+    fn from(i: stateset_core::WishlistItem) -> Self {
+        Self {
+            product_id: i.product_id.to_string(),
+            variant_id: i.variant_id,
+            added_at: i.added_at.to_rfc3339(),
+            note: i.note,
+            quantity: i.quantity,
+            priority: i.priority,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct WishlistOutput {
+    pub id: String,
+    pub customer_id: String,
+    pub name: String,
+    pub is_public: bool,
+    pub items: Vec<WishlistItemOutput>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Wishlist> for WishlistOutput {
+    fn from(w: stateset_core::Wishlist) -> Self {
+        Self {
+            id: w.id.to_string(),
+            customer_id: w.customer_id.to_string(),
+            name: w.name,
+            is_public: w.is_public,
+            items: w.items.into_iter().map(Into::into).collect(),
+            created_at: w.created_at.to_rfc3339(),
+            updated_at: w.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct Wishlists {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Wishlists {
+    /// Whether the wishlists backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.wishlists().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateWishlistInput) -> Result<WishlistOutput> {
+        let commerce = self.commerce.lock().await;
+        let customer_id: uuid::Uuid =
+            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let wishlist = commerce
+            .wishlists()
+            .create(stateset_core::CreateWishlist {
+                customer_id: customer_id.into(),
+                name: input.name,
+                is_public: input.is_public.unwrap_or(false),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create wishlist: {}", e)))?;
+        Ok(wishlist.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<WishlistOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let wishlist = commerce
+            .wishlists()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get wishlist: {}", e)))?;
+        Ok(wishlist.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateWishlistInput) -> Result<WishlistOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let wishlist = commerce
+            .wishlists()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateWishlist { name: input.name, is_public: input.is_public },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update wishlist: {}", e)))?;
+        Ok(wishlist.into())
+    }
+
+    #[napi]
+    pub async fn list(&self, filter: Option<WishlistFilterInput>) -> Result<Vec<WishlistOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or_default();
+        let customer_id = match filter.customer_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| Error::from_reason("Invalid customer UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let wishlists = commerce
+            .wishlists()
+            .list(stateset_core::WishlistFilter {
+                customer_id,
+                is_public: filter.is_public,
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list wishlists: {}", e)))?;
+        Ok(wishlists.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .wishlists()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete wishlist: {}", e)))?;
+        Ok(())
+    }
+
+    /// Add a product to a wishlist, returning the added item.
+    #[napi]
+    pub async fn add_item(
+        &self,
+        wishlist_id: String,
+        item: AddWishlistItemInput,
+    ) -> Result<WishlistItemOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            wishlist_id.parse().map_err(|_| Error::from_reason("Invalid wishlist UUID"))?;
+        let product_id: uuid::Uuid =
+            item.product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+        let added = commerce
+            .wishlists()
+            .add_item(
+                uuid.into(),
+                stateset_core::AddWishlistItem {
+                    product_id: product_id.into(),
+                    variant_id: item.variant_id,
+                    note: item.note,
+                    quantity: item.quantity,
+                    priority: item.priority,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to add wishlist item: {}", e)))?;
+        Ok(added.into())
+    }
+
+    #[napi]
+    pub async fn remove_item(&self, wishlist_id: String, product_id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            wishlist_id.parse().map_err(|_| Error::from_reason("Invalid wishlist UUID"))?;
+        let product_uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+        commerce
+            .wishlists()
+            .remove_item(uuid.into(), product_uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to remove wishlist item: {}", e)))?;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Customer segments
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SegmentRuleInput {
+    pub field: String,
+    /// One of: eq, neq, gt, gte, lt, lte, contains, in, between, starts_with,
+    /// ends_with
+    pub operator: String,
+    pub value: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SegmentRuleOutput {
+    pub field: String,
+    pub operator: String,
+    pub value: String,
+}
+
+impl From<stateset_core::SegmentRule> for SegmentRuleOutput {
+    fn from(r: stateset_core::SegmentRule) -> Self {
+        Self { field: r.field, operator: format!("{}", r.operator), value: r.value }
+    }
+}
+
+fn parse_segment_rules(rules: Vec<SegmentRuleInput>) -> Result<Vec<stateset_core::SegmentRule>> {
+    rules
+        .into_iter()
+        .map(|r| {
+            Ok(stateset_core::SegmentRule {
+                field: r.field,
+                operator: r.operator.parse::<stateset_core::SegmentOperator>().map_err(|_| {
+                    Error::from_reason(format!("Invalid segment operator '{}'", r.operator))
+                })?,
+                value: r.value,
+            })
+        })
+        .collect()
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateSegmentInput {
+    pub name: String,
+    pub description: Option<String>,
+    /// "static" (default) or "dynamic"
+    pub segment_type: Option<String>,
+    pub rules: Option<Vec<SegmentRuleInput>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateSegmentInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub rules: Option<Vec<SegmentRuleInput>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct SegmentFilterInput {
+    pub segment_type: Option<String>,
+    pub name: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SegmentOutput {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub segment_type: String,
+    pub rules: Vec<SegmentRuleOutput>,
+    pub member_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Segment> for SegmentOutput {
+    fn from(s: stateset_core::Segment) -> Self {
+        Self {
+            id: s.id.to_string(),
+            name: s.name,
+            description: s.description,
+            segment_type: format!("{}", s.segment_type),
+            rules: s.rules.into_iter().map(Into::into).collect(),
+            member_count: s.member_count as i64,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SegmentMembershipOutput {
+    pub segment_id: String,
+    pub customer_id: String,
+    pub joined_at: String,
+}
+
+impl From<stateset_core::SegmentMembership> for SegmentMembershipOutput {
+    fn from(m: stateset_core::SegmentMembership) -> Self {
+        Self {
+            segment_id: m.segment_id.to_string(),
+            customer_id: m.customer_id.to_string(),
+            joined_at: m.joined_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct Segments {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Segments {
+    /// Whether the segments backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.segments().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateSegmentInput) -> Result<SegmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let segment_type = match input.segment_type.as_deref() {
+            Some(s) => s
+                .parse::<stateset_core::SegmentType>()
+                .map_err(|_| Error::from_reason("Invalid segment_type (use static or dynamic)"))?,
+            None => stateset_core::SegmentType::default(),
+        };
+        let rules = parse_segment_rules(input.rules.unwrap_or_default())?;
+        let segment = commerce
+            .segments()
+            .create(stateset_core::CreateSegment {
+                name: input.name,
+                description: input.description,
+                segment_type,
+                rules,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create segment: {}", e)))?;
+        Ok(segment.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<SegmentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let segment = commerce
+            .segments()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get segment: {}", e)))?;
+        Ok(segment.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateSegmentInput) -> Result<SegmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let rules = match input.rules {
+            Some(r) => Some(parse_segment_rules(r)?),
+            None => None,
+        };
+        let segment = commerce
+            .segments()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateSegment {
+                    name: input.name,
+                    description: input.description.map(Some),
+                    rules,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update segment: {}", e)))?;
+        Ok(segment.into())
+    }
+
+    #[napi]
+    pub async fn list(&self, filter: Option<SegmentFilterInput>) -> Result<Vec<SegmentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or_default();
+        let segment_type = match filter.segment_type.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::SegmentType>()
+                    .map_err(|_| Error::from_reason("Invalid segment_type"))?,
+            ),
+            None => None,
+        };
+        let segments = commerce
+            .segments()
+            .list(stateset_core::SegmentFilter {
+                segment_type,
+                name: filter.name,
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list segments: {}", e)))?;
+        Ok(segments.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .segments()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete segment: {}", e)))?;
+        Ok(())
+    }
+
+    /// Add a customer to a (static) segment, returning the membership record.
+    #[napi]
+    pub async fn add_member(
+        &self,
+        segment_id: String,
+        customer_id: String,
+    ) -> Result<SegmentMembershipOutput> {
+        let commerce = self.commerce.lock().await;
+        let seg: uuid::Uuid =
+            segment_id.parse().map_err(|_| Error::from_reason("Invalid segment UUID"))?;
+        let cust: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let membership = commerce
+            .segments()
+            .add_member(seg.into(), cust.into())
+            .map_err(|e| Error::from_reason(format!("Failed to add segment member: {}", e)))?;
+        Ok(membership.into())
+    }
+
+    #[napi]
+    pub async fn remove_member(&self, segment_id: String, customer_id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let seg: uuid::Uuid =
+            segment_id.parse().map_err(|_| Error::from_reason("Invalid segment UUID"))?;
+        let cust: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        commerce
+            .segments()
+            .remove_member(seg.into(), cust.into())
+            .map_err(|e| Error::from_reason(format!("Failed to remove segment member: {}", e)))?;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn list_members(
+        &self,
+        segment_id: String,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<SegmentMembershipOutput>> {
+        let commerce = self.commerce.lock().await;
+        let seg: uuid::Uuid =
+            segment_id.parse().map_err(|_| Error::from_reason("Invalid segment UUID"))?;
+        let members = commerce
+            .segments()
+            .list_members(seg.into(), limit, offset)
+            .map_err(|e| Error::from_reason(format!("Failed to list segment members: {}", e)))?;
+        Ok(members.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn is_member(&self, segment_id: String, customer_id: String) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        let seg: uuid::Uuid =
+            segment_id.parse().map_err(|_| Error::from_reason("Invalid segment UUID"))?;
+        let cust: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        commerce
+            .segments()
+            .is_member(seg.into(), cust.into())
+            .map_err(|e| Error::from_reason(format!("Failed to check segment membership: {}", e)))
+    }
+}
+
+// ============================================================================
+// Loyalty  (points are integers; reward `value` is an exact decimal string)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LoyaltyTierInput {
+    pub name: String,
+    pub min_points: i64,
+    pub multiplier: f64,
+    pub perks: Vec<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LoyaltyTierOutput {
+    pub name: String,
+    pub min_points: i64,
+    pub multiplier: f64,
+    pub perks: Vec<String>,
+}
+
+impl From<stateset_core::LoyaltyTier> for LoyaltyTierOutput {
+    fn from(t: stateset_core::LoyaltyTier) -> Self {
+        Self {
+            name: t.name,
+            min_points: t.min_points as i64,
+            multiplier: t.multiplier,
+            perks: t.perks,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateLoyaltyProgramInput {
+    pub name: String,
+    pub description: Option<String>,
+    pub points_per_dollar: u32,
+    pub tiers: Option<Vec<LoyaltyTierInput>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LoyaltyProgramOutput {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub points_per_dollar: u32,
+    pub tiers: Vec<LoyaltyTierOutput>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::LoyaltyProgram> for LoyaltyProgramOutput {
+    fn from(p: stateset_core::LoyaltyProgram) -> Self {
+        Self {
+            id: p.id.to_string(),
+            name: p.name,
+            description: p.description,
+            points_per_dollar: p.points_per_dollar,
+            tiers: p.tiers.into_iter().map(Into::into).collect(),
+            status: format!("{}", p.status),
+            created_at: p.created_at.to_rfc3339(),
+            updated_at: p.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct EnrollCustomerInput {
+    pub customer_id: String,
+    pub program_id: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LoyaltyAccountOutput {
+    pub id: String,
+    pub customer_id: String,
+    pub program_id: String,
+    pub points_balance: i64,
+    pub lifetime_points: i64,
+    pub tier: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::LoyaltyAccount> for LoyaltyAccountOutput {
+    fn from(a: stateset_core::LoyaltyAccount) -> Self {
+        Self {
+            id: a.id.to_string(),
+            customer_id: a.customer_id.to_string(),
+            program_id: a.program_id.to_string(),
+            points_balance: a.points_balance,
+            lifetime_points: a.lifetime_points as i64,
+            tier: a.tier,
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AdjustPointsInput {
+    pub account_id: String,
+    pub points: i64,
+    /// Transaction type, e.g. "earn", "redeem", "adjust", "expire"
+    pub transaction_type: String,
+    pub reference_id: Option<String>,
+    pub description: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LoyaltyTransactionOutput {
+    pub id: String,
+    pub account_id: String,
+    pub points: i64,
+    pub transaction_type: String,
+    pub reference_id: Option<String>,
+    pub description: Option<String>,
+    pub created_at: String,
+}
+
+impl From<stateset_core::LoyaltyTransaction> for LoyaltyTransactionOutput {
+    fn from(t: stateset_core::LoyaltyTransaction) -> Self {
+        Self {
+            id: t.id.to_string(),
+            account_id: t.account_id.to_string(),
+            points: t.points,
+            transaction_type: format!("{}", t.transaction_type),
+            reference_id: t.reference_id,
+            description: t.description,
+            created_at: t.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateRewardInput {
+    pub program_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub points_cost: i64,
+    /// Reward type, e.g. "discount", "free_product", "free_shipping"
+    pub reward_type: String,
+    /// Monetary value as an exact decimal string (optional)
+    pub value: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RewardOutput {
+    pub id: String,
+    pub program_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub points_cost: i64,
+    pub reward_type: String,
+    pub value: Option<String>,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Reward> for RewardOutput {
+    fn from(r: stateset_core::Reward) -> Self {
+        Self {
+            id: r.id.to_string(),
+            program_id: r.program_id.to_string(),
+            name: r.name,
+            description: r.description,
+            points_cost: r.points_cost as i64,
+            reward_type: format!("{}", r.reward_type),
+            value: r.value.map(|v| v.to_string()),
+            is_active: r.is_active,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LoyaltyAccountFilterInput {
+    pub customer_id: Option<String>,
+    pub program_id: Option<String>,
+    pub tier: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RewardFilterInput {
+    pub program_id: Option<String>,
+    pub reward_type: Option<String>,
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi]
+pub struct Loyalty {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Loyalty {
+    /// Whether the loyalty backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.loyalty().is_supported())
+    }
+
+    #[napi]
+    pub async fn create_program(
+        &self,
+        input: CreateLoyaltyProgramInput,
+    ) -> Result<LoyaltyProgramOutput> {
+        let commerce = self.commerce.lock().await;
+        let tiers = input
+            .tiers
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| stateset_core::LoyaltyTier {
+                name: t.name,
+                min_points: t.min_points.max(0) as u64,
+                multiplier: t.multiplier,
+                perks: t.perks,
+            })
+            .collect();
+        let program = commerce
+            .loyalty()
+            .create_program(stateset_core::CreateLoyaltyProgram {
+                name: input.name,
+                description: input.description,
+                points_per_dollar: input.points_per_dollar,
+                tiers,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create loyalty program: {}", e)))?;
+        Ok(program.into())
+    }
+
+    #[napi]
+    pub async fn get_program(&self, id: String) -> Result<Option<LoyaltyProgramOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let program = commerce
+            .loyalty()
+            .get_program(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get loyalty program: {}", e)))?;
+        Ok(program.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list_programs(&self) -> Result<Vec<LoyaltyProgramOutput>> {
+        let commerce = self.commerce.lock().await;
+        let programs = commerce
+            .loyalty()
+            .list_programs()
+            .map_err(|e| Error::from_reason(format!("Failed to list loyalty programs: {}", e)))?;
+        Ok(programs.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn enroll(&self, input: EnrollCustomerInput) -> Result<LoyaltyAccountOutput> {
+        let commerce = self.commerce.lock().await;
+        let customer_id: uuid::Uuid =
+            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let program_id: uuid::Uuid =
+            input.program_id.parse().map_err(|_| Error::from_reason("Invalid program UUID"))?;
+        let account = commerce
+            .loyalty()
+            .enroll(stateset_core::EnrollCustomer {
+                customer_id: customer_id.into(),
+                program_id: program_id.into(),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to enroll customer: {}", e)))?;
+        Ok(account.into())
+    }
+
+    #[napi]
+    pub async fn get_account(&self, id: String) -> Result<Option<LoyaltyAccountOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let account = commerce
+            .loyalty()
+            .get_account(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get loyalty account: {}", e)))?;
+        Ok(account.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn get_account_by_customer(
+        &self,
+        customer_id: String,
+        program_id: String,
+    ) -> Result<Option<LoyaltyAccountOutput>> {
+        let commerce = self.commerce.lock().await;
+        let customer_id: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let program_id: uuid::Uuid =
+            program_id.parse().map_err(|_| Error::from_reason("Invalid program UUID"))?;
+        let account = commerce
+            .loyalty()
+            .get_account_by_customer(customer_id.into(), program_id.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get loyalty account: {}", e)))?;
+        Ok(account.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list_accounts(
+        &self,
+        filter: Option<LoyaltyAccountFilterInput>,
+    ) -> Result<Vec<LoyaltyAccountOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or(LoyaltyAccountFilterInput {
+            customer_id: None,
+            program_id: None,
+            tier: None,
+            limit: None,
+            offset: None,
+        });
+        let customer_id = match filter.customer_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| Error::from_reason("Invalid customer UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let program_id = match filter.program_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| Error::from_reason("Invalid program UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let accounts = commerce
+            .loyalty()
+            .list_accounts(stateset_core::LoyaltyAccountFilter {
+                customer_id,
+                program_id,
+                tier: filter.tier,
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list loyalty accounts: {}", e)))?;
+        Ok(accounts.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn adjust_points(
+        &self,
+        input: AdjustPointsInput,
+    ) -> Result<LoyaltyTransactionOutput> {
+        let commerce = self.commerce.lock().await;
+        let account_id: uuid::Uuid =
+            input.account_id.parse().map_err(|_| Error::from_reason("Invalid account UUID"))?;
+        let transaction_type = input
+            .transaction_type
+            .parse::<stateset_core::LoyaltyTransactionType>()
+            .map_err(|_| Error::from_reason("Invalid transaction_type"))?;
+        let txn = commerce
+            .loyalty()
+            .adjust_points(stateset_core::AdjustPoints {
+                account_id: account_id.into(),
+                points: input.points,
+                transaction_type,
+                reference_id: input.reference_id,
+                description: input.description,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to adjust points: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    #[napi]
+    pub async fn get_transactions(
+        &self,
+        account_id: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<LoyaltyTransactionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            account_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let txns = commerce
+            .loyalty()
+            .get_transactions(uuid.into(), limit)
+            .map_err(|e| Error::from_reason(format!("Failed to get transactions: {}", e)))?;
+        Ok(txns.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn create_reward(&self, input: CreateRewardInput) -> Result<RewardOutput> {
+        let commerce = self.commerce.lock().await;
+        let program_id: uuid::Uuid =
+            input.program_id.parse().map_err(|_| Error::from_reason("Invalid program UUID"))?;
+        let reward_type = input
+            .reward_type
+            .parse::<stateset_core::RewardType>()
+            .map_err(|_| Error::from_reason("Invalid reward_type"))?;
+        let value = match input.value.as_deref() {
+            Some(s) => Some(
+                s.parse::<Decimal>().map_err(|_| Error::from_reason("Invalid value decimal"))?,
+            ),
+            None => None,
+        };
+        let reward = commerce
+            .loyalty()
+            .create_reward(stateset_core::CreateReward {
+                program_id: program_id.into(),
+                name: input.name,
+                description: input.description,
+                points_cost: input.points_cost.max(0) as u64,
+                reward_type,
+                value,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create reward: {}", e)))?;
+        Ok(reward.into())
+    }
+
+    #[napi]
+    pub async fn get_reward(&self, id: String) -> Result<Option<RewardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let reward = commerce
+            .loyalty()
+            .get_reward(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get reward: {}", e)))?;
+        Ok(reward.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list_rewards(
+        &self,
+        filter: Option<RewardFilterInput>,
+    ) -> Result<Vec<RewardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or(RewardFilterInput {
+            program_id: None,
+            reward_type: None,
+            is_active: None,
+            limit: None,
+            offset: None,
+        });
+        let program_id = match filter.program_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| Error::from_reason("Invalid program UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let reward_type = match filter.reward_type.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::RewardType>()
+                    .map_err(|_| Error::from_reason("Invalid reward_type"))?,
+            ),
+            None => None,
+        };
+        let rewards = commerce
+            .loyalty()
+            .list_rewards(stateset_core::RewardFilter {
+                program_id,
+                reward_type,
+                is_active: filter.is_active,
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list rewards: {}", e)))?;
+        Ok(rewards.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete_reward(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .loyalty()
+            .delete_reward(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete reward: {}", e)))?;
+        Ok(())
+    }
 }

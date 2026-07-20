@@ -4,7 +4,7 @@ use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime, parse_datetime_opt,
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
     parse_decimal_strict, parse_enum, parse_enum_row, parse_uuid, parse_uuid_opt,
-    parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    parse_uuid_opt_row, parse_uuid_row, uuid_params, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -598,31 +598,39 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         }
 
         let now = Utc::now();
+        let id_str = id.to_string();
 
-        // Do the update in a scoped block
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let existing: (String, String, Option<String>) = conn
+        // Read the current `quantity_completed`, accumulate, and write it back
+        // inside ONE `IMMEDIATE` transaction. IMMEDIATE takes the write lock up
+        // front, so two concurrent `complete` calls serialize instead of both
+        // reading the same starting quantity and one overwriting the other (a
+        // lost update that would under-count completed units).
+        with_immediate_transaction(&self.pool, |tx| {
+            let existing: (String, String, Option<String>) = tx
                 .query_row(
                     "SELECT quantity_completed, quantity_to_build, actual_end FROM manufacturing_work_orders WHERE id = ?",
-                    [id.to_string()],
+                    [&id_str],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
-                    _ => CommerceError::DatabaseError(e.to_string()),
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
+                    }
+                    other => other,
                 })?;
 
             let existing_completed =
-                parse_decimal_strict(&existing.0, "work_order", "quantity_completed")?;
+                parse_decimal_strict(&existing.0, "work_order", "quantity_completed")
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             let quantity_to_build =
-                parse_decimal_strict(&existing.1, "work_order", "quantity_to_build")?;
+                parse_decimal_strict(&existing.1, "work_order", "quantity_to_build")
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             let new_quantity_completed = existing_completed + quantity_completed;
             let is_complete = new_quantity_completed >= quantity_to_build;
             let new_status = if is_complete { "completed" } else { "partially_completed" };
             let new_actual_end = if is_complete { Some(now.to_rfc3339()) } else { existing.2 };
 
-            conn.execute(
+            tx.execute(
                 "UPDATE manufacturing_work_orders
                  SET quantity_completed = ?, status = ?, actual_end = ?, updated_at = ?
                  WHERE id = ?",
@@ -631,11 +639,11 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                     new_status,
                     new_actual_end,
                     now.to_rfc3339(),
-                    id.to_string()
+                    id_str,
                 ],
-            )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        } // Connection released here
+            )?;
+            Ok(())
+        })?;
 
         // Fetch and return the updated work order
         self.get(id)?.ok_or(CommerceError::NotFound)
@@ -1528,5 +1536,57 @@ mod tests {
         let stranger = Uuid::new_v4();
         let fetched = repo.get_batch(vec![w1.id, w2.id, stranger]).expect("ok");
         assert_eq!(fetched.len(), 2);
+    }
+
+    #[test]
+    fn concurrent_completions_are_not_lost() {
+        // Ten completions of one unit each land simultaneously on a work order.
+        // `complete` is a read-modify-write of `quantity_completed`; without
+        // serialization the reads race and completions are silently overwritten
+        // (lost updates). Every committed completion must be counted.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let wo = db
+            .work_orders()
+            .create(CreateWorkOrder {
+                product_id: ProductId::new(),
+                quantity_to_build: dec!(1000),
+                ..Default::default()
+            })
+            .expect("create wo");
+
+        let thread_count = 10usize;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let id = wo.id;
+            handles.push(thread::spawn(move || {
+                let repo = db.work_orders();
+                barrier.wait();
+                repo.complete(id, dec!(1))
+            }));
+        }
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        // A failure is acceptable only if it is a transient lock (the caller
+        // retries); a lost update is never acceptable.
+        assert!(
+            results
+                .iter()
+                .all(|r| r.is_ok() || format!("{:?}", r.as_ref().unwrap_err()).contains("locked")),
+            "unexpected non-lock failure: {results:?}"
+        );
+
+        let fetched = db.work_orders().get(wo.id).expect("get").expect("found");
+        // Each completion adds exactly one unit; with the read+write serialized
+        // every one lands, so the total equals the thread count (no lost updates).
+        assert_eq!(
+            fetched.quantity_completed,
+            Decimal::from(thread_count as u64),
+            "completions were lost to a race: {results:?}"
+        );
     }
 }

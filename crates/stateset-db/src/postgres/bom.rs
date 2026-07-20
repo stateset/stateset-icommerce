@@ -233,37 +233,42 @@ impl PgBomRepository {
         let limit = filter.limit.unwrap_or(100) as i64;
         let offset = filter.offset.unwrap_or(0) as i64;
 
-        // Build query based on filter
-        let rows = if let Some(product_id) = filter.product_id {
-            sqlx::query_as::<_, BomRow>(
-                "SELECT * FROM manufacturing_boms WHERE product_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-            )
-            .bind(product_id)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?
-        } else if let Some(status) = filter.status {
-            sqlx::query_as::<_, BomRow>(
-                "SELECT * FROM manufacturing_boms WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-            )
-            .bind(status.to_string())
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?
-        } else {
-            sqlx::query_as::<_, BomRow>(
-                "SELECT * FROM manufacturing_boms ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-            )
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?
-        };
+        // Build the WHERE clause cumulatively so product_id/status/search compose
+        // (matching SQLite). The previous if/else-if dropped `status` when
+        // `product_id` was also set and ignored `search` entirely.
+        let mut query = String::from("SELECT * FROM manufacturing_boms WHERE 1=1");
+        let mut param_idx = 1;
+        if filter.product_id.is_some() {
+            query.push_str(&format!(" AND product_id = ${param_idx}"));
+            param_idx += 1;
+        }
+        if filter.status.is_some() {
+            query.push_str(&format!(" AND status = ${param_idx}"));
+            param_idx += 1;
+        }
+        if filter.search.is_some() {
+            query.push_str(&format!(
+                " AND (name ILIKE ${param_idx} OR bom_number ILIKE ${param_idx})"
+            ));
+            param_idx += 1;
+        }
+        query.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            param_idx,
+            param_idx + 1
+        ));
+
+        let mut q = sqlx::query_as::<_, BomRow>(&query);
+        if let Some(product_id) = filter.product_id {
+            q = q.bind(product_id);
+        }
+        if let Some(status) = filter.status {
+            q = q.bind(status.to_string());
+        }
+        if let Some(search) = filter.search {
+            q = q.bind(format!("%{search}%"));
+        }
+        let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         let mut boms = Vec::new();
         for row in rows {
@@ -390,24 +395,34 @@ impl PgBomRepository {
 
     /// Count BOMs (async)
     pub async fn count_async(&self, filter: BomFilter) -> Result<u64> {
-        let count: (i64,) = if let Some(product_id) = filter.product_id {
-            sqlx::query_as("SELECT COUNT(*) FROM manufacturing_boms WHERE product_id = $1")
-                .bind(product_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?
-        } else if let Some(status) = filter.status {
-            sqlx::query_as("SELECT COUNT(*) FROM manufacturing_boms WHERE status = $1")
-                .bind(status.to_string())
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?
-        } else {
-            sqlx::query_as("SELECT COUNT(*) FROM manufacturing_boms")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?
-        };
+        // Mirror list_async's cumulative WHERE so the count matches the filtered list.
+        let mut query = String::from("SELECT COUNT(*) FROM manufacturing_boms WHERE 1=1");
+        let mut param_idx = 1;
+        if filter.product_id.is_some() {
+            query.push_str(&format!(" AND product_id = ${param_idx}"));
+            param_idx += 1;
+        }
+        if filter.status.is_some() {
+            query.push_str(&format!(" AND status = ${param_idx}"));
+            param_idx += 1;
+        }
+        if filter.search.is_some() {
+            query.push_str(&format!(
+                " AND (name ILIKE ${param_idx} OR bom_number ILIKE ${param_idx})"
+            ));
+        }
+
+        let mut q = sqlx::query_as::<_, (i64,)>(&query);
+        if let Some(product_id) = filter.product_id {
+            q = q.bind(product_id);
+        }
+        if let Some(status) = filter.status {
+            q = q.bind(status.to_string());
+        }
+        if let Some(search) = filter.search {
+            q = q.bind(format!("%{search}%"));
+        }
+        let count: (i64,) = q.fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }

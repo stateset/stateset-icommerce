@@ -448,6 +448,16 @@ impl PgSerialRepository {
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
+        // Only an existing, Available serial with no post-creation history may be
+        // deleted (matching the SQLite backend). Without these guards Postgres
+        // returned Ok(()) for a missing id and permanently deleted a sold serial.
+        let serial = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if serial.status != SerialStatus::Available {
+            return Err(CommerceError::ValidationError(
+                "Can only delete serials with 'available' status".to_string(),
+            ));
+        }
+
         let history_count: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM serial_history WHERE serial_id = $1 AND event_type != $2",
         )

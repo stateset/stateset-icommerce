@@ -16,6 +16,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// SQL expression producing an ISO-8601 week label (`IYYY-"W"IW`, e.g.
+/// `2022-W52`) for the `created_at` column, matching Postgres's
+/// `to_char(created_at, 'IYYY-"W"IW')`. The ISO year and week are those of the
+/// week's Thursday: `-3 days` then the next `weekday 4` yields that Thursday,
+/// and the ISO week number is `(day_of_year_of_thursday - 1) / 7 + 1`.
+const ISO_WEEK_EXPR: &str = "strftime('%Y', created_at, '-3 days', 'weekday 4') || '-W' || \
+     substr('0' || ((strftime('%j', created_at, '-3 days', 'weekday 4') - 1) / 7 + 1), -2, 2)";
+
 #[derive(Debug)]
 pub struct SqliteAnalyticsRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -226,7 +234,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let period_expr = match granularity {
             TimeGranularity::Hour => "strftime('%Y-%m-%d %H:00', created_at)".to_string(),
             TimeGranularity::Day => "strftime('%Y-%m-%d', created_at)".to_string(),
-            TimeGranularity::Week => "strftime('%Y-W%W', created_at)".to_string(),
+            TimeGranularity::Week => ISO_WEEK_EXPR.to_string(),
             TimeGranularity::Month => "strftime('%Y-%m', created_at)".to_string(),
             TimeGranularity::Quarter => {
                 // SQLite doesn't have a built-in quarter function. Derive it from the month:
@@ -292,9 +300,9 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             .prepare(
                 r"
                 SELECT
-                    oi.product_id,
+                    MAX(oi.product_id) as product_id,
                     oi.sku,
-                    oi.name,
+                    MAX(oi.name) as name,
                     SUM(oi.quantity) as units_sold,
                     decimal_sum(oi.total) as revenue,
                     COUNT(DISTINCT oi.order_id) as order_count,
@@ -840,7 +848,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 r"
                 SELECT
                     ri.sku,
-                    ri.name,
+                    MAX(ri.name) as name,
                     SUM(ri.quantity) as units_returned,
                     COALESCE(
                         (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.sku = ri.sku),
@@ -1004,33 +1012,41 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         };
 
         let start = (Utc::now() - Duration::days(days_back)).to_rfc3339();
-        let date_format = match granularity {
-            TimeGranularity::Day => "%Y-%m-%d",
-            TimeGranularity::Week => "%Y-W%W",
-            TimeGranularity::Month => "%Y-%m",
-            _ => "%Y-%m",
+        let group_expr = match granularity {
+            TimeGranularity::Day => "strftime('%Y-%m-%d', created_at)".to_string(),
+            TimeGranularity::Week => ISO_WEEK_EXPR.to_string(),
+            TimeGranularity::Month => "strftime('%Y-%m', created_at)".to_string(),
+            _ => "strftime('%Y-%m', created_at)".to_string(),
         };
 
-        // Get average revenue per period
-        let avg_revenue: f64 = conn
+        // Average revenue per period, computed with exact `Decimal` arithmetic.
+        // Money is stored as TEXT, so SQL `SUM`/`AVG` would coerce it to f64 and
+        // drift (e.g. 0.10 + 0.20 -> 0.30000000000000004); the `decimal_sum`
+        // aggregate sums the TEXT money exactly, and we divide by the period count
+        // in Rust — matching the Postgres backend's exact NUMERIC average.
+        let (total_str, period_count): (String, i64) = conn
             .query_row(
                 &format!(
                     r"
-                    SELECT AVG(period_revenue) FROM (
-                        SELECT SUM(total_amount) as period_revenue
+                    SELECT decimal_sum(period_revenue), COUNT(*) FROM (
+                        SELECT decimal_sum(total_amount) as period_revenue
                         FROM orders
                         WHERE created_at >= ?1
                           AND status NOT IN ('cancelled', 'refunded')
-                        GROUP BY strftime('{date_format}', created_at)
+                        GROUP BY {group_expr}
                     )
                     "
                 ),
                 [&start],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .unwrap_or(0.0);
+            .unwrap_or_else(|_| ("0".to_string(), 0));
 
-        let avg_revenue_dec = Decimal::from_f64_retain(avg_revenue).unwrap_or(Decimal::ZERO);
+        let avg_revenue_dec = if period_count > 0 {
+            parse_decimal_value(&total_str, "period_revenue")? / Decimal::from(period_count)
+        } else {
+            Decimal::ZERO
+        };
 
         // Generate forecast periods
         let mut results = Vec::new();
@@ -1077,6 +1093,27 @@ mod tests {
 
     fn last_30_days() -> AnalyticsQuery {
         AnalyticsQuery::new().period(TimePeriod::Last30Days)
+    }
+
+    #[test]
+    fn iso_week_expr_matches_postgres_iso_labels() {
+        // The production `ISO_WEEK_EXPR` references the `created_at` column; wrap
+        // the bound date in a subquery aliasing it so the EXACT expression used by
+        // get_revenue_by_period is exercised. Expected labels are the ISO-8601
+        // week (matching Postgres `to_char(..., 'IYYY-"W"IW')`) for year-boundary
+        // dates, where the old `%W` calendar-week label diverged.
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let conn = db.pool().get().expect("conn");
+        let sql = format!("SELECT {ISO_WEEK_EXPR} FROM (SELECT ?1 AS created_at)");
+        for (date, expected) in [
+            ("2023-01-01", "2022-W52"), // Sunday → ISO week 52 of 2022
+            ("2023-01-02", "2023-W01"), // Monday → ISO week 1 of 2023
+            ("2023-12-31", "2023-W52"), // Sunday → ISO week 52 of 2023
+            ("2024-12-30", "2025-W01"), // Monday → ISO week 1 of 2025
+        ] {
+            let got: String = conn.query_row(&sql, [date], |row| row.get(0)).expect("query");
+            assert_eq!(got, expected, "ISO week label for {date}");
+        }
     }
 
     #[test]

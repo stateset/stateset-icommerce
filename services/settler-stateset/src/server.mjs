@@ -21,6 +21,7 @@
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { canonicalJson, signEd25519, publicKeyToRaw, newId } from '../../../icp-handler/src/codec.mjs';
 import * as state from './state.mjs';
@@ -30,14 +31,32 @@ const SETTLER_ID = process.env.SETTLER_ID ?? 'settler:stateset.usdc.base-sepolia
 const MODE = process.env.SETTLER_CHAIN_RPC ? 'chain' : 'mock';
 
 // ---------------------------------------------------------------------------
-// Settler identity. Production reads from a KMS-backed key. The demo
-// generates a fresh Ed25519 key per process and exposes the public part
-// in the discovery doc.
+// Settler identity. Production reads from a KMS-backed key. Set
+// SETTLER_KEY_FILE to persist the Ed25519 keypair across restarts (PKCS8
+// PEM, created with mode 0600 if absent) — a settler whose signing identity
+// changes every restart breaks every observer verifying its EscrowEvents.
+// Without the env var the key is ephemeral (demo behavior). The kid is
+// derived from the public key, so it is stable for a given key either way.
 // ---------------------------------------------------------------------------
 
-const settlerKp = generateKeyPairSync('ed25519');
+function loadOrCreateSettlerKey() {
+  const keyFile = process.env.SETTLER_KEY_FILE ?? null;
+  if (keyFile && existsSync(keyFile)) {
+    const privateKey = createPrivateKey(readFileSync(keyFile, 'utf8'));
+    return { privateKey, publicKey: createPublicKey(privateKey) };
+  }
+  const kp = generateKeyPairSync('ed25519');
+  if (keyFile) {
+    writeFileSync(keyFile, kp.privateKey.export({ type: 'pkcs8', format: 'pem' }), {
+      mode: 0o600,
+    });
+  }
+  return kp;
+}
+
+const settlerKp = loadOrCreateSettlerKey();
 const settlerPubRaw = publicKeyToRaw(settlerKp.publicKey);
-const settlerKid = `settler-stateset-${process.pid}`;
+const settlerKid = `settler-stateset-${settlerPubRaw.toString('hex').slice(0, 12)}`;
 
 // ---------------------------------------------------------------------------
 // Discovery document (per SETTLERS.md §S.1)
@@ -364,6 +383,18 @@ function err(code, message) { return { type: 'icp.error', code, message }; }
 export async function stop() {
   server.close();
   await once(server, 'close');
+}
+
+// Graceful shutdown: flush state and stop accepting connections. The
+// unref'd hard-exit fallback covers long-lived SSE observers that would
+// otherwise keep close() from ever completing.
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    process.stderr.write(`settler-stateset: ${signal} received, shutting down\n`);
+    state.persist();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  });
 }
 
 export { server, settlerKp, settlerKid, settlerPubRaw, SETTLER_ID, MODE };

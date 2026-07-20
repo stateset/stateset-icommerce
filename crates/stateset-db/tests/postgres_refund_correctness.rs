@@ -166,3 +166,82 @@ async fn postgres_concurrent_refunds_do_not_over_refund() {
         "aggregate reserved refunds must equal the payment amount, never exceed it"
     );
 }
+
+/// Completing the same refund twice (e.g. a duplicated payment-processor webhook)
+/// must be idempotent: the amount folds into `amount_refunded` exactly once.
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_complete_refund_is_idempotent() {
+    let url = match postgres_url() {
+        Some(url) => url,
+        None => {
+            eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+            return;
+        }
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let payment = completed_payment(&db, dec!(100.00)).await;
+
+    let refund = db
+        .payments()
+        .create_refund_async(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(50.00)),
+            ..Default::default()
+        })
+        .await
+        .expect("create refund");
+
+    db.payments().complete_refund_async(refund.id).await.expect("first completion");
+    let once =
+        db.payments().get_async(payment.id.into_uuid()).await.expect("get").expect("present");
+    assert_eq!(once.amount_refunded, dec!(50.00));
+    assert_eq!(once.status, stateset_core::PaymentTransactionStatus::PartiallyRefunded);
+
+    db.payments().complete_refund_async(refund.id).await.expect("second completion is idempotent");
+    let twice =
+        db.payments().get_async(payment.id.into_uuid()).await.expect("get").expect("present");
+    assert_eq!(
+        twice.amount_refunded,
+        dec!(50.00),
+        "duplicate complete_refund must NOT double-count into amount_refunded"
+    );
+    assert_eq!(twice.status, stateset_core::PaymentTransactionStatus::PartiallyRefunded);
+}
+
+/// A failed (terminal) refund cannot be completed and must not fold its amount.
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_complete_refund_rejects_failed_refund() {
+    let url = match postgres_url() {
+        Some(url) => url,
+        None => {
+            eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+            return;
+        }
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let payment = completed_payment(&db, dec!(100.00)).await;
+
+    let refund = db
+        .payments()
+        .create_refund_async(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(40.00)),
+            ..Default::default()
+        })
+        .await
+        .expect("create refund");
+    db.payments().fail_refund_async(refund.id, "processor declined").await.expect("fail refund");
+
+    let err = db
+        .payments()
+        .complete_refund_async(refund.id)
+        .await
+        .expect_err("a failed refund cannot be completed");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+    let reloaded =
+        db.payments().get_async(payment.id.into_uuid()).await.expect("get").expect("present");
+    assert_eq!(reloaded.amount_refunded, dec!(0.00));
+}

@@ -1,0 +1,37 @@
+{
+  "validations": {
+    "t01_valid": {
+      "valid": true
+    },
+    "t02_expired": {
+      "error": "replay.expired"
+    },
+    "t03_window_too_long": {
+      "error": "replay.window_too_long"
+    },
+    "t04_window_exactly_600": {
+      "valid": true
+    },
+    "t05_exp_equals_now": {
+      "valid": true
+    },
+    "t06_malformed_iat": {
+      "error": "replay.timestamp_malformed"
+    },
+    "t07_malformed_exp": {
+      "error": "replay.timestamp_malformed"
+    },
+    "t08_window_and_expired": {
+      "error": "replay.window_too_long"
+    },
+    "t09_cross_day": {
+      "valid": true
+    },
+    "t10_exp_one_sec_ahead": {
+      "valid": true
+    }
+  },
+  "_provenance": {
+    "note": "Generated from ICP-1.0 \u00a75.3 replay rules and schemas/error-codes.md. Checks (precedence): replay.timestamp_malformed, replay.window_too_long (exp-iat > 600s), replay.expired (exp < now). Each case supplies a reference clock `now`. Timestamps are strict YYYY-MM-DDTHH:MM:SSZ; epoch via days_from_civil (no leap seconds, positive years). replay.iat_in_future is deferred: \u00a75.3 leaves the allowed clock skew unspecified (spec-clarification item)."
+  }
+}

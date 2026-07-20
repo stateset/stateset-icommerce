@@ -1,0 +1,129 @@
+{
+  "transitions": {
+    "t01": {
+      "state": "funded"
+    },
+    "t02": {
+      "error": "escrow.wrong_state"
+    },
+    "t03": {
+      "error": "escrow.wrong_state"
+    },
+    "t04": {
+      "error": "escrow.wrong_state"
+    },
+    "t05": {
+      "error": "escrow.wrong_state"
+    },
+    "t06": {
+      "error": "escrow.wrong_state"
+    },
+    "t07": {
+      "error": "escrow.already_funded"
+    },
+    "t08": {
+      "state": "released"
+    },
+    "t09": {
+      "state": "disputed"
+    },
+    "t10": {
+      "error": "escrow.wrong_state"
+    },
+    "t11": {
+      "error": "escrow.wrong_state"
+    },
+    "t12": {
+      "state": "refunded"
+    },
+    "t13": {
+      "error": "escrow.wrong_state"
+    },
+    "t14": {
+      "error": "escrow.wrong_state"
+    },
+    "t15": {
+      "error": "escrow.wrong_state"
+    },
+    "t16": {
+      "state": "released"
+    },
+    "t17": {
+      "state": "refunded"
+    },
+    "t18": {
+      "error": "escrow.wrong_state"
+    },
+    "t19": {
+      "error": "escrow.wrong_state"
+    },
+    "t20": {
+      "error": "escrow.wrong_state"
+    },
+    "t21": {
+      "error": "escrow.wrong_state"
+    },
+    "t22": {
+      "error": "escrow.wrong_state"
+    },
+    "t23": {
+      "error": "escrow.wrong_state"
+    },
+    "t24": {
+      "error": "escrow.wrong_state"
+    },
+    "t25": {
+      "error": "escrow.wrong_state"
+    },
+    "t26": {
+      "error": "escrow.wrong_state"
+    },
+    "t27": {
+      "error": "escrow.wrong_state"
+    },
+    "t28": {
+      "error": "escrow.wrong_state"
+    },
+    "t29": {
+      "error": "escrow.wrong_state"
+    },
+    "t30": {
+      "error": "escrow.wrong_state"
+    }
+  },
+  "replays": {
+    "r01": {
+      "final_state": "pending"
+    },
+    "r02": {
+      "final_state": "released"
+    },
+    "r03": {
+      "final_state": "refunded"
+    },
+    "r04": {
+      "final_state": "released"
+    },
+    "r05": {
+      "final_state": "refunded"
+    },
+    "r06": {
+      "error": "escrow.seq_out_of_order"
+    },
+    "r07": {
+      "error": "escrow.seq_out_of_order"
+    },
+    "r08": {
+      "error": "escrow.seq_out_of_order"
+    },
+    "r09": {
+      "error": "escrow.wrong_state"
+    },
+    "r10": {
+      "error": "escrow.already_funded"
+    }
+  },
+  "_provenance": {
+    "note": "Expected outputs generated mechanically from the ICP-1.0-DRAFT \u00a78 transition table and \u00a78 replay requirements (strict monotonic seq from 0, initial state 'pending'). Error codes per schemas/error-codes.md: escrow.wrong_state, escrow.already_funded, escrow.seq_out_of_order."
+  }
+}

@@ -110,6 +110,8 @@ struct AutoPostingConfigRow {
     shipping_revenue_account_id: Option<Uuid>,
     cogs_account_id: Uuid,
     bad_debt_expense_account_id: Option<Uuid>,
+    auto_post_depreciation: bool,
+    auto_post_revenue_recognition: bool,
     is_active: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -318,6 +320,8 @@ impl PgGeneralLedgerRepository {
             shipping_revenue_account_id: row.shipping_revenue_account_id,
             cogs_account_id: row.cogs_account_id,
             bad_debt_expense_account_id: row.bad_debt_expense_account_id,
+            auto_post_depreciation: row.auto_post_depreciation,
+            auto_post_revenue_recognition: row.auto_post_revenue_recognition,
             is_active: row.is_active,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -625,7 +629,10 @@ impl PgGeneralLedgerRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
 
-        builder.push(" ORDER BY start_date DESC");
+        // Order by period identity (unique, deterministic), matching SQLite — not
+        // `start_date`, which can tie and disagrees when a lower-numbered period has
+        // a later start date.
+        builder.push(" ORDER BY fiscal_year DESC, period_number DESC");
 
         if let Some(limit) = filter.limit {
             builder.push(" LIMIT ").push_bind(limit as i64);
@@ -891,7 +898,9 @@ impl PgGeneralLedgerRepository {
                 .push(")");
         }
 
-        builder.push(" ORDER BY je.entry_date DESC");
+        // Deterministic tiebreak by entry number for same-date entries, matching
+        // SQLite.
+        builder.push(" ORDER BY je.entry_date DESC, je.entry_number DESC");
 
         if let Some(limit) = filter.limit {
             builder.push(" LIMIT ").push_bind(limit as i64);
@@ -1119,6 +1128,7 @@ impl PgGeneralLedgerRepository {
             "SELECT id, config_name, cash_account_id, accounts_receivable_account_id, inventory_account_id,
                     accounts_payable_account_id, unearned_revenue_account_id, sales_revenue_account_id,
                     shipping_revenue_account_id, cogs_account_id, bad_debt_expense_account_id,
+                    auto_post_depreciation, auto_post_revenue_recognition,
                     is_active, created_at, updated_at
              FROM gl_auto_posting_config WHERE is_active = TRUE LIMIT 1",
         )
@@ -1140,8 +1150,9 @@ impl PgGeneralLedgerRepository {
             "INSERT INTO gl_auto_posting_config (id, config_name, cash_account_id, accounts_receivable_account_id,
                 inventory_account_id, accounts_payable_account_id, unearned_revenue_account_id,
                 sales_revenue_account_id, shipping_revenue_account_id, cogs_account_id,
-                bad_debt_expense_account_id, is_active, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+                bad_debt_expense_account_id, auto_post_depreciation,
+                auto_post_revenue_recognition, is_active, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(id)
         .bind(&input.config_name)
@@ -1154,6 +1165,8 @@ impl PgGeneralLedgerRepository {
         .bind(input.shipping_revenue_account_id)
         .bind(input.cogs_account_id)
         .bind(input.bad_debt_expense_account_id)
+        .bind(input.auto_post_depreciation)
+        .bind(input.auto_post_revenue_recognition)
         .bind(true)
         .bind(now)
         .bind(now)

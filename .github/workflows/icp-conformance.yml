@@ -163,6 +163,147 @@ jobs:
           check go "$go_out"
           check python "$py_out"
           echo "All cryptographic fields byte-identical across JS + Rust + Go + Python IUTs."
+      - name: Cross-IUT escrow lifecycle determinism (04)
+        working-directory: icp-conformance
+        run: |
+          echo "All IUTs MUST agree on every escrow transition and replay outcome."
+          inputs=vectors/icp-1.0/04-escrow-lifecycle/inputs.json
+          normalize() {
+            python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps({'transitions':d['transitions'],'replays':d['replays']},sort_keys=True))"
+          }
+          js_out=$(node iut-adapters/reference-demo.mjs 04-escrow-lifecycle < "$inputs" | normalize)
+          rs_out=$(../target/release/stateset-icp-iut 04-escrow-lifecycle < "$inputs" | normalize)
+          go_out=$(../crates/stateset-icp-iut-go/stateset-icp-iut-go 04-escrow-lifecycle < "$inputs" | normalize)
+          py_out=$(python3 ../crates/stateset-icp-iut-py/iut.py 04-escrow-lifecycle < "$inputs" | normalize)
+          for pair in "rust:$rs_out" "go:$go_out" "python:$py_out"; do
+            impl="${pair%%:*}"
+            out="${pair#*:}"
+            if [ "$js_out" != "$out" ]; then
+              echo "FAIL: escrow lifecycle divergence (reference-demo vs $impl)"
+              exit 1
+            fi
+            echo "OK: escrow lifecycle outcomes identical (reference-demo vs $impl)"
+          done
+          echo "All 40 escrow lifecycle outcomes identical across JS + Rust + Go + Python IUTs."
+      - name: Cross-IUT intent validation determinism (05)
+        working-directory: icp-conformance
+        run: |
+          echo "All IUTs MUST agree on which intents are well-formed and, when"
+          echo "not, on the exact error code — this is the handshake precondition."
+          inputs=vectors/icp-1.0/05-intent-validation/inputs.json
+          normalize() {
+            python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps(d['validations'],sort_keys=True))"
+          }
+          js_out=$(node iut-adapters/reference-demo.mjs 05-intent-validation < "$inputs" | normalize)
+          rs_out=$(../target/release/stateset-icp-iut 05-intent-validation < "$inputs" | normalize)
+          go_out=$(../crates/stateset-icp-iut-go/stateset-icp-iut-go 05-intent-validation < "$inputs" | normalize)
+          py_out=$(python3 ../crates/stateset-icp-iut-py/iut.py 05-intent-validation < "$inputs" | normalize)
+          for pair in "rust:$rs_out" "go:$go_out" "python:$py_out"; do
+            impl="${pair%%:*}"
+            out="${pair#*:}"
+            if [ "$js_out" != "$out" ]; then
+              echo "FAIL: intent validation divergence (reference-demo vs $impl)"
+              exit 1
+            fi
+            echo "OK: intent validation outcomes identical (reference-demo vs $impl)"
+          done
+          echo "All 21 intent validation outcomes identical across JS + Rust + Go + Python IUTs."
+      - name: Cross-IUT quote-binding determinism (06)
+        working-directory: icp-conformance
+        run: |
+          echo "All IUTs MUST agree on the §11.4 max_total ceiling — an exact"
+          echo "decimal comparison. Divergence means one impl auto-accepts an"
+          echo "overcharge another blocks (e.g. the 9.9-vs-10.0 string trap)."
+          inputs=vectors/icp-1.0/06-quote-binding/inputs.json
+          normalize() {
+            python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps(d['decisions'],sort_keys=True))"
+          }
+          js_out=$(node iut-adapters/reference-demo.mjs 06-quote-binding < "$inputs" | normalize)
+          rs_out=$(../target/release/stateset-icp-iut 06-quote-binding < "$inputs" | normalize)
+          go_out=$(../crates/stateset-icp-iut-go/stateset-icp-iut-go 06-quote-binding < "$inputs" | normalize)
+          py_out=$(python3 ../crates/stateset-icp-iut-py/iut.py 06-quote-binding < "$inputs" | normalize)
+          for pair in "rust:$rs_out" "go:$go_out" "python:$py_out"; do
+            impl="${pair%%:*}"
+            out="${pair#*:}"
+            if [ "$js_out" != "$out" ]; then
+              echo "FAIL: quote-binding divergence (reference-demo vs $impl)"
+              exit 1
+            fi
+            echo "OK: quote-binding decisions identical (reference-demo vs $impl)"
+          done
+          echo "All 14 quote-binding decisions identical across JS + Rust + Go + Python IUTs."
+      - name: Cross-IUT settlement-receipt determinism (07)
+        working-directory: icp-conformance
+        run: |
+          echo "All IUTs MUST agree on whether a co-signed SettlementReceipt is"
+          echo "valid — it is the §9 canonical proof of payment that tax and"
+          echo "audit systems treat as authoritative."
+          inputs=vectors/icp-1.0/07-settlement-receipts/inputs.json
+          normalize() {
+            python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps(d['verifications'],sort_keys=True))"
+          }
+          js_out=$(node iut-adapters/reference-demo.mjs 07-settlement-receipts < "$inputs" | normalize)
+          rs_out=$(../target/release/stateset-icp-iut 07-settlement-receipts < "$inputs" | normalize)
+          go_out=$(../crates/stateset-icp-iut-go/stateset-icp-iut-go 07-settlement-receipts < "$inputs" | normalize)
+          py_out=$(python3 ../crates/stateset-icp-iut-py/iut.py 07-settlement-receipts < "$inputs" | normalize)
+          for pair in "rust:$rs_out" "go:$go_out" "python:$py_out"; do
+            impl="${pair%%:*}"
+            out="${pair#*:}"
+            if [ "$js_out" != "$out" ]; then
+              echo "FAIL: settlement-receipt divergence (reference-demo vs $impl)"
+              exit 1
+            fi
+            echo "OK: settlement-receipt verifications identical (reference-demo vs $impl)"
+          done
+          echo "All 8 settlement-receipt verifications identical across JS + Rust + Go + Python IUTs."
+      - name: Cross-IUT replay-timing determinism (08)
+        working-directory: icp-conformance
+        run: |
+          echo "All IUTs MUST agree on the §5.3 replay window — same strict"
+          echo "timestamp parse and epoch arithmetic, or one accepts a stale"
+          echo "intent (a replay) another rejects."
+          inputs=vectors/icp-1.0/08-timing/inputs.json
+          normalize() {
+            python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps(d['validations'],sort_keys=True))"
+          }
+          js_out=$(node iut-adapters/reference-demo.mjs 08-timing < "$inputs" | normalize)
+          rs_out=$(../target/release/stateset-icp-iut 08-timing < "$inputs" | normalize)
+          go_out=$(../crates/stateset-icp-iut-go/stateset-icp-iut-go 08-timing < "$inputs" | normalize)
+          py_out=$(python3 ../crates/stateset-icp-iut-py/iut.py 08-timing < "$inputs" | normalize)
+          for pair in "rust:$rs_out" "go:$go_out" "python:$py_out"; do
+            impl="${pair%%:*}"
+            out="${pair#*:}"
+            if [ "$js_out" != "$out" ]; then
+              echo "FAIL: replay-timing divergence (reference-demo vs $impl)"
+              exit 1
+            fi
+            echo "OK: replay-timing decisions identical (reference-demo vs $impl)"
+          done
+          echo "All 10 replay-timing decisions identical across JS + Rust + Go + Python IUTs."
+      - name: Cross-IUT refund/payout ceiling determinism (09)
+        working-directory: icp-conformance
+        run: |
+          echo "All IUTs MUST agree on the max_refund and max_per_payout"
+          echo "ceilings — the same exact-decimal comparison as 06, so a"
+          echo "divergence here means the comparator does not generalize."
+          inputs=vectors/icp-1.0/09-ceilings/inputs.json
+          normalize() {
+            python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps(d['decisions'],sort_keys=True))"
+          }
+          js_out=$(node iut-adapters/reference-demo.mjs 09-ceilings < "$inputs" | normalize)
+          rs_out=$(../target/release/stateset-icp-iut 09-ceilings < "$inputs" | normalize)
+          go_out=$(../crates/stateset-icp-iut-go/stateset-icp-iut-go 09-ceilings < "$inputs" | normalize)
+          py_out=$(python3 ../crates/stateset-icp-iut-py/iut.py 09-ceilings < "$inputs" | normalize)
+          for pair in "rust:$rs_out" "go:$go_out" "python:$py_out"; do
+            impl="${pair%%:*}"
+            out="${pair#*:}"
+            if [ "$js_out" != "$out" ]; then
+              echo "FAIL: ceiling divergence (reference-demo vs $impl)"
+              exit 1
+            fi
+            echo "OK: ceiling decisions identical (reference-demo vs $impl)"
+          done
+          echo "All 10 refund/payout ceiling decisions identical across JS + Rust + Go + Python IUTs."
       - name: Differential canonicalization fuzz (JS × Rust × Go × Python)
         working-directory: icp-conformance
         run: |

@@ -40,7 +40,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.7.0` | `package-manifest` | manifest coverage |
 | Node.js | npm | `@stateset/embedded` | `1.7.0` | `detailed` | 6 export entrypoints |
 | PHP | Composer | `stateset/embedded` | `1.7.0` | `package-manifest` | manifest coverage |
-| Python | PyPI | `stateset-embedded` | `1.7.0` | `detailed` | 102 public symbols |
+| Python | PyPI | `stateset-embedded` | `1.7.0` | `detailed` | 112 public symbols |
 | Ruby | RubyGems | `stateset_embedded` | `1.7.0` | `package-manifest` | manifest coverage |
 | Swift | SwiftPM | `StateSet` | — | `detailed` | 71 API methods |
 | WASM | npm | `@stateset/embedded-wasm` | `1.7.0` | `package-manifest` | manifest coverage |
@@ -721,6 +721,9 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `execute_tool_calls` |
 | `FrameworkToolFactory` |
 | `FulfillmentMetrics` |
+| `GiftCard` |
+| `GiftCards` |
+| `GiftCardTransaction` |
 | `Inventory` |
 | `InventoryHealth` |
 | `InventoryItem` |
@@ -729,6 +732,12 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `Invoices` |
 | `jcs_canonicalize` |
 | `LowStockItem` |
+| `Loyalty` |
+| `LoyaltyAccount` |
+| `LoyaltyProgram` |
+| `LoyaltyTier` |
+| `LoyaltyTierInput` |
+| `LoyaltyTransaction` |
 | `merkle_root` |
 | `Order` |
 | `OrderItem` |
@@ -751,6 +760,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `Returns` |
 | `RevenueByPeriod` |
 | `RevenueForecast` |
+| `Reward` |
 | `SalesSummary` |
 | `SetExchangeRateInput` |
 | `Shipment` |

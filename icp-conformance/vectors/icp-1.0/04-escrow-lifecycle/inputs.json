@@ -1,0 +1,282 @@
+{
+  "test": "04-escrow-lifecycle",
+  "transition_cases": [
+    {
+      "id": "t01",
+      "from": "pending",
+      "trigger": "payment_confirmed"
+    },
+    {
+      "id": "t02",
+      "from": "pending",
+      "trigger": "fulfillment_confirmed_window_elapsed"
+    },
+    {
+      "id": "t03",
+      "from": "pending",
+      "trigger": "dispute_raised"
+    },
+    {
+      "id": "t04",
+      "from": "pending",
+      "trigger": "resolution_favors_merchant"
+    },
+    {
+      "id": "t05",
+      "from": "pending",
+      "trigger": "resolution_favors_buyer"
+    },
+    {
+      "id": "t06",
+      "from": "pending",
+      "trigger": "merchant_cancel_or_expiry"
+    },
+    {
+      "id": "t07",
+      "from": "funded",
+      "trigger": "payment_confirmed"
+    },
+    {
+      "id": "t08",
+      "from": "funded",
+      "trigger": "fulfillment_confirmed_window_elapsed"
+    },
+    {
+      "id": "t09",
+      "from": "funded",
+      "trigger": "dispute_raised"
+    },
+    {
+      "id": "t10",
+      "from": "funded",
+      "trigger": "resolution_favors_merchant"
+    },
+    {
+      "id": "t11",
+      "from": "funded",
+      "trigger": "resolution_favors_buyer"
+    },
+    {
+      "id": "t12",
+      "from": "funded",
+      "trigger": "merchant_cancel_or_expiry"
+    },
+    {
+      "id": "t13",
+      "from": "disputed",
+      "trigger": "payment_confirmed"
+    },
+    {
+      "id": "t14",
+      "from": "disputed",
+      "trigger": "fulfillment_confirmed_window_elapsed"
+    },
+    {
+      "id": "t15",
+      "from": "disputed",
+      "trigger": "dispute_raised"
+    },
+    {
+      "id": "t16",
+      "from": "disputed",
+      "trigger": "resolution_favors_merchant"
+    },
+    {
+      "id": "t17",
+      "from": "disputed",
+      "trigger": "resolution_favors_buyer"
+    },
+    {
+      "id": "t18",
+      "from": "disputed",
+      "trigger": "merchant_cancel_or_expiry"
+    },
+    {
+      "id": "t19",
+      "from": "released",
+      "trigger": "payment_confirmed"
+    },
+    {
+      "id": "t20",
+      "from": "released",
+      "trigger": "fulfillment_confirmed_window_elapsed"
+    },
+    {
+      "id": "t21",
+      "from": "released",
+      "trigger": "dispute_raised"
+    },
+    {
+      "id": "t22",
+      "from": "released",
+      "trigger": "resolution_favors_merchant"
+    },
+    {
+      "id": "t23",
+      "from": "released",
+      "trigger": "resolution_favors_buyer"
+    },
+    {
+      "id": "t24",
+      "from": "released",
+      "trigger": "merchant_cancel_or_expiry"
+    },
+    {
+      "id": "t25",
+      "from": "refunded",
+      "trigger": "payment_confirmed"
+    },
+    {
+      "id": "t26",
+      "from": "refunded",
+      "trigger": "fulfillment_confirmed_window_elapsed"
+    },
+    {
+      "id": "t27",
+      "from": "refunded",
+      "trigger": "dispute_raised"
+    },
+    {
+      "id": "t28",
+      "from": "refunded",
+      "trigger": "resolution_favors_merchant"
+    },
+    {
+      "id": "t29",
+      "from": "refunded",
+      "trigger": "resolution_favors_buyer"
+    },
+    {
+      "id": "t30",
+      "from": "refunded",
+      "trigger": "merchant_cancel_or_expiry"
+    }
+  ],
+  "replay_cases": [
+    {
+      "id": "r01",
+      "events": []
+    },
+    {
+      "id": "r02",
+      "events": [
+        {
+          "seq": 0,
+          "trigger": "payment_confirmed"
+        },
+        {
+          "seq": 1,
+          "trigger": "fulfillment_confirmed_window_elapsed"
+        }
+      ]
+    },
+    {
+      "id": "r03",
+      "events": [
+        {
+          "seq": 0,
+          "trigger": "payment_confirmed"
+        },
+        {
+          "seq": 1,
+          "trigger": "dispute_raised"
+        },
+        {
+          "seq": 2,
+          "trigger": "resolution_favors_buyer"
+        }
+      ]
+    },
+    {
+      "id": "r04",
+      "events": [
+        {
+          "seq": 0,
+          "trigger": "payment_confirmed"
+        },
+        {
+          "seq": 1,
+          "trigger": "dispute_raised"
+        },
+        {
+          "seq": 2,
+          "trigger": "resolution_favors_merchant"
+        }
+      ]
+    },
+    {
+      "id": "r05",
+      "events": [
+        {
+          "seq": 0,
+          "trigger": "payment_confirmed"
+        },
+        {
+          "seq": 1,
+          "trigger": "merchant_cancel_or_expiry"
+        }
+      ]
+    },
+    {
+      "id": "r06",
+      "events": [
+        {
+          "seq": 0,
+          "trigger": "payment_confirmed"
+        },
+        {
+          "seq": 2,
+          "trigger": "dispute_raised"
+        }
+      ]
+    },
+    {
+      "id": "r07",
+      "events": [
+        {
+          "seq": 0,
+          "trigger": "payment_confirmed"
+        },
+        {
+          "seq": 1,
+          "trigger": "dispute_raised"
+        },
+        {
+          "seq": 1,
+          "trigger": "resolution_favors_buyer"
+        }
+      ]
+    },
+    {
+      "id": "r08",
+      "events": [
+        {
+          "seq": 1,
+          "trigger": "payment_confirmed"
+        }
+      ]
+    },
+    {
+      "id": "r09",
+      "events": [
+        {
+          "seq": 0,
+          "trigger": "dispute_raised"
+        }
+      ]
+    },
+    {
+      "id": "r10",
+      "events": [
+        {
+          "seq": 0,
+          "trigger": "payment_confirmed"
+        },
+        {
+          "seq": 1,
+          "trigger": "payment_confirmed"
+        }
+      ]
+    }
+  ]
+}

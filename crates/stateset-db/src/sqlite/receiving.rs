@@ -410,13 +410,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -599,8 +593,11 @@ impl ReceivingRepository for SqliteReceivingRepository {
         let conn = self.conn()?;
         let existing = self.get_receipt(id)?.ok_or(CommerceError::NotFound)?;
 
-        if existing.status == ReceiptStatus::Completed {
-            return Err(CommerceError::ValidationError("Cannot cancel completed receipts".into()));
+        if !existing.status.can_cancel() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot cancel a receipt in {} status (goods already received)",
+                existing.status
+            )));
         }
 
         conn.execute(
@@ -856,7 +853,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
 
         // Get PO items
         let mut stmt = conn
-            .prepare("SELECT sku, name, quantity, unit_cost FROM purchase_order_items WHERE purchase_order_id = ?1")
+            .prepare("SELECT sku, name, quantity_ordered, unit_cost FROM purchase_order_items WHERE purchase_order_id = ?1")
             .map_err(map_db_error)?;
 
         let mut rows = stmt.query(params![po_id.to_string()]).map_err(map_db_error)?;
@@ -1018,6 +1015,49 @@ mod tests {
             .find(|i| i.id == item_id)
             .expect("item present")
             .received_quantity
+    }
+
+    #[test]
+    fn create_receipt_from_po_copies_po_lines() {
+        // Regression: the PO-line query selected a nonexistent `quantity` column
+        // (schema has `quantity_ordered`), so this call always failed.
+        use stateset_core::{
+            CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PurchaseOrderRepository,
+        };
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        db.warehouse()
+            .create_warehouse(CreateWarehouse {
+                code: "WH-PO".into(),
+                name: "PO Receiving".into(),
+                warehouse_type: WarehouseType::Distribution,
+                ..Default::default()
+            })
+            .expect("seed warehouse");
+        let supplier = db
+            .purchase_orders()
+            .create_supplier(CreateSupplier { name: "Acme".into(), ..Default::default() })
+            .expect("supplier");
+        let po = db
+            .purchase_orders()
+            .create(CreatePurchaseOrder {
+                supplier_id: supplier.id,
+                items: vec![CreatePurchaseOrderItem {
+                    sku: "SKU-PO".into(),
+                    name: "Widget".into(),
+                    quantity: dec!(7),
+                    unit_cost: dec!(3.50),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .expect("create PO");
+
+        let receipt =
+            db.receiving().create_receipt_from_po(po.id.into(), 1).expect("receipt from PO");
+        let items = db.receiving().get_receipt_items(receipt.id).expect("items");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].sku, "SKU-PO");
+        assert_eq!(items[0].expected_quantity, dec!(7));
     }
 
     #[test]

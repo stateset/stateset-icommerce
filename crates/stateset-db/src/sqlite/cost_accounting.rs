@@ -17,6 +17,7 @@ use uuid::Uuid;
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
     parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
+    with_immediate_transaction,
 };
 
 #[derive(Debug)]
@@ -441,12 +442,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
         sql.push_str(" ORDER BY sku");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -480,27 +476,35 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             })?;
         }
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            // Calculate new weighted average
-            // Get current quantity from inventory
-            let sku_param = sku.to_string();
+        // Read the current on-hand quantity and average cost, compute the new
+        // weighted average, and write it back inside ONE `IMMEDIATE` transaction,
+        // so two concurrent receipts for the same SKU serialize instead of both
+        // reading the same `average_cost` and one clobbering the other — a lost
+        // update that corrupts the weighted-average cost.
+        let sku_param = sku.to_string();
+        let now_str = now.to_rfc3339();
+        with_immediate_transaction(&self.pool, |tx| {
             let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
+            // On-hand quantity lives in `inventory_balances` (per location), keyed
+            // by `item_id`; `inventory_items` has no `quantity_on_hand` column, so
+            // the previous query errored on every call. Sum the balances for the
+            // SKU across locations.
             let current_qty = sum_decimal_query(
-                &conn,
-                "SELECT quantity_on_hand FROM inventory_items WHERE sku = ?",
+                tx,
+                "SELECT b.quantity_on_hand FROM inventory_balances b \
+                 JOIN inventory_items i ON b.item_id = i.id WHERE i.sku = ?",
                 &sku_params,
-                "inventory_items",
+                "inventory_balance",
                 "quantity_on_hand",
+            )
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let avg_str: String = tx.query_row(
+                "SELECT COALESCE(average_cost, '0') FROM item_costs WHERE sku = ?",
+                [&sku_param],
+                |row| row.get(0),
             )?;
-            let avg_str: String = conn
-                .query_row(
-                    "SELECT COALESCE(average_cost, '0') FROM item_costs WHERE sku = ?",
-                    [sku],
-                    |row| row.get(0),
-                )
-                .map_err(map_db_error)?;
-            let current_avg = parse_decimal_strict(&avg_str, "item_cost", "average_cost")?;
+            let current_avg = parse_decimal_strict(&avg_str, "item_cost", "average_cost")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
             let total_qty = current_qty + quantity;
             let new_avg = if total_qty > Decimal::ZERO {
@@ -509,16 +513,17 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                 unit_cost
             };
 
-            conn.execute(
+            tx.execute(
                 "UPDATE item_costs SET average_cost = ?, last_cost = ?, updated_at = ? WHERE sku = ?",
                 rusqlite::params![
                     new_avg.to_string(),
                     unit_cost.to_string(),
-                    now.to_rfc3339(),
-                    sku,
+                    now_str,
+                    sku_param,
                 ],
-            ).map_err(map_db_error)?;
-        }
+            )?;
+            Ok(())
+        })?;
 
         self.get_item_cost(sku)?.ok_or(CommerceError::NotFound)
     }

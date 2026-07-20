@@ -128,6 +128,14 @@ impl PgGiftCardRepository {
 
     /// Create a gift card (async)
     pub async fn create_async(&self, input: CreateGiftCard) -> Result<GiftCard> {
+        // Reject a negative initial balance with a clean ValidationError before
+        // hitting the DB CHECK constraint (matches the SQLite backend's guard).
+        if input.initial_balance < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Gift card initial balance cannot be negative".to_string(),
+            ));
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let code = input.code.unwrap_or_else(Self::generate_code);

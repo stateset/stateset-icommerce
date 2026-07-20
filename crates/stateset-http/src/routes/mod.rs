@@ -2,13 +2,19 @@
 
 pub mod a2a_credit;
 pub mod a2a_messaging;
+pub mod accounts_payable;
+pub mod accounts_receivable;
 pub mod activity_logs;
+pub mod bom;
 pub mod channels;
 pub mod companies;
 pub mod currency;
 pub mod customers;
 pub mod edi_documents;
 pub mod events;
+pub mod fixed_assets;
+pub mod fulfillment;
+pub mod general_ledger;
 pub mod gift_cards;
 pub mod health;
 pub mod inbound_shipments;
@@ -16,6 +22,7 @@ pub mod integration_field_mappings;
 pub mod integration_mappings;
 pub mod inventory;
 pub mod invoices;
+pub mod lots;
 pub mod loyalty;
 pub mod negotiations;
 pub mod orders;
@@ -28,11 +35,16 @@ pub mod print_stations;
 pub mod production_batches;
 pub mod products;
 pub mod promotions;
+pub mod purchase_orders;
 pub mod purgatory;
+pub mod quality;
+pub mod receiving;
 pub mod reports;
 pub mod returns;
+pub mod revenue_recognition;
 pub mod reviews;
 pub mod segments;
+pub mod serials;
 pub mod shipments;
 pub mod shipping_zones;
 pub mod stock_snapshots;
@@ -44,8 +56,10 @@ pub mod transfer_orders;
 pub mod units_of_measure;
 pub mod vendor_credits;
 pub mod vendor_returns;
+pub mod warehouse;
 pub mod warranties;
 pub mod wishlists;
+pub mod work_orders;
 
 use axum::{Router, extract::DefaultBodyLimit, middleware::from_fn_with_state};
 use std::time::Duration;
@@ -131,6 +145,20 @@ fn v1_router() -> Router<AppState> {
         .merge(stock_snapshots::router())
         .merge(reports::router())
         .merge(prepayments::router())
+        .merge(purchase_orders::router())
+        .merge(general_ledger::router())
+        .merge(fixed_assets::router())
+        .merge(revenue_recognition::router())
+        .merge(accounts_payable::router())
+        .merge(accounts_receivable::router())
+        .merge(warehouse::router())
+        .merge(fulfillment::router())
+        .merge(receiving::router())
+        .merge(work_orders::router())
+        .merge(quality::router())
+        .merge(bom::router())
+        .merge(lots::router())
+        .merge(serials::router())
         .merge(crate::openapi::router())
 }
 

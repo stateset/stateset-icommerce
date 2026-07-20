@@ -4,12 +4,12 @@ use super::parse_helpers::parse_decimal as parse_decimal_with_context;
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_decimal_row, parse_enum, parse_enum_row, parse_uuid_opt_row,
-    parse_uuid_row, sum_decimal_query, uuid_params,
+    parse_uuid_row, sum_decimal_query, uuid_params, with_immediate_transaction,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Row, params};
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 use stateset_core::{
     BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, CustomerId, Invoice,
     InvoiceFilter, InvoiceId, InvoiceItem, InvoiceRepository, InvoiceStatus, OrderId, OrderItemId,
@@ -17,6 +17,18 @@ use stateset_core::{
     validate_batch_size,
 };
 use uuid::Uuid;
+
+/// Round a money value to cents (2 dp, half away from zero).
+///
+/// The Postgres backend stores invoice money in `DECIMAL(12, 2)` columns, which
+/// round on write; SQLite stores money as TEXT and would otherwise keep
+/// sub-cent precision, so line totals, invoice totals, and balances could differ
+/// between backends (and flip an invoice between `Paid` and `PartiallyPaid`).
+/// Rounding here with the same half-away-from-zero strategy Postgres `NUMERIC`
+/// uses keeps the two backends penny-identical.
+fn money(amount: Decimal) -> Decimal {
+    amount.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
+}
 
 #[derive(Debug)]
 pub struct SqliteInvoiceRepository {
@@ -268,12 +280,14 @@ impl SqliteInvoiceRepository {
             )
             .map_err(map_db_error)?;
 
-        let total = subtotal
-            - parse_decimal_with_context(&discount_amount, "invoice", "discount_amount")?
-            + parse_decimal_with_context(&tax_amount, "invoice", "tax_amount")?
-            + parse_decimal_with_context(&shipping_amount, "invoice", "shipping_amount")?;
+        let subtotal = money(subtotal);
+        let total = money(
+            subtotal - parse_decimal_with_context(&discount_amount, "invoice", "discount_amount")?
+                + parse_decimal_with_context(&tax_amount, "invoice", "tax_amount")?
+                + parse_decimal_with_context(&shipping_amount, "invoice", "shipping_amount")?,
+        );
         let balance_due =
-            total - parse_decimal_with_context(&amount_paid, "invoice", "amount_paid")?;
+            money(total - parse_decimal_with_context(&amount_paid, "invoice", "amount_paid")?);
 
         conn.execute(
             "UPDATE invoices SET subtotal = ?, total = ?, balance_due = ?, updated_at = ? WHERE id = ?",
@@ -334,11 +348,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 input.billing_postal_code,
                 input.billing_country,
                 "0",
-                input.discount_amount.unwrap_or_default().to_string(),
+                money(input.discount_amount.unwrap_or_default()).to_string(),
                 input.discount_percent.map(|d| d.to_string()),
-                input.tax_amount.unwrap_or_default().to_string(),
+                money(input.tax_amount.unwrap_or_default()).to_string(),
                 input.tax_rate.map(|d| d.to_string()),
-                input.shipping_amount.unwrap_or_default().to_string(),
+                money(input.shipping_amount.unwrap_or_default()).to_string(),
                 "0",
                 "0",
                 "0",
@@ -359,9 +373,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 item_with_order.sort_order = Some(i as i32);
             }
 
-            let line_total = item_with_order.quantity * item_with_order.unit_price
-                - item_with_order.discount_amount.unwrap_or_default()
-                + item_with_order.tax_amount.unwrap_or_default();
+            let line_total = money(
+                item_with_order.quantity * item_with_order.unit_price
+                    - item_with_order.discount_amount.unwrap_or_default()
+                    + item_with_order.tax_amount.unwrap_or_default(),
+            );
 
             tx.execute(
                 "INSERT INTO invoice_items (id, invoice_id, order_item_id, product_id, sku, description,
@@ -378,8 +394,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                     item_with_order.quantity.to_string(),
                     item_with_order.unit_of_measure,
                     item_with_order.unit_price.to_string(),
-                    item_with_order.discount_amount.unwrap_or_default().to_string(),
-                    item_with_order.tax_amount.unwrap_or_default().to_string(),
+                    money(item_with_order.discount_amount.unwrap_or_default()).to_string(),
+                    money(item_with_order.tax_amount.unwrap_or_default()).to_string(),
                     line_total.to_string(),
                     item_with_order.sort_order.unwrap_or(0),
                     now.to_rfc3339(),
@@ -486,18 +502,37 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
         }
+        if let Some(invoice_type) = &filter.invoice_type {
+            sql.push_str(" AND invoice_type = ?");
+            params_vec.push(Box::new(invoice_type.to_string()));
+        }
         if filter.overdue_only.unwrap_or(false) {
             sql.push_str(" AND due_date < datetime('now') AND status NOT IN ('paid', 'voided')");
         }
+        if let Some(from_date) = &filter.from_date {
+            sql.push_str(" AND invoice_date >= ?");
+            params_vec.push(Box::new(from_date.to_rfc3339()));
+        }
+        if let Some(to_date) = &filter.to_date {
+            sql.push_str(" AND invoice_date <= ?");
+            params_vec.push(Box::new(to_date.to_rfc3339()));
+        }
+        if let Some(due_from) = &filter.due_from {
+            sql.push_str(" AND due_date >= ?");
+            params_vec.push(Box::new(due_from.to_rfc3339()));
+        }
+        if let Some(due_to) = &filter.due_to {
+            sql.push_str(" AND due_date <= ?");
+            params_vec.push(Box::new(due_to.to_rfc3339()));
+        }
+        if let Some(invoice_number) = &filter.invoice_number {
+            // Case-insensitive substring match, mirroring Postgres `ILIKE '%..%'`
+            // (SQLite `LIKE` is case-insensitive for ASCII by default).
+            sql.push_str(" AND invoice_number LIKE ?");
+            params_vec.push(Box::new(format!("%{invoice_number}%")));
+        }
 
         sql.push_str(" ORDER BY invoice_date DESC");
-
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -505,13 +540,42 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::row_to_invoice).map_err(map_db_error)?;
 
-        let mut invoices = Vec::new();
+        // The money thresholds compare TEXT money columns, which SQLite cannot
+        // compare numerically without a lossy `CAST(... AS REAL)`. Filter them
+        // exactly in Rust (the fields are already parsed to `Decimal`), before
+        // pagination — matching the Postgres order (WHERE then LIMIT/OFFSET).
+        let mut matched: Vec<Invoice> = Vec::new();
         for row in rows {
-            let mut invoice = row.map_err(map_db_error)?;
-            invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
-            invoices.push(invoice);
+            let invoice = row.map_err(map_db_error)?;
+            if let Some(min_total) = filter.min_total {
+                if invoice.total < min_total {
+                    continue;
+                }
+            }
+            if let Some(max_total) = filter.max_total {
+                if invoice.total > max_total {
+                    continue;
+                }
+            }
+            if let Some(min_balance) = filter.min_balance {
+                if invoice.balance_due < min_balance {
+                    continue;
+                }
+            }
+            matched.push(invoice);
         }
-        Ok(invoices)
+
+        let offset = filter.offset.unwrap_or(0) as usize;
+        let mut page = if offset >= matched.len() { Vec::new() } else { matched.split_off(offset) };
+        if let Some(limit) = filter.limit {
+            page.truncate(limit as usize);
+        }
+
+        // Load items only for the rows actually returned.
+        for invoice in &mut page {
+            invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
+        }
+        Ok(page)
     }
 
     fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Invoice>> {
@@ -578,49 +642,67 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn record_payment(&self, id: InvoiceId, payment: RecordInvoicePayment) -> Result<Invoice> {
-        let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        if payment.amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Invoice payment amount must be positive".to_string(),
+            ));
+        }
+
         let now = chrono::Utc::now();
+        let id_str = id.to_string();
 
-        let (total, amount_paid): (String, String) = tx
-            .query_row(
+        // Recording a payment is a read-modify-write of `amount_paid`. Run it in
+        // an IMMEDIATE transaction so concurrent payments on the same invoice are
+        // serialized (each sees the prior payment's committed total) rather than
+        // racing on a stale read and either losing a payment or failing with a
+        // "table is locked" error — the same hardening the gift-card, store-credit
+        // and refund paths use.
+        //
+        // The updated invoice is read back INSIDE the transaction and returned,
+        // so there is no separate post-commit read that could fail with "table
+        // is locked" *after* the payment already committed — which would surface
+        // an error for a payment that actually landed and tempt the caller to
+        // retry and double-pay. (`tx` deref-coerces to `&Connection`.)
+        with_immediate_transaction(&self.pool, |tx| {
+            let (total, amount_paid): (String, String) = tx.query_row(
                 "SELECT total, amount_paid FROM invoices WHERE id = ?",
-                [id.to_string()],
+                [&id_str],
                 |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-        let total_dec = parse_decimal_with_context(&total, "invoice", "total")?;
-        let amount_paid_dec = parse_decimal_with_context(&amount_paid, "invoice", "amount_paid")?;
+            let total_dec = parse_decimal_row(&total, "invoice", "total")?;
+            let amount_paid_dec = parse_decimal_row(&amount_paid, "invoice", "amount_paid")?;
 
-        let new_amount_paid = amount_paid_dec + payment.amount;
-        let new_balance = total_dec - new_amount_paid;
+            let new_amount_paid = money(amount_paid_dec + payment.amount);
+            let new_balance = money(total_dec - new_amount_paid);
 
-        let new_status = if new_balance <= Decimal::ZERO {
-            InvoiceStatus::Paid
-        } else {
-            InvoiceStatus::PartiallyPaid
-        };
+            let new_status = if new_balance <= Decimal::ZERO {
+                InvoiceStatus::Paid
+            } else {
+                InvoiceStatus::PartiallyPaid
+            };
 
-        let paid_at = if new_status == InvoiceStatus::Paid { Some(now) } else { None };
+            let paid_at = if new_status == InvoiceStatus::Paid { Some(now) } else { None };
 
-        tx.execute(
-            "UPDATE invoices SET amount_paid = ?, balance_due = ?, status = ?,
-             paid_at = COALESCE(?, paid_at), updated_at = ? WHERE id = ?",
-            params![
-                new_amount_paid.to_string(),
-                new_balance.to_string(),
-                new_status.to_string(),
-                paid_at.map(|d| d.to_rfc3339()),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+            tx.execute(
+                "UPDATE invoices SET amount_paid = ?, balance_due = ?, status = ?,
+                 paid_at = COALESCE(?, paid_at), updated_at = ? WHERE id = ?",
+                params![
+                    new_amount_paid.to_string(),
+                    new_balance.to_string(),
+                    new_status.to_string(),
+                    paid_at.map(|d| d.to_rfc3339()),
+                    now.to_rfc3339(),
+                    &id_str,
+                ],
+            )?;
 
-        tx.commit().map_err(map_db_error)?;
-
-        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+            Self::get_invoice_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or_else(|| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
+                })
+        })
     }
 
     fn void(&self, id: InvoiceId) -> Result<Invoice> {
@@ -1167,11 +1249,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SqliteDatabase;
+    use crate::{DatabaseConfig, SqliteDatabase};
     use rust_decimal_macros::dec;
     use stateset_core::{
         CreateInvoice, CreateInvoiceItem, CustomerId, InvoiceFilter, InvoiceRepository,
-        InvoiceStatus,
+        InvoiceStatus, RecordInvoicePayment,
     };
 
     fn fresh_repo() -> SqliteInvoiceRepository {
@@ -1212,6 +1294,103 @@ mod tests {
             }],
         })
         .expect("create invoice")
+    }
+
+    #[test]
+    fn concurrent_payments_are_not_lost() {
+        // Ten partial payments of $10 land simultaneously on a $100 invoice.
+        // Each is a read-modify-write of amount_paid; without serialization the
+        // reads race and payments are silently overwritten (lost updates). All
+        // ten must be recorded, leaving the invoice fully paid.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::new(&DatabaseConfig::in_memory()).unwrap());
+        let repo = SqliteInvoiceRepository::new(db.pool().clone());
+        let invoice = make_invoice(&repo, CustomerId::new()); // total $100
+        assert_eq!(invoice.balance_due, dec!(100.00));
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let invoice_id = invoice.id;
+            handles.push(thread::spawn(move || {
+                let repo = SqliteInvoiceRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.record_payment(
+                    invoice_id,
+                    RecordInvoicePayment {
+                        amount: dec!(10.00),
+                        payment_id: None,
+                        payment_method: None,
+                        reference: None,
+                        notes: None,
+                    },
+                )
+            }));
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        // Every failure must be a transient lock (the caller retries), never a
+        // lost/garbled update.
+        let _ = thread_count;
+        assert!(
+            results
+                .iter()
+                .all(|r| r.is_ok() || format!("{:?}", r.as_ref().unwrap_err()).contains("locked")),
+            "every failure must be a transient lock: {results:?}"
+        );
+        assert!(successes >= 1, "at least one payment must succeed: {results:?}");
+
+        let fetched = repo.get(invoice.id).expect("get").expect("found");
+        // amount_paid reflects EXACTLY the successful $10 payments — no lost
+        // updates and no phantom errors. record_payment reads the updated invoice
+        // back inside its transaction, so a payment commits if and only if it
+        // returns Ok: a payment can never quietly land while surfacing an error
+        // (which previously happened when a post-commit read hit "table is
+        // locked", and could tempt the caller to retry and double-pay).
+        assert_eq!(
+            fetched.amount_paid,
+            dec!(10.00) * Decimal::from(successes as u64),
+            "amount_paid must equal exactly the successful payments (Ok iff committed): {results:?}"
+        );
+        assert_eq!(fetched.balance_due, dec!(100.00) - fetched.amount_paid);
+        let expected_status = if fetched.balance_due <= dec!(0) {
+            InvoiceStatus::Paid
+        } else {
+            InvoiceStatus::PartiallyPaid
+        };
+        assert_eq!(fetched.status, expected_status);
+    }
+
+    #[test]
+    fn record_payment_rejects_nonpositive_amount() {
+        // A zero or negative "payment" would drive amount_paid down and the
+        // balance up — un-paying an invoice. It must be rejected, leaving the
+        // invoice untouched, like every other money-in operation in the engine.
+        let repo = fresh_repo();
+        let invoice = make_invoice(&repo, CustomerId::new()); // total $100
+
+        let pay = |amount| RecordInvoicePayment {
+            amount,
+            payment_id: None,
+            payment_method: None,
+            reference: None,
+            notes: None,
+        };
+        assert!(repo.record_payment(invoice.id, pay(dec!(0))).is_err(), "zero must be rejected");
+        assert!(
+            repo.record_payment(invoice.id, pay(dec!(-10))).is_err(),
+            "negative must be rejected"
+        );
+
+        let fetched = repo.get(invoice.id).expect("get").expect("found");
+        assert_eq!(fetched.amount_paid, dec!(0), "rejected payment must not touch amount_paid");
+        assert_eq!(fetched.balance_due, dec!(100.00));
     }
 
     #[test]

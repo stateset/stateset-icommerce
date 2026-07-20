@@ -314,6 +314,8 @@ pub enum MovementType {
     Shipment,
     /// Returned to stock
     Return,
+    /// Cycle count variance adjustment
+    CycleCount,
 }
 
 impl std::fmt::Display for MovementType {
@@ -325,6 +327,7 @@ impl std::fmt::Display for MovementType {
             Self::Adjustment => write!(f, "adjustment"),
             Self::Shipment => write!(f, "shipment"),
             Self::Return => write!(f, "return"),
+            Self::CycleCount => write!(f, "cycle_count"),
         }
     }
 }
@@ -340,6 +343,7 @@ impl std::str::FromStr for MovementType {
             "adjustment" => Ok(Self::Adjustment),
             "shipment" => Ok(Self::Shipment),
             "return" => Ok(Self::Return),
+            "cycle_count" => Ok(Self::CycleCount),
             _ => Err(crate::CommerceError::ValidationError(format!("Invalid movement type: {s}"))),
         }
     }
@@ -402,3 +406,191 @@ pub struct UpdateZone {
 
 /// Alias for `CreateLocation` for API convenience
 pub type CreateWarehouseLocation = CreateLocation;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    // ============================================================================
+    // WarehouseType
+    // ============================================================================
+
+    #[test]
+    fn warehouse_type_display_from_str_round_trip() {
+        for t in [
+            WarehouseType::Distribution,
+            WarehouseType::Manufacturing,
+            WarehouseType::Retail,
+            WarehouseType::ThirdParty,
+            WarehouseType::Consignment,
+            WarehouseType::Returns,
+        ] {
+            assert_eq!(WarehouseType::from_str(&t.to_string()), Ok(t));
+        }
+    }
+
+    #[test]
+    fn warehouse_type_third_party_aliases() {
+        assert_eq!(WarehouseType::from_str("third_party"), Ok(WarehouseType::ThirdParty));
+        assert_eq!(WarehouseType::from_str("thirdparty"), Ok(WarehouseType::ThirdParty));
+        assert_eq!(WarehouseType::ThirdParty.to_string(), "third_party");
+    }
+
+    #[test]
+    fn warehouse_type_case_insensitive_and_unknown() {
+        assert_eq!(WarehouseType::from_str("RETAIL"), Ok(WarehouseType::Retail));
+        assert!(WarehouseType::from_str("spaceport").is_err());
+    }
+
+    #[test]
+    fn warehouse_type_default_is_distribution() {
+        assert_eq!(WarehouseType::default(), WarehouseType::Distribution);
+    }
+
+    // ============================================================================
+    // LocationType
+    // ============================================================================
+
+    #[test]
+    fn location_type_display_from_str_round_trip() {
+        for t in [
+            LocationType::Bulk,
+            LocationType::Pick,
+            LocationType::Staging,
+            LocationType::Receiving,
+            LocationType::Shipping,
+            LocationType::Quarantine,
+            LocationType::Returns,
+            LocationType::Production,
+            LocationType::Packing,
+            LocationType::CrossDock,
+        ] {
+            assert_eq!(LocationType::from_str(&t.to_string()), Ok(t));
+        }
+    }
+
+    #[test]
+    fn location_type_cross_dock_aliases() {
+        assert_eq!(LocationType::from_str("cross_dock"), Ok(LocationType::CrossDock));
+        assert_eq!(LocationType::from_str("crossdock"), Ok(LocationType::CrossDock));
+        assert_eq!(LocationType::CrossDock.to_string(), "cross_dock");
+    }
+
+    #[test]
+    fn location_type_default_is_bulk_and_unknown_errs() {
+        assert_eq!(LocationType::default(), LocationType::Bulk);
+        assert!(LocationType::from_str("void").is_err());
+    }
+
+    // ============================================================================
+    // MovementType
+    // ============================================================================
+
+    #[test]
+    fn movement_type_display_from_str_round_trip() {
+        for t in [
+            MovementType::Receipt,
+            MovementType::Transfer,
+            MovementType::Pick,
+            MovementType::Adjustment,
+            MovementType::Shipment,
+            MovementType::Return,
+            MovementType::CycleCount,
+        ] {
+            assert_eq!(MovementType::from_str(&t.to_string()).expect("round trip"), t);
+        }
+    }
+
+    #[test]
+    fn movement_type_from_str_case_insensitive() {
+        assert_eq!(MovementType::from_str("RETURN").expect("parses"), MovementType::Return);
+        assert_eq!(MovementType::from_str("Receipt").expect("parses"), MovementType::Receipt);
+    }
+
+    #[test]
+    fn movement_type_from_str_invalid_is_validation_error() {
+        let err = MovementType::from_str("teleport").expect_err("should fail");
+        match err {
+            crate::CommerceError::ValidationError(msg) => {
+                assert!(msg.contains("teleport"), "message should include input: {msg}");
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+    }
+
+    // ============================================================================
+    // Serde representations
+    // ============================================================================
+
+    #[test]
+    fn warehouse_type_serde_snake_case() {
+        let json = serde_json::to_string(&WarehouseType::ThirdParty).expect("serialize");
+        assert_eq!(json, "\"third_party\"");
+        let back: WarehouseType = serde_json::from_str("\"third_party\"").expect("deserialize");
+        assert_eq!(back, WarehouseType::ThirdParty);
+    }
+
+    #[test]
+    fn movement_type_serde_snake_case() {
+        let json = serde_json::to_string(&MovementType::Receipt).expect("serialize");
+        assert_eq!(json, "\"receipt\"");
+        let back: MovementType = serde_json::from_str("\"adjustment\"").expect("deserialize");
+        assert_eq!(back, MovementType::Adjustment);
+    }
+
+    #[test]
+    fn location_inventory_serde_round_trip() {
+        let inv = LocationInventory {
+            location_id: 7,
+            sku: "SKU-1".to_string(),
+            lot_id: None,
+            quantity_on_hand: Decimal::from(10),
+            quantity_reserved: Decimal::from(3),
+            quantity_available: Decimal::from(7),
+            updated_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&inv).expect("serialize");
+        let back: LocationInventory = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, inv);
+    }
+
+    // ============================================================================
+    // Defaults
+    // ============================================================================
+
+    #[test]
+    fn warehouse_address_default_is_empty() {
+        let addr = WarehouseAddress::default();
+        assert!(addr.street1.is_empty());
+        assert!(addr.city.is_empty());
+        assert!(addr.country.is_empty());
+        assert_eq!(addr.street2, None);
+        assert_eq!(addr.phone, None);
+    }
+
+    #[test]
+    fn create_warehouse_default_uses_distribution() {
+        let create = CreateWarehouse::default();
+        assert_eq!(create.warehouse_type, WarehouseType::Distribution);
+        assert!(create.code.is_empty());
+        assert_eq!(create.timezone, None);
+    }
+
+    #[test]
+    fn create_location_default_uses_bulk() {
+        let create = CreateLocation::default();
+        assert_eq!(create.location_type, LocationType::Bulk);
+        assert_eq!(create.warehouse_id, 0);
+        assert_eq!(create.is_pickable, None);
+        assert_eq!(create.max_weight_kg, None);
+    }
+
+    #[test]
+    fn filters_default_to_unset() {
+        let f = LocationFilter::default();
+        assert!(f.warehouse_id.is_none() && f.location_type.is_none() && f.limit.is_none());
+        let mf = MovementFilter::default();
+        assert!(mf.sku.is_none() && mf.movement_type.is_none() && mf.offset.is_none());
+    }
+}

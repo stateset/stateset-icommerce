@@ -325,6 +325,11 @@ impl SqliteCartRepository {
             subtotal += line_subtotal;
         }
 
+        // Round the subtotal to the currency minor unit so the stored value is a
+        // real money amount (a sub-cent subtotal like 9.999 is not chargeable),
+        // matching the Postgres DECIMAL(12,2) columns and the order pipeline.
+        let subtotal = subtotal.round_dp(2);
+
         // Get current tax and shipping
         let (tax, shipping, discount): (String, String, String) = conn
             .query_row(
@@ -334,11 +339,14 @@ impl SqliteCartRepository {
             )
             .map_err(map_db_error)?;
 
-        // Calculate grand total
+        // Calculate grand total, clamped at zero: a discount larger than
+        // subtotal + tax + shipping must not produce a negative total (which
+        // would charge the buyer a negative amount at checkout).
         let tax_dec = parse_decimal_err(&tax, "cart", "tax_amount")?;
         let shipping_dec = parse_decimal_err(&shipping, "cart", "shipping_amount")?;
         let discount_dec = parse_decimal_err(&discount, "cart", "discount_amount")?;
-        let grand_total = subtotal + tax_dec + shipping_dec - discount_dec;
+        let grand_total =
+            (subtotal + tax_dec + shipping_dec - discount_dec).round_dp(2).max(Decimal::ZERO);
 
         conn.execute(
             "UPDATE carts SET subtotal = ?, grand_total = ?, updated_at = ? WHERE id = ?",
@@ -607,12 +615,7 @@ impl CartRepository for SqliteCartRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -2112,6 +2115,31 @@ mod tests {
         repo.add_item(cart.id, add_item("SKU-X", 3, dec!(7))).expect("add");
         let fresh = repo.get(cart.id).expect("ok").expect("found");
         assert_eq!(fresh.subtotal, dec!(21));
+    }
+
+    #[test]
+    fn grand_total_never_goes_negative_from_oversized_discount() {
+        // A cart-level discount larger than subtotal + tax + shipping must not
+        // drive the grand total negative — a negative total would mean charging
+        // the buyer a negative amount (crediting them) at checkout.
+        let repo = fresh_repo();
+        let cart = repo
+            .create(CreateCart {
+                items: Some(vec![add_item("SKU-A", 2, dec!(10)), add_item("SKU-B", 1, dec!(5))]),
+                ..Default::default()
+            })
+            .expect("create"); // subtotal $25
+
+        repo.update(cart.id, UpdateCart { discount_amount: Some(dec!(100)), ..Default::default() })
+            .expect("set oversized discount");
+        let recalculated = repo.recalculate(cart.id).expect("recalc");
+
+        assert_eq!(recalculated.subtotal, dec!(25));
+        assert_eq!(
+            recalculated.grand_total,
+            dec!(0),
+            "grand total must clamp at zero, not go negative: {recalculated:?}"
+        );
     }
 
     #[test]

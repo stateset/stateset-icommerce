@@ -1041,9 +1041,22 @@ impl PgSubscriptionRepository {
             )
         })?;
 
-        self.get_subscription_async(id).await?.ok_or_else(|| {
+        let subscription = self.get_subscription_async(id).await?.ok_or_else(|| {
             CommerceError::DatabaseError("Failed to retrieve created subscription".into())
+        })?;
+
+        // Seed the initial billing cycle (cycle 1) for the subscription's current
+        // period, matching the SQLite backend — a fresh subscription otherwise has
+        // no billing cycle at all, breaking dunning/next-charge/history consumers.
+        self.create_billing_cycle_async(CreateBillingCycle {
+            subscription_id: id,
+            cycle_number: 1,
+            period_start: subscription.current_period_start,
+            period_end: subscription.current_period_end,
         })
+        .await?;
+
+        Ok(subscription)
     }
 
     pub async fn get_subscription_async(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
@@ -1506,13 +1519,34 @@ impl PgSubscriptionRepository {
         id: Uuid,
         status: BillingCycleStatus,
     ) -> Result<BillingCycle> {
-        sqlx::query("UPDATE billing_cycles SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(billing_cycle_status_str(status))
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let now = Utc::now();
+        // Stamp `billed_at` when the cycle reaches a terminal billing outcome
+        // (Paid/Failed) and advance the dunning `retry_count` on failure —
+        // matching the SQLite backend, so retry-cap logic behaves identically.
+        let billed_at: Option<DateTime<Utc>> =
+            if matches!(status, BillingCycleStatus::Paid | BillingCycleStatus::Failed) {
+                Some(now)
+            } else {
+                None
+            };
+        let increment_retry = status == BillingCycleStatus::Failed;
+
+        sqlx::query(
+            "UPDATE billing_cycles SET
+                status = $1,
+                billed_at = COALESCE($2, billed_at),
+                retry_count = CASE WHEN $3 THEN retry_count + 1 ELSE retry_count END,
+                updated_at = $4
+             WHERE id = $5",
+        )
+        .bind(billing_cycle_status_str(status))
+        .bind(billed_at)
+        .bind(increment_retry)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
     }

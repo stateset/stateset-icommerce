@@ -250,8 +250,22 @@ impl Order {
     }
 }
 
+/// Decimal places a line/order money total is rounded to.
+///
+/// Currency minor units vary (JPY has 0, most have 2, a few have 3), but the
+/// order pipeline has historically assumed 2; keeping a single constant here
+/// keeps every backend's rounding identical. A currency-aware version would
+/// thread the currency into `calculate_total`.
+pub(crate) const MONEY_SCALE: u32 = 2;
+
 impl OrderItem {
-    /// Calculate item total
+    /// Calculate a line item's money total, rounded to the currency minor unit.
+    ///
+    /// The result is rounded to [`MONEY_SCALE`] decimal places so the stored
+    /// line total is a real money amount and an order's `total_amount` (the sum
+    /// of these line totals) foots exactly to its line items. All order-creation
+    /// paths on both backends route through this function so they agree to the
+    /// cent.
     #[must_use]
     pub fn calculate_total(
         quantity: i32,
@@ -260,7 +274,7 @@ impl OrderItem {
         tax: Decimal,
     ) -> Decimal {
         let subtotal = unit_price * Decimal::from(quantity);
-        subtotal - discount + tax
+        (subtotal - discount + tax).round_dp(MONEY_SCALE)
     }
 }
 

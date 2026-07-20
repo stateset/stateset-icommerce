@@ -313,6 +313,188 @@ mod tests {
         assert_eq!(PaymentRunStatus::from_str("cancelled").unwrap(), PaymentRunStatus::Cancelled);
         assert!(PaymentRunStatus::from_str("unknown").is_err());
     }
+
+    mod three_way_match {
+        use super::super::*;
+        use crate::{PurchaseOrderItem, ReceiptItem, ReceiptItemStatus};
+        use rust_decimal_macros::dec;
+
+        fn po_item(id: Uuid, qty: Decimal, unit_cost: Decimal) -> PurchaseOrderItem {
+            let now = Utc::now();
+            PurchaseOrderItem {
+                id,
+                purchase_order_id: stateset_primitives::PurchaseOrderId::new(),
+                product_id: None,
+                sku: "SKU-1".into(),
+                name: "Widget".into(),
+                supplier_sku: None,
+                quantity_ordered: qty,
+                quantity_received: Decimal::ZERO,
+                unit_of_measure: None,
+                unit_cost,
+                line_total: qty * unit_cost,
+                tax_amount: Decimal::ZERO,
+                discount_amount: Decimal::ZERO,
+                expected_date: None,
+                notes: None,
+                created_at: now,
+                updated_at: now,
+            }
+        }
+
+        fn receipt_item(po_line_id: Uuid, received: Decimal) -> ReceiptItem {
+            let now = Utc::now();
+            ReceiptItem {
+                id: Uuid::new_v4(),
+                receipt_id: Uuid::new_v4(),
+                line_number: 1,
+                sku: "SKU-1".into(),
+                description: None,
+                po_line_id: Some(po_line_id),
+                expected_quantity: received,
+                received_quantity: received,
+                rejected_quantity: Decimal::ZERO,
+                unit_cost: None,
+                lot_number: None,
+                serial_numbers: None,
+                expiration_date: None,
+                status: ReceiptItemStatus::Received,
+                notes: None,
+                created_at: now,
+                updated_at: now,
+            }
+        }
+
+        fn bill_item(po_line_id: Option<Uuid>, qty: Decimal, unit_price: Decimal) -> BillItem {
+            BillItem {
+                id: Uuid::new_v4(),
+                bill_id: Uuid::new_v4(),
+                line_number: 1,
+                description: "Widget".into(),
+                account_code: None,
+                quantity: qty,
+                unit_price,
+                amount: qty * unit_price,
+                tax_rate: None,
+                tax_amount: Decimal::ZERO,
+                po_line_id,
+                created_at: Utc::now(),
+            }
+        }
+
+        #[test]
+        fn exact_match_is_matched() {
+            let line = Uuid::new_v4();
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[receipt_item(line, dec!(10))],
+                &[bill_item(Some(line), dec!(10), dec!(5))],
+                Decimal::ZERO,
+            );
+            assert_eq!(result.match_status, MatchStatus::Matched);
+            assert_eq!(result.lines.len(), 1);
+            assert!(result.lines[0].matched);
+            assert_eq!(result.lines[0].quantity_variance, Decimal::ZERO);
+        }
+
+        #[test]
+        fn quantity_variance_within_tolerance_matches() {
+            let line = Uuid::new_v4();
+            // Billed 102 vs ordered/received 100 => 2% variance, 5% tolerance.
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(100), dec!(5))],
+                &[receipt_item(line, dec!(100))],
+                &[bill_item(Some(line), dec!(102), dec!(5))],
+                dec!(5),
+            );
+            assert_eq!(result.match_status, MatchStatus::Matched);
+        }
+
+        #[test]
+        fn quantity_variance_over_tolerance_is_variance() {
+            let line = Uuid::new_v4();
+            // Billed 110 vs 100 => 10% variance, 5% tolerance.
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(100), dec!(5))],
+                &[receipt_item(line, dec!(100))],
+                &[bill_item(Some(line), dec!(110), dec!(5))],
+                dec!(5),
+            );
+            assert_eq!(result.match_status, MatchStatus::Variance { variance_line_count: 1 });
+            assert!(!result.lines[0].matched);
+            assert_eq!(result.lines[0].issues.len(), 2); // vs ordered and vs received
+            assert_eq!(result.lines[0].quantity_variance, dec!(10));
+        }
+
+        #[test]
+        fn price_variance_over_tolerance_is_variance() {
+            let line = Uuid::new_v4();
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[receipt_item(line, dec!(10))],
+                &[bill_item(Some(line), dec!(10), dec!(6))],
+                dec!(5),
+            );
+            assert_eq!(result.match_status, MatchStatus::Variance { variance_line_count: 1 });
+            assert_eq!(result.lines[0].price_variance, dec!(1));
+            assert!(result.lines[0].issues[0].contains("unit price"));
+        }
+
+        #[test]
+        fn missing_receipt_is_pending() {
+            let line = Uuid::new_v4();
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[],
+                &[bill_item(Some(line), dec!(10), dec!(5))],
+                Decimal::ZERO,
+            );
+            assert_eq!(result.match_status, MatchStatus::Pending);
+            assert!(!result.lines[0].matched);
+            assert!(result.lines[0].issues.iter().any(|i| i.contains("no quantity received")));
+        }
+
+        #[test]
+        fn partial_receipt_is_variance() {
+            let line = Uuid::new_v4();
+            // Only 4 of 10 received, billed 10.
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[receipt_item(line, dec!(4))],
+                &[bill_item(Some(line), dec!(10), dec!(5))],
+                dec!(5),
+            );
+            assert_eq!(result.match_status, MatchStatus::Variance { variance_line_count: 1 });
+            assert_eq!(result.lines[0].received_quantity, dec!(4));
+            assert_eq!(result.lines[0].quantity_variance, dec!(6));
+        }
+
+        #[test]
+        fn partial_receipt_across_multiple_receipts_sums() {
+            let line = Uuid::new_v4();
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[receipt_item(line, dec!(4)), receipt_item(line, dec!(6))],
+                &[bill_item(Some(line), dec!(10), dec!(5))],
+                Decimal::ZERO,
+            );
+            assert_eq!(result.match_status, MatchStatus::Matched);
+            assert_eq!(result.lines[0].received_quantity, dec!(10));
+        }
+
+        #[test]
+        fn unlinked_bill_line_is_variance() {
+            let line = Uuid::new_v4();
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[receipt_item(line, dec!(10))],
+                &[bill_item(None, dec!(10), dec!(5))],
+                Decimal::ZERO,
+            );
+            assert_eq!(result.match_status, MatchStatus::Variance { variance_line_count: 1 });
+            assert!(result.lines[0].issues[0].contains("not linked"));
+        }
+    }
 }
 
 // ============================================================================
@@ -472,6 +654,180 @@ pub struct SupplierApSummary {
     pub total_outstanding: Decimal,
     pub total_overdue: Decimal,
     pub bill_count: i32,
+}
+
+// ============================================================================
+// Three-Way Match (PO <-> Receipt <-> Bill)
+// ============================================================================
+
+/// Outcome of a three-way match evaluation for a bill.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MatchStatus {
+    /// The bill is not linked to a purchase order, so no match is required.
+    NotRequired,
+    /// No goods have been received yet; matching cannot complete.
+    Pending,
+    /// Every bill line matched its PO line and receipts within tolerance.
+    Matched,
+    /// One or more lines fell outside tolerance.
+    Variance {
+        /// Number of bill lines with at least one variance issue.
+        variance_line_count: usize,
+    },
+}
+
+/// Per-line comparison of ordered vs received vs billed quantities/costs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreeWayMatchLine {
+    /// PO line the bill line references (if any).
+    pub po_line_id: Option<Uuid>,
+    /// Bill line item ID.
+    pub bill_item_id: Uuid,
+    /// Bill line description.
+    pub description: String,
+    /// Quantity ordered on the PO line (if linked).
+    pub ordered_quantity: Option<Decimal>,
+    /// Unit cost on the PO line (if linked).
+    pub ordered_unit_cost: Option<Decimal>,
+    /// Total quantity received against the PO line (across all receipts).
+    pub received_quantity: Decimal,
+    /// Quantity billed on this bill line.
+    pub billed_quantity: Decimal,
+    /// Unit price billed on this bill line.
+    pub billed_unit_cost: Decimal,
+    /// `billed_quantity - received_quantity`.
+    pub quantity_variance: Decimal,
+    /// `billed_unit_cost - ordered_unit_cost` (zero when no PO line).
+    pub price_variance: Decimal,
+    /// Whether this line matched within tolerance.
+    pub matched: bool,
+    /// Human-readable variance issues for this line.
+    pub issues: Vec<String>,
+}
+
+/// Result of [`perform_three_way_match`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreeWayMatchResult {
+    /// Overall match outcome.
+    pub match_status: MatchStatus,
+    /// Tolerance applied, as a percentage (e.g. `5` = 5%).
+    pub tolerance_percent: Decimal,
+    /// Per-line comparison details.
+    pub lines: Vec<ThreeWayMatchLine>,
+}
+
+impl ThreeWayMatchResult {
+    /// A result for a bill with no purchase order linkage.
+    #[must_use]
+    pub const fn not_required() -> Self {
+        Self {
+            match_status: MatchStatus::NotRequired,
+            tolerance_percent: Decimal::ZERO,
+            lines: Vec::new(),
+        }
+    }
+}
+
+/// Whether `actual` is within `tolerance_percent` of `expected` (relative).
+fn within_tolerance(expected: Decimal, actual: Decimal, tolerance_percent: Decimal) -> bool {
+    let diff = (actual - expected).abs();
+    if expected.is_zero() {
+        return diff.is_zero();
+    }
+    diff * Decimal::ONE_HUNDRED <= expected.abs() * tolerance_percent
+}
+
+/// Perform a three-way match between a purchase order's lines, the receipt
+/// lines recorded against it, and the lines of a supplier bill.
+///
+/// Lines are correlated by PO line ID: each bill line's `po_line_id` is matched
+/// to a [`crate::PurchaseOrderItem`] and to the sum of received quantities of
+/// all [`crate::ReceiptItem`]s referencing that PO line. `tolerance_percent` is
+/// a relative tolerance (e.g. `dec!(5)` allows a 5% deviation) applied to both
+/// quantity and unit-cost comparisons.
+///
+/// Returns [`MatchStatus::Pending`] when nothing has been received yet,
+/// [`MatchStatus::Matched`] when all lines agree within tolerance, and
+/// [`MatchStatus::Variance`] otherwise. Callers should short-circuit to
+/// [`MatchStatus::NotRequired`] when the bill has no purchase order.
+#[must_use]
+pub fn perform_three_way_match(
+    po_items: &[crate::PurchaseOrderItem],
+    receipt_items: &[crate::ReceiptItem],
+    bill_lines: &[BillItem],
+    tolerance_percent: Decimal,
+) -> ThreeWayMatchResult {
+    let tolerance_percent = tolerance_percent.max(Decimal::ZERO);
+    let nothing_received =
+        receipt_items.iter().fold(Decimal::ZERO, |acc, r| acc + r.received_quantity).is_zero();
+
+    let mut lines = Vec::with_capacity(bill_lines.len());
+    for bill_line in bill_lines {
+        let po_item = bill_line.po_line_id.and_then(|id| po_items.iter().find(|p| p.id == id));
+        let received_quantity = bill_line.po_line_id.map_or(Decimal::ZERO, |id| {
+            receipt_items
+                .iter()
+                .filter(|r| r.po_line_id == Some(id))
+                .fold(Decimal::ZERO, |acc, r| acc + r.received_quantity)
+        });
+
+        let mut issues = Vec::new();
+        match po_item {
+            None => issues.push("bill line is not linked to a purchase order line".to_string()),
+            Some(po) => {
+                if !within_tolerance(po.quantity_ordered, bill_line.quantity, tolerance_percent) {
+                    issues.push(format!(
+                        "billed quantity {} differs from ordered quantity {} beyond tolerance",
+                        bill_line.quantity, po.quantity_ordered
+                    ));
+                }
+                if !within_tolerance(po.unit_cost, bill_line.unit_price, tolerance_percent) {
+                    issues.push(format!(
+                        "billed unit price {} differs from ordered unit cost {} beyond tolerance",
+                        bill_line.unit_price, po.unit_cost
+                    ));
+                }
+                if !within_tolerance(received_quantity, bill_line.quantity, tolerance_percent) {
+                    issues.push(if received_quantity.is_zero() {
+                        "no quantity received against this purchase order line".to_string()
+                    } else {
+                        format!(
+                            "billed quantity {} differs from received quantity {received_quantity} beyond tolerance",
+                            bill_line.quantity
+                        )
+                    });
+                }
+            }
+        }
+
+        lines.push(ThreeWayMatchLine {
+            po_line_id: bill_line.po_line_id,
+            bill_item_id: bill_line.id,
+            description: bill_line.description.clone(),
+            ordered_quantity: po_item.map(|p| p.quantity_ordered),
+            ordered_unit_cost: po_item.map(|p| p.unit_cost),
+            received_quantity,
+            billed_quantity: bill_line.quantity,
+            billed_unit_cost: bill_line.unit_price,
+            quantity_variance: bill_line.quantity - received_quantity,
+            price_variance: po_item.map_or(Decimal::ZERO, |p| bill_line.unit_price - p.unit_cost),
+            matched: issues.is_empty(),
+            issues,
+        });
+    }
+
+    let variance_line_count = lines.iter().filter(|l| !l.matched).count();
+    let match_status = if nothing_received {
+        MatchStatus::Pending
+    } else if variance_line_count == 0 {
+        MatchStatus::Matched
+    } else {
+        MatchStatus::Variance { variance_line_count }
+    };
+
+    ThreeWayMatchResult { match_status, tolerance_percent, lines }
 }
 
 // ============================================================================

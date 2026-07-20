@@ -1148,3 +1148,290 @@ fn test_invoice_send_and_payment() {
         .expect("Invoice not found");
     assert_eq!(fetched.id, invoice.id);
 }
+
+/// Recording an inspection result must reject passed+failed quantities that
+/// exceed the quantity inspected, and reject negative quantities — you cannot
+/// pass or fail more units than were inspected.
+#[test]
+fn test_quality_inspection_result_rejects_over_and_negative() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    let inspection = commerce
+        .quality()
+        .create_inspection(stateset_embedded::CreateInspection {
+            inspection_type: stateset_embedded::InspectionType::Incoming,
+            reference_type: "receipt".into(),
+            reference_id: Uuid::new_v4(),
+            inspector_id: Some("QC-001".into()),
+            scheduled_at: None,
+            notes: None,
+            items: vec![stateset_embedded::CreateInspectionItem {
+                sku: "QC-SKU".into(),
+                lot_number: None,
+                serial_number: None,
+                quantity_to_inspect: dec!(10),
+            }],
+        })
+        .expect("create inspection");
+
+    let items =
+        commerce.quality().get_inspection_items(inspection.id).expect("get inspection items");
+    let item_id = items[0].id;
+
+    // passed + failed (13) exceeds inspected (10) → rejected.
+    let err = commerce
+        .quality()
+        .record_inspection_result(stateset_embedded::RecordInspectionResult {
+            item_id,
+            quantity_passed: dec!(8),
+            quantity_failed: dec!(5),
+            result: stateset_embedded::InspectionResult::Fail,
+            defect_codes: vec![],
+            measurements: None,
+            notes: None,
+        })
+        .expect_err("over-inspection must be rejected");
+    assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "got {err:?}");
+
+    // negative quantity → rejected.
+    let err = commerce
+        .quality()
+        .record_inspection_result(stateset_embedded::RecordInspectionResult {
+            item_id,
+            quantity_passed: dec!(-1),
+            quantity_failed: dec!(0),
+            result: stateset_embedded::InspectionResult::Pass,
+            defect_codes: vec![],
+            measurements: None,
+            notes: None,
+        })
+        .expect_err("negative quantity must be rejected");
+    assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "got {err:?}");
+
+    // Exactly the inspected quantity (7 + 3 == 10) is accepted.
+    let ok = commerce
+        .quality()
+        .record_inspection_result(stateset_embedded::RecordInspectionResult {
+            item_id,
+            quantity_passed: dec!(7),
+            quantity_failed: dec!(3),
+            result: stateset_embedded::InspectionResult::ConditionalPass,
+            defect_codes: vec![],
+            measurements: None,
+            notes: None,
+        })
+        .expect("valid result accepted");
+    assert_eq!(ok.quantity_passed, dec!(7));
+    assert_eq!(ok.quantity_failed, dec!(3));
+}
+
+/// Fulfilling a backorder must reject: fulfilling more than remains, fulfilling a
+/// cancelled backorder, and non-positive quantities. (SQLite historically
+/// allowed cancelled-fulfill and non-positive; Postgres allowed over-fulfill.)
+#[test]
+fn test_backorder_fulfill_guards() {
+    use stateset_embedded::{FulfillBackorder, FulfillmentSourceType};
+
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: format!("bo-{}@example.com", Uuid::new_v4()),
+            first_name: "BO".into(),
+            last_name: "Guard".into(),
+            ..Default::default()
+        })
+        .expect("create customer");
+    let order = commerce
+        .orders()
+        .create(stateset_embedded::CreateOrder {
+            customer_id: customer.id,
+            items: vec![stateset_embedded::CreateOrderItem {
+                product_id: Uuid::new_v4().into(),
+                sku: "BO-GUARD".into(),
+                quantity: 10,
+                unit_price: dec!(5.00),
+                name: "BO Guard Item".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("create order");
+
+    let mk = |commerce: &Commerce| {
+        commerce
+            .backorder()
+            .create_backorder(CreateBackorder {
+                order_id: order.id.into(),
+                customer_id: customer.id.into(),
+                sku: "BO-GUARD".into(),
+                quantity: dec!(10),
+                priority: None,
+                order_line_id: None,
+                expected_date: None,
+                promised_date: None,
+                source_location_id: None,
+                notes: None,
+            })
+            .expect("create backorder")
+    };
+    let fulfill = |id: Uuid, qty| FulfillBackorder {
+        backorder_id: id,
+        quantity: qty,
+        source_type: FulfillmentSourceType::Inventory,
+        source_id: None,
+        notes: None,
+        fulfilled_by: None,
+    };
+
+    // --- over-fulfill: 8 then 8 (only 2 remain) is rejected, state unchanged.
+    let bo = mk(&commerce);
+    commerce.backorder().fulfill_backorder(fulfill(bo.id, dec!(8))).expect("first partial");
+    let err = commerce
+        .backorder()
+        .fulfill_backorder(fulfill(bo.id, dec!(8)))
+        .expect_err("over-fulfill must be rejected");
+    assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "got {err:?}");
+    let after = commerce.backorder().get_backorder(bo.id).expect("get").expect("exists");
+    assert_eq!(after.quantity_fulfilled, dec!(8), "over-fulfill must not fold in");
+    assert_eq!(after.quantity_remaining, dec!(2));
+
+    // --- cancelled backorder cannot be fulfilled.
+    let bo2 = mk(&commerce);
+    commerce.backorder().cancel_backorder(bo2.id).expect("cancel");
+    let err = commerce
+        .backorder()
+        .fulfill_backorder(fulfill(bo2.id, dec!(5)))
+        .expect_err("fulfilling a cancelled backorder must be rejected");
+    assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "got {err:?}");
+
+    // --- non-positive quantity is rejected.
+    let bo3 = mk(&commerce);
+    let err = commerce
+        .backorder()
+        .fulfill_backorder(fulfill(bo3.id, dec!(0)))
+        .expect_err("zero-quantity fulfillment must be rejected");
+    assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "got {err:?}");
+
+    // --- valid: fulfilling exactly the remaining quantity completes it.
+    let bo4 = mk(&commerce);
+    commerce.backorder().fulfill_backorder(fulfill(bo4.id, dec!(4))).expect("partial");
+    let done = commerce
+        .backorder()
+        .fulfill_backorder(fulfill(bo4.id, dec!(6)))
+        .expect("fulfilling the remainder is allowed");
+    assert_eq!(done.quantity_fulfilled, dec!(10));
+    assert_eq!(done.quantity_remaining, dec!(0));
+}
+
+/// A receipt whose goods have been received cannot be cancelled, but one still
+/// in progress can. (SQLite historically guarded the wrong status — `Completed`,
+/// which the normal flow never reaches — so a received receipt was cancellable;
+/// Postgres guarded only `Received`. Both now block cancellation once received.)
+#[test]
+fn test_cancel_receipt_guards() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let warehouse = commerce
+        .warehouse()
+        .create_warehouse(CreateWarehouse {
+            code: format!("WH-{}", &Uuid::new_v4().to_string()[..8]),
+            name: "Recv WH".into(),
+            warehouse_type: WarehouseType::Distribution,
+            ..Default::default()
+        })
+        .expect("create warehouse");
+
+    let mk = || {
+        commerce
+            .receiving()
+            .create_receipt(CreateReceipt {
+                receipt_type: ReceiptType::PurchaseOrder,
+                warehouse_id: warehouse.id,
+                ..Default::default()
+            })
+            .expect("create receipt")
+    };
+
+    // Received (goods on hand) → not cancellable.
+    let received = mk();
+    commerce.receiving().start_receiving(received.id).expect("start"); // Expected -> InProgress
+    commerce.receiving().complete_receiving(received.id).expect("complete"); // -> Received
+    let err = commerce
+        .receiving()
+        .cancel_receipt(received.id)
+        .expect_err("a received receipt must not be cancellable");
+    assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "got {err:?}");
+
+    // In progress (nothing finalized) → cancellable.
+    let in_prog = mk();
+    commerce.receiving().start_receiving(in_prog.id).expect("start");
+    let cancelled = commerce
+        .receiving()
+        .cancel_receipt(in_prog.id)
+        .expect("an in-progress receipt is cancellable");
+    assert_eq!(cancelled.status, stateset_core::ReceiptStatus::Cancelled);
+
+    // Expected (no goods yet) → cancellable.
+    let expected = mk();
+    let cancelled = commerce
+        .receiving()
+        .cancel_receipt(expected.id)
+        .expect("an expected receipt is cancellable");
+    assert_eq!(cancelled.status, stateset_core::ReceiptStatus::Cancelled);
+}
+
+/// Completing a receipt marks its non-rejected line items `received` (SQLite —
+/// parity with the Postgres backend).
+#[test]
+fn test_complete_receiving_marks_items_received() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let warehouse = commerce
+        .warehouse()
+        .create_warehouse(CreateWarehouse {
+            code: format!("WHI-{}", &Uuid::new_v4().to_string()[..8]),
+            name: "Recv Items WH".into(),
+            warehouse_type: WarehouseType::Distribution,
+            ..Default::default()
+        })
+        .expect("create warehouse");
+
+    let receipt = commerce
+        .receiving()
+        .create_receipt(CreateReceipt {
+            receipt_type: ReceiptType::PurchaseOrder,
+            warehouse_id: warehouse.id,
+            items: vec![stateset_core::CreateReceiptItem {
+                sku: "ITEM-A".into(),
+                expected_quantity: dec!(5),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("create receipt with items");
+
+    commerce.receiving().start_receiving(receipt.id).expect("start");
+    commerce.receiving().complete_receiving(receipt.id).expect("complete");
+
+    let items = commerce.receiving().get_receipt_items(receipt.id).expect("get items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].status, stateset_core::ReceiptItemStatus::Received);
+}
+
+/// Setting a new item's cost seeds `average_cost` and `last_cost` to the standard
+/// cost (SQLite — parity with the Postgres backend, which previously seeded 0).
+#[test]
+fn test_set_item_cost_seeds_average_and_last_to_standard() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let cost = commerce
+        .cost_accounting()
+        .set_item_cost(SetItemCost {
+            sku: "COST-SEED".into(),
+            cost_method: Some(CostMethod::Standard),
+            standard_cost: Some(dec!(10.00)),
+            ..Default::default()
+        })
+        .expect("set item cost");
+    assert_eq!(cost.standard_cost, dec!(10.00));
+    assert_eq!(cost.average_cost, dec!(10.00), "average_cost must seed to standard_cost");
+    assert_eq!(cost.last_cost, dec!(10.00), "last_cost must seed to standard_cost");
+}

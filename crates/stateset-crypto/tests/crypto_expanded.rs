@@ -326,7 +326,7 @@ fn generate_keypair_produces_valid_keys() {
     assert_eq!(private_key.len(), 32);
     assert_eq!(public_key.len(), 32);
     // Keys should not be all zeros
-    assert_ne!(private_key, [0u8; 32]);
+    assert_ne!(*private_key, [0u8; 32]);
     assert_ne!(public_key, [0u8; 32]);
 }
 

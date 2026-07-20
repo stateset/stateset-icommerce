@@ -5,6 +5,12 @@
   "vectors": [
     "01-aid-derivation",
     "02-canonical-json",
-    "03-signature-verification"
+    "03-signature-verification",
+    "04-escrow-lifecycle",
+    "05-intent-validation",
+    "06-quote-binding",
+    "07-settlement-receipts",
+    "08-timing",
+    "09-ceilings"
   ]
 }

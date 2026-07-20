@@ -32,6 +32,89 @@ impl SqliteSerialRepository {
         Self { pool }
     }
 
+    /// Build the shared `WHERE` conditions (and their bound params) for serial
+    /// queries, so `list` and `count` filter identically — a divergence between
+    /// them was exactly how `count` came to ignore most filters.
+    fn serial_filter_conditions(
+        filter: &SerialFilter,
+    ) -> (Vec<String>, Vec<Box<dyn rusqlite::ToSql>>) {
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(serial) = &filter.serial {
+            conditions.push("serial = ?".to_string());
+            params.push(Box::new(serial.clone()));
+        }
+        if let Some(prefix) = &filter.serial_prefix {
+            conditions.push("serial LIKE ?".to_string());
+            params.push(Box::new(format!("{prefix}%")));
+        }
+        if let Some(sku) = &filter.sku {
+            conditions.push("sku = ?".to_string());
+            params.push(Box::new(sku.clone()));
+        }
+        if let Some(status) = &filter.status {
+            conditions.push("status = ?".to_string());
+            params.push(Box::new(status.to_string()));
+        }
+        if let Some(statuses) = &filter.statuses {
+            let placeholders = build_in_clause(statuses.len());
+            conditions.push(format!("status IN ({placeholders})"));
+            for s in statuses {
+                params.push(Box::new(s.to_string()));
+            }
+        }
+        if let Some(lot_id) = &filter.lot_id {
+            conditions.push("lot_id = ?".to_string());
+            params.push(Box::new(lot_id.to_string()));
+        }
+        if let Some(lot_number) = &filter.lot_number {
+            conditions.push("lot_number = ?".to_string());
+            params.push(Box::new(lot_number.clone()));
+        }
+        if let Some(loc_id) = filter.location_id {
+            conditions.push("current_location_id = ?".to_string());
+            params.push(Box::new(loc_id));
+        }
+        if let Some(owner_id) = &filter.owner_id {
+            conditions.push("current_owner_id = ?".to_string());
+            params.push(Box::new(owner_id.to_string()));
+        }
+        if let Some(owner_type) = &filter.owner_type {
+            conditions.push("current_owner_type = ?".to_string());
+            params.push(Box::new(owner_type.clone()));
+        }
+        if let Some(warranty_id) = &filter.warranty_id {
+            conditions.push("warranty_id = ?".to_string());
+            params.push(Box::new(warranty_id.to_string()));
+        }
+        if let Some(has_warranty) = filter.has_warranty {
+            if has_warranty {
+                conditions.push("warranty_id IS NOT NULL".to_string());
+            } else {
+                conditions.push("warranty_id IS NULL".to_string());
+            }
+        }
+        if let Some(after) = &filter.manufactured_after {
+            conditions.push("manufactured_at >= ?".to_string());
+            params.push(Box::new(after.to_rfc3339()));
+        }
+        if let Some(before) = &filter.manufactured_before {
+            conditions.push("manufactured_at <= ?".to_string());
+            params.push(Box::new(before.to_rfc3339()));
+        }
+        if let Some(after) = &filter.sold_after {
+            conditions.push("sold_at >= ?".to_string());
+            params.push(Box::new(after.to_rfc3339()));
+        }
+        if let Some(before) = &filter.sold_before {
+            conditions.push("sold_at <= ?".to_string());
+            params.push(Box::new(before.to_rfc3339()));
+        }
+
+        (conditions, params)
+    }
+
     fn map_serial_row(row: &Row<'_>) -> Result<SerialNumber, rusqlite::Error> {
         let status_str: String = row.get("status")?;
         let attributes_str: Option<String> = row.get("attributes")?;
@@ -436,79 +519,7 @@ impl SerialRepository for SqliteSerialRepository {
     fn list(&self, filter: SerialFilter) -> stateset_core::Result<Vec<SerialNumber>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let mut conditions = Vec::new();
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(serial) = &filter.serial {
-            conditions.push("serial = ?".to_string());
-            params.push(Box::new(serial.clone()));
-        }
-        if let Some(prefix) = &filter.serial_prefix {
-            conditions.push("serial LIKE ?".to_string());
-            params.push(Box::new(format!("{prefix}%")));
-        }
-        if let Some(sku) = &filter.sku {
-            conditions.push("sku = ?".to_string());
-            params.push(Box::new(sku.clone()));
-        }
-        if let Some(status) = &filter.status {
-            conditions.push("status = ?".to_string());
-            params.push(Box::new(status.to_string()));
-        }
-        if let Some(statuses) = &filter.statuses {
-            let placeholders = build_in_clause(statuses.len());
-            conditions.push(format!("status IN ({placeholders})"));
-            for s in statuses {
-                params.push(Box::new(s.to_string()));
-            }
-        }
-        if let Some(lot_id) = &filter.lot_id {
-            conditions.push("lot_id = ?".to_string());
-            params.push(Box::new(lot_id.to_string()));
-        }
-        if let Some(lot_number) = &filter.lot_number {
-            conditions.push("lot_number = ?".to_string());
-            params.push(Box::new(lot_number.clone()));
-        }
-        if let Some(loc_id) = filter.location_id {
-            conditions.push("current_location_id = ?".to_string());
-            params.push(Box::new(loc_id));
-        }
-        if let Some(owner_id) = &filter.owner_id {
-            conditions.push("current_owner_id = ?".to_string());
-            params.push(Box::new(owner_id.to_string()));
-        }
-        if let Some(owner_type) = &filter.owner_type {
-            conditions.push("current_owner_type = ?".to_string());
-            params.push(Box::new(owner_type.clone()));
-        }
-        if let Some(warranty_id) = &filter.warranty_id {
-            conditions.push("warranty_id = ?".to_string());
-            params.push(Box::new(warranty_id.to_string()));
-        }
-        if let Some(has_warranty) = filter.has_warranty {
-            if has_warranty {
-                conditions.push("warranty_id IS NOT NULL".to_string());
-            } else {
-                conditions.push("warranty_id IS NULL".to_string());
-            }
-        }
-        if let Some(after) = &filter.manufactured_after {
-            conditions.push("manufactured_at >= ?".to_string());
-            params.push(Box::new(after.to_rfc3339()));
-        }
-        if let Some(before) = &filter.manufactured_before {
-            conditions.push("manufactured_at <= ?".to_string());
-            params.push(Box::new(before.to_rfc3339()));
-        }
-        if let Some(after) = &filter.sold_after {
-            conditions.push("sold_at >= ?".to_string());
-            params.push(Box::new(after.to_rfc3339()));
-        }
-        if let Some(before) = &filter.sold_before {
-            conditions.push("sold_at <= ?".to_string());
-            params.push(Box::new(before.to_rfc3339()));
-        }
+        let (conditions, mut params) = Self::serial_filter_conditions(&filter);
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -1444,12 +1455,28 @@ impl SerialRepository for SqliteSerialRepository {
         sku: &str,
         limit: u32,
     ) -> stateset_core::Result<Vec<SerialNumber>> {
-        self.list(SerialFilter {
-            sku: Some(sku.to_string()),
-            status: Some(SerialStatus::Available),
-            limit: Some(limit),
-            ..Default::default()
-        })
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        // Allocate the OLDEST available serial first (FIFO), matching Postgres.
+        // This deliberately orders ASC, unlike `list`'s newest-first (DESC) view.
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM serial_numbers WHERE sku = ? AND status = ? \
+                 ORDER BY created_at ASC LIMIT ?",
+            )
+            .map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(
+                params![sku, SerialStatus::Available.to_string(), i64::from(limit)],
+                Self::map_serial_row,
+            )
+            .map_err(map_db_error)?;
+
+        let mut serials = Vec::new();
+        for row in rows {
+            serials.push(row.map_err(map_db_error)?);
+        }
+        Ok(serials)
     }
 
     fn get_for_lot(&self, lot_id: Uuid) -> stateset_core::Result<Vec<SerialNumber>> {
@@ -1467,21 +1494,8 @@ impl SerialRepository for SqliteSerialRepository {
     fn count(&self, filter: SerialFilter) -> stateset_core::Result<u64> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let mut conditions = Vec::new();
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(sku) = &filter.sku {
-            conditions.push("sku = ?".to_string());
-            params.push(Box::new(sku.clone()));
-        }
-        if let Some(status) = &filter.status {
-            conditions.push("status = ?".to_string());
-            params.push(Box::new(status.to_string()));
-        }
-        if let Some(lot_id) = &filter.lot_id {
-            conditions.push("lot_id = ?".to_string());
-            params.push(Box::new(lot_id.to_string()));
-        }
+        // Reuse the same conditions as `list` so the two never diverge.
+        let (conditions, params) = Self::serial_filter_conditions(&filter);
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -1578,7 +1592,7 @@ mod tests {
     use crate::SqliteDatabase;
     use stateset_core::{
         ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, ReserveSerialNumber,
-        SerialFilter, SerialRepository, SerialStatus,
+        SerialFilter, SerialRepository, SerialStatus, UpdateSerialNumber,
     };
 
     fn fresh_repo() -> SqliteSerialRepository {
@@ -1606,6 +1620,91 @@ mod tests {
         assert_eq!(s.serial, "S-001");
         assert_eq!(s.sku, "SKU-A");
         assert_eq!(s.status, SerialStatus::Available);
+    }
+
+    #[test]
+    fn delete_rejects_missing_and_non_available_serials() {
+        let repo = fresh_repo();
+
+        // A non-existent serial is NotFound, not a silent success.
+        let err = repo.delete(Uuid::new_v4()).expect_err("missing serial must error");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+
+        // A non-Available serial cannot be deleted, and must survive the attempt.
+        let s = make_serial(&repo, "SKU-DEL", "S-DEL-1");
+        repo.update(
+            s.id,
+            UpdateSerialNumber { status: Some(SerialStatus::Sold), ..Default::default() },
+        )
+        .expect("update to sold");
+        let err = repo.delete(s.id).expect_err("a sold serial must not be deletable");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert!(
+            repo.get(s.id).expect("get").is_some(),
+            "a rejected delete must not remove the serial"
+        );
+    }
+
+    #[test]
+    fn count_matches_list_for_all_filters() {
+        let repo = fresh_repo();
+        make_serial(&repo, "SKU", "S-1");
+        make_serial(&repo, "SKU", "S-2");
+
+        // Every predicate `list` honors, `count` must honor too — `count(f)` must
+        // equal `list(f).len()` for the same filter (they previously diverged
+        // because `count` only applied sku/status/lot_id).
+        let filters = [
+            SerialFilter { serial: Some("S-1".into()), ..Default::default() },
+            SerialFilter { serial_prefix: Some("S-1".into()), ..Default::default() },
+            SerialFilter { statuses: Some(vec![SerialStatus::Sold]), ..Default::default() },
+            SerialFilter { sku: Some("SKU".into()), ..Default::default() },
+        ];
+        for filter in filters {
+            let listed = repo.list(filter.clone()).expect("list").len() as u64;
+            let counted = repo.count(filter).expect("count");
+            assert_eq!(counted, listed, "count must match list for the same filter");
+        }
+
+        // Sanity: the distinguishing filters select the right subset.
+        assert_eq!(
+            repo.count(SerialFilter { serial: Some("S-1".into()), ..Default::default() }).unwrap(),
+            1
+        );
+        assert_eq!(
+            repo.count(SerialFilter {
+                statuses: Some(vec![SerialStatus::Sold]),
+                ..Default::default()
+            })
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            repo.count(SerialFilter { sku: Some("SKU".into()), ..Default::default() }).unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn get_available_for_sku_allocates_oldest_first_fifo() {
+        let repo = fresh_repo();
+        let oldest = make_serial(&repo, "SKU-F", "S-OLD");
+        let newest = make_serial(&repo, "SKU-F", "S-NEW");
+
+        // FIFO: the oldest available serial is allocated first (matching Postgres,
+        // which orders by created_at ASC). SQLite used to inherit list's DESC order
+        // and hand out the newest unit.
+        let one = repo.get_available_for_sku("SKU-F", 1).expect("available");
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].id, oldest.id, "must allocate the oldest serial first (FIFO)");
+
+        // The full set is ordered oldest → newest.
+        let all = repo.get_available_for_sku("SKU-F", 10).expect("all");
+        assert_eq!(
+            all.iter().map(|s| s.id).collect::<Vec<_>>(),
+            vec![oldest.id, newest.id],
+            "available serials must be FIFO-ordered"
+        );
     }
 
     #[test]

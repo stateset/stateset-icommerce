@@ -284,6 +284,10 @@ impl GeneralLedger {
 
     /// Set up auto-posting configuration.
     ///
+    /// The optional `auto_post_depreciation` and `auto_post_revenue_recognition`
+    /// flags (default off) additionally auto-post journal entries when
+    /// fixed-asset depreciation is posted or deferred revenue is recognized.
+    ///
     /// # Example
     ///
     /// ```rust,ignore

@@ -25,6 +25,7 @@ struct LoyaltyProgramRow {
     description: Option<String>,
     points_per_dollar: i32,
     status: String,
+    tiers: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -65,6 +66,7 @@ impl PgLoyaltyProgramRepository {
             description,
             points_per_dollar,
             status,
+            tiers,
             created_at,
             updated_at,
         } = row;
@@ -76,12 +78,16 @@ impl PgLoyaltyProgramRepository {
             ))
         })?;
 
+        // `tiers` is a JSON array column (migration 051); a NULL or parse
+        // failure degrades to an empty tier list rather than erroring.
+        let tiers = tiers.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+
         Ok(LoyaltyProgram {
             id: LoyaltyProgramId::from(id),
             name,
             description,
             points_per_dollar: points_per_dollar as u32,
-            tiers: vec![],
+            tiers,
             status,
             created_at,
             updated_at,
@@ -148,16 +154,19 @@ impl PgLoyaltyProgramRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        let tiers_json = serde_json::to_string(&input.tiers).unwrap_or_else(|_| "[]".to_string());
+
         sqlx::query(
             "INSERT INTO loyalty_programs (id, name, description, points_per_dollar, status,
-             created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             tiers, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(id)
         .bind(&input.name)
         .bind(&input.description)
         .bind(input.points_per_dollar as i32)
         .bind(LoyaltyProgramStatus::Active.to_string())
+        .bind(&tiers_json)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -170,7 +179,7 @@ impl PgLoyaltyProgramRepository {
     /// Get loyalty program by ID (async)
     pub async fn get_async(&self, id: LoyaltyProgramId) -> Result<Option<LoyaltyProgram>> {
         let row = sqlx::query_as::<_, LoyaltyProgramRow>(
-            "SELECT id, name, description, points_per_dollar, status, created_at, updated_at
+            "SELECT id, name, description, points_per_dollar, status, tiers, created_at, updated_at
              FROM loyalty_programs WHERE id = $1",
         )
         .bind(id.into_uuid())
@@ -184,7 +193,7 @@ impl PgLoyaltyProgramRepository {
     /// List all loyalty programs (async)
     pub async fn list_async(&self) -> Result<Vec<LoyaltyProgram>> {
         let rows = sqlx::query_as::<_, LoyaltyProgramRow>(
-            "SELECT id, name, description, points_per_dollar, status, created_at, updated_at
+            "SELECT id, name, description, points_per_dollar, status, tiers, created_at, updated_at
              FROM loyalty_programs ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)

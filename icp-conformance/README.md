@@ -11,9 +11,35 @@ than inside any single implementation. That separation is what converts
 
 ## Status
 
-ICP-1.0 — bootstrap. First vector (`01-aid-derivation`) lands in this
-release. Vector set will grow alongside the spec; full coverage targeted
-for ICP-1.0 Last Call.
+ICP-1.0 — four vector families, four implementations (JS · Rust · Go ·
+Python), all byte-identical in CI:
+
+| Family | Covers | Cases |
+|---|---|---|
+| `01-aid-derivation` | §4.2 identity, §6.1 intent signing | 6 fields |
+| `02-canonical-json` | RFC 8785 canonicalization | 20 sub-cases |
+| `03-signature-verification` | §4.1/§5.2 envelope verification | 8 sub-cases |
+| `04-escrow-lifecycle` | **§8 operational semantics**: full 30-cell transition matrix + 10 event-replay cases | 40 sub-cases |
+| `05-intent-validation` | **§6 intent envelope**: structural validation across all 7 verbs, 7 error codes | 21 sub-cases |
+| `06-quote-binding` | **§11.4 economic safety**: exact-decimal `max_total` ceiling (the quote-binding-attack mitigation) | 14 sub-cases |
+| `07-settlement-receipts` | **§9 proof of payment**: co-signed (settler + receiving party) receipt verification | 8 sub-cases |
+| `08-timing` | **§5.3 replay window**: strict-parse timestamps + `exp − iat ≤ 600s` + `exp < now` expiry | 10 sub-cases |
+| `09-ceilings` | **§6.2/§6.6 economic safety**: `max_refund` and `max_per_payout` exact-decimal ceilings | 10 sub-cases |
+
+`04`–`09` are the families that test what the protocol *does* rather than how
+it hashes — two implementations that disagree on one escrow transition
+disagree about who holds the money; two that disagree on whether an intent is
+well-formed can't complete the handshake; two that compare `max_total` as
+floats-or-strings rather than exact decimals will disagree on whether a Quote
+is an overcharge (case `06/c09`: `9.9` ≤ `10.0`, which naive string comparison
+gets wrong); two that disagree on a co-signed SettlementReceipt disagree
+about whether a payment actually happened — the receipt is the §9 canonical
+proof that tax and audit systems MUST treat as authoritative; and two that
+parse timestamps leniently or botch the window arithmetic disagree on whether
+a replayed, expired intent is still live. Remaining before ICP-1.0 Last Call:
+the subscription `max_total_per_period` ceiling (§6.2 — same comparator),
+intent-verb request/response flows (stateful counterparty responses), and the
+`iat_in_future` clock-skew rule once §5.3 pins a value.
 
 ## How it works
 

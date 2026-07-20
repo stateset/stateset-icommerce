@@ -239,7 +239,9 @@ impl PgCustomObjectRepository {
         };
 
         let now = Utc::now();
-        let updated: (i64,) = sqlx::query_as(
+        // `RETURNING 1` is an INT4 literal, so decode it as i32 (an i64 decode
+        // fails with a type mismatch and was breaking the update on Postgres).
+        let updated: (i32,) = sqlx::query_as(
             "UPDATE custom_object_types
              SET display_name = $1, description = $2, fields = $3, updated_at = $4, version = version + 1
              WHERE id = $5 AND version = $6

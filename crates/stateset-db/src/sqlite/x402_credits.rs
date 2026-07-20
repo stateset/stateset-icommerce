@@ -227,7 +227,13 @@ impl X402CreditRepository for SqliteX402CreditRepository {
             }
 
             let new_balance = match input.direction {
-                X402CreditDirection::Credit => current_balance + amount_i64,
+                X402CreditDirection::Credit => {
+                    current_balance.checked_add(amount_i64).ok_or_else(|| {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            CommerceError::ValidationError("x402 balance overflow".to_string()),
+                        ))
+                    })?
+                }
                 X402CreditDirection::Debit => {
                     if current_balance < amount_i64 {
                         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(

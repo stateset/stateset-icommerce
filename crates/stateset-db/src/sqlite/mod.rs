@@ -20,6 +20,7 @@ mod currency;
 mod custom_objects;
 mod customers;
 mod edi_documents;
+mod fixed_assets;
 mod fraud;
 mod fulfillment;
 mod general_ledger;
@@ -48,6 +49,7 @@ mod purgatory;
 mod quality;
 mod receiving;
 mod returns;
+mod revenue_recognition;
 mod reviews;
 mod rewards;
 mod search_configs;
@@ -96,6 +98,7 @@ pub use currency::*;
 pub use custom_objects::*;
 pub use customers::*;
 pub use edi_documents::*;
+pub use fixed_assets::*;
 pub use fraud::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
@@ -122,6 +125,7 @@ pub use purgatory::*;
 pub use quality::*;
 pub use receiving::*;
 pub use returns::*;
+pub use revenue_recognition::*;
 pub use reviews::*;
 pub use rewards::*;
 pub use search_configs::*;
@@ -669,6 +673,18 @@ impl SqliteDatabase {
         SqliteSupplierSkuRepository::new(self.pool.clone())
     }
 
+    /// Get fixed asset repository
+    #[must_use]
+    pub fn fixed_assets(&self) -> SqliteFixedAssetRepository {
+        SqliteFixedAssetRepository::new(self.pool.clone())
+    }
+
+    /// Get revenue recognition repository
+    #[must_use]
+    pub fn revenue_recognition(&self) -> SqliteRevenueRecognitionRepository {
+        SqliteRevenueRecognitionRepository::new(self.pool.clone())
+    }
+
     /// Get vendor return repository
     #[must_use]
     pub fn vendor_returns(&self) -> SqliteVendorReturnRepository {
@@ -897,6 +913,25 @@ pub(crate) fn build_in_clause(count: usize) -> String {
     }
 
     std::iter::repeat_n("?", count).collect::<Vec<_>>().join(", ")
+}
+
+/// Append a `LIMIT`/`OFFSET` pagination clause to a query string.
+///
+/// SQLite rejects a bare `OFFSET` that is not preceded by a `LIMIT` (unlike
+/// Postgres, which allows it), so when only an offset is supplied this emits
+/// `LIMIT -1 OFFSET <n>` — `LIMIT -1` means "unbounded" — instead of a bare
+/// `OFFSET` that would fail at runtime with a syntax error.
+pub(crate) fn append_limit_offset<L: std::fmt::Display, O: std::fmt::Display>(
+    sql: &mut String,
+    limit: Option<L>,
+    offset: Option<O>,
+) {
+    match (limit, offset) {
+        (Some(limit), Some(offset)) => sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}")),
+        (Some(limit), None) => sql.push_str(&format!(" LIMIT {limit}")),
+        (None, Some(offset)) => sql.push_str(&format!(" LIMIT -1 OFFSET {offset}")),
+        (None, None) => {}
+    }
 }
 
 /// Check if SQLite JSON1 functions are available.
@@ -1142,6 +1177,21 @@ impl DatabaseExt for SqliteDatabase {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn append_limit_offset_covers_all_cases() {
+        let case = |limit: Option<u32>, offset: Option<u32>| {
+            let mut sql = "SELECT * FROM t".to_string();
+            append_limit_offset(&mut sql, limit, offset);
+            sql
+        };
+        assert_eq!(case(Some(10), Some(5)), "SELECT * FROM t LIMIT 10 OFFSET 5");
+        assert_eq!(case(Some(10), None), "SELECT * FROM t LIMIT 10");
+        assert_eq!(case(None, None), "SELECT * FROM t");
+        // The bug this guards against: a bare `OFFSET` is invalid on SQLite, so an
+        // offset with no limit must emit `LIMIT -1` (unbounded) first.
+        assert_eq!(case(None, Some(5)), "SELECT * FROM t LIMIT -1 OFFSET 5");
+    }
 
     fn retryable_error() -> rusqlite::Error {
         rusqlite::Error::SqliteFailure(

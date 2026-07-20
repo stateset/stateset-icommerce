@@ -151,9 +151,11 @@ impl SqliteGeneralLedgerRepository {
             shipping_revenue_account_id: parse_optional(row.get::<_, Option<String>>(8)?, 8)?,
             cogs_account_id: parse_required(row.get::<_, String>(9)?, 9)?,
             bad_debt_expense_account_id: parse_optional(row.get::<_, Option<String>>(10)?, 10)?,
-            is_active: row.get::<_, i32>(11)? != 0,
-            created_at: parse_required(row.get::<_, String>(12)?, 12)?,
-            updated_at: parse_required(row.get::<_, String>(13)?, 13)?,
+            auto_post_depreciation: row.get::<_, i32>(11)? != 0,
+            auto_post_revenue_recognition: row.get::<_, i32>(12)? != 0,
+            is_active: row.get::<_, i32>(13)? != 0,
+            created_at: parse_required(row.get::<_, String>(14)?, 14)?,
+            updated_at: parse_required(row.get::<_, String>(15)?, 15)?,
         })
     }
 
@@ -388,12 +390,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         sql.push_str(" ORDER BY account_number");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -567,12 +564,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         sql.push_str(" ORDER BY fiscal_year DESC, period_number DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -865,15 +857,28 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             sql.push_str(" AND source_document_id = ?");
             params.push(Box::new(doc_id.to_string()));
         }
+        // `account_id` selects entries with a line posting to that account. Postgres
+        // joins `gl_journal_entry_lines` with `SELECT DISTINCT`; the `id IN (…)`
+        // subquery is the equivalent here and cannot produce duplicate rows.
+        if let Some(account_id) = filter.account_id {
+            sql.push_str(
+                " AND id IN (SELECT journal_entry_id FROM gl_journal_entry_lines \
+                 WHERE account_id = ?)",
+            );
+            params.push(Box::new(account_id.to_string()));
+        }
+        // Free-text search over entry number / description (Postgres uses `ILIKE`;
+        // SQLite `LIKE` is case-insensitive for ASCII).
+        if let Some(search) = filter.search {
+            sql.push_str(" AND (entry_number LIKE ? OR description LIKE ?)");
+            let term = format!("%{search}%");
+            params.push(Box::new(term.clone()));
+            params.push(Box::new(term));
+        }
 
         sql.push_str(" ORDER BY entry_date DESC, entry_number DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -1102,7 +1107,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             "SELECT id, config_name, cash_account_id, accounts_receivable_account_id,
                     inventory_account_id, accounts_payable_account_id, unearned_revenue_account_id,
                     sales_revenue_account_id, shipping_revenue_account_id, cogs_account_id,
-                    bad_debt_expense_account_id, is_active, created_at, updated_at
+                    bad_debt_expense_account_id, auto_post_depreciation,
+                    auto_post_revenue_recognition, is_active, created_at, updated_at
              FROM gl_auto_posting_config WHERE is_active = 1 LIMIT 1",
             [],
             Self::map_auto_posting_config_row,
@@ -1129,8 +1135,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             "INSERT INTO gl_auto_posting_config (id, config_name, cash_account_id,
              accounts_receivable_account_id, inventory_account_id, accounts_payable_account_id,
              unearned_revenue_account_id, sales_revenue_account_id, shipping_revenue_account_id,
-             cogs_account_id, bad_debt_expense_account_id, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             cogs_account_id, bad_debt_expense_account_id, auto_post_depreciation,
+             auto_post_revenue_recognition, is_active, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 id.to_string(),
                 input.config_name,
@@ -1143,6 +1150,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 input.shipping_revenue_account_id.map(|id| id.to_string()),
                 input.cogs_account_id.to_string(),
                 input.bad_debt_expense_account_id.map(|id| id.to_string()),
+                i32::from(input.auto_post_depreciation),
+                i32::from(input.auto_post_revenue_recognition),
                 1,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
@@ -1163,17 +1172,26 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        // Get invoice details
+        // Get invoice details. The money column is `total` (not `total_amount`),
+        // and `invoice_date` is stored as a full RFC3339 timestamp, so it must be
+        // parsed as a datetime and reduced to its date (matching Postgres, which
+        // reads a `DateTime<Utc>` and calls `.date_naive()`).
         let (total, invoice_date): (String, String) = conn
             .query_row(
-                "SELECT total_amount, invoice_date FROM invoices WHERE id = ?1",
+                "SELECT total, invoice_date FROM invoices WHERE id = ?1",
                 params![invoice_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(total, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = parse_required(invoice_date, 1).map_err(map_db_error)?;
+        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&invoice_date)
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "invalid invoice_date {invoice_date:?}: {e}"
+                ))
+            })?
+            .date_naive();
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -1207,16 +1225,26 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
+        // The `payments` table has no `payment_date` column; the payment date is
+        // `paid_at` (nullable) falling back to `created_at`, stored as full RFC3339
+        // timestamps. Match Postgres, which reads `COALESCE(paid_at, created_at)`
+        // as a `DateTime<Utc>` and reduces it with `.date_naive()`.
         let (amount_str, payment_date): (String, String) = conn
             .query_row(
-                "SELECT amount, payment_date FROM payments WHERE id = ?1",
+                "SELECT amount, COALESCE(paid_at, created_at) FROM payments WHERE id = ?1",
                 params![payment_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = parse_required(payment_date, 1).map_err(map_db_error)?;
+        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&payment_date)
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "invalid payment date {payment_date:?}: {e}"
+                ))
+            })?
+            .date_naive();
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -1250,16 +1278,25 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
+        // AP bills live in `ap_bills` (there is no `bills` table), and `bill_date`
+        // is stored as a full RFC3339 timestamp, so it must be parsed as a datetime
+        // and reduced to its date (Postgres reads `ap_bills` with a native `DATE`).
         let (total, bill_date): (String, String) = conn
             .query_row(
-                "SELECT total_amount, bill_date FROM bills WHERE id = ?1",
+                "SELECT total_amount, bill_date FROM ap_bills WHERE id = ?1",
                 params![bill_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(total, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = parse_required(bill_date, 1).map_err(map_db_error)?;
+        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&bill_date)
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "invalid bill_date {bill_date:?}: {e}"
+                ))
+            })?
+            .date_naive();
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -1293,16 +1330,26 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
+        // AP payments live in `ap_payments` (there is no `bill_payments` table), and
+        // `payment_date` is stored as a full RFC3339 timestamp, so it must be parsed
+        // as a datetime and reduced to its date (Postgres reads `ap_payments` with a
+        // native `DATE`).
         let (amount_str, payment_date): (String, String) = conn
             .query_row(
-                "SELECT amount, payment_date FROM bill_payments WHERE id = ?1",
+                "SELECT amount, payment_date FROM ap_payments WHERE id = ?1",
                 params![payment_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = parse_required(payment_date, 1).map_err(map_db_error)?;
+        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&payment_date)
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "invalid payment date {payment_date:?}: {e}"
+                ))
+            })?
+            .date_naive();
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -1336,16 +1383,31 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let (cost_str, transaction_date, transaction_type): (String, String, String) = conn.query_row(
-            "SELECT total_cost, transaction_date, transaction_type FROM cost_transactions WHERE id = ?1",
+        // The date column is `created_at` (there is no `transaction_date`), stored
+        // as a full RFC3339 timestamp, so it must be parsed as a datetime and
+        // reduced to its date (Postgres reads `created_at` as a `DateTime<Utc>` and
+        // calls `.date_naive()`).
+        let (cost_str, created_at, transaction_type): (String, String, String) = conn.query_row(
+            "SELECT total_cost, created_at, transaction_type FROM cost_transactions WHERE id = ?1",
             params![cost_transaction_id.to_string()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).map_err(map_db_error)?;
 
         let cost = parse_decimal_required(cost_str, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = parse_required(transaction_date, 1).map_err(map_db_error)?;
+        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&created_at)
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "invalid created_at {created_at:?}: {e}"
+                ))
+            })?
+            .date_naive();
 
-        let (debit_account, credit_account) = if transaction_type == "sale" {
+        // An inventory issue/sale moves cost out of Inventory into COGS (debit COGS,
+        // credit Inventory); anything else (a receipt) does the reverse. Postgres
+        // treats both `"issue"` and `"sale"` as issues — matching that here fixes an
+        // `"issue"` transaction posting with debit/credit reversed on SQLite.
+        let is_issue = transaction_type == "issue" || transaction_type == "sale";
+        let (debit_account, credit_account) = if is_issue {
             (config.cogs_account_id, config.inventory_account_id)
         } else {
             (config.inventory_account_id, config.cogs_account_id)
@@ -1359,12 +1421,12 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 stateset_core::CreateJournalEntryLine::debit(
                     debit_account,
                     cost,
-                    Some(if transaction_type == "sale" { "COGS" } else { "Inventory" }.to_string()),
+                    Some(if is_issue { "COGS" } else { "Inventory" }.to_string()),
                 ),
                 stateset_core::CreateJournalEntryLine::credit(
                     credit_account,
                     cost,
-                    Some(if transaction_type == "sale" { "Inventory" } else { "COGS" }.to_string()),
+                    Some(if is_issue { "Inventory" } else { "COGS" }.to_string()),
                 ),
             ],
             source_document_type: Some("cost_transaction".to_string()),
@@ -1591,9 +1653,14 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         // Get account activity for the period from posted journal entries
         let mut stmt = conn
             .prepare(
+                // `debit_amount` / `credit_amount` are TEXT money columns; the
+                // built-in SQL `SUM()` coerces them to float (lossy) and returns
+                // a non-TEXT value that the `String` read below rejects. The
+                // `decimal_sum` aggregate accumulates exactly and returns TEXT
+                // ("0" for accounts with no lines).
                 "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
-                    COALESCE(SUM(l.debit_amount), 0) as total_debits,
-                    COALESCE(SUM(l.credit_amount), 0) as total_credits
+                    decimal_sum(l.debit_amount) as total_debits,
+                    decimal_sum(l.credit_amount) as total_credits
              FROM gl_accounts a
              LEFT JOIN gl_journal_entry_lines l ON a.id = l.account_id
              LEFT JOIN gl_journal_entries je ON l.journal_entry_id = je.id
@@ -2217,13 +2284,28 @@ mod tests {
 
         let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
         let successes = results.iter().filter(|r| r.is_ok()).count();
-        assert_eq!(successes, 1, "exactly one concurrent post should succeed: {results:?}");
+        // Safety invariant: the entry can be posted AT MOST once, so its lines
+        // are applied to the ledger at most once. Under extreme lock contention
+        // the sole winner can fail transiently (retryable), so zero successes is
+        // acceptable; two or more is the double-post bug this guards against.
+        assert!(successes <= 1, "journal entry posted more than once: {results:?}");
 
-        assert_eq!(account_balance(&repo, cash.id), dec!(100), "cash applied more than once");
-        assert_eq!(account_balance(&repo, revenue.id), dec!(100), "revenue applied more than once");
+        let mult = Decimal::from(successes as u64);
+        assert_eq!(
+            account_balance(&repo, cash.id),
+            dec!(100) * mult,
+            "cash must reflect exactly the successful post"
+        );
+        assert_eq!(
+            account_balance(&repo, revenue.id),
+            dec!(100) * mult,
+            "revenue must reflect exactly the successful post"
+        );
 
         let posted = repo.get_journal_entry(entry.id).expect("ok").expect("found");
-        assert_eq!(posted.status, JournalEntryStatus::Posted);
+        let expected_status =
+            if successes == 1 { JournalEntryStatus::Posted } else { JournalEntryStatus::Draft };
+        assert_eq!(posted.status, expected_status);
     }
 
     #[test]

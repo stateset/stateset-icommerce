@@ -300,20 +300,23 @@ impl SqliteOrderRepository {
         let customer_id_str = input.customer_id.to_string();
         let now_str = now.to_rfc3339();
 
-        // Compute order total with proper financial rounding.
-        // Each line item: (unit_price × quantity) - discount + tax, rounded to 2dp.
-        // This matches the pricing engine's line_item computation.
+        // Order total is the sum of the per-line money totals. Each line is
+        // rounded to the currency minor unit by `OrderItem::calculate_total`
+        // (the same helper used to store `order_items.total`), so the order
+        // total foots exactly to its line items and matches `update_order_total`
+        // and the Postgres backend.
         let total: Decimal = input
             .items
             .iter()
             .map(|item| {
-                let subtotal = item.unit_price * Decimal::from(item.quantity);
-                let discount = item.discount.unwrap_or_default();
-                let tax = item.tax_amount.unwrap_or_default();
-                (subtotal - discount + tax).round_dp(2)
+                OrderItem::calculate_total(
+                    item.quantity,
+                    item.unit_price,
+                    item.discount.unwrap_or_default(),
+                    item.tax_amount.unwrap_or_default(),
+                )
             })
-            .sum::<Decimal>()
-            .round_dp(2);
+            .sum();
         let total_str = total.to_string();
 
         let shipping_address_json = input
@@ -952,14 +955,11 @@ impl OrderRepository for SqliteOrderRepository {
 
         sql.push_str(" ORDER BY order_date DESC, id DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if filter.after_cursor.is_none() {
-            if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {offset}"));
-            }
-        }
+        // Offset pagination applies only in non-cursor mode; the helper emits
+        // `LIMIT -1 OFFSET n` when an offset is set without a limit (SQLite rejects
+        // a bare OFFSET).
+        let offset = if filter.after_cursor.is_none() { filter.offset } else { None };
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -1152,10 +1152,12 @@ impl OrderRepository for SqliteOrderRepository {
                 .items
                 .iter()
                 .map(|item| {
-                    let subtotal = item.unit_price * Decimal::from(item.quantity);
-                    let discount = item.discount.unwrap_or_default();
-                    let tax = item.tax_amount.unwrap_or_default();
-                    subtotal - discount + tax
+                    OrderItem::calculate_total(
+                        item.quantity,
+                        item.unit_price,
+                        item.discount.unwrap_or_default(),
+                        item.tax_amount.unwrap_or_default(),
+                    )
                 })
                 .sum();
 

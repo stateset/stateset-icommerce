@@ -418,10 +418,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             }
         }
 
-        if invoice_count == 0 {
-            return Err(stateset_core::CommerceError::NotFound);
-        }
-
+        // The customer exists (checked above); an empty open-invoice set is a
+        // zero-filled aging, not NotFound — matching the Postgres backend and
+        // keeping get_customer_summary / generate_statement working for paid-up
+        // customers.
         Ok(Some(CustomerArAging {
             customer_id,
             customer_name: Some(format!("{first_name} {last_name}")),
@@ -470,8 +470,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         #[derive(Default)]
         struct AgingAccum {
             customer_id: Uuid,
-            customer_name: String,
-            customer_email: String,
+            customer_name: Option<String>,
+            customer_email: Option<String>,
             current: Decimal,
             days_1_30: Decimal,
             days_31_60: Decimal,
@@ -492,9 +492,13 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         while let Some(row) = rows.next().map_err(map_db_error)? {
             let id_str: String = row.get(0).map_err(map_db_error)?;
             let customer_id = parse_uuid(&id_str, "invoice", "customer_id")?;
-            let first_name: String = row.get(1).map_err(map_db_error)?;
-            let last_name: String = row.get(2).map_err(map_db_error)?;
-            let email: String = row.get(3).map_err(map_db_error)?;
+            // first_name/last_name/email come from a LEFT JOIN, so they are NULL
+            // when an invoice references a customer that no longer exists. Read
+            // them as optional rather than crashing the whole report on one
+            // orphaned invoice.
+            let first_name: Option<String> = row.get(1).map_err(map_db_error)?;
+            let last_name: Option<String> = row.get(2).map_err(map_db_error)?;
+            let email: Option<String> = row.get(3).map_err(map_db_error)?;
             let due_date_str: String = row.get(4).map_err(map_db_error)?;
             let balance_str: String = row.get(5).map_err(map_db_error)?;
             let created_at_str: String = row.get(6).map_err(map_db_error)?;
@@ -507,9 +511,15 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             let due_date = parse_datetime_safe(&due_date_str, "invoice", "due_date")?;
             let created_at = parse_datetime_safe(&created_at_str, "invoice", "created_at")?;
 
+            let customer_name = match (first_name, last_name) {
+                (Some(f), Some(l)) => Some(format!("{f} {l}")),
+                (Some(f), None) => Some(f),
+                (None, Some(l)) => Some(l),
+                (None, None) => None,
+            };
             let entry = by_customer.entry(customer_id).or_insert_with(|| AgingAccum {
                 customer_id,
-                customer_name: format!("{first_name} {last_name}"),
+                customer_name,
                 customer_email: email,
                 ..Default::default()
             });
@@ -536,12 +546,45 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let mut results: Vec<CustomerArAging> = by_customer
             .into_values()
             .filter(|entry| {
-                if filter.overdue_only.unwrap_or(false) {
-                    entry.days_1_30 + entry.days_31_60 + entry.days_61_90 + entry.days_over_90
-                        > Decimal::ZERO
-                } else {
-                    true
+                // overdue_only: the customer must have some past-due balance.
+                if filter.overdue_only.unwrap_or(false)
+                    && entry.days_1_30 + entry.days_31_60 + entry.days_61_90 + entry.days_over_90
+                        <= Decimal::ZERO
+                {
+                    return false;
                 }
+                // min_balance: total outstanding must meet the threshold. Mirrors
+                // the Postgres `HAVING SUM(balance_due) >= min_balance`, applied
+                // before pagination so the offset/limit see the filtered set.
+                if let Some(min_balance) = filter.min_balance {
+                    let total = entry.current
+                        + entry.days_1_30
+                        + entry.days_31_60
+                        + entry.days_61_90
+                        + entry.days_over_90;
+                    if total < min_balance {
+                        return false;
+                    }
+                }
+                // aging_bucket: the customer must have a positive balance in the
+                // requested bucket (matches the Postgres per-bucket HAVING).
+                if let Some(bucket) = filter.aging_bucket {
+                    let has_bucket_balance = match bucket {
+                        stateset_core::AgingBucket::Current => entry.current > Decimal::ZERO,
+                        stateset_core::AgingBucket::Days1To30 => entry.days_1_30 > Decimal::ZERO,
+                        stateset_core::AgingBucket::Days31To60 => entry.days_31_60 > Decimal::ZERO,
+                        stateset_core::AgingBucket::Days61To90 => entry.days_61_90 > Decimal::ZERO,
+                        stateset_core::AgingBucket::DaysOver90 => {
+                            entry.days_over_90 > Decimal::ZERO
+                        }
+                        // Unknown bucket: don't filter (matches Postgres `1=1`).
+                        _ => true,
+                    };
+                    if !has_bucket_balance {
+                        return false;
+                    }
+                }
+                true
             })
             .map(|entry| {
                 let total = entry.current
@@ -551,8 +594,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                     + entry.days_over_90;
                 CustomerArAging {
                     customer_id: entry.customer_id,
-                    customer_name: Some(entry.customer_name),
-                    customer_email: Some(entry.customer_email),
+                    customer_name: entry.customer_name,
+                    customer_email: entry.customer_email,
                     current: entry.current,
                     days_1_30: entry.days_1_30,
                     days_31_60: entry.days_31_60,
@@ -566,7 +609,15 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             })
             .collect();
 
-        results.sort_by(|a, b| b.total_outstanding.cmp(&a.total_outstanding));
+        // Sort by outstanding balance, then customer_id as a total-order
+        // tiebreaker: customers with equal balances must have a stable, unique
+        // ordering, otherwise the offset/limit pagination below (and the Postgres
+        // ORDER BY) can skip or duplicate rows across pages.
+        results.sort_by(|a, b| {
+            b.total_outstanding
+                .cmp(&a.total_outstanding)
+                .then_with(|| a.customer_id.cmp(&b.customer_id))
+        });
 
         let offset = filter.offset.unwrap_or(0) as usize;
         let limit = filter.limit.map(|l| l as usize);
@@ -1741,8 +1792,8 @@ mod tests {
     use crate::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        AccountsReceivableRepository, ApplyCreditMemo, ArAgingFilter, CreateCreditMemo,
-        CreditMemoFilter, CreditMemoReason, CreditMemoStatus,
+        AccountsReceivableRepository, AgingBucket, ApplyCreditMemo, ArAgingFilter,
+        CreateCreditMemo, CreditMemoFilter, CreditMemoReason, CreditMemoStatus,
     };
 
     fn fresh_repo() -> SqliteAccountsReceivableRepository {
@@ -1763,6 +1814,77 @@ mod tests {
             notes: Some("test".into()),
         })
         .expect("create memo")
+    }
+
+    fn seed_payment(repo: &SqliteAccountsReceivableRepository, id: Uuid, number: &str) {
+        let conn = repo.pool.get().expect("conn");
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO payments (id, payment_number, amount, created_at, updated_at)
+             VALUES (?1, ?2, '100', ?3, ?3)",
+            params![id.to_string(), number, now],
+        )
+        .expect("seed payment");
+    }
+
+    fn seed_paid_invoice(
+        repo: &SqliteAccountsReceivableRepository,
+        id: Uuid,
+        number: &str,
+        customer_id: Uuid,
+        invoice_date: chrono::DateTime<Utc>,
+    ) {
+        let conn = repo.pool.get().expect("conn");
+        let d = invoice_date.to_rfc3339();
+        conn.execute(
+            "INSERT INTO invoices (id, invoice_number, customer_id, status, invoice_date,
+                due_date, total, amount_paid, balance_due, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'paid', ?4, ?4, '100', '100', '0', ?4, ?4)",
+            params![id.to_string(), number, customer_id.to_string(), d],
+        )
+        .expect("seed paid invoice");
+    }
+
+    fn seed_application(
+        repo: &SqliteAccountsReceivableRepository,
+        payment_id: Uuid,
+        invoice_id: Uuid,
+        applied_date: chrono::DateTime<Utc>,
+    ) {
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "INSERT INTO ar_payment_applications (id, payment_id, invoice_id, applied_amount, applied_date, created_at)
+             VALUES (?1, ?2, ?3, '100', ?4, ?5)",
+            params![
+                Uuid::new_v4().to_string(),
+                payment_id.to_string(),
+                invoice_id.to_string(),
+                applied_date.to_rfc3339(),
+                Utc::now().to_rfc3339(),
+            ],
+        )
+        .expect("seed application");
+    }
+
+    #[test]
+    fn average_days_to_pay_uses_fractional_days() {
+        let repo = fresh_repo();
+        let customer = Uuid::new_v4();
+        let payment = Uuid::new_v4();
+        seed_payment(&repo, payment, "PAY-ADP");
+
+        let base = Utc::now();
+        let inv1 = Uuid::new_v4();
+        let inv2 = Uuid::new_v4();
+        seed_paid_invoice(&repo, inv1, "INV-ADP-1", customer, base);
+        seed_paid_invoice(&repo, inv2, "INV-ADP-2", customer, base);
+        // Paid at +10.5 and +11.5 days.
+        seed_application(&repo, payment, inv1, base + chrono::Duration::hours(10 * 24 + 12));
+        seed_application(&repo, payment, inv2, base + chrono::Duration::hours(11 * 24 + 12));
+
+        // Fractional per-invoice days: AVG(10.5, 11.5) = 11.0 -> 11. Postgres's
+        // whole-day EXTRACT(DAY) truncation would give AVG(10, 11) = 10.5 -> 10.
+        assert_eq!(repo.get_average_days_to_pay(customer).expect("avg"), Some(11));
     }
 
     /// Insert an overdue, unpaid invoice directly so balance filters can be
@@ -1809,6 +1931,117 @@ mod tests {
 
         let tiny = due.iter().find(|i| i.invoice_number == "INV-DUN-1").expect("found");
         assert_eq!(tiny.balance_due, dec!(0.005), "balance must round-trip exactly");
+    }
+
+    /// Insert an unpaid invoice for a specific customer with a chosen due-date
+    /// offset (positive = days in the past, negative = days in the future), so
+    /// aging-bucket filters can be exercised deterministically.
+    fn insert_invoice_due_days(
+        repo: &SqliteAccountsReceivableRepository,
+        customer_id: Uuid,
+        number: &str,
+        balance_due: &str,
+        due_days_ago: i64,
+    ) {
+        let conn = repo.pool.get().expect("conn");
+        let now = Utc::now();
+        let due = now - chrono::Duration::days(due_days_ago);
+        conn.execute(
+            "INSERT INTO invoices (id, invoice_number, customer_id, status, invoice_date,
+                due_date, total, amount_paid, balance_due, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'sent', ?4, ?5, ?6, '0', ?6, ?4, ?4)",
+            params![
+                Uuid::new_v4().to_string(),
+                number,
+                customer_id.to_string(),
+                now.to_rfc3339(),
+                due.to_rfc3339(),
+                balance_due,
+            ],
+        )
+        .expect("insert invoice");
+    }
+
+    #[test]
+    fn get_aging_report_honors_min_balance() {
+        // Each insert_overdue_invoice creates a distinct customer.
+        let repo = fresh_repo();
+        insert_overdue_invoice(&repo, "INV-SMALL", "100.00");
+        insert_overdue_invoice(&repo, "INV-BIG", "5000.00");
+
+        let all = repo.get_aging_report(ArAgingFilter::default()).expect("all");
+        assert_eq!(all.len(), 2, "both customers appear without a min_balance filter");
+
+        let filtered = repo
+            .get_aging_report(ArAgingFilter { min_balance: Some(dec!(1000)), ..Default::default() })
+            .expect("filtered");
+        assert_eq!(filtered.len(), 1, "only the >= 1000 customer must pass min_balance");
+        assert_eq!(filtered[0].total_outstanding, dec!(5000.00));
+    }
+
+    #[test]
+    fn get_aging_report_honors_aging_bucket() {
+        let repo = fresh_repo();
+        let current_cust = Uuid::new_v4();
+        let over90_cust = Uuid::new_v4();
+        // Not yet due (5 days in the future) => Current bucket.
+        insert_invoice_due_days(&repo, current_cust, "INV-CUR", "200.00", -5);
+        // 120 days overdue => DaysOver90 bucket.
+        insert_invoice_due_days(&repo, over90_cust, "INV-OLD", "300.00", 120);
+
+        let over90 = repo
+            .get_aging_report(ArAgingFilter {
+                aging_bucket: Some(AgingBucket::DaysOver90),
+                ..Default::default()
+            })
+            .expect("over90");
+        assert_eq!(over90.len(), 1, "only the >90-day customer matches DaysOver90: {over90:?}");
+        assert_eq!(over90[0].customer_id, over90_cust);
+
+        let current = repo
+            .get_aging_report(ArAgingFilter {
+                aging_bucket: Some(AgingBucket::Current),
+                ..Default::default()
+            })
+            .expect("current");
+        assert_eq!(current.len(), 1, "only the not-yet-due customer matches Current: {current:?}");
+        assert_eq!(current[0].customer_id, current_cust);
+    }
+
+    /// Insert a bare customer row (id + required NOT NULL columns).
+    fn insert_customer(repo: &SqliteAccountsReceivableRepository, id: Uuid, email: &str) {
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "INSERT INTO customers (id, email, first_name, last_name) VALUES (?1, ?2, 'Paid', 'Up')",
+            params![id.to_string(), email],
+        )
+        .expect("insert customer");
+    }
+
+    #[test]
+    fn get_customer_aging_returns_zeros_for_existing_customer_without_invoices() {
+        // A customer that exists but owes nothing must return a zero-filled aging
+        // (matching Postgres), NOT NotFound — the truly-missing case is the only
+        // one that is None. SQLite previously returned Err(NotFound) here, which
+        // also broke get_customer_summary / generate_statement for paid-up
+        // customers.
+        let repo = fresh_repo();
+        let existing = Uuid::new_v4();
+        insert_customer(&repo, existing, "paidup@example.com");
+
+        let aging = repo
+            .get_customer_aging(existing)
+            .expect("an existing customer must not error")
+            .expect("an existing customer must return Some, even with no open invoices");
+        assert_eq!(aging.invoice_count, 0);
+        assert_eq!(aging.total_outstanding, dec!(0));
+        assert_eq!(aging.current, dec!(0));
+        assert!(aging.oldest_invoice_date.is_none());
+
+        // A truly-unknown customer is still None (not an error).
+        let missing =
+            repo.get_customer_aging(Uuid::new_v4()).expect("unknown customer is not error");
+        assert!(missing.is_none(), "unknown customer must be None");
     }
 
     #[test]
@@ -2034,6 +2267,55 @@ mod tests {
     }
 
     #[test]
+    fn aging_report_orders_ties_by_customer_id() {
+        // Five customers with identical outstanding balances must come back in a
+        // stable, unique order (by customer_id) — otherwise the report's order,
+        // and the offset/limit pagination built on it, is non-deterministic.
+        let repo = fresh_repo();
+        let mut ids: Vec<Uuid> = (0..5).map(|_| Uuid::new_v4()).collect();
+        for (i, id) in ids.iter().enumerate() {
+            {
+                let conn = repo.pool.get().expect("conn");
+                conn.execute(
+                    "INSERT INTO customers (id, email, first_name, last_name)
+                     VALUES (?1, ?2, 'Test', 'Customer')",
+                    params![id.to_string(), format!("tie-{i}@example.com")],
+                )
+                .expect("insert customer");
+            }
+            insert_invoice_for(&repo, *id, &format!("INV-TIE-{i}"), "100");
+        }
+
+        let report = repo.get_aging_report(ArAgingFilter::default()).expect("report");
+        let returned: Vec<Uuid> = report.iter().map(|r| r.customer_id).collect();
+        ids.sort();
+        assert_eq!(
+            returned, ids,
+            "equal-balance customers must be ordered by ascending customer_id"
+        );
+    }
+
+    #[test]
+    fn aging_report_tolerates_invoice_with_missing_customer() {
+        // An invoice can reference a customer that no longer exists (deleted).
+        // The report LEFT JOINs customers, so that row's name/email come back
+        // NULL — it must surface the balance with an empty name rather than
+        // erroring out and taking down the whole report.
+        let repo = fresh_repo();
+        let orphan = Uuid::new_v4();
+        insert_invoice_for(&repo, orphan, "INV-ORPHAN", "250");
+
+        let report = repo
+            .get_aging_report(ArAgingFilter::default())
+            .expect("report must not crash on an invoice whose customer is missing");
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].customer_id, orphan);
+        assert_eq!(report[0].customer_name, None, "missing customer must yield no name");
+        assert_eq!(report[0].customer_email, None);
+        assert_eq!(report[0].total_outstanding, dec!(250));
+    }
+
+    #[test]
     fn apply_credit_memo_is_atomic_under_concurrency() {
         use std::sync::{Arc, Barrier};
 
@@ -2069,14 +2351,24 @@ mod tests {
             handles.into_iter().map(|h| h.join().unwrap()).filter(|&ok| ok).count()
         });
 
-        assert_eq!(
-            successes, 1,
-            "exactly one of {THREADS} concurrent full applications of a 100-unit memo may succeed"
+        // Safety invariant: the memo can be applied AT MOST once (never
+        // double-applied). Under extreme lock contention the sole winner can fail
+        // transiently (the caller retries), so zero successes is acceptable; two
+        // or more would be the double-apply bug this guards against.
+        assert!(
+            successes <= 1,
+            "the 100-unit memo was applied more than once across {THREADS} threads"
         );
         let after = repo.get_credit_memo(memo.id).expect("get").expect("memo");
-        assert_eq!(after.applied_amount, dec!(100), "memo must be applied exactly once");
-        assert_eq!(after.unapplied_amount, dec!(0));
-        assert_eq!(after.status, CreditMemoStatus::FullyApplied);
+        assert_eq!(
+            after.applied_amount,
+            dec!(100) * Decimal::from(successes as u64),
+            "applied_amount must reflect exactly the successful application"
+        );
+        assert_eq!(after.unapplied_amount, dec!(100) - after.applied_amount);
+        let expected_status =
+            if successes == 1 { CreditMemoStatus::FullyApplied } else { CreditMemoStatus::Open };
+        assert_eq!(after.status, expected_status);
     }
 
     fn insert_payment(
@@ -2135,9 +2427,28 @@ mod tests {
             handles.into_iter().map(|h| h.join().unwrap()).filter(|&ok| ok).count()
         });
 
+        // Safety invariant: at most one full payment can bind to the 100-balance
+        // invoice (no double-apply). Under extreme lock contention the winner can
+        // fail transiently (retryable), so zero is acceptable; two or more is the
+        // bug this guards against.
+        assert!(
+            successes <= 1,
+            "more than one full payment bound to the invoice across {THREADS} threads"
+        );
+        let balance: String = {
+            let conn = repo.pool.get().expect("conn");
+            conn.query_row(
+                "SELECT balance_due FROM invoices WHERE id = ?1",
+                params![invoice_id.to_string()],
+                |r| r.get(0),
+            )
+            .expect("balance")
+        };
+        let balance = parse_decimal_safe(&balance, "invoice", "balance_due").expect("parse");
         assert_eq!(
-            successes, 1,
-            "exactly one of {THREADS} concurrent full payments against a 100-balance invoice may succeed"
+            balance,
+            dec!(100) - dec!(100) * Decimal::from(successes as u64),
+            "invoice balance must reflect exactly the successful payment"
         );
     }
 

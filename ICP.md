@@ -29,7 +29,7 @@ settlement. No other public protocol covers this layer.
 |---|---|---|
 | **Spec** | [`icp-spec/ICP-1.0-DRAFT.md`](./icp-spec/ICP-1.0-DRAFT.md) — normative protocol; canonicalization rules; 60+ error codes | — |
 | **Wire** | **All 7 core intent verbs shipping** (`purchase.create`, `subscription.create`, `subscription.cancel`, `purchase.return`, `inventory.query`, `quote.request`, `payout.request` — see ICPIP-0003/0004), plus the `channel.register` extension verb (ICPIP-0005) | — |
-| **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic | 3 vectors × **4 IUTs (JS · Rust · Go · Python)** = **12 byte-identical PASS** |
+| **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic; incl. the full §8 escrow state machine (30-cell transition matrix + event replay), §6 intent validation across all 7 verbs, the §11.4/§6.2/§6.6 exact-decimal economic ceilings (`max_total`, `max_refund`, `max_per_payout`), §9 co-signed settlement-receipt verification, and §5.3 replay-window timing | 9 vector families × **4 IUTs (JS · Rust · Go · Python)** = **36 byte-identical PASS** |
 | **Reference contract** | [`icp-spec/contracts/usdc-base/ICPEscrow.sol`](./icp-spec/contracts/usdc-base/) — production-quality Solidity | **15/15 Foundry PASS** |
 | **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference + [`openapi.yaml`](./icp-handler/openapi.yaml) for codegen; ICPIP-0005 register + signed emit + state-transition publish + recovery API | **39/39 Node-test PASS** |
 | **MCP server** | [`icp-mcp/`](./icp-mcp/) — drops into Claude Desktop | **6/6 Node-test PASS** |

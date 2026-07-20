@@ -35,6 +35,7 @@ struct WishlistItemRow {
     product_id: Uuid,
     variant_id: Option<String>,
     priority: Option<i32>,
+    quantity: i32,
     notes: Option<String>,
     added_at: DateTime<Utc>,
 }
@@ -62,14 +63,14 @@ impl PgWishlistRepository {
             variant_id: row.variant_id,
             added_at: row.added_at,
             note: row.notes,
-            quantity: 1,
+            quantity: row.quantity.max(0) as u32,
             priority: row.priority,
         }
     }
 
     async fn load_items_async(&self, wishlist_id: Uuid) -> Result<Vec<WishlistItem>> {
         let rows = sqlx::query_as::<_, WishlistItemRow>(
-            "SELECT id, wishlist_id, product_id, variant_id, priority, notes, added_at
+            "SELECT id, wishlist_id, product_id, variant_id, priority, quantity, notes, added_at
              FROM wishlist_items WHERE wishlist_id = $1 ORDER BY added_at",
         )
         .bind(wishlist_id)
@@ -245,14 +246,15 @@ impl PgWishlistRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         sqlx::query(
-            "INSERT INTO wishlist_items (id, wishlist_id, product_id, variant_id, priority, notes, added_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO wishlist_items (id, wishlist_id, product_id, variant_id, priority, quantity, notes, added_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(item_id)
         .bind(wishlist_id)
         .bind(item.product_id.into_uuid())
         .bind(&item.variant_id)
         .bind(item.priority)
+        .bind(i32::try_from(item.quantity.unwrap_or(1)).unwrap_or(1))
         .bind(&item.note)
         .bind(now)
         .execute(tx.as_mut())
@@ -374,6 +376,7 @@ mod tests {
             product_id,
             variant_id: Some("size-L".into()),
             priority: Some(1),
+            quantity: 3,
             notes: Some("Red color".into()),
             added_at: now,
         };
@@ -383,7 +386,7 @@ mod tests {
         assert_eq!(item.variant_id.as_deref(), Some("size-L"));
         assert_eq!(item.priority, Some(1));
         assert_eq!(item.note.as_deref(), Some("Red color"));
-        assert_eq!(item.quantity, 1);
+        assert_eq!(item.quantity, 3, "quantity must be read from the row, not hard-coded");
     }
 
     #[test]
@@ -395,6 +398,7 @@ mod tests {
             product_id: Uuid::new_v4(),
             variant_id: None,
             priority: None,
+            quantity: 1,
             notes: None,
             added_at: now,
         };
@@ -403,5 +407,6 @@ mod tests {
         assert!(item.variant_id.is_none());
         assert!(item.priority.is_none());
         assert!(item.note.is_none());
+        assert_eq!(item.quantity, 1);
     }
 }

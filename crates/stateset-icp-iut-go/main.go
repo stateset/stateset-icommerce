@@ -18,6 +18,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +54,18 @@ func main() {
 		output, err = run02CanonicalJson(input)
 	case "03-signature-verification":
 		output, err = run03SignatureVerification(input)
+	case "04-escrow-lifecycle":
+		output, err = run04EscrowLifecycle(input)
+	case "05-intent-validation":
+		output, err = run05IntentValidation(input)
+	case "06-quote-binding":
+		output, err = run06QuoteBinding(input)
+	case "07-settlement-receipts":
+		output, err = run07SettlementReceipts(input)
+	case "08-timing":
+		output, err = run08Timing(input)
+	case "09-ceilings":
+		output, err = run09Ceilings(input)
 	default:
 		// Per iut.protocol.md: exit 2 + JSON on stderr signals SKIP.
 		fmt.Fprintf(os.Stderr, `{"error":"unsupported","reason":"no handler for %s"}`+"\n", testName)
@@ -459,4 +472,411 @@ func base58btcEncode(buf []byte) string {
 		out = append(out, alphabet[digits[i]])
 	}
 	return string(out)
+}
+
+// ---------------------------------------------------------------------------
+// 04-escrow-lifecycle — ICP-1.0 §8 state machine + event replay
+// ---------------------------------------------------------------------------
+
+// escrowTransitions encodes the normative §8 transition table directly.
+var escrowTransitions = map[string]string{
+	"pending|payment_confirmed":                   "funded",
+	"funded|fulfillment_confirmed_window_elapsed": "released",
+	"funded|dispute_raised":                       "disputed",
+	"disputed|resolution_favors_merchant":         "released",
+	"disputed|resolution_favors_buyer":            "refunded",
+	"funded|merchant_cancel_or_expiry":            "refunded",
+}
+
+func escrowStep(state, trigger string) map[string]interface{} {
+	if next, ok := escrowTransitions[state+"|"+trigger]; ok {
+		return map[string]interface{}{"state": next}
+	}
+	if state == "funded" && trigger == "payment_confirmed" {
+		return map[string]interface{}{"error": "escrow.already_funded"}
+	}
+	return map[string]interface{}{"error": "escrow.wrong_state"}
+}
+
+func escrowReplay(events []interface{}) map[string]interface{} {
+	state := "pending"
+	for index, raw := range events {
+		event, ok := raw.(map[string]interface{})
+		if !ok {
+			return map[string]interface{}{"error": "escrow.seq_out_of_order"}
+		}
+		seqNumber, ok := event["seq"].(json.Number)
+		if !ok {
+			return map[string]interface{}{"error": "escrow.seq_out_of_order"}
+		}
+		seq, err := seqNumber.Int64()
+		if err != nil || int(seq) != index {
+			return map[string]interface{}{"error": "escrow.seq_out_of_order"}
+		}
+		trigger, _ := event["trigger"].(string)
+		step := escrowStep(state, trigger)
+		if errCode, failed := step["error"]; failed {
+			return map[string]interface{}{"error": errCode}
+		}
+		state = step["state"].(string)
+	}
+	return map[string]interface{}{"final_state": state}
+}
+
+func run04EscrowLifecycle(input map[string]interface{}) (map[string]interface{}, error) {
+	transitionCases, ok := input["transition_cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.transition_cases must be an array")
+	}
+	replayCases, ok := input["replay_cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.replay_cases must be an array")
+	}
+
+	transitions := map[string]interface{}{}
+	for _, raw := range transitionCases {
+		c := raw.(map[string]interface{})
+		transitions[c["id"].(string)] = escrowStep(c["from"].(string), c["trigger"].(string))
+	}
+	replays := map[string]interface{}{}
+	for _, raw := range replayCases {
+		c := raw.(map[string]interface{})
+		events, _ := c["events"].([]interface{})
+		replays[c["id"].(string)] = escrowReplay(events)
+	}
+	return map[string]interface{}{"transitions": transitions, "replays": replays}, nil
+}
+
+// ---------------------------------------------------------------------------
+// 05-intent-validation — ICP-1.0 §6 intent envelope validation
+// ---------------------------------------------------------------------------
+
+var (
+	aidRe     = regexp.MustCompile(`^aid:v1:z[1-9A-HJ-NP-Za-km-z]{40,60}$`)
+	settlerRe = regexp.MustCompile(`^settler:[a-z0-9]+(\.[a-z0-9]+)*$`)
+	moneyRe   = regexp.MustCompile(`^-?[0-9]+(\.[0-9]{1,18})?$`)
+)
+
+type intentVerbSpec struct {
+	aids          []string
+	money         []string
+	itemsRequired bool
+	required      []string
+}
+
+var intentVerbs = map[string]intentVerbSpec{
+	"purchase.create": {[]string{"buyer", "merchant"}, []string{"max_total"}, true,
+		[]string{"v", "verb", "intent_id", "buyer", "merchant", "settler", "items", "max_total", "expiry", "principal_binding", "nonce", "iat", "exp"}},
+	"inventory.query": {[]string{"buyer", "merchant"}, nil, false,
+		[]string{"v", "verb", "intent_id", "buyer", "merchant", "settler", "principal_binding", "nonce", "iat", "exp"}},
+	"quote.request": {[]string{"buyer", "merchant"}, nil, true,
+		[]string{"v", "verb", "intent_id", "buyer", "merchant", "settler", "items", "principal_binding", "nonce", "iat", "exp"}},
+	"payout.request": {[]string{"seller", "platform"}, []string{"amount"}, false,
+		[]string{"v", "verb", "intent_id", "seller", "platform", "settler", "amount", "destination", "principal_binding", "nonce", "iat", "exp"}},
+	"subscription.create": {[]string{"buyer", "merchant"}, []string{"max_total_per_period"}, false,
+		[]string{"v", "verb", "intent_id", "buyer", "merchant", "settler", "service_id", "cadence", "max_total_per_period", "first_charge_at", "principal_binding", "nonce", "iat", "exp"}},
+	"subscription.cancel": {[]string{"buyer", "merchant"}, nil, false,
+		[]string{"v", "verb", "intent_id", "buyer", "merchant", "settler", "subscription_id", "effective", "principal_binding", "nonce", "iat", "exp"}},
+	"purchase.return": {[]string{"buyer", "merchant"}, nil, true,
+		[]string{"v", "verb", "intent_id", "buyer", "merchant", "settler", "original_settlement_id", "items", "desired_outcome", "principal_binding", "nonce", "iat", "exp"}},
+}
+
+func validateIntent(raw interface{}) map[string]interface{} {
+	intent, ok := raw.(map[string]interface{})
+	if !ok {
+		return map[string]interface{}{"error": "format.bad_schema"}
+	}
+	if _, ok := intent["v"]; !ok {
+		return map[string]interface{}{"error": "format.missing_field"}
+	}
+	if v, _ := intent["v"].(string); v != "icp-1.0" {
+		return map[string]interface{}{"error": "version.unsupported"}
+	}
+	if _, ok := intent["verb"]; !ok {
+		return map[string]interface{}{"error": "format.missing_field"}
+	}
+	verb, _ := intent["verb"].(string)
+	spec, ok := intentVerbs[verb]
+	if !ok {
+		return map[string]interface{}{"error": "format.unknown_verb"}
+	}
+	for _, field := range spec.required {
+		if _, ok := intent[field]; !ok {
+			return map[string]interface{}{"error": "format.missing_field"}
+		}
+	}
+	for _, field := range spec.aids {
+		if !aidRe.MatchString(fmt.Sprintf("%v", intent[field])) {
+			return map[string]interface{}{"error": "format.bad_aid"}
+		}
+	}
+	if !settlerRe.MatchString(fmt.Sprintf("%v", intent["settler"])) {
+		return map[string]interface{}{"error": "format.bad_settler_id"}
+	}
+	for _, field := range spec.money {
+		m, ok := intent[field].(map[string]interface{})
+		if !ok || !moneyRe.MatchString(fmt.Sprintf("%v", m["amount"])) {
+			return map[string]interface{}{"error": "format.bad_money"}
+		}
+	}
+	if spec.itemsRequired {
+		items, ok := intent["items"].([]interface{})
+		if !ok || len(items) < 1 {
+			return map[string]interface{}{"error": "format.bad_schema"}
+		}
+	}
+	return map[string]interface{}{"valid": true}
+}
+
+func run05IntentValidation(input map[string]interface{}) (map[string]interface{}, error) {
+	cases, ok := input["cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.cases must be an array")
+	}
+	validations := map[string]interface{}{}
+	for _, raw := range cases {
+		c := raw.(map[string]interface{})
+		validations[c["id"].(string)] = validateIntent(c["intent"])
+	}
+	return map[string]interface{}{"validations": validations}, nil
+}
+
+// ---------------------------------------------------------------------------
+// 06-quote-binding — ICP-1.0 §11.4 max_total ceiling (exact decimal compare)
+// ---------------------------------------------------------------------------
+
+// cmpAmount compares two non-negative decimal strings. Returns -1, 0, or 1.
+// Exact — no float conversion.
+func cmpAmount(a, b string) int {
+	ia, fa := splitDecimal(a)
+	ib, fb := splitDecimal(b)
+	ia = strings.TrimLeft(ia, "0")
+	if ia == "" {
+		ia = "0"
+	}
+	ib = strings.TrimLeft(ib, "0")
+	if ib == "" {
+		ib = "0"
+	}
+	if len(ia) != len(ib) {
+		if len(ia) < len(ib) {
+			return -1
+		}
+		return 1
+	}
+	if ia != ib {
+		if ia < ib {
+			return -1
+		}
+		return 1
+	}
+	n := len(fa)
+	if len(fb) > n {
+		n = len(fb)
+	}
+	fa = fa + strings.Repeat("0", n-len(fa))
+	fb = fb + strings.Repeat("0", n-len(fb))
+	if fa == fb {
+		return 0
+	}
+	if fa < fb {
+		return -1
+	}
+	return 1
+}
+
+func splitDecimal(s string) (string, string) {
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+func run06QuoteBinding(input map[string]interface{}) (map[string]interface{}, error) {
+	cases, ok := input["cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.cases must be an array")
+	}
+	decisions := map[string]interface{}{}
+	for _, raw := range cases {
+		c := raw.(map[string]interface{})
+		quote := c["quote_total"].(map[string]interface{})["amount"].(string)
+		max := c["intent_max_total"].(map[string]interface{})["amount"].(string)
+		if cmpAmount(quote, max) > 0 {
+			decisions[c["id"].(string)] = map[string]interface{}{"error": "policy.quote.exceeds_max_total"}
+		} else {
+			decisions[c["id"].(string)] = map[string]interface{}{"valid": true}
+		}
+	}
+	return map[string]interface{}{"decisions": decisions}, nil
+}
+
+// ---------------------------------------------------------------------------
+// 07-settlement-receipts — ICP-1.0 §9 co-signed receipt verification
+// ---------------------------------------------------------------------------
+
+func sigValue(sig interface{}) (string, bool) {
+	m, ok := sig.(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	s, ok := m["sig"].(string)
+	return s, ok && s != ""
+}
+
+func verifyReceipt(raw interface{}, merchantPk, settlerPk string) map[string]interface{} {
+	receipt, ok := raw.(map[string]interface{})
+	if !ok {
+		return map[string]interface{}{"error": "format.missing_field"}
+	}
+	merchantSig, ok := sigValue(receipt["merchant_signature"])
+	if !ok {
+		return map[string]interface{}{"error": "format.missing_field"}
+	}
+	settlerSig, ok := sigValue(receipt["settler_signature"])
+	if !ok {
+		return map[string]interface{}{"error": "format.missing_field"}
+	}
+	unsigned := map[string]interface{}{}
+	for k, v := range receipt {
+		if k != "merchant_signature" && k != "settler_signature" {
+			unsigned[k] = v
+		}
+	}
+	canonical, err := canonicalJSON(unsigned)
+	if err != nil {
+		return map[string]interface{}{"error": "format.missing_field"}
+	}
+	if !verifyOne(canonical, merchantSig, merchantPk) {
+		return map[string]interface{}{"error": "signature.invalid"}
+	}
+	if !verifyOne(canonical, settlerSig, settlerPk) {
+		return map[string]interface{}{"error": "settlement.settler_signature_invalid"}
+	}
+	return map[string]interface{}{"valid": true}
+}
+
+func run07SettlementReceipts(input map[string]interface{}) (map[string]interface{}, error) {
+	cases, ok := input["cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.cases must be an array")
+	}
+	verifications := map[string]interface{}{}
+	for _, raw := range cases {
+		c := raw.(map[string]interface{})
+		merchantPk, _ := c["merchant_pubkey_hex"].(string)
+		settlerPk, _ := c["settler_pubkey_hex"].(string)
+		verifications[c["id"].(string)] = verifyReceipt(c["receipt"], merchantPk, settlerPk)
+	}
+	return map[string]interface{}{"verifications": verifications}, nil
+}
+
+// ---------------------------------------------------------------------------
+// 08-timing — ICP-1.0 §5.3 replay window (strict parse + shared epoch algo)
+// ---------------------------------------------------------------------------
+
+const timingWindowMax = 600 // §5.3 intent window ceiling, seconds
+
+var timingTsRe = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$`)
+
+func daysFromCivil(y, m, d int64) int64 {
+	y2 := y
+	if m <= 2 {
+		y2 = y - 1
+	}
+	base := y2
+	if y2 < 0 {
+		base = y2 - 399
+	}
+	era := base / 400
+	yoe := y2 - era*400
+	mm := m + 9
+	if m > 2 {
+		mm = m - 3
+	}
+	doy := (153*mm+2)/5 + d - 1
+	doe := yoe*365 + yoe/4 - yoe/100 + doy
+	return era*146097 + doe - 719468
+}
+
+// parseEpoch returns (epochSeconds, true) or (0, false) if not a strict
+// YYYY-MM-DDTHH:MM:SSZ timestamp with in-range fields.
+func parseEpoch(s string) (int64, bool) {
+	m := timingTsRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0, false
+	}
+	var v [6]int64
+	for i := 0; i < 6; i++ {
+		n, err := strconv.ParseInt(m[i+1], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		v[i] = n
+	}
+	y, mo, d, h, mi, se := v[0], v[1], v[2], v[3], v[4], v[5]
+	if !(mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && se <= 59) {
+		return 0, false
+	}
+	return daysFromCivil(y, mo, d)*86400 + h*3600 + mi*60 + se, true
+}
+
+func validateTiming(iat, exp, now string) map[string]interface{} {
+	ti, iok := parseEpoch(iat)
+	te, eok := parseEpoch(exp)
+	tn, nok := parseEpoch(now)
+	if !iok || !eok || !nok {
+		return map[string]interface{}{"error": "replay.timestamp_malformed"}
+	}
+	if te-ti > timingWindowMax {
+		return map[string]interface{}{"error": "replay.window_too_long"}
+	}
+	if te < tn {
+		return map[string]interface{}{"error": "replay.expired"}
+	}
+	return map[string]interface{}{"valid": true}
+}
+
+func run08Timing(input map[string]interface{}) (map[string]interface{}, error) {
+	cases, ok := input["cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.cases must be an array")
+	}
+	validations := map[string]interface{}{}
+	for _, raw := range cases {
+		c := raw.(map[string]interface{})
+		iat, _ := c["iat"].(string)
+		exp, _ := c["exp"].(string)
+		now, _ := c["now"].(string)
+		validations[c["id"].(string)] = validateTiming(iat, exp, now)
+	}
+	return map[string]interface{}{"validations": validations}, nil
+}
+
+// ---------------------------------------------------------------------------
+// 09-ceilings — refund/payout authoritative ceilings (reuses cmpAmount)
+// ---------------------------------------------------------------------------
+
+var ceilingCode = map[string]string{
+	"return": "policy.return.exceeds_max_refund",
+	"payout": "policy.payout.exceeds_max_per_payout",
+}
+
+func run09Ceilings(input map[string]interface{}) (map[string]interface{}, error) {
+	cases, ok := input["cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.cases must be an array")
+	}
+	decisions := map[string]interface{}{}
+	for _, raw := range cases {
+		c := raw.(map[string]interface{})
+		value := c["value"].(map[string]interface{})["amount"].(string)
+		ceiling := c["ceiling"].(map[string]interface{})["amount"].(string)
+		if cmpAmount(value, ceiling) > 0 {
+			decisions[c["id"].(string)] = map[string]interface{}{"error": ceilingCode[c["kind"].(string)]}
+		} else {
+			decisions[c["id"].(string)] = map[string]interface{}{"valid": true}
+		}
+	}
+	return map[string]interface{}{"decisions": decisions}, nil
 }

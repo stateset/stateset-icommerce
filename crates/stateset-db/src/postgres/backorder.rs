@@ -444,33 +444,61 @@ impl PgBackorderRepository {
     }
 
     pub async fn fulfill_backorder_async(&self, input: FulfillBackorder) -> Result<Backorder> {
-        let backorder =
-            self.get_backorder_async(input.backorder_id).await?.ok_or(CommerceError::NotFound)?;
-
-        if backorder.status == BackorderStatus::Cancelled
-            || backorder.status == BackorderStatus::Fulfilled
-        {
-            return Err(CommerceError::ValidationError("Backorder cannot be fulfilled".into()));
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Fulfillment quantity must be greater than zero".into(),
+            ));
         }
 
-        let new_fulfilled = backorder.quantity_fulfilled + input.quantity;
-        let remaining = (backorder.quantity_ordered - new_fulfilled).max(Decimal::ZERO);
-        let new_status = if remaining.is_zero() {
+        let now = Utc::now();
+
+        // Read + guards + UPDATE + fulfillment INSERT all inside one transaction
+        // with `SELECT ... FOR UPDATE` locking the backorder row, so concurrent
+        // fulfillments serialize instead of both reading the same remaining
+        // quantity and over-fulfilling.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let (status_str, remaining, fulfilled): (String, Decimal, Decimal) = sqlx::query_as(
+            "SELECT status, quantity_remaining, quantity_fulfilled FROM backorders WHERE id = $1 FOR UPDATE",
+        )
+        .bind(input.backorder_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let status: BackorderStatus = status_str.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid backorder status '{status_str}'"))
+        })?;
+
+        // A cancelled or already-fulfilled backorder cannot be fulfilled.
+        if matches!(status, BackorderStatus::Cancelled | BackorderStatus::Fulfilled) {
+            return Err(CommerceError::ValidationError("Backorder cannot be fulfilled".into()));
+        }
+        // Cannot fulfill more units than remain.
+        if input.quantity > remaining {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot fulfill {} - only {} remaining",
+                input.quantity, remaining
+            )));
+        }
+
+        let new_fulfilled = fulfilled + input.quantity;
+        let new_remaining = remaining - input.quantity;
+        let new_status = if new_remaining <= Decimal::ZERO {
             BackorderStatus::Fulfilled
         } else {
             BackorderStatus::PartiallyFulfilled
         };
 
-        let now = Utc::now();
         sqlx::query(
             "UPDATE backorders SET quantity_fulfilled = $1, quantity_remaining = $2, status = $3, updated_at = $4 WHERE id = $5",
         )
         .bind(new_fulfilled)
-        .bind(remaining)
+        .bind(new_remaining)
         .bind(new_status.to_string())
         .bind(now)
         .bind(input.backorder_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -484,12 +512,14 @@ impl PgBackorderRepository {
         .bind(input.quantity)
         .bind(input.source_type.to_string())
         .bind(input.source_id)
-        .bind(input.notes)
+        .bind(&input.notes)
         .bind(now)
-        .bind(input.fulfilled_by)
-        .execute(&self.pool)
+        .bind(&input.fulfilled_by)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_backorder_async(input.backorder_id).await?.ok_or(CommerceError::NotFound)
     }

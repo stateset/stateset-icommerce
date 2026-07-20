@@ -101,6 +101,14 @@ pub struct HybridSigningPrivateKey {
     pub ml_dsa_65_seed: [u8; 32],
 }
 
+impl Drop for HybridSigningPrivateKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.ed25519_private_key.zeroize();
+        self.ml_dsa_65_seed.zeroize();
+    }
+}
+
 /// Full hybrid Ed25519 + ML-DSA-65 keypair material.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HybridSigningKeypair {
@@ -341,7 +349,10 @@ pub fn generate_hybrid_signing_keypair() -> Result<HybridSigningKeypair, CryptoE
 
     Ok(HybridSigningKeypair {
         public: HybridSigningPublicKey { ed25519_public_key, ml_dsa_65_public_key: encoded_public },
-        private: HybridSigningPrivateKey { ed25519_private_key, ml_dsa_65_seed },
+        private: HybridSigningPrivateKey {
+            ed25519_private_key: *ed25519_private_key,
+            ml_dsa_65_seed,
+        },
     })
 }
 

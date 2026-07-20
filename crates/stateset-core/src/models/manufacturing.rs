@@ -43,11 +43,17 @@ pub struct BillOfMaterials {
 }
 
 impl BillOfMaterials {
-    /// Generate a BOM number based on timestamp
+    /// Generate a BOM number based on timestamp.
+    ///
+    /// Includes a millisecond timestamp plus a UUID suffix (matching
+    /// `generate_work_order_number`) so two BOMs created within the same second
+    /// cannot collide on the UNIQUE `bom_number` constraint — a second-granularity
+    /// number made rapid/concurrent `create` calls fail on both backends.
     #[must_use]
     pub fn generate_bom_number() -> String {
         let now = Utc::now();
-        format!("BOM-{}", now.format("%Y%m%d%H%M%S"))
+        let suffix = Uuid::new_v4().simple().to_string();
+        format!("BOM-{}-{}", now.format("%Y%m%d%H%M%S%3f"), &suffix[..8])
     }
 
     /// Calculate total component count

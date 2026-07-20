@@ -9,6 +9,9 @@ use stateset_primitives::{CurrencyCode, ProductId, PurchaseOrderId};
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
+
 /// Purchase order status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
 #[strum(serialize_all = "snake_case")]
@@ -38,10 +41,70 @@ pub enum PurchaseOrderStatus {
     OnHold,
 }
 
+impl PurchaseOrderStatus {
+    /// Check if a status transition is allowed.
+    ///
+    /// Models the purchase order lifecycle:
+    /// `draft` → `pending_approval` → `approved` → `sent` → `acknowledged` →
+    /// `partially_received` → `received` → `completed`.
+    ///
+    /// `OnHold` is reachable from `PendingApproval`, `Approved`, `Sent`, and
+    /// `Acknowledged`, and can be released back to any of those states.
+    /// Cancellation is allowed from any non-terminal state before the PO is
+    /// fully received. `Completed` and `Cancelled` are terminal.
+    ///
+    /// Note: the SQLite store (`stateset-db::sqlite::purchase_orders`) only
+    /// enforces the draft-only guard on `submit_for_approval`; other
+    /// transition methods should consult this guard.
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+
+        match self {
+            Self::Draft => matches!(next, Self::PendingApproval | Self::Cancelled),
+            Self::PendingApproval => {
+                matches!(next, Self::Approved | Self::OnHold | Self::Cancelled)
+            }
+            Self::Approved => matches!(next, Self::Sent | Self::OnHold | Self::Cancelled),
+            Self::Sent => matches!(
+                next,
+                Self::Acknowledged
+                    | Self::PartiallyReceived
+                    | Self::Received
+                    | Self::OnHold
+                    | Self::Cancelled
+            ),
+            Self::Acknowledged => matches!(
+                next,
+                Self::PartiallyReceived | Self::Received | Self::OnHold | Self::Cancelled
+            ),
+            Self::PartiallyReceived => matches!(next, Self::Received | Self::Cancelled),
+            Self::Received => matches!(next, Self::Completed),
+            Self::OnHold => matches!(
+                next,
+                Self::PendingApproval
+                    | Self::Approved
+                    | Self::Sent
+                    | Self::Acknowledged
+                    | Self::Cancelled
+            ),
+            Self::Completed | Self::Cancelled => false,
+        }
+    }
+
+    /// Returns true if this status is terminal (no further transitions).
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
+    }
+}
+
 impl std::str::FromStr for PurchaseOrderStatus {
     type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "draft" => Ok(Self::Draft),
             "pending_approval" => Ok(Self::PendingApproval),
@@ -300,6 +363,33 @@ pub struct PurchaseOrder {
     pub updated_at: DateTime<Utc>,
 }
 
+impl Validate for PurchaseOrder {
+    /// Validate a purchase order.
+    ///
+    /// Requires a non-nil supplier, a PO number, a valid currency code,
+    /// non-negative charge amounts, and valid line items (positive quantities
+    /// and non-negative costs).
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .required("po_number", &self.po_number)
+            .uuid_not_nil("supplier_id", self.supplier_id)
+            .currency_code("currency", self.currency.as_str())
+            .non_negative("subtotal", self.subtotal)
+            .non_negative("tax_amount", self.tax_amount)
+            .non_negative("shipping_cost", self.shipping_cost)
+            .non_negative("discount_amount", self.discount_amount)
+            .non_negative("total", self.total)
+            .non_negative("amount_paid", self.amount_paid)
+            .build()?;
+
+        for item in &self.items {
+            item.validate()?;
+        }
+
+        Ok(())
+    }
+}
+
 /// A line item on a purchase order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PurchaseOrderItem {
@@ -337,6 +427,21 @@ pub struct PurchaseOrderItem {
     pub created_at: DateTime<Utc>,
     /// When last updated
     pub updated_at: DateTime<Utc>,
+}
+
+impl Validate for PurchaseOrderItem {
+    /// Validate a purchase order line item.
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .required("sku", &self.sku)
+            .required("name", &self.name)
+            .positive("quantity_ordered", self.quantity_ordered)
+            .non_negative("quantity_received", self.quantity_received)
+            .non_negative("unit_cost", self.unit_cost)
+            .non_negative("tax_amount", self.tax_amount)
+            .non_negative("discount_amount", self.discount_amount)
+            .build()
+    }
 }
 
 /// Input for creating a purchase order
@@ -493,7 +598,77 @@ pub fn generate_po_number() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::generate_supplier_code;
+    use super::PurchaseOrderStatus as S;
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    // ========================================================================
+    // Test Helpers
+    // ========================================================================
+
+    fn create_test_item(quantity: Decimal, unit_cost: Decimal) -> PurchaseOrderItem {
+        let now = Utc::now();
+        PurchaseOrderItem {
+            id: Uuid::new_v4(),
+            purchase_order_id: PurchaseOrderId::new(),
+            product_id: Some(ProductId::new()),
+            sku: "WIDGET-001".to_string(),
+            name: "Widget".to_string(),
+            supplier_sku: None,
+            quantity_ordered: quantity,
+            quantity_received: Decimal::ZERO,
+            unit_of_measure: None,
+            unit_cost,
+            line_total: quantity * unit_cost,
+            tax_amount: Decimal::ZERO,
+            discount_amount: Decimal::ZERO,
+            expected_date: None,
+            notes: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn create_test_po() -> PurchaseOrder {
+        let now = Utc::now();
+        let items = vec![create_test_item(dec!(10), dec!(4.50))];
+        let subtotal: Decimal = items.iter().map(|i| i.line_total).sum();
+        PurchaseOrder {
+            id: PurchaseOrderId::new(),
+            po_number: generate_po_number(),
+            supplier_id: Uuid::new_v4(),
+            status: S::Draft,
+            order_date: now,
+            expected_date: None,
+            delivered_date: None,
+            ship_to_address: None,
+            ship_to_city: None,
+            ship_to_state: None,
+            ship_to_postal_code: None,
+            ship_to_country: None,
+            payment_terms: PaymentTerms::Net30,
+            currency: CurrencyCode::USD,
+            subtotal,
+            tax_amount: Decimal::ZERO,
+            shipping_cost: Decimal::ZERO,
+            discount_amount: Decimal::ZERO,
+            total: subtotal,
+            amount_paid: Decimal::ZERO,
+            supplier_reference: None,
+            notes: None,
+            supplier_notes: None,
+            approved_by: None,
+            approved_at: None,
+            items,
+            sent_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    // ========================================================================
+    // Number Generation
+    // ========================================================================
 
     #[test]
     fn generated_supplier_codes_include_entropy_suffix() {
@@ -503,5 +678,230 @@ mod tests {
         assert!(first.starts_with("SUP-"));
         assert!(first.len() > "SUP-20260101120000".len());
         assert_ne!(first, second);
+    }
+
+    // ========================================================================
+    // Status Transitions — Legal
+    // ========================================================================
+
+    #[test]
+    fn happy_path_lifecycle_transitions_are_allowed() {
+        assert!(S::Draft.can_transition_to(S::PendingApproval));
+        assert!(S::PendingApproval.can_transition_to(S::Approved));
+        assert!(S::Approved.can_transition_to(S::Sent));
+        assert!(S::Sent.can_transition_to(S::Acknowledged));
+        assert!(S::Acknowledged.can_transition_to(S::PartiallyReceived));
+        assert!(S::PartiallyReceived.can_transition_to(S::Received));
+        assert!(S::Received.can_transition_to(S::Completed));
+    }
+
+    #[test]
+    fn receiving_can_skip_partial_and_acknowledgement() {
+        assert!(S::Sent.can_transition_to(S::PartiallyReceived));
+        assert!(S::Sent.can_transition_to(S::Received));
+        assert!(S::Acknowledged.can_transition_to(S::Received));
+    }
+
+    #[test]
+    fn hold_is_reachable_from_active_states() {
+        assert!(S::PendingApproval.can_transition_to(S::OnHold));
+        assert!(S::Approved.can_transition_to(S::OnHold));
+        assert!(S::Sent.can_transition_to(S::OnHold));
+        assert!(S::Acknowledged.can_transition_to(S::OnHold));
+    }
+
+    #[test]
+    fn hold_can_release_back_to_active_states() {
+        assert!(S::OnHold.can_transition_to(S::PendingApproval));
+        assert!(S::OnHold.can_transition_to(S::Approved));
+        assert!(S::OnHold.can_transition_to(S::Sent));
+        assert!(S::OnHold.can_transition_to(S::Acknowledged));
+        assert!(S::OnHold.can_transition_to(S::Cancelled));
+    }
+
+    #[test]
+    fn cancel_is_allowed_from_pre_received_states() {
+        assert!(S::Draft.can_transition_to(S::Cancelled));
+        assert!(S::PendingApproval.can_transition_to(S::Cancelled));
+        assert!(S::Approved.can_transition_to(S::Cancelled));
+        assert!(S::Sent.can_transition_to(S::Cancelled));
+        assert!(S::Acknowledged.can_transition_to(S::Cancelled));
+        assert!(S::PartiallyReceived.can_transition_to(S::Cancelled));
+    }
+
+    #[test]
+    fn idempotent_transitions_are_allowed() {
+        for status in [S::Draft, S::Sent, S::OnHold, S::Completed, S::Cancelled] {
+            assert!(status.can_transition_to(status), "{status} -> {status} should be allowed");
+        }
+    }
+
+    // ========================================================================
+    // Status Transitions — Illegal
+    // ========================================================================
+
+    #[test]
+    fn draft_cannot_skip_ahead_or_hold() {
+        assert!(!S::Draft.can_transition_to(S::Approved));
+        assert!(!S::Draft.can_transition_to(S::Sent));
+        assert!(!S::Draft.can_transition_to(S::Received));
+        assert!(!S::Draft.can_transition_to(S::OnHold));
+    }
+
+    #[test]
+    fn lifecycle_cannot_move_backwards() {
+        assert!(!S::Approved.can_transition_to(S::PendingApproval));
+        assert!(!S::Sent.can_transition_to(S::Draft));
+        assert!(!S::Acknowledged.can_transition_to(S::Sent));
+        assert!(!S::Received.can_transition_to(S::PartiallyReceived));
+    }
+
+    #[test]
+    fn received_cannot_be_cancelled_or_held() {
+        assert!(!S::Received.can_transition_to(S::Cancelled));
+        assert!(!S::Received.can_transition_to(S::OnHold));
+        assert!(!S::PartiallyReceived.can_transition_to(S::OnHold));
+    }
+
+    #[test]
+    fn terminal_states_reject_all_transitions() {
+        for terminal in [S::Completed, S::Cancelled] {
+            assert!(terminal.is_terminal());
+            for next in [
+                S::Draft,
+                S::PendingApproval,
+                S::Approved,
+                S::Sent,
+                S::Acknowledged,
+                S::PartiallyReceived,
+                S::Received,
+                S::OnHold,
+            ] {
+                assert!(!terminal.can_transition_to(next), "{terminal} -> {next} should be denied");
+            }
+        }
+        assert!(!S::Completed.can_transition_to(S::Cancelled));
+        assert!(!S::Cancelled.can_transition_to(S::Completed));
+    }
+
+    #[test]
+    fn hold_cannot_release_into_receiving_or_terminal_states() {
+        assert!(!S::OnHold.can_transition_to(S::Draft));
+        assert!(!S::OnHold.can_transition_to(S::PartiallyReceived));
+        assert!(!S::OnHold.can_transition_to(S::Received));
+        assert!(!S::OnHold.can_transition_to(S::Completed));
+    }
+
+    #[test]
+    fn non_terminal_states_are_not_terminal() {
+        for status in [
+            S::Draft,
+            S::PendingApproval,
+            S::Approved,
+            S::Sent,
+            S::Acknowledged,
+            S::PartiallyReceived,
+            S::Received,
+            S::OnHold,
+        ] {
+            assert!(!status.is_terminal(), "{status} should not be terminal");
+        }
+    }
+
+    // ========================================================================
+    // Enum Round-Trips
+    // ========================================================================
+
+    #[test]
+    fn purchase_order_status_round_trips_through_strings() {
+        for status in [
+            S::Draft,
+            S::PendingApproval,
+            S::Approved,
+            S::Sent,
+            S::Acknowledged,
+            S::PartiallyReceived,
+            S::Received,
+            S::Completed,
+            S::Cancelled,
+            S::OnHold,
+        ] {
+            let parsed: S = status.to_string().parse().expect("status should round-trip");
+            assert_eq!(parsed, status);
+        }
+        assert_eq!("canceled".parse::<S>(), Ok(S::Cancelled));
+        assert!("bogus".parse::<S>().is_err());
+    }
+
+    #[test]
+    fn payment_terms_round_trip_through_strings() {
+        for terms in [
+            PaymentTerms::DueOnReceipt,
+            PaymentTerms::Net15,
+            PaymentTerms::Net30,
+            PaymentTerms::Net90,
+            PaymentTerms::TwoTenNet30,
+            PaymentTerms::CashOnDelivery,
+        ] {
+            let parsed: PaymentTerms = terms.to_string().parse().expect("terms should round-trip");
+            assert_eq!(parsed, terms);
+        }
+        assert_eq!("cod".parse::<PaymentTerms>(), Ok(PaymentTerms::CashOnDelivery));
+        assert_eq!("net30".parse::<PaymentTerms>(), Ok(PaymentTerms::Net30));
+    }
+
+    // ========================================================================
+    // Validation
+    // ========================================================================
+
+    #[test]
+    fn valid_purchase_order_passes_validation() {
+        assert!(create_test_po().validate().is_ok());
+    }
+
+    #[test]
+    fn purchase_order_with_nil_supplier_fails_validation() {
+        let mut po = create_test_po();
+        po.supplier_id = Uuid::nil();
+        assert!(po.validate().is_err());
+    }
+
+    #[test]
+    fn purchase_order_with_empty_po_number_fails_validation() {
+        let mut po = create_test_po();
+        po.po_number = String::new();
+        assert!(po.validate().is_err());
+    }
+
+    #[test]
+    fn purchase_order_with_negative_amounts_fails_validation() {
+        let mut po = create_test_po();
+        po.total = dec!(-1.00);
+        assert!(po.validate().is_err());
+
+        let mut po = create_test_po();
+        po.shipping_cost = dec!(-5.00);
+        assert!(po.validate().is_err());
+    }
+
+    #[test]
+    fn purchase_order_item_requires_positive_quantity() {
+        let mut po = create_test_po();
+        po.items[0].quantity_ordered = Decimal::ZERO;
+        assert!(po.validate().is_err());
+
+        po.items[0].quantity_ordered = dec!(-3);
+        assert!(po.validate().is_err());
+    }
+
+    #[test]
+    fn purchase_order_item_rejects_negative_cost_and_empty_sku() {
+        let mut po = create_test_po();
+        po.items[0].unit_cost = dec!(-0.01);
+        assert!(po.validate().is_err());
+
+        let mut po = create_test_po();
+        po.items[0].sku = String::new();
+        assert!(po.validate().is_err());
     }
 }

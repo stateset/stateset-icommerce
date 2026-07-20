@@ -361,3 +361,69 @@ fn failed_refund_releases_its_reservation() {
     assert_eq!(reloaded.amount_refunded, dec!(100.00));
     assert_eq!(reloaded.status, stateset_core::PaymentTransactionStatus::Refunded);
 }
+
+/// Completing the same refund twice (e.g. a duplicated payment-processor webhook
+/// or a retry) must be idempotent: the refund amount is folded into the
+/// payment's `amount_refunded` exactly once, never doubled.
+#[test]
+fn complete_refund_is_idempotent() {
+    let db = db();
+    let payment = completed_payment(&db, dec!(100.00));
+
+    let refund = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(50.00)),
+            ..Default::default()
+        })
+        .expect("create refund");
+
+    db.payments().complete_refund(refund.id).expect("first completion");
+    let once = db.payments().get(payment.id).expect("get").expect("present");
+    assert_eq!(once.amount_refunded, dec!(50.00));
+    assert_eq!(once.status, stateset_core::PaymentTransactionStatus::PartiallyRefunded);
+
+    // Second completion must be a no-op, not a double-count.
+    db.payments().complete_refund(refund.id).expect("second completion is idempotent");
+    let twice = db.payments().get(payment.id).expect("get").expect("present");
+    assert_eq!(
+        twice.amount_refunded,
+        dec!(50.00),
+        "duplicate complete_refund must NOT double-count into amount_refunded"
+    );
+    assert_eq!(
+        twice.status,
+        stateset_core::PaymentTransactionStatus::PartiallyRefunded,
+        "payment must not flip to fully Refunded on a duplicate completion"
+    );
+}
+
+/// A failed (terminal) refund cannot be completed, and completing it must not
+/// fold its amount into the payment.
+#[test]
+fn complete_refund_rejects_failed_refund() {
+    let db = db();
+    let payment = completed_payment(&db, dec!(100.00));
+
+    let refund = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(40.00)),
+            ..Default::default()
+        })
+        .expect("create refund");
+    db.payments().fail_refund(refund.id, "processor declined").expect("fail refund");
+
+    let err =
+        db.payments().complete_refund(refund.id).expect_err("a failed refund cannot be completed");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+    let reloaded = db.payments().get(payment.id).expect("get").expect("present");
+    assert_eq!(
+        reloaded.amount_refunded,
+        dec!(0.00),
+        "a failed refund must not fold its amount into the payment"
+    );
+}

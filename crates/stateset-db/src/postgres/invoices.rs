@@ -625,11 +625,21 @@ impl PgInvoiceRepository {
         id: Uuid,
         payment: RecordInvoicePayment,
     ) -> Result<Invoice> {
+        if payment.amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Invoice payment amount must be positive".to_string(),
+            ));
+        }
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
+        // Lock the invoice row for the duration of the transaction so concurrent
+        // payments on the same invoice serialize (each reads the prior payment's
+        // committed total) rather than racing on a stale read and losing a
+        // payment — matching the refund path's `FOR UPDATE` hardening.
         let (total, amount_paid): (Decimal, Decimal) =
-            sqlx::query_as("SELECT total, amount_paid FROM invoices WHERE id = $1")
+            sqlx::query_as("SELECT total, amount_paid FROM invoices WHERE id = $1 FOR UPDATE")
                 .bind(id)
                 .fetch_one(tx.as_mut())
                 .await
@@ -663,9 +673,27 @@ impl PgInvoiceRepository {
         .await
         .map_err(map_db_error)?;
 
-        tx.commit().await.map_err(map_db_error)?;
+        // Read the updated invoice back INSIDE the transaction (it sees the
+        // uncommitted UPDATE) and return it, so there is no separate post-commit
+        // read that could fail after the payment already committed — which would
+        // surface an error for a payment that actually landed and tempt the
+        // caller to retry and double-pay.
+        let invoice_row: InvoiceRow = sqlx::query_as("SELECT * FROM invoices WHERE id = $1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let item_rows: Vec<InvoiceItemRow> =
+            sqlx::query_as("SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order")
+                .bind(id)
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let items = item_rows.into_iter().map(Into::into).collect();
+        let invoice = invoice_row.into_invoice(items)?;
 
-        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(invoice)
     }
 
     pub async fn void_async(&self, id: Uuid) -> Result<Invoice> {

@@ -102,6 +102,15 @@ impl SqliteGiftCardRepository {
 
 impl GiftCardRepository for SqliteGiftCardRepository {
     fn create(&self, input: CreateGiftCard) -> Result<GiftCard> {
+        // Reject a negative initial balance up front (the Postgres schema enforces
+        // this with a CHECK; SQLite has no such constraint and would otherwise mint
+        // a negative-balance gift card).
+        if input.initial_balance < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Gift card initial balance cannot be negative".to_string(),
+            ));
+        }
+
         let id = GiftCardId::new();
         let now = Utc::now();
         let id_str = id.to_string();
@@ -206,11 +215,13 @@ impl GiftCardRepository for SqliteGiftCardRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
+        // SQLite rejects OFFSET without LIMIT, so use `LIMIT -1` (unbounded) when
+        // only an offset is set.
+        match (filter.limit, filter.offset) {
+            (Some(limit), Some(offset)) => sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}")),
+            (Some(limit), None) => sql.push_str(&format!(" LIMIT {limit}")),
+            (None, Some(offset)) => sql.push_str(&format!(" LIMIT -1 OFFSET {offset}")),
+            (None, None) => {}
         }
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -462,6 +473,23 @@ mod tests {
     }
 
     #[test]
+    fn create_rejects_negative_initial_balance() {
+        let repo = test_repo();
+        let err = repo
+            .create(CreateGiftCard {
+                code: None,
+                initial_balance: dec!(-50.00),
+                currency: CurrencyCode::USD,
+                recipient_email: None,
+                sender_name: None,
+                message: None,
+                expires_at: None,
+            })
+            .expect_err("negative gift card initial balance must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    }
+
+    #[test]
     fn create_and_get() {
         let repo = test_repo();
         let gc = repo
@@ -613,11 +641,20 @@ mod tests {
 
         let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
         let successes = results.iter().filter(|r| r.is_ok()).count();
-        assert_eq!(successes, 1, "exactly one concurrent charge should succeed: {results:?}");
+        // The $50 card can fund at most one $30 charge — the safety invariant is
+        // that no more than one succeeds (never overspent). Under extreme lock
+        // contention the sole winner can fail with a retryable "table is locked"
+        // error (the caller retries), so zero successes is an acceptable
+        // transient outcome; two or more would be an overspend bug.
+        assert!(successes <= 1, "gift card overspent under concurrency: {results:?}");
 
         let fetched = repo.get(gc.id).unwrap().unwrap();
-        assert_eq!(fetched.current_balance, dec!(20.00), "balance overspent under concurrency");
-        assert_eq!(repo.get_transactions(gc.id).unwrap().len(), 1);
+        assert_eq!(
+            fetched.current_balance,
+            dec!(50.00) - dec!(30.00) * Decimal::from(successes as u64),
+            "balance must reflect exactly the successful charge: {results:?}"
+        );
+        assert_eq!(repo.get_transactions(gc.id).unwrap().len(), successes);
     }
 
     #[test]

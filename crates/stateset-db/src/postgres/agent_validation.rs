@@ -97,7 +97,7 @@ impl AgentValidationRepository for PgAgentValidationRepository {
             .map_err(map_db_error)?;
 
             let row: ValidationRequestRow = sqlx::query_as(
-                "SELECT request_hash, agent_registry, agent_id, validator_address, request_uri, created_at\
+                "SELECT request_hash, agent_registry, agent_id, validator_address, request_uri, created_at \
                  FROM agent_validation_requests WHERE request_hash = $1",
             )
             .bind(&input.request_hash)
@@ -124,7 +124,7 @@ impl AgentValidationRepository for PgAgentValidationRepository {
             }
 
             let request: ValidationRequestRow = sqlx::query_as(
-                "SELECT request_hash, agent_registry, agent_id, validator_address, request_uri, created_at\
+                "SELECT request_hash, agent_registry, agent_id, validator_address, request_uri, created_at \
                  FROM agent_validation_requests WHERE request_hash = $1",
             )
             .bind(&request_hash)
@@ -156,8 +156,8 @@ impl AgentValidationRepository for PgAgentValidationRepository {
             .map_err(map_db_error)?;
 
             let row: ValidationResponseRow = sqlx::query_as(
-                "SELECT id, request_hash, agent_registry, agent_id, validator_address, response,\
-                        response_uri, response_hash, tag, created_at\
+                "SELECT id, request_hash, agent_registry, agent_id, validator_address, response, \
+                        response_uri, response_hash, tag, created_at \
                  FROM agent_validation_responses WHERE id = $1",
             )
             .bind(id)
@@ -174,7 +174,7 @@ impl AgentValidationRepository for PgAgentValidationRepository {
         let request_hash = request_hash.to_string();
         block_on(async move {
             let request: Option<ValidationRequestRow> = sqlx::query_as(
-                "SELECT request_hash, agent_registry, agent_id, validator_address, request_uri, created_at\
+                "SELECT request_hash, agent_registry, agent_id, validator_address, request_uri, created_at \
                  FROM agent_validation_requests WHERE request_hash = $1",
             )
             .bind(&request_hash)
@@ -189,8 +189,8 @@ impl AgentValidationRepository for PgAgentValidationRepository {
 
             type LatestResponseRow = (i16, Option<String>, Option<String>, DateTime<Utc>);
             let row: Option<LatestResponseRow> = sqlx::query_as(
-                "SELECT response, response_hash, tag, created_at\
-                 FROM agent_validation_responses WHERE request_hash = $1\
+                "SELECT response, response_hash, tag, created_at \
+                 FROM agent_validation_responses WHERE request_hash = $1 \
                  ORDER BY created_at DESC LIMIT 1",
             )
             .bind(&request_hash)

@@ -42,7 +42,8 @@ impl SqliteBomRepository {
             .prepare(
                 "SELECT id, bom_id, component_product_id, component_sku, name, quantity,
                         unit_of_measure, position, notes, created_at, updated_at
-                 FROM manufacturing_bom_components WHERE bom_id = ?",
+                 FROM manufacturing_bom_components WHERE bom_id = ?
+                 ORDER BY position, created_at",
             )
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -476,6 +477,13 @@ impl BomRepository for SqliteBomRepository {
             params.push(Box::new(status.to_string()));
         }
 
+        if let Some(search) = filter.search {
+            sql.push_str(" AND (name LIKE ? OR bom_number LIKE ?)");
+            let search_pattern = format!("%{search}%");
+            params.push(Box::new(search_pattern.clone()));
+            params.push(Box::new(search_pattern));
+        }
+
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
 
@@ -851,5 +859,77 @@ impl BomRepository for SqliteBomRepository {
         }
 
         Ok(boms)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+
+    fn fresh_repo() -> SqliteBomRepository {
+        SqliteDatabase::in_memory().expect("in-memory").bom()
+    }
+
+    fn make_bom(
+        repo: &SqliteBomRepository,
+        product: ProductId,
+        name: &str,
+        components: Vec<CreateBomComponent>,
+    ) -> BillOfMaterials {
+        repo.create(CreateBom {
+            product_id: product,
+            name: name.into(),
+            description: None,
+            revision: None,
+            components: if components.is_empty() { None } else { Some(components) },
+            created_by: None,
+        })
+        .expect("create bom")
+    }
+
+    #[test]
+    fn count_applies_search_filter() {
+        let repo = fresh_repo();
+        let product = ProductId::new();
+        make_bom(&repo, product, "Widget Assembly", vec![]);
+        make_bom(&repo, product, "Gadget Assembly", vec![]);
+
+        let filter = BomFilter { search: Some("Widget".into()), ..Default::default() };
+        let listed = repo.list(filter.clone()).expect("list");
+        assert_eq!(listed.len(), 1, "list filters by search");
+        assert_eq!(
+            repo.count(filter).expect("count"),
+            1,
+            "count must apply the search filter and match the filtered list"
+        );
+    }
+
+    #[test]
+    fn load_components_orders_by_position() {
+        let repo = fresh_repo();
+        let product = ProductId::new();
+        let component = |pos: &str, name: &str| CreateBomComponent {
+            component_product_id: None,
+            component_sku: Some(name.into()),
+            name: name.into(),
+            quantity: dec!(1),
+            unit_of_measure: None,
+            position: Some(pos.into()),
+            notes: None,
+        };
+        // Insert out of position order; expect ascending position on read-back.
+        let bom = make_bom(
+            &repo,
+            product,
+            "Ordered BOM",
+            vec![component("30", "C-30"), component("10", "C-10"), component("20", "C-20")],
+        );
+
+        let loaded = repo.get(bom.id).expect("get").expect("present");
+        let positions: Vec<String> =
+            loaded.components.iter().map(|c| c.position.clone().unwrap_or_default()).collect();
+        assert_eq!(positions, vec!["10", "20", "30"], "components must be ordered by position");
     }
 }

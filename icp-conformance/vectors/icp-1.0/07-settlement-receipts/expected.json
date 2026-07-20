@@ -1,0 +1,31 @@
+{
+  "verifications": {
+    "r01_valid_released": {
+      "valid": true
+    },
+    "r08_valid_refunded": {
+      "valid": true
+    },
+    "r02_missing_merchant_sig": {
+      "error": "format.missing_field"
+    },
+    "r03_missing_settler_sig": {
+      "error": "format.missing_field"
+    },
+    "r04_tampered_merchant_sig": {
+      "error": "signature.invalid"
+    },
+    "r05_tampered_settler_sig": {
+      "error": "settlement.settler_signature_invalid"
+    },
+    "r06_tampered_amount": {
+      "error": "signature.invalid"
+    },
+    "r07_wrong_merchant_pubkey": {
+      "error": "signature.invalid"
+    }
+  },
+  "_provenance": {
+    "note": "Generated from ICP-1.0 \u00a79 (SettlementReceipt) and the reference verifySettlementReceipt (packages/icp-client), requireSettler=true. Signatures are real Ed25519 over the RFC 8785 canonical bytes of the unsigned receipt body, produced with fixed seeds (merchant 0x11*32, settler 0x22*32). Error precedence: field presence, then merchant signature, then settler signature."
+  }
+}

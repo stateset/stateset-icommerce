@@ -549,3 +549,259 @@ impl Lot {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+    use std::str::FromStr;
+
+    // ============================================================================
+    // Test Helpers
+    // ============================================================================
+
+    fn create_test_lot() -> Lot {
+        let now = Utc::now();
+        Lot {
+            id: Uuid::new_v4(),
+            lot_number: "LOT-001".to_string(),
+            sku: "SKU-001".to_string(),
+            status: LotStatus::Active,
+            quantity_produced: dec!(100),
+            quantity_remaining: dec!(100),
+            quantity_reserved: Decimal::ZERO,
+            quantity_quarantined: Decimal::ZERO,
+            production_date: now,
+            expiration_date: None,
+            best_before_date: None,
+            supplier_lot: None,
+            supplier_id: None,
+            work_order_id: None,
+            purchase_order_id: None,
+            cost_per_unit: Some(dec!(2.50)),
+            attributes: serde_json::json!({}),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    // ============================================================================
+    // Quantity / Availability
+    // ============================================================================
+
+    #[test]
+    fn quantity_available_subtracts_reserved_and_quarantined() {
+        let mut lot = create_test_lot();
+        lot.quantity_reserved = dec!(30);
+        lot.quantity_quarantined = dec!(20);
+        assert_eq!(lot.quantity_available(), dec!(50));
+    }
+
+    #[test]
+    fn has_available_true_when_positive() {
+        let lot = create_test_lot();
+        assert!(lot.has_available());
+    }
+
+    #[test]
+    fn has_available_false_when_zero() {
+        let mut lot = create_test_lot();
+        lot.quantity_reserved = dec!(100);
+        assert_eq!(lot.quantity_available(), Decimal::ZERO);
+        assert!(!lot.has_available());
+    }
+
+    #[test]
+    fn quantity_available_can_go_negative_when_over_reserved() {
+        let mut lot = create_test_lot();
+        lot.quantity_reserved = dec!(120);
+        assert_eq!(lot.quantity_available(), dec!(-20));
+        assert!(!lot.has_available());
+    }
+
+    // ============================================================================
+    // can_consume / can_reserve guards
+    // ============================================================================
+
+    #[test]
+    fn can_consume_exact_boundary() {
+        let lot = create_test_lot();
+        assert!(lot.can_consume(dec!(100)));
+        assert!(!lot.can_consume(dec!(100.0001)));
+    }
+
+    #[test]
+    fn can_consume_zero_quantity() {
+        let lot = create_test_lot();
+        assert!(lot.can_consume(Decimal::ZERO));
+    }
+
+    #[test]
+    fn can_consume_rejected_for_non_active_statuses() {
+        for status in [
+            LotStatus::Quarantine,
+            LotStatus::Expired,
+            LotStatus::Consumed,
+            LotStatus::OnHold,
+            LotStatus::Recalled,
+            LotStatus::Scrapped,
+        ] {
+            let mut lot = create_test_lot();
+            lot.status = status;
+            assert!(!lot.can_consume(dec!(1)), "should not consume from {status}");
+        }
+    }
+
+    #[test]
+    fn can_reserve_exact_boundary_and_over() {
+        let mut lot = create_test_lot();
+        lot.quantity_reserved = dec!(40);
+        assert!(lot.can_reserve(dec!(60)));
+        assert!(!lot.can_reserve(dec!(61)));
+    }
+
+    #[test]
+    fn can_reserve_rejected_when_on_hold() {
+        let mut lot = create_test_lot();
+        lot.status = LotStatus::OnHold;
+        assert!(!lot.can_reserve(dec!(1)));
+    }
+
+    // ============================================================================
+    // Expiration
+    // ============================================================================
+
+    #[test]
+    fn is_expired_false_without_expiration_date() {
+        let lot = create_test_lot();
+        assert!(!lot.is_expired());
+        assert_eq!(lot.days_until_expiration(), None);
+    }
+
+    #[test]
+    fn is_expired_true_for_past_date() {
+        let mut lot = create_test_lot();
+        lot.expiration_date = Some(Utc::now() - chrono::Duration::days(1));
+        assert!(lot.is_expired());
+    }
+
+    #[test]
+    fn is_expiring_soon_within_window() {
+        let mut lot = create_test_lot();
+        lot.expiration_date = Some(Utc::now() + chrono::Duration::days(5));
+        assert!(lot.is_expiring_soon(7));
+        assert!(!lot.is_expiring_soon(2));
+    }
+
+    #[test]
+    fn is_expiring_soon_false_when_already_expired() {
+        let mut lot = create_test_lot();
+        lot.expiration_date = Some(Utc::now() - chrono::Duration::days(1));
+        assert!(!lot.is_expiring_soon(30));
+    }
+
+    #[test]
+    fn days_until_expiration_positive_for_future() {
+        let mut lot = create_test_lot();
+        lot.expiration_date = Some(Utc::now() + chrono::Duration::days(10));
+        assert_eq!(lot.days_until_expiration(), Some(9)); // truncated by sub-day remainder
+    }
+
+    #[test]
+    fn shelf_life_remaining_none_without_expiration() {
+        let lot = create_test_lot();
+        assert_eq!(lot.shelf_life_remaining(), None);
+    }
+
+    #[test]
+    fn shelf_life_remaining_none_when_total_days_zero() {
+        let mut lot = create_test_lot();
+        lot.expiration_date = Some(lot.production_date);
+        assert_eq!(lot.shelf_life_remaining(), None);
+    }
+
+    #[test]
+    fn shelf_life_remaining_clamps_expired_to_zero() {
+        let mut lot = create_test_lot();
+        lot.production_date = Utc::now() - chrono::Duration::days(100);
+        lot.expiration_date = Some(Utc::now() - chrono::Duration::days(10));
+        assert_eq!(lot.shelf_life_remaining(), Some(Decimal::ZERO));
+    }
+
+    #[test]
+    fn shelf_life_remaining_roughly_half_midway() {
+        let mut lot = create_test_lot();
+        lot.production_date = Utc::now() - chrono::Duration::days(50);
+        lot.expiration_date = Some(Utc::now() + chrono::Duration::days(50));
+        let pct = lot.shelf_life_remaining().expect("should have shelf life");
+        assert!(pct >= dec!(48) && pct <= dec!(52), "expected ~50, got {pct}");
+    }
+
+    // ============================================================================
+    // Enum Display / FromStr round-trips and defaults
+    // ============================================================================
+
+    #[test]
+    fn lot_status_display_from_str_round_trip() {
+        for status in [
+            LotStatus::Active,
+            LotStatus::Quarantine,
+            LotStatus::Expired,
+            LotStatus::Consumed,
+            LotStatus::OnHold,
+            LotStatus::Recalled,
+            LotStatus::Scrapped,
+        ] {
+            let parsed = LotStatus::from_str(&status.to_string()).expect("round trip");
+            assert_eq!(parsed, status);
+        }
+    }
+
+    #[test]
+    fn lot_status_from_str_case_insensitive_and_unknown() {
+        assert_eq!(LotStatus::from_str("ON_HOLD"), Ok(LotStatus::OnHold));
+        assert!(LotStatus::from_str("bogus").is_err());
+    }
+
+    #[test]
+    fn lot_transaction_type_round_trip() {
+        for t in [
+            LotTransactionType::Received,
+            LotTransactionType::Consumed,
+            LotTransactionType::QuarantineReleased,
+            LotTransactionType::Split,
+            LotTransactionType::Merged,
+        ] {
+            assert_eq!(LotTransactionType::from_str(&t.to_string()), Ok(t));
+        }
+        assert!(LotTransactionType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn certificate_type_round_trip_and_default() {
+        assert_eq!(CertificateType::default(), CertificateType::Coa);
+        for t in [CertificateType::Coa, CertificateType::Msds, CertificateType::CountryOfOrigin] {
+            assert_eq!(CertificateType::from_str(&t.to_string()), Ok(t));
+        }
+    }
+
+    #[test]
+    fn trace_node_type_display() {
+        assert_eq!(TraceNodeType::PurchaseOrder.to_string(), "purchase_order");
+        assert_eq!(TraceNodeType::WorkOrder.to_string(), "work_order");
+        assert_eq!(TraceNodeType::Adjustment.to_string(), "adjustment");
+    }
+
+    #[test]
+    fn defaults_are_sane() {
+        assert_eq!(LotStatus::default(), LotStatus::Active);
+        assert_eq!(LotTransactionType::default(), LotTransactionType::Received);
+        let create = CreateLot::default();
+        assert_eq!(create.quantity, Decimal::ZERO);
+        assert!(create.sku.is_empty());
+        let consume = ConsumeLot::default();
+        assert_eq!(consume.lot_id, Uuid::nil());
+        assert_eq!(consume.quantity, Decimal::ZERO);
+    }
+}

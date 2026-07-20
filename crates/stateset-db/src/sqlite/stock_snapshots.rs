@@ -163,12 +163,7 @@ impl StockSnapshotRepository for SqliteStockSnapshotRepository {
     fn list(&self, filter: StockSnapshotFilter) -> Result<Vec<StockSnapshot>> {
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM stock_snapshots ORDER BY captured_at DESC".to_string();
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         // Header-level listing; lines omitted for brevity (fetch via get()).
         let rows = stmt

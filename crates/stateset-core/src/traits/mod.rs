@@ -42,12 +42,12 @@ use crate::models::{
     CreateBillItem, CreateBillPayment, CreateBillingCycle, CreateBom, CreateBomComponent,
     CreateCart, CreateCollectionActivity, CreateCostAdjustment, CreateCostLayer, CreateCouponCode,
     CreateCreditAccount, CreateCreditMemo, CreateCustomObject, CreateCustomObjectType,
-    CreateCustomer, CreateCustomerAddress, CreateDefectCode, CreateFraudAssessment,
-    CreateFraudRule, CreateGiftCard, CreateGlAccount, CreateGlPeriod, CreateInspection,
-    CreateInventoryItem, CreateInvoice, CreateInvoiceItem, CreateJournalEntry, CreateLocation,
-    CreateLot, CreateLoyaltyProgram, CreateNonConformance, CreateOrder, CreateOrderItem,
-    CreatePackTask, CreatePayment, CreatePaymentMethod, CreatePaymentRun, CreatePickTask,
-    CreateProduct, CreateProductVariant, CreatePromotion, CreatePurchaseOrder,
+    CreateCustomer, CreateCustomerAddress, CreateCycleCount, CreateDefectCode,
+    CreateFraudAssessment, CreateFraudRule, CreateGiftCard, CreateGlAccount, CreateGlPeriod,
+    CreateInspection, CreateInventoryItem, CreateInvoice, CreateInvoiceItem, CreateJournalEntry,
+    CreateLocation, CreateLot, CreateLoyaltyProgram, CreateNonConformance, CreateOrder,
+    CreateOrderItem, CreatePackTask, CreatePayment, CreatePaymentMethod, CreatePaymentRun,
+    CreatePickTask, CreateProduct, CreateProductVariant, CreatePromotion, CreatePurchaseOrder,
     CreatePurchaseOrderItem, CreatePutAway, CreateQualityHold, CreateReceipt, CreateRefund,
     CreateReturn, CreateReview, CreateReward, CreateSearchConfig, CreateSegment,
     CreateSerialNumber, CreateSerialNumbersBulk, CreateShipTask, CreateShipment,
@@ -60,8 +60,8 @@ use crate::models::{
     CreditMemo, CreditMemoFilter, CreditTransaction, CreditTransactionFilter, Currency,
     CustomObject, CustomObjectFilter, CustomObjectType, CustomObjectTypeFilter, Customer,
     CustomerAddress, CustomerArAging, CustomerArSummary, CustomerCreditSummary, CustomerFilter,
-    CustomerMetrics, CustomerStatement, DefectCode, DemandForecast, DunningLetterType,
-    EmbeddingMetadata, EmbeddingStats, EnrollCustomer, EntityType, ExchangeRate,
+    CustomerMetrics, CustomerStatement, CycleCount, CycleCountFilter, DefectCode, DemandForecast,
+    DunningLetterType, EmbeddingMetadata, EmbeddingStats, EnrollCustomer, EntityType, ExchangeRate,
     ExchangeRateFilter, FeedbackSummary, FraudAssessment, FraudAssessmentFilter, FraudDecision,
     FraudRule, FraudRuleFilter, FulfillBackorder, FulfillmentMetrics, GenerateStatementRequest,
     GiftCard, GiftCardFilter, GiftCardTransaction, GlAccount, GlAccountFilter, GlPeriod,
@@ -79,11 +79,11 @@ use crate::models::{
     ProductTaxCategory, ProductVariant, Promotion, PromotionFilter, PromotionUsage, PurchaseOrder,
     PurchaseOrderFilter, PurchaseOrderItem, PurchaseStatus, PutAway, PutAwayFilter, QualityHold,
     QualityHoldFilter, QuoteStatus, Receipt, ReceiptFilter, ReceiptItem, ReceiveItems,
-    ReceivePurchaseOrderItems, RecordCostVariance, RecordCreditTransaction, RecordInspectionResult,
-    RecordInvoicePayment, Refund, ReleaseCreditHold, ReleaseQualityHold, ReserveInventory,
-    ReserveLot, ReserveSerialNumber, Return, ReturnFilter, ReturnMetrics, RevenueByPeriod,
-    RevenueForecast, Review, ReviewCreditApplication, ReviewFilter, ReviewSummary, Reward,
-    RewardFilter, SalesSummary, SearchConfig, SearchConfigFilter, Segment, SegmentFilter,
+    ReceivePurchaseOrderItems, RecordCostVariance, RecordCreditTransaction, RecordCycleCountLine,
+    RecordInspectionResult, RecordInvoicePayment, Refund, ReleaseCreditHold, ReleaseQualityHold,
+    ReserveInventory, ReserveLot, ReserveSerialNumber, Return, ReturnFilter, ReturnMetrics,
+    RevenueByPeriod, RevenueForecast, Review, ReviewCreditApplication, ReviewFilter, ReviewSummary,
+    Reward, RewardFilter, SalesSummary, SearchConfig, SearchConfigFilter, Segment, SegmentFilter,
     SegmentMembership, SerialFilter, SerialHistory, SerialHistoryFilter, SerialLookupResult,
     SerialNumber, SerialReservation, SerialValidation, SetCartPayment, SetCartShipping,
     SetCartX402Payment, SetExchangeRate, SetItemCost, ShipTask, ShipTaskFilter, Shipment,
@@ -2090,6 +2090,33 @@ pub trait WarehouseRepository: Send + Sync {
 
     /// Get multiple locations by ID
     fn get_locations_batch(&self, ids: Vec<i32>) -> Result<Vec<Location>>;
+
+    // Cycle count operations
+    /// Create a cycle count (draft) with its expected lines
+    fn create_cycle_count(&self, input: CreateCycleCount) -> Result<CycleCount>;
+
+    /// Get a cycle count (with lines) by ID
+    fn get_cycle_count(&self, id: Uuid) -> Result<Option<CycleCount>>;
+
+    /// List cycle counts (with lines) matching the filter
+    fn list_cycle_counts(&self, filter: CycleCountFilter) -> Result<Vec<CycleCount>>;
+
+    /// Start a draft cycle count (draft → `in_progress`)
+    fn start_cycle_count(&self, id: Uuid) -> Result<CycleCount>;
+
+    /// Record physical counts against an in-progress cycle count
+    fn record_cycle_counts(
+        &self,
+        id: Uuid,
+        counts: Vec<RecordCycleCountLine>,
+    ) -> Result<CycleCount>;
+
+    /// Complete an in-progress cycle count: computes variances and applies
+    /// inventory adjustments (recorded as `cycle_count` movements)
+    fn complete_cycle_count(&self, id: Uuid) -> Result<CycleCount>;
+
+    /// Cancel a draft or in-progress cycle count
+    fn cancel_cycle_count(&self, id: Uuid) -> Result<CycleCount>;
 }
 
 // ============================================================================
@@ -4506,4 +4533,96 @@ pub trait StockSnapshotRepository: Send + Sync {
 
     /// Delete a snapshot.
     fn delete(&self, id: StockSnapshotId) -> Result<()>;
+}
+
+use crate::models::{
+    CreateFixedAsset, CreateRevenueContract, DepreciationSchedule, FixedAsset, FixedAssetFilter,
+    PerformanceObligation, RevenueContract, RevenueContractFilter, RevenueSchedule,
+    UpdateFixedAsset, UpdateRevenueContract,
+};
+
+/// Fixed asset register repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait FixedAssetRepository: Send + Sync {
+    /// Create a new fixed asset (draft, or in-service when an in-service date is supplied).
+    fn create(&self, input: CreateFixedAsset) -> Result<FixedAsset>;
+
+    /// Get a fixed asset by ID.
+    fn get(&self, id: uuid::Uuid) -> Result<Option<FixedAsset>>;
+
+    /// List fixed assets with filter.
+    fn list(&self, filter: FixedAssetFilter) -> Result<Vec<FixedAsset>>;
+
+    /// Update a fixed asset (partial). Terminal assets cannot be updated.
+    fn update(&self, id: uuid::Uuid, input: UpdateFixedAsset) -> Result<FixedAsset>;
+
+    /// Place a draft asset in service on the given date.
+    fn place_in_service(&self, id: uuid::Uuid, date: chrono::NaiveDate) -> Result<FixedAsset>;
+
+    /// Dispose of an asset for the given proceeds, recording gain/loss.
+    fn dispose(
+        &self,
+        id: uuid::Uuid,
+        date: chrono::NaiveDate,
+        proceeds: rust_decimal::Decimal,
+        notes: Option<String>,
+    ) -> Result<FixedAsset>;
+
+    /// Write off an asset (disposal with zero proceeds).
+    fn write_off(
+        &self,
+        id: uuid::Uuid,
+        date: chrono::NaiveDate,
+        notes: Option<String>,
+    ) -> Result<FixedAsset>;
+
+    /// Generate and persist the depreciation schedule for an asset,
+    /// replacing any previously scheduled (unposted) entries.
+    fn generate_schedule(&self, id: uuid::Uuid) -> Result<DepreciationSchedule>;
+
+    /// Get the persisted depreciation schedule for an asset, if generated.
+    fn get_schedule(&self, id: uuid::Uuid) -> Result<Option<DepreciationSchedule>>;
+
+    /// Post the next `periods` scheduled depreciation entries, advancing
+    /// accumulated depreciation (and status when fully depreciated).
+    fn post_depreciation(&self, id: uuid::Uuid, periods: u32) -> Result<FixedAsset>;
+}
+
+/// Revenue recognition (ASC 606) repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait RevenueRecognitionRepository: Send + Sync {
+    /// Create a new revenue contract with its performance obligations.
+    fn create_contract(&self, input: CreateRevenueContract) -> Result<RevenueContract>;
+
+    /// Get a revenue contract by ID (with obligations).
+    fn get_contract(&self, id: uuid::Uuid) -> Result<Option<RevenueContract>>;
+
+    /// List revenue contracts with filter.
+    fn list_contracts(&self, filter: RevenueContractFilter) -> Result<Vec<RevenueContract>>;
+
+    /// Update a revenue contract (partial); status changes are transition-guarded.
+    fn update_contract(
+        &self,
+        id: uuid::Uuid,
+        input: UpdateRevenueContract,
+    ) -> Result<RevenueContract>;
+
+    /// List the performance obligations under a contract.
+    fn list_obligations(&self, contract_id: uuid::Uuid) -> Result<Vec<PerformanceObligation>>;
+
+    /// Generate and persist the recognition schedule for an obligation,
+    /// replacing any previously deferred (unrecognized) entries.
+    fn generate_schedule(&self, obligation_id: uuid::Uuid) -> Result<RevenueSchedule>;
+
+    /// Get the persisted recognition schedule for an obligation, if generated.
+    fn get_schedule(&self, obligation_id: uuid::Uuid) -> Result<Option<RevenueSchedule>>;
+
+    /// Recognize all deferred entries with a period start on or before
+    /// `through`, advancing the obligation's recognized amount (and the
+    /// contract status when fully recognized).
+    fn recognize_period(
+        &self,
+        obligation_id: uuid::Uuid,
+        through: chrono::NaiveDate,
+    ) -> Result<RevenueSchedule>;
 }

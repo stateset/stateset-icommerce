@@ -383,6 +383,132 @@ fn validate_hpke_field(
     Ok(())
 }
 
+/// Result of re-wrapping an encrypted payload for a new recipient set.
+#[derive(Debug, Clone)]
+pub struct RewrapResult {
+    /// The updated payload structure — identical ciphertext, rotated recipients
+    pub payload_encrypted: serde_json::Value,
+    /// Recomputed `payload_cipher_hash` reflecting the new recipient set
+    pub payload_cipher_hash: [u8; 32],
+}
+
+/// Rotate the recipient set of an encrypted payload without decrypting it
+/// (KEK rotation per VES-ENC-1).
+///
+/// Unwraps the DEK using one existing recipient's X25519 secret, wraps it
+/// for `new_recipient_keys`, and **replaces** the envelope's recipient set.
+/// The payload ciphertext, nonce, and tag are untouched — the plaintext is
+/// never materialized. To *add* a recipient rather than rotate, include the
+/// existing recipients in `new_recipient_keys`.
+///
+/// The returned [`RewrapResult::payload_cipher_hash`] differs from the
+/// original (it commits to the recipient set); callers persisting that hash
+/// must store the new value alongside the updated envelope.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - `new_recipient_keys` is empty ([`CryptoError::NoRecipients`]) or contains
+///   duplicate kids
+/// - `recipient_kid` is not in the envelope ([`CryptoError::RecipientNotFound`])
+/// - The DEK cannot be unwrapped with the provided key (wrong key or tampered
+///   envelope)
+pub fn rewrap_payload(
+    payload_encrypted: &serde_json::Value,
+    payload_aad: &[u8; 32],
+    recipient_kid: u32,
+    recipient_private_key: &[u8; 32],
+    new_recipient_keys: &[RecipientKey],
+) -> Result<RewrapResult, CryptoError> {
+    if new_recipient_keys.is_empty() {
+        return Err(CryptoError::NoRecipients);
+    }
+    validate_unique_recipient_kids(new_recipient_keys.iter().map(|recipient| recipient.kid))?;
+
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let recipients = validate_encryption_envelope(payload_encrypted)?;
+
+    let recipient = recipients
+        .iter()
+        .find(|r| {
+            r.get("recipient_kid").and_then(serde_json::Value::as_u64)
+                == Some(u64::from(recipient_kid))
+        })
+        .ok_or(CryptoError::RecipientNotFound(recipient_kid))?;
+
+    let enc = b64
+        .decode(
+            recipient
+                .get("enc_b64u")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| CryptoError::KeyWrapError("Missing enc_b64u".to_string()))?,
+        )
+        .map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
+    let wrapped_key = b64
+        .decode(
+            recipient
+                .get("ct_b64u")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| CryptoError::KeyWrapError("Missing ct_b64u".to_string()))?,
+        )
+        .map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
+    let enc_arr: [u8; 32] = enc
+        .try_into()
+        .map_err(|_| CryptoError::KeyWrapError("enc must be 32 bytes".to_string()))?;
+
+    let dek =
+        Zeroizing::new(unwrap_dek(&enc_arr, &wrapped_key, recipient_private_key, payload_aad)?);
+
+    // Wrap for the new recipient set — same construction as encrypt_payload.
+    let mut new_recipients = Vec::with_capacity(new_recipient_keys.len());
+    for rk in new_recipient_keys {
+        let (enc, wrapped) = wrap_dek(&dek, &rk.public_key, payload_aad)?;
+        new_recipients.push(serde_json::json!({
+            "recipient_kid": rk.kid,
+            "enc_b64u": b64.encode(&enc),
+            "ct_b64u": b64.encode(&wrapped),
+        }));
+    }
+    new_recipients.sort_by(|a, b| {
+        let a_kid = a.get("recipient_kid").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let b_kid = b.get("recipient_kid").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        a_kid.cmp(&b_kid)
+    });
+    let recipients_hash = compute_recipients_hash(&new_recipients)?;
+
+    // Recompute payload_cipher_hash over the (unchanged) ciphertext and the
+    // rotated recipient set.
+    let decode_field = |field: &str| -> Result<Vec<u8>, CryptoError> {
+        b64.decode(
+            payload_encrypted
+                .get(field)
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| CryptoError::KeyWrapError(format!("Missing {field}")))?,
+        )
+        .map_err(|e| CryptoError::KeyWrapError(e.to_string()))
+    };
+    let nonce_bytes = decode_field("nonce_b64u")?;
+    let ciphertext = decode_field("ciphertext_b64u")?;
+    let tag = decode_field("tag_b64u")?;
+    let nonce_arr: [u8; NONCE_SIZE] = nonce_bytes
+        .try_into()
+        .map_err(|_| CryptoError::KeyWrapError("nonce must be 12 bytes".to_string()))?;
+
+    let cipher_params = PayloadCipherParams {
+        nonce: &nonce_arr,
+        payload_aad,
+        ciphertext: &ciphertext,
+        tag: &tag,
+        recipients_hash: &recipients_hash,
+    };
+    let payload_cipher_hash = compute_payload_cipher_hash(Some(&cipher_params));
+
+    let mut updated = payload_encrypted.clone();
+    updated["recipients"] = serde_json::Value::Array(new_recipients);
+
+    Ok(RewrapResult { payload_encrypted: updated, payload_cipher_hash })
+}
+
 /// Wrap DEK using X25519 ECDH + HKDF + AES-256-GCM
 fn wrap_dek(
     dek: &[u8; 32],
@@ -554,6 +680,150 @@ mod tests {
         .unwrap();
 
         assert_eq!(decrypted, payload);
+    }
+
+    fn rewrap_fixture() -> (serde_json::Value, EncryptionResult, [u8; 32], [u8; 32], [u8; 32]) {
+        let payload = json!({"order_id": "ord_rotate", "amount": "125.00"});
+        let plain_hash = [0u8; 32];
+        let aad_params = test_aad_params(&plain_hash);
+        let (old_private, old_public) = generate_x25519_keypair();
+        let enc_result = encrypt_payload(
+            &payload,
+            &aad_params,
+            &[RecipientKey { kid: 1, public_key: old_public }],
+        )
+        .unwrap();
+        let aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
+        let payload_aad = crate::hash::compute_payload_aad(&aad_params).unwrap();
+        (payload, enc_result, payload_aad, old_private, old_public)
+    }
+
+    #[test]
+    fn rewrap_rotates_recipients_without_reencrypting() {
+        let (payload, enc_result, payload_aad, old_private, _) = rewrap_fixture();
+        let (new_private, new_public) = generate_x25519_keypair();
+
+        let rewrapped = rewrap_payload(
+            &enc_result.payload_encrypted,
+            &payload_aad,
+            1,
+            &old_private,
+            &[RecipientKey { kid: 2, public_key: new_public }],
+        )
+        .unwrap();
+
+        // The ciphertext is untouched — rotation never decrypts the payload.
+        for field in ["ciphertext_b64u", "nonce_b64u", "tag_b64u"] {
+            assert_eq!(
+                rewrapped.payload_encrypted.get(field),
+                enc_result.payload_encrypted.get(field),
+                "{field} must be unchanged by rewrap"
+            );
+        }
+        // The recipients hash (and thus the cipher hash) reflects the rotation.
+        assert_ne!(rewrapped.payload_cipher_hash, enc_result.payload_cipher_hash);
+
+        // New key decrypts.
+        let decrypted = decrypt_payload(
+            &rewrapped.payload_encrypted,
+            &payload_aad,
+            2,
+            &new_private,
+            &enc_result.payload_plain_hash,
+        )
+        .unwrap();
+        assert_eq!(decrypted, payload);
+
+        // Old key is fully rotated out.
+        let old_attempt = decrypt_payload(
+            &rewrapped.payload_encrypted,
+            &payload_aad,
+            1,
+            &old_private,
+            &enc_result.payload_plain_hash,
+        );
+        assert!(matches!(old_attempt, Err(CryptoError::RecipientNotFound(1))));
+    }
+
+    #[test]
+    fn rewrap_can_retain_existing_recipient() {
+        let (payload, enc_result, payload_aad, old_private, old_public) = rewrap_fixture();
+        let (new_private, new_public) = generate_x25519_keypair();
+
+        let rewrapped = rewrap_payload(
+            &enc_result.payload_encrypted,
+            &payload_aad,
+            1,
+            &old_private,
+            &[
+                RecipientKey { kid: 1, public_key: old_public },
+                RecipientKey { kid: 2, public_key: new_public },
+            ],
+        )
+        .unwrap();
+
+        for (kid, key) in [(1u32, &old_private), (2u32, &new_private)] {
+            let decrypted = decrypt_payload(
+                &rewrapped.payload_encrypted,
+                &payload_aad,
+                kid,
+                key,
+                &enc_result.payload_plain_hash,
+            )
+            .unwrap();
+            assert_eq!(decrypted, payload, "kid {kid} must decrypt after additive rewrap");
+        }
+    }
+
+    #[test]
+    fn rewrap_with_wrong_secret_fails() {
+        let (_, enc_result, payload_aad, _, _) = rewrap_fixture();
+        let (wrong_private, _) = generate_x25519_keypair();
+        let (_, new_public) = generate_x25519_keypair();
+
+        let result = rewrap_payload(
+            &enc_result.payload_encrypted,
+            &payload_aad,
+            1,
+            &wrong_private,
+            &[RecipientKey { kid: 2, public_key: new_public }],
+        );
+        assert!(result.is_err(), "rewrap with a wrong unwrapping key must fail");
+    }
+
+    #[test]
+    fn rewrap_unknown_kid_fails() {
+        let (_, enc_result, payload_aad, old_private, _) = rewrap_fixture();
+        let (_, new_public) = generate_x25519_keypair();
+
+        let result = rewrap_payload(
+            &enc_result.payload_encrypted,
+            &payload_aad,
+            99,
+            &old_private,
+            &[RecipientKey { kid: 2, public_key: new_public }],
+        );
+        assert!(matches!(result, Err(CryptoError::RecipientNotFound(99))));
+    }
+
+    #[test]
+    fn rewrap_rejects_empty_or_duplicate_new_recipients() {
+        let (_, enc_result, payload_aad, old_private, _) = rewrap_fixture();
+        let (_, new_public) = generate_x25519_keypair();
+
+        assert!(matches!(
+            rewrap_payload(&enc_result.payload_encrypted, &payload_aad, 1, &old_private, &[]),
+            Err(CryptoError::NoRecipients)
+        ));
+        let dupes = [
+            RecipientKey { kid: 2, public_key: new_public },
+            RecipientKey { kid: 2, public_key: new_public },
+        ];
+        assert!(
+            rewrap_payload(&enc_result.payload_encrypted, &payload_aad, 1, &old_private, &dupes)
+                .is_err()
+        );
     }
 
     #[test]

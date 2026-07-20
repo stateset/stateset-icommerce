@@ -596,7 +596,10 @@ impl PgAccountsPayableRepository {
         let now = Utc::now();
         let id = Uuid::new_v4();
 
-        let line_number: (i64,) = sqlx::query_as(
+        // `line_number` is INTEGER (INT4), so `MAX(line_number) + 1` is INT4 —
+        // decode it as i32, not i64 (an i64 decode fails with a type mismatch and
+        // was breaking every bill-item insert on Postgres).
+        let line_number: (i32,) = sqlx::query_as(
             "SELECT COALESCE(MAX(line_number), 0) + 1 FROM ap_bill_items WHERE bill_id = $1",
         )
         .bind(bill_id)
@@ -616,7 +619,7 @@ impl PgAccountsPayableRepository {
         )
         .bind(id)
         .bind(bill_id)
-        .bind(line_number.0 as i32)
+        .bind(line_number.0)
         .bind(&item.description)
         .bind(&item.account_code)
         .bind(item.quantity)
@@ -675,8 +678,26 @@ impl PgAccountsPayableRepository {
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
+        // The remaining predicates mirror `list_bills_async` exactly so a filtered
+        // count always matches the filtered list (previously purchase_order_id,
+        // the date range, and min/max amount were dropped here).
+        if let Some(purchase_order_id) = filter.purchase_order_id {
+            builder.push(" AND purchase_order_id = ").push_bind(purchase_order_id);
+        }
         if filter.overdue_only == Some(true) {
             builder.push(" AND due_date < CURRENT_DATE AND status NOT IN ('paid', 'cancelled')");
+        }
+        if let Some(from_date) = filter.from_date {
+            builder.push(" AND bill_date >= ").push_bind(to_date(from_date));
+        }
+        if let Some(to_date_value) = filter.to_date {
+            builder.push(" AND bill_date <= ").push_bind(to_date(to_date_value));
+        }
+        if let Some(min_amount) = filter.min_amount {
+            builder.push(" AND total_amount >= ").push_bind(min_amount);
+        }
+        if let Some(max_amount) = filter.max_amount {
+            builder.push(" AND total_amount <= ").push_bind(max_amount);
         }
 
         let row =

@@ -460,7 +460,11 @@ impl PgLotRepository {
     pub async fn adjust_async(&self, input: AdjustLot) -> Result<LotTransaction> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
+        // Lock the lot row so the read-modify-write of `quantity_remaining`
+        // serializes against concurrent consume/reserve/adjust on the same lot
+        // (matching the `FOR UPDATE` already used by confirm_reservation/transfer
+        // and the SQLite backend's single-transaction serialization).
+        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
             .bind(input.lot_id)
             .fetch_optional(tx.as_mut())
             .await
@@ -506,7 +510,12 @@ impl PgLotRepository {
     pub async fn consume_async(&self, input: ConsumeLot) -> Result<LotTransaction> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
+        // Lock the lot row so the availability check and the quantity write
+        // serialize: without this, two concurrent consumes both read the same
+        // `quantity_remaining`, both pass `can_consume`, and both write — a TOCTOU
+        // race that over-consumes stock. (Siblings confirm_reservation/transfer
+        // already `FOR UPDATE`; the SQLite backend serializes via its transaction.)
+        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
             .bind(input.lot_id)
             .fetch_optional(tx.as_mut())
             .await
@@ -560,7 +569,9 @@ impl PgLotRepository {
     pub async fn reserve_async(&self, input: ReserveLot) -> Result<Uuid> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
+        // Lock the lot row so the availability check and the reservation write
+        // serialize against concurrent consume/reserve/adjust (TOCTOU otherwise).
+        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
             .bind(input.lot_id)
             .fetch_optional(tx.as_mut())
             .await

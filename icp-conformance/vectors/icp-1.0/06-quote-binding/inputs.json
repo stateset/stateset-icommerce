@@ -1,0 +1,159 @@
+{
+  "test": "06-quote-binding",
+  "cases": [
+    {
+      "id": "c01_under",
+      "intent_max_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "50.00",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c02_equal",
+      "intent_max_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c03_over_by_a_cent",
+      "intent_max_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "65.01",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c04_trailing_zero_eq",
+      "intent_max_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "65.0",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c05_trailing_zero_eq_r",
+      "intent_max_total": {
+        "amount": "65.0",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c06_18digit_over",
+      "intent_max_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "65.000000000000000001",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c07_bigint_over",
+      "intent_max_total": {
+        "amount": "999999999999.99",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "1000000000000.00",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c08_bigint_under",
+      "intent_max_total": {
+        "amount": "1000000000000.00",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "999999999999.99",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c09_string_trap_under",
+      "intent_max_total": {
+        "amount": "10.0",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "9.9",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c10_string_trap_over",
+      "intent_max_total": {
+        "amount": "9.9",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "10.1",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c11_zero_quote",
+      "intent_max_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "0.00",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c12_integer_form_eq",
+      "intent_max_total": {
+        "amount": "65.00",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "65",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c13_integer_over",
+      "intent_max_total": {
+        "amount": "65",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "66",
+        "currency": "USDC"
+      }
+    },
+    {
+      "id": "c14_leading_zeros_eq",
+      "intent_max_total": {
+        "amount": "65.0",
+        "currency": "USDC"
+      },
+      "quote_total": {
+        "amount": "0065.00",
+        "currency": "USDC"
+      }
+    }
+  ]
+}

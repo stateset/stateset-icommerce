@@ -401,14 +401,11 @@ impl ProductRepository for SqliteProductRepository {
 
         let apply_price_filter = min_price.is_some() || max_price.is_some();
         if !apply_price_filter {
-            if let Some(limit) = limit {
-                sql.push_str(&format!(" LIMIT {limit}"));
-            }
-            if after_cursor.is_none() {
-                if let Some(offset) = offset {
-                    sql.push_str(&format!(" OFFSET {offset}"));
-                }
-            }
+            // Offset pagination applies only in non-cursor mode; the helper emits
+            // `LIMIT -1 OFFSET n` when an offset is set without a limit (SQLite
+            // rejects a bare OFFSET).
+            let page_offset = if after_cursor.is_none() { offset } else { None };
+            crate::sqlite::append_limit_offset(&mut sql, limit, page_offset);
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =

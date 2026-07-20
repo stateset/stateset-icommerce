@@ -1,0 +1,70 @@
+{
+  "validations": {
+    "v01_inventory_query_valid": {
+      "valid": true
+    },
+    "v02_payout_request_valid": {
+      "valid": true
+    },
+    "v03_purchase_create_valid": {
+      "valid": true
+    },
+    "v04_purchase_return_valid": {
+      "valid": true
+    },
+    "v05_quote_request_valid": {
+      "valid": true
+    },
+    "v06_subscription_cancel_valid": {
+      "valid": true
+    },
+    "v07_subscription_create_valid": {
+      "valid": true
+    },
+    "n01_missing_v": {
+      "error": "format.missing_field"
+    },
+    "n02_wrong_version": {
+      "error": "version.unsupported"
+    },
+    "n03_missing_verb": {
+      "error": "format.missing_field"
+    },
+    "n04_unknown_verb": {
+      "error": "format.unknown_verb"
+    },
+    "n05_missing_settler": {
+      "error": "format.missing_field"
+    },
+    "n06_missing_items": {
+      "error": "format.missing_field"
+    },
+    "n07_bad_buyer_aid": {
+      "error": "format.bad_aid"
+    },
+    "n08_bad_merchant_aid": {
+      "error": "format.bad_aid"
+    },
+    "n09_bad_settler_id": {
+      "error": "format.bad_settler_id"
+    },
+    "n10_bad_money": {
+      "error": "format.bad_money"
+    },
+    "n11_empty_items": {
+      "error": "format.bad_schema"
+    },
+    "n12_bad_seller_aid": {
+      "error": "format.bad_aid"
+    },
+    "n13_missing_amount": {
+      "error": "format.missing_field"
+    },
+    "n14_bad_amount_money": {
+      "error": "format.bad_money"
+    }
+  },
+  "_provenance": {
+    "note": "Generated from the ICP-1.0 \u00a76 intent JSON Schemas (schemas/intent.*.schema.json) and schemas/error-codes.md. Validator precedence is documented in description.md. Structural validation only; absolute-time (replay.expired) and window-timing checks are deferred to a clock-injection family."
+  }
+}

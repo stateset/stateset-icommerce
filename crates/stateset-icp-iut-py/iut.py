@@ -20,6 +20,7 @@ byte-identical bytes regardless of where the merchant or settler runs.
 import sys
 import json
 import math
+import re
 import hashlib
 
 try:
@@ -310,6 +311,247 @@ def run_03_signature_verification(inp):
 
 
 # ---------------------------------------------------------------------------
+# 04-escrow-lifecycle — ICP-1.0 §8 state machine + event replay
+# ---------------------------------------------------------------------------
+
+# The normative §8 transition table, encoded directly.
+ESCROW_TRANSITIONS = {
+    ("pending", "payment_confirmed"): "funded",
+    ("funded", "fulfillment_confirmed_window_elapsed"): "released",
+    ("funded", "dispute_raised"): "disputed",
+    ("disputed", "resolution_favors_merchant"): "released",
+    ("disputed", "resolution_favors_buyer"): "refunded",
+    ("funded", "merchant_cancel_or_expiry"): "refunded",
+}
+
+
+def escrow_step(state, trigger):
+    nxt = ESCROW_TRANSITIONS.get((state, trigger))
+    if nxt is not None:
+        return {"state": nxt}
+    if state == "funded" and trigger == "payment_confirmed":
+        return {"error": "escrow.already_funded"}
+    return {"error": "escrow.wrong_state"}
+
+
+def escrow_replay(events):
+    state = "pending"
+    for index, event in enumerate(events):
+        if event.get("seq") != index:
+            return {"error": "escrow.seq_out_of_order"}
+        step = escrow_step(state, event.get("trigger"))
+        if "error" in step:
+            return {"error": step["error"]}
+        state = step["state"]
+    return {"final_state": state}
+
+
+def run_04_escrow_lifecycle(inp):
+    transitions = {
+        case["id"]: escrow_step(case["from"], case["trigger"])
+        for case in inp["transition_cases"]
+    }
+    replays = {
+        case["id"]: escrow_replay(case["events"]) for case in inp["replay_cases"]
+    }
+    return {"transitions": transitions, "replays": replays}
+
+
+# ---------------------------------------------------------------------------
+# 05-intent-validation — ICP-1.0 §6 intent envelope validation
+# ---------------------------------------------------------------------------
+
+AID_RE = re.compile(r"^aid:v1:z[1-9A-HJ-NP-Za-km-z]{40,60}$")
+SETTLER_RE = re.compile(r"^settler:[a-z0-9]+(\.[a-z0-9]+)*$")
+MONEY_RE = re.compile(r"^-?[0-9]+(\.[0-9]{1,18})?$")
+
+INTENT_VERBS = {
+    "purchase.create": {"aids": ["buyer", "merchant"], "money": ["max_total"], "items_required": True,
+        "required": ["v", "verb", "intent_id", "buyer", "merchant", "settler", "items", "max_total", "expiry", "principal_binding", "nonce", "iat", "exp"]},
+    "inventory.query": {"aids": ["buyer", "merchant"], "money": [], "items_required": False,
+        "required": ["v", "verb", "intent_id", "buyer", "merchant", "settler", "principal_binding", "nonce", "iat", "exp"]},
+    "quote.request": {"aids": ["buyer", "merchant"], "money": [], "items_required": True,
+        "required": ["v", "verb", "intent_id", "buyer", "merchant", "settler", "items", "principal_binding", "nonce", "iat", "exp"]},
+    "payout.request": {"aids": ["seller", "platform"], "money": ["amount"], "items_required": False,
+        "required": ["v", "verb", "intent_id", "seller", "platform", "settler", "amount", "destination", "principal_binding", "nonce", "iat", "exp"]},
+    "subscription.create": {"aids": ["buyer", "merchant"], "money": ["max_total_per_period"], "items_required": False,
+        "required": ["v", "verb", "intent_id", "buyer", "merchant", "settler", "service_id", "cadence", "max_total_per_period", "first_charge_at", "principal_binding", "nonce", "iat", "exp"]},
+    "subscription.cancel": {"aids": ["buyer", "merchant"], "money": [], "items_required": False,
+        "required": ["v", "verb", "intent_id", "buyer", "merchant", "settler", "subscription_id", "effective", "principal_binding", "nonce", "iat", "exp"]},
+    "purchase.return": {"aids": ["buyer", "merchant"], "money": [], "items_required": True,
+        "required": ["v", "verb", "intent_id", "buyer", "merchant", "settler", "original_settlement_id", "items", "desired_outcome", "principal_binding", "nonce", "iat", "exp"]},
+}
+
+
+def validate_intent(intent):
+    if not isinstance(intent, dict):
+        return {"error": "format.bad_schema"}
+    if "v" not in intent:
+        return {"error": "format.missing_field"}
+    if intent["v"] != "icp-1.0":
+        return {"error": "version.unsupported"}
+    if "verb" not in intent:
+        return {"error": "format.missing_field"}
+    spec = INTENT_VERBS.get(intent["verb"])
+    if spec is None:
+        return {"error": "format.unknown_verb"}
+    for field in spec["required"]:
+        if field not in intent:
+            return {"error": "format.missing_field"}
+    for field in spec["aids"]:
+        if not AID_RE.match(str(intent[field])):
+            return {"error": "format.bad_aid"}
+    if not SETTLER_RE.match(str(intent["settler"])):
+        return {"error": "format.bad_settler_id"}
+    for field in spec["money"]:
+        m = intent[field]
+        if not isinstance(m, dict) or not MONEY_RE.match(str(m.get("amount", ""))):
+            return {"error": "format.bad_money"}
+    if spec["items_required"]:
+        items = intent.get("items")
+        if not isinstance(items, list) or len(items) < 1:
+            return {"error": "format.bad_schema"}
+    return {"valid": True}
+
+
+def run_05_intent_validation(inp):
+    return {"validations": {c["id"]: validate_intent(c["intent"]) for c in inp["cases"]}}
+
+
+# ---------------------------------------------------------------------------
+# 06-quote-binding — ICP-1.0 §11.4 max_total ceiling (exact decimal compare)
+# ---------------------------------------------------------------------------
+
+
+def cmp_amount(a, b):
+    """Compare two non-negative decimal strings. Returns -1, 0, or 1. Exact."""
+    ia, _, fa = a.partition(".")
+    ib, _, fb = b.partition(".")
+    ia = ia.lstrip("0") or "0"
+    ib = ib.lstrip("0") or "0"
+    if len(ia) != len(ib):
+        return -1 if len(ia) < len(ib) else 1
+    if ia != ib:
+        return -1 if ia < ib else 1
+    n = max(len(fa), len(fb))
+    fa = fa.ljust(n, "0")
+    fb = fb.ljust(n, "0")
+    if fa == fb:
+        return 0
+    return -1 if fa < fb else 1
+
+
+def run_06_quote_binding(inp):
+    decisions = {}
+    for c in inp["cases"]:
+        exceeds = cmp_amount(c["quote_total"]["amount"], c["intent_max_total"]["amount"]) > 0
+        decisions[c["id"]] = (
+            {"error": "policy.quote.exceeds_max_total"} if exceeds else {"valid": True}
+        )
+    return {"decisions": decisions}
+
+
+# ---------------------------------------------------------------------------
+# 07-settlement-receipts — ICP-1.0 §9 co-signed receipt verification
+# ---------------------------------------------------------------------------
+
+
+def verify_receipt(receipt, merchant_pk, settler_pk):
+    if not isinstance(receipt, dict):
+        return {"error": "format.missing_field"}
+    ms = receipt.get("merchant_signature")
+    if not (isinstance(ms, dict) and ms.get("sig")):
+        return {"error": "format.missing_field"}
+    ss = receipt.get("settler_signature")
+    if not (isinstance(ss, dict) and ss.get("sig")):
+        return {"error": "format.missing_field"}
+    unsigned = {
+        k: v
+        for k, v in receipt.items()
+        if k not in ("merchant_signature", "settler_signature")
+    }
+    canonical = canonical_json(unsigned)
+    if not verify_one(canonical, ms["sig"], merchant_pk):
+        return {"error": "signature.invalid"}
+    if not verify_one(canonical, ss["sig"], settler_pk):
+        return {"error": "settlement.settler_signature_invalid"}
+    return {"valid": True}
+
+
+def run_07_settlement_receipts(inp):
+    return {
+        "verifications": {
+            c["id"]: verify_receipt(
+                c["receipt"], c["merchant_pubkey_hex"], c["settler_pubkey_hex"]
+            )
+            for c in inp["cases"]
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# 08-timing — ICP-1.0 §5.3 replay window (strict parse + shared epoch algo)
+# ---------------------------------------------------------------------------
+
+TIMING_WINDOW_MAX = 600  # §5.3 intent window ceiling, seconds
+TS_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
+
+
+def days_from_civil(y, m, d):
+    y2 = y - 1 if m <= 2 else y
+    era = (y2 if y2 >= 0 else y2 - 399) // 400
+    yoe = y2 - era * 400
+    doy = (153 * (m - 3 if m > 2 else m + 9) + 2) // 5 + d - 1
+    doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
+
+
+def parse_epoch(s):
+    if not isinstance(s, str):
+        return None
+    m = TS_RE.match(s)
+    if not m:
+        return None
+    y, mo, d, h, mi, se = (int(x) for x in m.groups())
+    if not (1 <= mo <= 12 and 1 <= d <= 31 and h <= 23 and mi <= 59 and se <= 59):
+        return None
+    return days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se
+
+
+def validate_timing(iat, exp, now):
+    ti, te, tn = parse_epoch(iat), parse_epoch(exp), parse_epoch(now)
+    if ti is None or te is None or tn is None:
+        return {"error": "replay.timestamp_malformed"}
+    if te - ti > TIMING_WINDOW_MAX:
+        return {"error": "replay.window_too_long"}
+    if te < tn:
+        return {"error": "replay.expired"}
+    return {"valid": True}
+
+
+def run_08_timing(inp):
+    return {"validations": {c["id"]: validate_timing(c["iat"], c["exp"], c["now"]) for c in inp["cases"]}}
+
+
+# ---------------------------------------------------------------------------
+# 09-ceilings — refund/payout authoritative ceilings (reuses cmp_amount)
+# ---------------------------------------------------------------------------
+
+CEILING_CODE = {
+    "return": "policy.return.exceeds_max_refund",
+    "payout": "policy.payout.exceeds_max_per_payout",
+}
+
+
+def run_09_ceilings(inp):
+    decisions = {}
+    for c in inp["cases"]:
+        exceeds = cmp_amount(c["value"]["amount"], c["ceiling"]["amount"]) > 0
+        decisions[c["id"]] = {"error": CEILING_CODE[c["kind"]]} if exceeds else {"valid": True}
+    return {"decisions": decisions}
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -333,6 +575,18 @@ def main():
             output = run_02_canonical_json(inp)
         elif test_name == "03-signature-verification":
             output = run_03_signature_verification(inp)
+        elif test_name == "04-escrow-lifecycle":
+            output = run_04_escrow_lifecycle(inp)
+        elif test_name == "05-intent-validation":
+            output = run_05_intent_validation(inp)
+        elif test_name == "06-quote-binding":
+            output = run_06_quote_binding(inp)
+        elif test_name == "07-settlement-receipts":
+            output = run_07_settlement_receipts(inp)
+        elif test_name == "08-timing":
+            output = run_08_timing(inp)
+        elif test_name == "09-ceilings":
+            output = run_09_ceilings(inp)
         else:
             print(
                 json.dumps(

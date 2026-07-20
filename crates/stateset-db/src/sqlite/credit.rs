@@ -17,7 +17,8 @@ use uuid::Uuid;
 
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    with_immediate_transaction,
 };
 
 #[derive(Debug)]
@@ -227,9 +228,12 @@ impl SqliteCreditRepository {
     }
 
     fn recalculate_available_credit(&self, customer_id: CustomerId) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
         // available = limit - balance - holds.
+        //
+        // Read-modify-write of `available_credit`, run in an IMMEDIATE
+        // transaction so it is serialized against concurrent charges/payments/
+        // reservations (which move balance and holds) and retried on lock
+        // contention rather than failing with "database table is locked".
         //
         // `credit_limit`, `current_balance`, and `hold_amount` are TEXT columns
         // (migration 021), so subtracting in SQL
@@ -239,25 +243,24 @@ impl SqliteCreditRepository {
         // 0.10). `check_credit` then approves/denies orders against that drifted
         // value. Instead we read the three exact TEXT values, subtract with
         // `rust_decimal::Decimal`, and write the exact string back.
-        let (limit, balance, hold): (String, String, String) = conn
-            .query_row(
+        with_immediate_transaction(&self.pool, |tx| {
+            let (limit, balance, hold): (String, String, String) = tx.query_row(
                 "SELECT credit_limit, current_balance, hold_amount FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-        let available = parse_decimal_strict(&limit, "credit_account", "credit_limit")?
-            - parse_decimal_strict(&balance, "credit_account", "current_balance")?
-            - parse_decimal_strict(&hold, "credit_account", "hold_amount")?;
+            let available = parse_decimal_row(&limit, "credit_account", "credit_limit")?
+                - parse_decimal_row(&balance, "credit_account", "current_balance")?
+                - parse_decimal_row(&hold, "credit_account", "hold_amount")?;
 
-        conn.execute(
-            "UPDATE credit_accounts SET available_credit = ? WHERE customer_id = ?",
-            [&available.to_string(), &customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            tx.execute(
+                "UPDATE credit_accounts SET available_credit = ? WHERE customer_id = ?",
+                [&available.to_string(), &customer_id.to_string()],
+            )?;
 
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -556,63 +559,59 @@ impl CreditRepository for SqliteCreditRepository {
             ));
         }
 
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
         let id = Uuid::new_v4();
 
-        // The reservation must fit within the customer's remaining credit
-        // (limit minus balance minus existing holds) — otherwise a hold can
-        // extend credit past the agreed line.
-        let (limit_str, balance_str, hold_str): (String, String, String) = conn
-            .query_row(
+        // The available-credit check, the reservation INSERT, and the hold bump
+        // must be atomic and serialized: otherwise concurrent reservations each
+        // pass the check against the same stale hold and all commit, extending
+        // credit past the agreed line. Run them in an IMMEDIATE transaction (the
+        // same hardening `charge_credit` and the Postgres backend use), then
+        // recompute available credit afterward — outside the transaction, so we
+        // never hold the write connection while that helper opens its own.
+        //
+        // `credit_limit`, `current_balance`, and `hold_amount` are TEXT columns
+        // (migration 021), so the arithmetic is done with exact
+        // `rust_decimal::Decimal` and the new hold is written back as an exact
+        // bound parameter rather than coercing to a float in SQL.
+        with_immediate_transaction(&self.pool, |tx| {
+            let (limit_str, balance_str, hold_str): (String, String, String) = tx.query_row(
                 "SELECT credit_limit, current_balance, hold_amount FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(map_db_error)?;
-        let available = parse_decimal_strict(&limit_str, "credit_account", "credit_limit")?
-            - parse_decimal_strict(&balance_str, "credit_account", "current_balance")?
-            - parse_decimal_strict(&hold_str, "credit_account", "hold_amount")?;
-        if amount > available {
-            return Err(CommerceError::ValidationError(format!(
-                "Insufficient available credit: requested {amount}, available {available}"
-            )));
-        }
+            )?;
+            let hold = parse_decimal_row(&hold_str, "credit_account", "hold_amount")?;
+            let available = parse_decimal_row(&limit_str, "credit_account", "credit_limit")?
+                - parse_decimal_row(&balance_str, "credit_account", "current_balance")?
+                - hold;
+            if amount > available {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "Insufficient available credit: requested {amount}, available {available}"
+                    )),
+                )));
+            }
 
-        // Create reservation
-        conn.execute(
-            "INSERT INTO credit_reservations (id, customer_id, order_id, amount, status, created_at)
-             VALUES (?, ?, ?, ?, 'active', ?)",
-            rusqlite::params![
-                id.to_string(),
-                customer_id.to_string(),
-                order_id.to_string(),
-                amount.to_string(),
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+            tx.execute(
+                "INSERT INTO credit_reservations (id, customer_id, order_id, amount, status, created_at)
+                 VALUES (?, ?, ?, ?, 'active', ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    customer_id.to_string(),
+                    order_id.to_string(),
+                    amount.to_string(),
+                    now.to_rfc3339(),
+                ],
+            )?;
 
-        // Update hold amount.
-        //
-        // `hold_amount` is a TEXT column (migration 021), so adding in SQL
-        // ('CAST(hold_amount AS REAL) + ?') would coerce both operands to
-        // IEEE-754 floats ('0.10' + '0.20' = 0.30000000000000004). Instead we
-        // read the current value, add with `rust_decimal::Decimal` in Rust, and
-        // write the exact precomputed string back as a bound parameter.
-        let current_hold: String = conn
-            .query_row(
-                "SELECT hold_amount FROM credit_accounts WHERE customer_id = ?",
-                [customer_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
-        let new_hold =
-            parse_decimal_strict(&current_hold, "credit_account", "hold_amount")? + amount;
-        conn.execute(
-            "UPDATE credit_accounts SET hold_amount = ? WHERE customer_id = ?",
-            [&new_hold.to_string(), &customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            let new_hold = hold + amount;
+            tx.execute(
+                "UPDATE credit_accounts SET hold_amount = ? WHERE customer_id = ?",
+                [&new_hold.to_string(), &customer_id.to_string()],
+            )?;
+
+            Ok(())
+        })?;
 
         self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
@@ -623,54 +622,55 @@ impl CreditRepository for SqliteCreditRepository {
         customer_id: CustomerId,
         order_id: OrderId,
     ) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        // Get reservation amount
-        let amount: Option<String> = match conn.query_row(
-            "SELECT amount FROM credit_reservations WHERE customer_id = ? AND order_id = ? AND status = 'active'",
-            [customer_id.to_string(), order_id.to_string()],
-            |row| row.get(0),
-        ) {
-            Ok(value) => Some(value),
-            Err(rusqlite::Error::QueryReturnedNoRows) => None,
-            Err(e) => return Err(map_db_error(e)),
-        };
-
-        let amount = match amount {
-            Some(value) => parse_decimal_strict(&value, "credit_reservation", "amount")?,
-            None => Decimal::ZERO,
-        };
-
-        // Release reservation
-        conn.execute(
-            "UPDATE credit_reservations SET status = 'released', released_at = ?
-             WHERE customer_id = ? AND order_id = ? AND status = 'active'",
-            [now.to_rfc3339(), customer_id.to_string(), order_id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        // Update hold amount.
+        // Release the reservation and decrement the hold in one IMMEDIATE
+        // transaction so the read-modify-write of `hold_amount` is serialized
+        // against concurrent reservations/releases and retried on lock
+        // contention. `recalculate_available_credit` runs afterward, outside the
+        // transaction (it opens its own), so we never hold this write connection
+        // while it acquires another.
         //
-        // `hold_amount` is a TEXT column (migration 021), so subtracting in SQL
-        // would coerce to IEEE-754 floats. Read the current value, subtract with
-        // `rust_decimal::Decimal`, clamp at zero in Rust, and write the exact
-        // string back as a bound parameter.
-        let current_hold: String = conn
-            .query_row(
+        // `hold_amount` is a TEXT column (migration 021), so the subtraction is
+        // done with exact `rust_decimal::Decimal`, clamped at zero, and written
+        // back as an exact bound parameter rather than coercing to a float in SQL.
+        with_immediate_transaction(&self.pool, |tx| {
+            let amount: Option<String> = match tx.query_row(
+                "SELECT amount FROM credit_reservations WHERE customer_id = ? AND order_id = ? AND status = 'active'",
+                [customer_id.to_string(), order_id.to_string()],
+                |row| row.get(0),
+            ) {
+                Ok(value) => Some(value),
+                Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                Err(e) => return Err(e),
+            };
+
+            let amount = match amount {
+                Some(value) => parse_decimal_row(&value, "credit_reservation", "amount")?,
+                None => Decimal::ZERO,
+            };
+
+            tx.execute(
+                "UPDATE credit_reservations SET status = 'released', released_at = ?
+                 WHERE customer_id = ? AND order_id = ? AND status = 'active'",
+                [now.to_rfc3339(), customer_id.to_string(), order_id.to_string()],
+            )?;
+
+            let current_hold: String = tx.query_row(
                 "SELECT hold_amount FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
                 |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
-        let new_hold = (parse_decimal_strict(&current_hold, "credit_account", "hold_amount")?
-            - amount)
-            .max(Decimal::ZERO);
-        conn.execute(
-            "UPDATE credit_accounts SET hold_amount = ? WHERE customer_id = ?",
-            [&new_hold.to_string(), &customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            )?;
+            let new_hold = (parse_decimal_row(&current_hold, "credit_account", "hold_amount")?
+                - amount)
+                .max(Decimal::ZERO);
+            tx.execute(
+                "UPDATE credit_accounts SET hold_amount = ? WHERE customer_id = ?",
+                [&new_hold.to_string(), &customer_id.to_string()],
+            )?;
+
+            Ok(())
+        })?;
 
         self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
@@ -688,41 +688,49 @@ impl CreditRepository for SqliteCreditRepository {
             ));
         }
 
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        // Check the limit before releasing the reservation, so a rejected
-        // charge does not destroy the hold. The check involves only
-        // current_balance and credit_limit, which the release does not touch.
-        let (current_balance, limit_str): (String, String) = conn
-            .query_row(
+        // The limit check and the balance write must be atomic and serialized:
+        // otherwise two concurrent charges each read the same balance, both pass
+        // the limit check, and both commit — together exceeding the credit limit.
+        // Run them in an IMMEDIATE transaction (write lock held across the
+        // read-modify-write), the same hardening the gift-card, store-credit,
+        // and invoice-payment paths use.
+        //
+        // A rejected charge (limit exceeded) returns before the reservation is
+        // released, so the hold is preserved. The reservation release, ledger
+        // entry, and available-credit recompute run *after* the transaction
+        // commits and outside it, so we never hold the write connection while
+        // those helpers acquire their own pooled connections (which would
+        // exhaust the pool under concurrency).
+        //
+        // `current_balance` is a TEXT column (migration 021), so the arithmetic
+        // is done with exact `rust_decimal::Decimal` and written back as an exact
+        // bound parameter rather than coercing to an IEEE-754 float in SQL.
+        with_immediate_transaction(&self.pool, |tx| {
+            let (current_balance, limit_str): (String, String) = tx.query_row(
                 "SELECT current_balance, credit_limit FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(map_db_error)?;
-        let new_balance =
-            parse_decimal_strict(&current_balance, "credit_account", "current_balance")? + amount;
-        let credit_limit = parse_decimal_strict(&limit_str, "credit_account", "credit_limit")?;
-        if new_balance > credit_limit {
-            return Err(CommerceError::ValidationError(format!(
-                "Charge would exceed credit limit: new balance {new_balance}, limit {credit_limit}"
-            )));
-        }
+            )?;
+            let new_balance =
+                parse_decimal_row(&current_balance, "credit_account", "current_balance")? + amount;
+            let credit_limit = parse_decimal_row(&limit_str, "credit_account", "credit_limit")?;
+            if new_balance > credit_limit {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "Charge would exceed credit limit: new balance {new_balance}, limit {credit_limit}"
+                    )),
+                )));
+            }
+            tx.execute(
+                "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
+                [&new_balance.to_string(), &customer_id.to_string()],
+            )?;
+            Ok(())
+        })?;
 
-        // Release the reservation, then add to balance.
-        //
-        // `current_balance` is a TEXT column (migration 021), so adding in SQL
-        // would coerce to IEEE-754 floats; `new_balance` was computed with
-        // `rust_decimal::Decimal` above and is written back as an exact bound
-        // parameter.
+        // Charge committed: release the hold, record the ledger entry, and
+        // recompute available credit.
         self.release_credit_reservation(customer_id, order_id)?;
-        conn.execute(
-            "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
-            [&new_balance.to_string(), &customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        // Record transaction
         self.record_transaction(RecordCreditTransaction {
             customer_id,
             transaction_type: CreditTransactionType::Charge,
@@ -1001,44 +1009,49 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn record_transaction(&self, input: RecordCreditTransaction) -> Result<CreditTransaction> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        // Get current balance
-        let balance: String = conn
-            .query_row(
+        // Read the current balance and insert the ledger row in one IMMEDIATE
+        // transaction so it is serialized against concurrent balance changes and
+        // retried on lock contention. The closure runs on the exact-decimal TEXT
+        // balance and may re-run on retry, so it borrows `input` and returns only
+        // the computed running balance; the owned `CreditTransaction` is built
+        // afterward.
+        let running_balance = with_immediate_transaction(&self.pool, |tx| {
+            let balance: String = tx.query_row(
                 "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
                 [input.customer_id.to_string()],
                 |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-        let current_balance = parse_decimal_strict(&balance, "credit_account", "current_balance")?;
-        let running_balance = match input.transaction_type {
-            CreditTransactionType::Payment | CreditTransactionType::CreditMemo => {
-                current_balance - input.amount
-            }
-            _ => current_balance,
-        };
+            let current_balance = parse_decimal_row(&balance, "credit_account", "current_balance")?;
+            let running_balance = match input.transaction_type {
+                CreditTransactionType::Payment | CreditTransactionType::CreditMemo => {
+                    current_balance - input.amount
+                }
+                _ => current_balance,
+            };
 
-        conn.execute(
-            "INSERT INTO credit_transactions (id, customer_id, transaction_type, amount,
-                running_balance, reference_type, reference_id, notes, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                id.to_string(),
-                input.customer_id.to_string(),
-                input.transaction_type.to_string(),
-                input.amount.to_string(),
-                running_balance.to_string(),
-                input.reference_type,
-                input.reference_id.map(|id| id.to_string()),
-                input.notes,
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
+            tx.execute(
+                "INSERT INTO credit_transactions (id, customer_id, transaction_type, amount,
+                    running_balance, reference_type, reference_id, notes, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    input.customer_id.to_string(),
+                    input.transaction_type.to_string(),
+                    input.amount.to_string(),
+                    running_balance.to_string(),
+                    &input.reference_type,
+                    input.reference_id.map(|id| id.to_string()),
+                    &input.notes,
+                    now.to_rfc3339(),
+                ],
+            )?;
+
+            Ok(running_balance)
+        })?;
 
         Ok(CreditTransaction {
             id,
@@ -1097,29 +1110,37 @@ impl CreditRepository for SqliteCreditRepository {
         amount: Decimal,
         reference_id: Option<Uuid>,
     ) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Payment amount must be positive".to_string(),
+            ));
+        }
 
-        // Reduce balance.
+        // Reduce balance under an IMMEDIATE transaction so concurrent payments
+        // serialize on the write lock instead of racing on a stale read and
+        // losing an update. The ledger entry and available-credit recompute run
+        // afterward, outside the transaction (see `charge_credit`).
         //
-        // `current_balance` is a TEXT column (migration 021), so subtracting in
-        // SQL would coerce to IEEE-754 floats. Read the current value, subtract
-        // with `rust_decimal::Decimal`, clamp at zero in Rust, and write the
-        // exact string back as a bound parameter.
-        let current_balance: String = conn
-            .query_row(
+        // `current_balance` is a TEXT column (migration 021), so the subtraction
+        // is done with exact `rust_decimal::Decimal`, clamped at zero, and
+        // written back as an exact bound parameter rather than coercing to an
+        // IEEE-754 float in SQL.
+        with_immediate_transaction(&self.pool, |tx| {
+            let current_balance: String = tx.query_row(
                 "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
                 |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
-        let new_balance =
-            (parse_decimal_strict(&current_balance, "credit_account", "current_balance")? - amount)
-                .max(Decimal::ZERO);
-        conn.execute(
-            "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
-            [&new_balance.to_string(), &customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            )?;
+            let new_balance =
+                (parse_decimal_row(&current_balance, "credit_account", "current_balance")?
+                    - amount)
+                    .max(Decimal::ZERO);
+            tx.execute(
+                "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
+                [&new_balance.to_string(), &customer_id.to_string()],
+            )?;
+            Ok(())
+        })?;
 
         // Record transaction
         self.record_transaction(RecordCreditTransaction {
@@ -1192,7 +1213,7 @@ impl CreditRepository for SqliteCreditRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SqliteDatabase;
+    use crate::{DatabaseConfig, SqliteDatabase};
     use rust_decimal_macros::dec;
     use stateset_core::{
         CreateCreditAccount, CreditAccountFilter, CreditAccountStatus, CreditRepository,
@@ -1201,6 +1222,21 @@ mod tests {
 
     fn fresh_repo() -> SqliteCreditRepository {
         SqliteDatabase::in_memory().expect("in-memory").credit()
+    }
+
+    /// A concurrent money operation may legitimately fail either because it was
+    /// rejected on business rules (limit/available exceeded) or because it hit
+    /// transient SQLite write-lock contention that outlasted the retry budget —
+    /// the caller retries the latter. Anything else is an unexpected error.
+    fn is_expected_or_transient(e: &CommerceError) -> bool {
+        match e {
+            CommerceError::ValidationError(_) => true,
+            CommerceError::DatabaseError(msg) => {
+                let m = msg.to_lowercase();
+                m.contains("locked") || m.contains("timed out") || m.contains("busy")
+            }
+            _ => false,
+        }
     }
 
     fn make_account(
@@ -1217,6 +1253,210 @@ mod tests {
             notes: Some("standard terms".into()),
         })
         .expect("create credit account")
+    }
+
+    #[test]
+    fn concurrent_charges_cannot_exceed_credit_limit() {
+        // Charging credit is a check-then-act on current_balance vs credit_limit.
+        // Without serialization, concurrent charges each pass the limit check
+        // against the same stale balance and both commit, blowing through the
+        // limit. Ten $20 charges race against a $100 limit — only five may win.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::new(&DatabaseConfig::in_memory()).unwrap());
+        let repo = SqliteCreditRepository::new(db.pool().clone());
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100)); // limit $100, balance $0
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let repo = SqliteCreditRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(20))
+            }));
+        }
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("get").expect("found");
+        // The critical safety invariant: concurrent charges can NEVER exceed the
+        // limit, no matter how the race resolves.
+        assert!(
+            acct.current_balance <= dec!(100),
+            "credit limit exceeded under concurrency: balance {}",
+            acct.current_balance
+        );
+        // No lost updates: the balance reflects AT LEAST every confirmed charge
+        // ($20 each). It can be a touch higher than 20*successes because under
+        // extreme contention a charge can commit its balance write yet hit
+        // "table is locked" on a post-commit step and surface as an Err — its
+        // money still landed. It can never exceed the limit, and must be an exact
+        // multiple of $20 (no partial writes). `successes` is at most five.
+        assert!(
+            acct.current_balance >= dec!(20) * Decimal::from(successes as u64),
+            "lost update: balance {} < confirmed charges {}: {results:?}",
+            acct.current_balance,
+            successes
+        );
+        assert!(
+            (acct.current_balance / dec!(20)).fract().is_zero(),
+            "balance must be an exact multiple of the $20 charge: {}",
+            acct.current_balance
+        );
+        assert!(successes <= 5, "at most five $20 charges fit under the $100 limit: {results:?}");
+        assert!(
+            results.iter().all(|r| match r {
+                Ok(_) => true,
+                Err(e) => is_expected_or_transient(e),
+            }),
+            "every failure must be a limit rejection or a transient lock: {results:?}"
+        );
+    }
+
+    #[test]
+    fn concurrent_payments_are_not_lost() {
+        // Applying a payment is a read-modify-write of current_balance; without
+        // serialization concurrent payments overwrite each other. Ten $10
+        // payments against a $100 balance must fully settle it.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::new(&DatabaseConfig::in_memory()).unwrap());
+        let repo = SqliteCreditRepository::new(db.pool().clone());
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000));
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(100)).expect("charge 100");
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let repo = SqliteCreditRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.apply_payment(cust, dec!(10), None)
+            }));
+        }
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("get").expect("found");
+        // No lost updates: each $10 payment reduces the $100 balance. The balance
+        // is reduced by AT LEAST every confirmed payment; it can be a touch lower
+        // than 100-10*successes because under contention a payment can commit yet
+        // hit "table is locked" on a post-commit step and surface as an Err (its
+        // money still landed). Balance never goes below zero and stays an exact
+        // multiple of $10.
+        assert!(
+            acct.current_balance <= dec!(100) - dec!(10) * Decimal::from(successes as u64),
+            "lost update: balance {} exceeds 100 - 10*{} successes: {results:?}",
+            acct.current_balance,
+            successes
+        );
+        assert!(acct.current_balance >= Decimal::ZERO, "balance went negative: {results:?}");
+        assert!(
+            (acct.current_balance / dec!(10)).fract().is_zero(),
+            "balance must be an exact multiple of the $10 payment: {}",
+            acct.current_balance
+        );
+        assert!(successes >= 1, "at least one payment must succeed: {results:?}");
+        assert!(
+            results.iter().all(|r| match r {
+                Ok(_) => true,
+                Err(e) => is_expected_or_transient(e),
+            }),
+            "every failure must be a transient lock: {results:?}"
+        );
+    }
+
+    #[test]
+    fn concurrent_reservations_cannot_exceed_available_credit() {
+        // Reserving credit checks the reservation against available credit
+        // (limit - balance - holds), then bumps the hold. Without serialization,
+        // concurrent reservations each pass the check against the same stale
+        // hold and all commit, over-reserving past the credit line. Ten $20
+        // reservations race against $100 available — only five may win.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::new(&DatabaseConfig::in_memory()).unwrap());
+        let repo = SqliteCreditRepository::new(db.pool().clone());
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100)); // available $100
+
+        let thread_count = 10;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+        for _ in 0..thread_count {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let repo = SqliteCreditRepository::new(db.pool().clone());
+                barrier.wait();
+                repo.reserve_credit(cust, stateset_core::OrderId::new(), dec!(20))
+            }));
+        }
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("get").expect("found");
+        // Safety invariant: holds can never over-reserve past the credit line.
+        assert!(
+            acct.hold_amount <= dec!(100),
+            "available credit over-reserved under concurrency: holds {}",
+            acct.hold_amount
+        );
+        // No lost updates: holds reflect AT LEAST every confirmed reservation
+        // ($20 each). They can be a touch higher than 20*successes because under
+        // contention a reservation can commit yet hit "table is locked" on a
+        // post-commit step and surface as an Err (its hold still landed). Holds
+        // stay an exact multiple of $20.
+        assert!(
+            acct.hold_amount >= dec!(20) * Decimal::from(successes as u64),
+            "lost update: holds {} < confirmed reservations {}: {results:?}",
+            acct.hold_amount,
+            successes
+        );
+        assert!(
+            (acct.hold_amount / dec!(20)).fract().is_zero(),
+            "holds must be an exact multiple of the $20 reservation: {}",
+            acct.hold_amount
+        );
+        assert!(successes <= 5, "at most five $20 reservations fit under $100: {results:?}");
+        assert!(
+            results.iter().all(|r| match r {
+                Ok(_) => true,
+                Err(e) => is_expected_or_transient(e),
+            }),
+            "every failure must be an available-credit rejection or a transient lock: {results:?}"
+        );
+        // available = limit - balance - holds; balance is zero here.
+        assert_eq!(acct.available_credit, dec!(100) - acct.hold_amount);
+    }
+
+    #[test]
+    fn apply_payment_rejects_nonpositive_amount() {
+        // A negative "payment" would compute (balance - (-x)) = balance + x,
+        // inflating the credit balance past the limit (apply_payment does not
+        // re-check the limit). Zero and negative amounts must be rejected.
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100));
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(50)).expect("charge 50");
+
+        assert!(repo.apply_payment(cust, dec!(0), None).is_err(), "zero must be rejected");
+        assert!(repo.apply_payment(cust, dec!(-25), None).is_err(), "negative must be rejected");
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("get").expect("found");
+        assert_eq!(acct.current_balance, dec!(50), "rejected payment must not change the balance");
     }
 
     #[test]

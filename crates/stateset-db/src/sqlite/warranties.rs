@@ -540,6 +540,26 @@ impl WarrantyRepository for SqliteWarrantyRepository {
             sql.push_str(" AND customer_id = ?");
             params_vec.push(Box::new(customer_id.to_string()));
         }
+        if let Some(order_id) = &filter.order_id {
+            sql.push_str(" AND order_id = ?");
+            params_vec.push(Box::new(order_id.to_string()));
+        }
+        if let Some(product_id) = &filter.product_id {
+            sql.push_str(" AND product_id = ?");
+            params_vec.push(Box::new(product_id.to_string()));
+        }
+        if let Some(sku) = &filter.sku {
+            sql.push_str(" AND sku = ?");
+            params_vec.push(Box::new(sku.clone()));
+        }
+        if let Some(serial_number) = &filter.serial_number {
+            sql.push_str(" AND serial_number = ?");
+            params_vec.push(Box::new(serial_number.clone()));
+        }
+        if let Some(warranty_type) = &filter.warranty_type {
+            sql.push_str(" AND warranty_type = ?");
+            params_vec.push(Box::new(warranty_type.to_string()));
+        }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
@@ -552,12 +572,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -847,12 +862,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -957,9 +967,34 @@ impl WarrantyRepository for SqliteWarrantyRepository {
             sql.push_str(" AND customer_id = ?");
             params_vec.push(Box::new(customer_id.to_string()));
         }
+        if let Some(order_id) = &filter.order_id {
+            sql.push_str(" AND order_id = ?");
+            params_vec.push(Box::new(order_id.to_string()));
+        }
+        if let Some(product_id) = &filter.product_id {
+            sql.push_str(" AND product_id = ?");
+            params_vec.push(Box::new(product_id.to_string()));
+        }
+        if let Some(sku) = &filter.sku {
+            sql.push_str(" AND sku = ?");
+            params_vec.push(Box::new(sku.clone()));
+        }
+        if let Some(serial_number) = &filter.serial_number {
+            sql.push_str(" AND serial_number = ?");
+            params_vec.push(Box::new(serial_number.clone()));
+        }
+        if let Some(warranty_type) = &filter.warranty_type {
+            sql.push_str(" AND warranty_type = ?");
+            params_vec.push(Box::new(warranty_type.to_string()));
+        }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
+        }
+        if filter.active_only.unwrap_or(false) {
+            sql.push_str(
+                " AND status = 'active' AND (end_date IS NULL OR end_date > datetime('now'))",
+            );
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1252,8 +1287,8 @@ mod tests {
     use crate::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        CreateWarranty, CreateWarrantyClaim, CustomerId, WarrantyClaimFilter, WarrantyFilter,
-        WarrantyRepository, WarrantyStatus, WarrantyType,
+        CreateWarranty, CreateWarrantyClaim, CustomerId, OrderId, ProductId, WarrantyClaimFilter,
+        WarrantyFilter, WarrantyRepository, WarrantyStatus, WarrantyType,
     };
 
     fn fresh_repo() -> SqliteWarrantyRepository {
@@ -1445,6 +1480,86 @@ mod tests {
             .expect("expired");
         assert!(actives.iter().any(|w| w.id == active.id));
         assert!(expireds.iter().any(|w| w.id == to_expire.id));
+    }
+
+    #[test]
+    fn list_filters_by_line_item_fields() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let order_a = OrderId::new();
+        let prod_a = ProductId::new();
+
+        let target = repo
+            .create(CreateWarranty {
+                customer_id: cust,
+                order_id: Some(order_a),
+                order_item_id: None,
+                product_id: Some(prod_a),
+                sku: Some("SKU-A".into()),
+                serial_number: Some("SN-A".into()),
+                warranty_type: Some(WarrantyType::Extended),
+                provider: None,
+                coverage_description: None,
+                purchase_date: None,
+                start_date: None,
+                end_date: None,
+                duration_months: Some(12),
+                max_coverage_amount: None,
+                deductible: None,
+                max_claims: Some(2),
+                terms: None,
+                notes: None,
+            })
+            .expect("create target");
+
+        // A second warranty with entirely different line-item attributes.
+        repo.create(CreateWarranty {
+            customer_id: cust,
+            order_id: Some(OrderId::new()),
+            order_item_id: None,
+            product_id: Some(ProductId::new()),
+            sku: Some("SKU-B".into()),
+            serial_number: Some("SN-B".into()),
+            warranty_type: Some(WarrantyType::Standard),
+            provider: None,
+            coverage_description: None,
+            purchase_date: None,
+            start_date: None,
+            end_date: None,
+            duration_months: Some(12),
+            max_coverage_amount: None,
+            deductible: None,
+            max_claims: Some(2),
+            terms: None,
+            notes: None,
+        })
+        .expect("create other");
+
+        let only_target = |filter: WarrantyFilter, label: &str| {
+            let rows = repo.list(filter.clone()).expect("list");
+            assert_eq!(rows.len(), 1, "filter {label} must return exactly one row");
+            assert_eq!(rows[0].id, target.id, "filter {label} returned the wrong warranty");
+            assert_eq!(
+                repo.count(filter).expect("count"),
+                1,
+                "filter {label}: count must match the filtered list"
+            );
+        };
+
+        only_target(WarrantyFilter { order_id: Some(order_a), ..Default::default() }, "order_id");
+        only_target(
+            WarrantyFilter { product_id: Some(prod_a), ..Default::default() },
+            "product_id",
+        );
+        only_target(WarrantyFilter { sku: Some("SKU-A".into()), ..Default::default() }, "sku");
+        only_target(
+            WarrantyFilter { serial_number: Some("SN-A".into()), ..Default::default() },
+            "serial_number",
+        );
+        only_target(
+            WarrantyFilter { warranty_type: Some(WarrantyType::Extended), ..Default::default() },
+            "warranty_type",
+        );
     }
 
     #[test]

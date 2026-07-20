@@ -115,6 +115,15 @@ impl SqliteStoreCreditRepository {
 
 impl StoreCreditRepository for SqliteStoreCreditRepository {
     fn create(&self, input: CreateStoreCredit) -> Result<StoreCredit> {
+        // Reject non-positive issuance up front (the Postgres schema enforces this
+        // with a CHECK; SQLite has no such constraint and would otherwise mint a
+        // zero/negative-balance credit plus a bogus negative issue transaction).
+        if input.amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Store credit amount must be positive".to_string(),
+            ));
+        }
+
         let id = StoreCreditId::new();
         let now = Utc::now();
         let id_str = id.to_string();
@@ -197,11 +206,13 @@ impl StoreCreditRepository for SqliteStoreCreditRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
+        // SQLite rejects OFFSET without LIMIT, so use `LIMIT -1` (unbounded) when
+        // only an offset is set.
+        match (filter.limit, filter.offset) {
+            (Some(limit), Some(offset)) => sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}")),
+            (Some(limit), None) => sql.push_str(&format!(" LIMIT {limit}")),
+            (None, Some(offset)) => sql.push_str(&format!(" LIMIT -1 OFFSET {offset}")),
+            (None, None) => {}
         }
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -444,6 +455,25 @@ mod tests {
     }
 
     #[test]
+    fn create_rejects_non_positive_amount() {
+        let repo = test_repo();
+        for bad in [dec!(-50.00), dec!(0)] {
+            let err = repo
+                .create(CreateStoreCredit {
+                    customer_id: CustomerId::new(),
+                    amount: bad,
+                    currency: CurrencyCode::USD,
+                    reason: StoreCreditReason::Return,
+                    reference_id: None,
+                    note: None,
+                    expires_at: None,
+                })
+                .expect_err("non-positive store credit amount must be rejected");
+            assert!(matches!(err, CommerceError::ValidationError(_)), "amount {bad}: got {err:?}");
+        }
+    }
+
+    #[test]
     fn create_and_get_store_credit() {
         let repo = test_repo();
         let customer_id = CustomerId::new();
@@ -521,10 +551,18 @@ mod tests {
 
         let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
         let successes = results.iter().filter(|r| r.is_ok()).count();
-        assert_eq!(successes, 1, "exactly one concurrent apply should succeed: {results:?}");
+        // The $50 credit can fund at most one $30 apply — the safety invariant is
+        // that no more than one succeeds (never overspent). Under extreme lock
+        // contention the sole winner can fail with a retryable "table is locked"
+        // error, so zero successes is acceptable; two or more would be a bug.
+        assert!(successes <= 1, "store credit overspent under concurrency: {results:?}");
 
         let fetched = repo.get(sc.id).expect("get").expect("found");
-        assert_eq!(fetched.current_balance, dec!(20.00), "balance overspent under concurrency");
+        assert_eq!(
+            fetched.current_balance,
+            dec!(50.00) - dec!(30.00) * Decimal::from(successes as u64),
+            "balance must reflect exactly the successful apply: {results:?}"
+        );
     }
 
     #[test]

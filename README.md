@@ -1507,6 +1507,17 @@ pub enum CommerceEvent {
 
 ---
 
+## Where this is going
+
+The engine is the foundation; the goal is the kernel for agent-to-agent
+commerce on the open internet. The campaign — protocol completion and
+second-party adoption, trust graduation (audits, key rotation, staked
+reputation), compliance as first-class primitives, and a schedule for the
+remaining engineering debt — is laid out in
+**[KERNEL_ROADMAP.md](./KERNEL_ROADMAP.md)**.
+
+---
+
 ## License
 
 MIT OR Apache-2.0

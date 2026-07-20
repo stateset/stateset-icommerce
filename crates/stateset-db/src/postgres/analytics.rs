@@ -252,9 +252,9 @@ impl PgAnalyticsRepository {
         let rows: Vec<TopProductRow> = sqlx::query_as(
             r#"
             SELECT
-                oi.product_id,
+                MAX(oi.product_id::text)::uuid as product_id,
                 oi.sku,
-                oi.name,
+                MAX(oi.name) as name,
                 SUM(oi.quantity)::bigint as units_sold,
                 SUM(oi.total) as revenue,
                 COUNT(DISTINCT oi.order_id)::bigint as order_count,
@@ -263,7 +263,7 @@ impl PgAnalyticsRepository {
             JOIN orders o ON oi.order_id = o.id
             WHERE o.created_at >= $1 AND o.created_at <= $2
               AND o.status NOT IN ('cancelled', 'refunded')
-            GROUP BY oi.product_id, oi.sku, oi.name
+            GROUP BY oi.sku
             ORDER BY revenue DESC
             LIMIT $3
             "#,
@@ -716,7 +716,7 @@ impl PgAnalyticsRepository {
             r#"
             SELECT
                 ri.sku,
-                ri.name,
+                MAX(ri.name) as name,
                 SUM(ri.quantity)::bigint as units_returned,
                 COALESCE(
                     (SELECT SUM(oi.quantity)::bigint FROM order_items oi WHERE oi.sku = ri.sku),
@@ -725,7 +725,7 @@ impl PgAnalyticsRepository {
             FROM return_items ri
             JOIN returns r ON ri.return_id = r.id
             WHERE r.created_at >= $1 AND r.created_at <= $2
-            GROUP BY ri.sku, ri.name
+            GROUP BY ri.sku
             ORDER BY units_returned DESC
             LIMIT 10
             "#,

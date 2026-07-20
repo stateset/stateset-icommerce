@@ -128,6 +128,14 @@ impl PgStoreCreditRepository {
     // ---- async implementations ----
 
     pub async fn create_async(&self, input: CreateStoreCredit) -> Result<StoreCredit> {
+        // Reject non-positive issuance with a clean ValidationError before hitting
+        // the DB CHECK constraint (matches the SQLite backend's guard).
+        if input.amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Store credit amount must be positive".to_string(),
+            ));
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
 

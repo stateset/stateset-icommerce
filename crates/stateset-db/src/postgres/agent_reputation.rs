@@ -120,8 +120,8 @@ impl PgAgentReputationRepository {
 
     async fn list_async(&self, filter: AgentFeedbackFilter) -> Result<Vec<AgentFeedback>> {
         let mut builder = QueryBuilder::new(
-            "SELECT id, agent_registry, agent_id, client_address, feedback_index, value, value_decimals,\
-                    tag1, tag2, endpoint, feedback_uri, feedback_hash, is_revoked, created_at, revoked_at\
+            "SELECT id, agent_registry, agent_id, client_address, feedback_index, value, value_decimals, \
+                    tag1, tag2, endpoint, feedback_uri, feedback_hash, is_revoked, created_at, revoked_at \
              FROM agent_feedback WHERE 1=1",
         );
 
@@ -175,7 +175,7 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             let mut tx = pool.begin().await.map_err(map_db_error)?;
 
             let next_index: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(feedback_index), 0) + 1 FROM agent_feedback\
+                "SELECT COALESCE(MAX(feedback_index), 0) + 1 FROM agent_feedback \
                  WHERE agent_registry = $1 AND agent_id = $2 AND client_address = $3",
             )
             .bind(&input.agent_registry)
@@ -212,8 +212,8 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             tx.commit().await.map_err(map_db_error)?;
 
             let row: FeedbackRow = sqlx::query_as(
-                "SELECT id, agent_registry, agent_id, client_address, feedback_index, value, value_decimals,\
-                        tag1, tag2, endpoint, feedback_uri, feedback_hash, is_revoked, created_at, revoked_at\
+                "SELECT id, agent_registry, agent_id, client_address, feedback_index, value, value_decimals, \
+                        tag1, tag2, endpoint, feedback_uri, feedback_hash, is_revoked, created_at, revoked_at \
                  FROM agent_feedback WHERE id = $1",
             )
             .bind(id)
@@ -238,7 +238,7 @@ impl AgentReputationRepository for PgAgentReputationRepository {
         let client = client_address.to_string();
         block_on(async move {
             let rows = sqlx::query(
-                "UPDATE agent_feedback SET is_revoked = true, revoked_at = $1\
+                "UPDATE agent_feedback SET is_revoked = true, revoked_at = $1 \
                  WHERE agent_registry = $2 AND agent_id = $3 AND client_address = $4 AND feedback_index = $5",
             )
             .bind(Utc::now())
@@ -256,9 +256,9 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             }
 
             let row: FeedbackRow = sqlx::query_as(
-                "SELECT id, agent_registry, agent_id, client_address, feedback_index, value, value_decimals,\
-                        tag1, tag2, endpoint, feedback_uri, feedback_hash, is_revoked, created_at, revoked_at\
-                 FROM agent_feedback\
+                "SELECT id, agent_registry, agent_id, client_address, feedback_index, value, value_decimals, \
+                        tag1, tag2, endpoint, feedback_uri, feedback_hash, is_revoked, created_at, revoked_at \
+                 FROM agent_feedback \
                  WHERE agent_registry = $1 AND agent_id = $2 AND client_address = $3 AND feedback_index = $4",
             )
             .bind(&registry)
@@ -286,9 +286,9 @@ impl AgentReputationRepository for PgAgentReputationRepository {
         let client = client_address.to_string();
         block_on(async move {
             let row: Option<FeedbackRow> = sqlx::query_as(
-                "SELECT id, agent_registry, agent_id, client_address, feedback_index, value, value_decimals,\
-                        tag1, tag2, endpoint, feedback_uri, feedback_hash, is_revoked, created_at, revoked_at\
-                 FROM agent_feedback\
+                "SELECT id, agent_registry, agent_id, client_address, feedback_index, value, value_decimals, \
+                        tag1, tag2, endpoint, feedback_uri, feedback_hash, is_revoked, created_at, revoked_at \
+                 FROM agent_feedback \
                  WHERE agent_registry = $1 AND agent_id = $2 AND client_address = $3 AND feedback_index = $4",
             )
             .bind(&registry)
@@ -410,8 +410,8 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             .map_err(map_db_error)?;
 
             let row: FeedbackResponseRow = sqlx::query_as(
-                "SELECT id, agent_registry, agent_id, client_address, feedback_index, responder_address,\
-                        response_uri, response_hash, created_at\
+                "SELECT id, agent_registry, agent_id, client_address, feedback_index, responder_address, \
+                        response_uri, response_hash, created_at \
                  FROM agent_feedback_responses WHERE id = $1",
             )
             .bind(id)
@@ -485,7 +485,7 @@ impl AgentReputationRepository for PgAgentReputationRepository {
         let client = client_address.to_string();
         block_on(async move {
             let index: Option<i64> = sqlx::query_scalar(
-                "SELECT MAX(feedback_index) FROM agent_feedback\
+                "SELECT MAX(feedback_index) FROM agent_feedback \
                  WHERE agent_registry = $1 AND agent_id = $2 AND client_address = $3",
             )
             .bind(&registry)

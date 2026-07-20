@@ -200,6 +200,42 @@ impl Commerce {
         Returns { commerce: self.inner.clone() }
     }
 
+    /// Get the gift cards API.
+    #[getter]
+    fn gift_cards(&self) -> GiftCards {
+        GiftCards { commerce: self.inner.clone() }
+    }
+
+    /// Get the loyalty API.
+    #[getter]
+    fn loyalty(&self) -> Loyalty {
+        Loyalty { commerce: self.inner.clone() }
+    }
+
+    /// Get the store credits API.
+    #[getter]
+    fn store_credits(&self) -> StoreCredits {
+        StoreCredits { commerce: self.inner.clone() }
+    }
+
+    /// Get the product reviews API.
+    #[getter]
+    fn reviews(&self) -> Reviews {
+        Reviews { commerce: self.inner.clone() }
+    }
+
+    /// Get the wishlists API.
+    #[getter]
+    fn wishlists(&self) -> Wishlists {
+        Wishlists { commerce: self.inner.clone() }
+    }
+
+    /// Get the customer segments API.
+    #[getter]
+    fn segments(&self) -> Segments {
+        Segments { commerce: self.inner.clone() }
+    }
+
     /// Get the payments API.
     #[getter]
     fn payments(&self) -> Payments {
@@ -12333,6 +12369,30 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Returns>()?;
     m.add_class::<Return>()?;
     m.add_class::<CreateReturnItemInput>()?;
+    m.add_class::<GiftCards>()?;
+    m.add_class::<GiftCard>()?;
+    m.add_class::<GiftCardTransaction>()?;
+    m.add_class::<StoreCredits>()?;
+    m.add_class::<StoreCredit>()?;
+    m.add_class::<StoreCreditTransaction>()?;
+    m.add_class::<Reviews>()?;
+    m.add_class::<Review>()?;
+    m.add_class::<ReviewSummary>()?;
+    m.add_class::<Wishlists>()?;
+    m.add_class::<Wishlist>()?;
+    m.add_class::<WishlistItem>()?;
+    m.add_class::<Segments>()?;
+    m.add_class::<Segment>()?;
+    m.add_class::<SegmentRule>()?;
+    m.add_class::<SegmentRuleInput>()?;
+    m.add_class::<SegmentMembership>()?;
+    m.add_class::<Loyalty>()?;
+    m.add_class::<LoyaltyProgram>()?;
+    m.add_class::<LoyaltyTier>()?;
+    m.add_class::<LoyaltyTierInput>()?;
+    m.add_class::<LoyaltyAccount>()?;
+    m.add_class::<LoyaltyTransaction>()?;
+    m.add_class::<Reward>()?;
 
     // Payments
     m.add_class::<Payments>()?;
@@ -12492,4 +12552,1970 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<EmbeddingStats>()?;
 
     Ok(())
+}
+
+// ============================================================================
+// Gift Cards  (money as exact decimal STRINGS, not f64)
+// ============================================================================
+
+#[pyclass]
+pub struct GiftCard {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    code: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    initial_balance: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    current_balance: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    recipient_email: Option<String>,
+    #[pyo3(get)]
+    sender_name: Option<String>,
+    #[pyo3(get)]
+    message: Option<String>,
+    #[pyo3(get)]
+    expires_at: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::GiftCard> for GiftCard {
+    fn from(g: stateset_core::GiftCard) -> Self {
+        Self {
+            id: g.id.to_string(),
+            code: g.code,
+            initial_balance: g.initial_balance.to_string(),
+            current_balance: g.current_balance.to_string(),
+            currency: g.currency.to_string(),
+            status: format!("{}", g.status),
+            recipient_email: g.recipient_email,
+            sender_name: g.sender_name,
+            message: g.message,
+            expires_at: g.expires_at.map(|d| d.to_rfc3339()),
+            created_at: g.created_at.to_rfc3339(),
+            updated_at: g.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct GiftCardTransaction {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    gift_card_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    balance_after: String,
+    #[pyo3(get)]
+    transaction_type: String,
+    #[pyo3(get)]
+    reference_id: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::GiftCardTransaction> for GiftCardTransaction {
+    fn from(t: stateset_core::GiftCardTransaction) -> Self {
+        Self {
+            id: t.id.to_string(),
+            gift_card_id: t.gift_card_id.to_string(),
+            amount: t.amount.to_string(),
+            balance_after: t.balance_after.to_string(),
+            transaction_type: format!("{}", t.transaction_type),
+            reference_id: t.reference_id,
+            created_at: t.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct GiftCards {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl GiftCards {
+    /// Whether the gift-cards backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.gift_cards().is_supported())
+    }
+
+    /// Create a gift card. `initial_balance` and money amounts are exact
+    /// decimal strings (e.g. "50.00"). `expires_at` is an RFC 3339 timestamp.
+    #[pyo3(signature = (initial_balance, currency, code=None, recipient_email=None, sender_name=None, message=None, expires_at=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn create(
+        &self,
+        initial_balance: String,
+        currency: String,
+        code: Option<String>,
+        recipient_email: Option<String>,
+        sender_name: Option<String>,
+        message: Option<String>,
+        expires_at: Option<String>,
+    ) -> PyResult<GiftCard> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let initial_balance = initial_balance
+            .parse::<Decimal>()
+            .map_err(|_| PyValueError::new_err("Invalid initial_balance decimal"))?;
+        let currency = currency
+            .parse::<CurrencyCode>()
+            .map_err(|_| PyValueError::new_err("Invalid currency code"))?;
+        let expires_at = match expires_at.as_deref() {
+            Some(s) => Some(
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(|_| PyValueError::new_err("Invalid expires_at RFC 3339 timestamp"))?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+        let card = commerce
+            .gift_cards()
+            .create(stateset_core::CreateGiftCard {
+                code,
+                initial_balance,
+                currency,
+                recipient_email,
+                sender_name,
+                message,
+                expires_at,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create gift card: {}", e)))?;
+        Ok(card.into())
+    }
+
+    /// Get a gift card by ID.
+    fn get(&self, id: String) -> PyResult<Option<GiftCard>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let card = commerce
+            .gift_cards()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get gift card: {}", e)))?;
+        Ok(card.map(Into::into))
+    }
+
+    /// Get a gift card by its redemption code.
+    fn get_by_code(&self, code: String) -> PyResult<Option<GiftCard>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let card = commerce
+            .gift_cards()
+            .get_by_code(&code)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get gift card: {}", e)))?;
+        Ok(card.map(Into::into))
+    }
+
+    /// Update a gift card's status and/or recipient email.
+    #[pyo3(signature = (id, status=None, recipient_email=None))]
+    fn update(
+        &self,
+        id: String,
+        status: Option<String>,
+        recipient_email: Option<String>,
+    ) -> PyResult<GiftCard> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let status = match status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::GiftCardStatus>()
+                    .map_err(|_| PyValueError::new_err("Invalid gift card status"))?,
+            ),
+            None => None,
+        };
+        let card = commerce
+            .gift_cards()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateGiftCard { status, recipient_email, ..Default::default() },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update gift card: {}", e)))?;
+        Ok(card.into())
+    }
+
+    /// List gift cards, optionally filtered by status and/or code.
+    #[pyo3(signature = (status=None, code=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        status: Option<String>,
+        code: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<GiftCard>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let status = match status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::GiftCardStatus>()
+                    .map_err(|_| PyValueError::new_err("Invalid gift card status"))?,
+            ),
+            None => None,
+        };
+        let cards = commerce
+            .gift_cards()
+            .list(stateset_core::GiftCardFilter { status, code, limit, offset })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list gift cards: {}", e)))?;
+        Ok(cards.into_iter().map(Into::into).collect())
+    }
+
+    /// Charge (debit) an amount from a gift card. `amount` is a decimal string.
+    #[pyo3(signature = (id, amount, reference_id=None))]
+    fn charge(
+        &self,
+        id: String,
+        amount: String,
+        reference_id: Option<String>,
+    ) -> PyResult<GiftCardTransaction> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let amount = amount
+            .parse::<Decimal>()
+            .map_err(|_| PyValueError::new_err("Invalid amount decimal"))?;
+        let txn = commerce
+            .gift_cards()
+            .charge(uuid.into(), amount, reference_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to charge gift card: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    /// Refund (credit) an amount to a gift card. `amount` is a decimal string.
+    #[pyo3(signature = (id, amount, reference_id=None))]
+    fn refund(
+        &self,
+        id: String,
+        amount: String,
+        reference_id: Option<String>,
+    ) -> PyResult<GiftCardTransaction> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let amount = amount
+            .parse::<Decimal>()
+            .map_err(|_| PyValueError::new_err("Invalid amount decimal"))?;
+        let txn = commerce
+            .gift_cards()
+            .refund(uuid.into(), amount, reference_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to refund gift card: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    /// Disable a gift card so it can no longer be used.
+    fn disable(&self, id: String) -> PyResult<GiftCard> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let card = commerce
+            .gift_cards()
+            .disable(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to disable gift card: {}", e)))?;
+        Ok(card.into())
+    }
+
+    /// Get the transaction history for a gift card.
+    fn get_transactions(&self, gift_card_id: String) -> PyResult<Vec<GiftCardTransaction>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            gift_card_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let txns = commerce
+            .gift_cards()
+            .get_transactions(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get transactions: {}", e)))?;
+        Ok(txns.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Store Credits  (money as exact decimal STRINGS, not f64)
+// ============================================================================
+
+#[pyclass]
+pub struct StoreCredit {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    customer_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    original_balance: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    current_balance: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    reason: String,
+    #[pyo3(get)]
+    reference_id: Option<String>,
+    #[pyo3(get)]
+    note: Option<String>,
+    #[pyo3(get)]
+    expires_at: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::StoreCredit> for StoreCredit {
+    fn from(c: stateset_core::StoreCredit) -> Self {
+        Self {
+            id: c.id.to_string(),
+            customer_id: c.customer_id.to_string(),
+            original_balance: c.original_balance.to_string(),
+            current_balance: c.current_balance.to_string(),
+            currency: c.currency.to_string(),
+            status: format!("{}", c.status),
+            reason: format!("{}", c.reason),
+            reference_id: c.reference_id,
+            note: c.note,
+            expires_at: c.expires_at.map(|d| d.to_rfc3339()),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct StoreCreditTransaction {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    store_credit_id: String,
+    /// Exact decimal string (positive = credit, negative = debit)
+    #[pyo3(get)]
+    amount: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    balance_after: String,
+    #[pyo3(get)]
+    transaction_type: String,
+    #[pyo3(get)]
+    reference_id: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::StoreCreditTransaction> for StoreCreditTransaction {
+    fn from(t: stateset_core::StoreCreditTransaction) -> Self {
+        Self {
+            id: t.id.to_string(),
+            store_credit_id: t.store_credit_id.to_string(),
+            amount: t.amount.to_string(),
+            balance_after: t.balance_after.to_string(),
+            transaction_type: format!("{}", t.transaction_type),
+            reference_id: t.reference_id,
+            created_at: t.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct StoreCredits {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl StoreCredits {
+    /// Whether the store-credits backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.store_credits().is_supported())
+    }
+
+    /// Issue a store credit to a customer. `amount` is an exact decimal string
+    /// (e.g. "25.00"). `reason` is one of return, loyalty, compensation,
+    /// promotion, manual, gift_card (defaults to "return"). `expires_at` is an
+    /// RFC 3339 timestamp.
+    #[pyo3(signature = (customer_id, amount, currency, reason=None, reference_id=None, note=None, expires_at=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn create(
+        &self,
+        customer_id: String,
+        amount: String,
+        currency: String,
+        reason: Option<String>,
+        reference_id: Option<String>,
+        note: Option<String>,
+        expires_at: Option<String>,
+    ) -> PyResult<StoreCredit> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let customer_uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let amount = amount
+            .parse::<Decimal>()
+            .map_err(|_| PyValueError::new_err("Invalid amount decimal"))?;
+        let currency = currency
+            .parse::<CurrencyCode>()
+            .map_err(|_| PyValueError::new_err("Invalid currency code"))?;
+        let reason = match reason.as_deref() {
+            Some(s) => s
+                .parse::<stateset_core::StoreCreditReason>()
+                .map_err(|_| PyValueError::new_err("Invalid store credit reason"))?,
+            None => stateset_core::StoreCreditReason::default(),
+        };
+        let expires_at = match expires_at.as_deref() {
+            Some(s) => Some(
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(|_| PyValueError::new_err("Invalid expires_at RFC 3339 timestamp"))?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+        let credit = commerce
+            .store_credits()
+            .create(stateset_core::CreateStoreCredit {
+                customer_id: customer_uuid.into(),
+                amount,
+                currency,
+                reason,
+                reference_id,
+                note,
+                expires_at,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create store credit: {}", e))
+            })?;
+        Ok(credit.into())
+    }
+
+    /// Get a store credit by ID.
+    fn get(&self, id: String) -> PyResult<Option<StoreCredit>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let credit = commerce
+            .store_credits()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get store credit: {}", e)))?;
+        Ok(credit.map(Into::into))
+    }
+
+    /// List store credits, optionally filtered by customer, status, or reason.
+    #[pyo3(signature = (customer_id=None, status=None, reason=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        customer_id: Option<String>,
+        status: Option<String>,
+        reason: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<StoreCredit>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let customer_id = match customer_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let status = match status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::StoreCreditStatus>()
+                    .map_err(|_| PyValueError::new_err("Invalid store credit status"))?,
+            ),
+            None => None,
+        };
+        let reason = match reason.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::StoreCreditReason>()
+                    .map_err(|_| PyValueError::new_err("Invalid store credit reason"))?,
+            ),
+            None => None,
+        };
+        let credits = commerce
+            .store_credits()
+            .list(stateset_core::StoreCreditFilter { customer_id, status, reason, limit, offset })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list store credits: {}", e)))?;
+        Ok(credits.into_iter().map(Into::into).collect())
+    }
+
+    /// Adjust a store credit balance. `amount` is a signed decimal string
+    /// ("10.00" adds, "-10.00" subtracts). The balance may not go below zero.
+    #[pyo3(signature = (id, amount, note=None, reference_id=None))]
+    fn adjust(
+        &self,
+        id: String,
+        amount: String,
+        note: Option<String>,
+        reference_id: Option<String>,
+    ) -> PyResult<StoreCredit> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let amount = amount
+            .parse::<Decimal>()
+            .map_err(|_| PyValueError::new_err("Invalid amount decimal"))?;
+        let credit = commerce
+            .store_credits()
+            .adjust(uuid.into(), stateset_core::AdjustStoreCredit { amount, note, reference_id })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to adjust store credit: {}", e))
+            })?;
+        Ok(credit.into())
+    }
+
+    /// Apply (redeem) an amount from a store credit, returning the ledger
+    /// transaction. `amount` is a decimal string.
+    #[pyo3(signature = (id, amount, reference_id=None))]
+    fn apply(
+        &self,
+        id: String,
+        amount: String,
+        reference_id: Option<String>,
+    ) -> PyResult<StoreCreditTransaction> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let amount = amount
+            .parse::<Decimal>()
+            .map_err(|_| PyValueError::new_err("Invalid amount decimal"))?;
+        let txn = commerce
+            .store_credits()
+            .apply(uuid.into(), amount, reference_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to apply store credit: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    /// Get the transaction history for a store credit.
+    fn get_transactions(&self, store_credit_id: String) -> PyResult<Vec<StoreCreditTransaction>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            store_credit_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let txns = commerce
+            .store_credits()
+            .get_transactions(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get transactions: {}", e)))?;
+        Ok(txns.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Product reviews
+// ============================================================================
+
+#[pyclass]
+pub struct Review {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    rating: u32,
+    #[pyo3(get)]
+    title: Option<String>,
+    #[pyo3(get)]
+    body: Option<String>,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    verified_purchase: bool,
+    #[pyo3(get)]
+    helpful_count: u32,
+    #[pyo3(get)]
+    reported_count: u32,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Review> for Review {
+    fn from(r: stateset_core::Review) -> Self {
+        Self {
+            id: r.id.to_string(),
+            product_id: r.product_id.to_string(),
+            customer_id: r.customer_id.to_string(),
+            rating: u32::from(r.rating),
+            title: r.title,
+            body: r.body,
+            status: format!("{}", r.status),
+            verified_purchase: r.verified_purchase,
+            helpful_count: r.helpful_count,
+            reported_count: r.reported_count,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct ReviewSummary {
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    average_rating: f64,
+    #[pyo3(get)]
+    total_reviews: u64,
+    /// Counts for 1..5 stars (index 0 = 1 star)
+    #[pyo3(get)]
+    rating_distribution: Vec<u32>,
+}
+
+impl From<stateset_core::ReviewSummary> for ReviewSummary {
+    fn from(s: stateset_core::ReviewSummary) -> Self {
+        Self {
+            product_id: s.product_id.to_string(),
+            average_rating: s.average_rating,
+            total_reviews: s.total_reviews,
+            rating_distribution: s.rating_distribution.to_vec(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct Reviews {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Reviews {
+    /// Whether the reviews backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.reviews().is_supported())
+    }
+
+    /// Create a product review. `rating` is a star rating 1–5.
+    #[pyo3(signature = (product_id, customer_id, rating, title=None, body=None, verified_purchase=false))]
+    fn create(
+        &self,
+        product_id: String,
+        customer_id: String,
+        rating: u32,
+        title: Option<String>,
+        body: Option<String>,
+        verified_purchase: bool,
+    ) -> PyResult<Review> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let product_uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
+        let customer_uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let rating = u8::try_from(rating)
+            .map_err(|_| PyValueError::new_err("rating must be between 1 and 5"))?;
+        let review = commerce
+            .reviews()
+            .create(stateset_core::CreateReview {
+                product_id: product_uuid.into(),
+                customer_id: customer_uuid.into(),
+                rating,
+                title,
+                body,
+                verified_purchase,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create review: {}", e)))?;
+        Ok(review.into())
+    }
+
+    /// Get a review by ID.
+    fn get(&self, id: String) -> PyResult<Option<Review>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let review = commerce
+            .reviews()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get review: {}", e)))?;
+        Ok(review.map(Into::into))
+    }
+
+    /// Update a review's rating, title, body, and/or moderation status
+    /// (pending, approved, rejected, flagged).
+    #[pyo3(signature = (id, rating=None, title=None, body=None, status=None))]
+    fn update(
+        &self,
+        id: String,
+        rating: Option<u32>,
+        title: Option<String>,
+        body: Option<String>,
+        status: Option<String>,
+    ) -> PyResult<Review> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let rating = match rating {
+            Some(r) => Some(
+                u8::try_from(r)
+                    .map_err(|_| PyValueError::new_err("rating must be between 1 and 5"))?,
+            ),
+            None => None,
+        };
+        let status = match status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::ReviewStatus>()
+                    .map_err(|_| PyValueError::new_err("Invalid review status"))?,
+            ),
+            None => None,
+        };
+        let review = commerce
+            .reviews()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateReview {
+                    rating,
+                    title: title.map(Some),
+                    body: body.map(Some),
+                    status,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update review: {}", e)))?;
+        Ok(review.into())
+    }
+
+    /// List reviews, optionally filtered.
+    #[pyo3(signature = (product_id=None, customer_id=None, status=None, min_rating=None, verified_only=None, limit=None, offset=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn list(
+        &self,
+        product_id: Option<String>,
+        customer_id: Option<String>,
+        status: Option<String>,
+        min_rating: Option<u32>,
+        verified_only: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Review>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let product_id = match product_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| PyValueError::new_err("Invalid product UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let customer_id = match customer_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let status = match status.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::ReviewStatus>()
+                    .map_err(|_| PyValueError::new_err("Invalid review status"))?,
+            ),
+            None => None,
+        };
+        let min_rating = match min_rating {
+            Some(r) => Some(
+                u8::try_from(r).map_err(|_| PyValueError::new_err("min_rating out of range"))?,
+            ),
+            None => None,
+        };
+        let reviews = commerce
+            .reviews()
+            .list(stateset_core::ReviewFilter {
+                product_id,
+                customer_id,
+                status,
+                min_rating,
+                verified_only,
+                limit,
+                offset,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list reviews: {}", e)))?;
+        Ok(reviews.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a review.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        commerce
+            .reviews()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete review: {}", e)))?;
+        Ok(())
+    }
+
+    /// Aggregate rating summary for a product (average, total, star distribution).
+    fn get_summary(&self, product_id: String) -> PyResult<ReviewSummary> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
+        let summary = commerce
+            .reviews()
+            .get_summary(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get review summary: {}", e)))?;
+        Ok(summary.into())
+    }
+
+    /// Increment the helpful counter on a review.
+    fn mark_helpful(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        commerce.reviews().mark_helpful(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to mark review helpful: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// Increment the reported counter on a review.
+    fn mark_reported(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        commerce.reviews().mark_reported(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to mark review reported: {}", e))
+        })?;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Wishlists
+// ============================================================================
+
+// Output-only; Clone is needed for the nested `items` getter on Wishlist, but
+// this type is never extracted from Python.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct WishlistItem {
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    variant_id: Option<String>,
+    #[pyo3(get)]
+    added_at: String,
+    #[pyo3(get)]
+    note: Option<String>,
+    #[pyo3(get)]
+    quantity: u32,
+    #[pyo3(get)]
+    priority: Option<i32>,
+}
+
+impl From<stateset_core::WishlistItem> for WishlistItem {
+    fn from(i: stateset_core::WishlistItem) -> Self {
+        Self {
+            product_id: i.product_id.to_string(),
+            variant_id: i.variant_id,
+            added_at: i.added_at.to_rfc3339(),
+            note: i.note,
+            quantity: i.quantity,
+            priority: i.priority,
+        }
+    }
+}
+
+#[pyclass]
+pub struct Wishlist {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    is_public: bool,
+    #[pyo3(get)]
+    items: Vec<WishlistItem>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Wishlist> for Wishlist {
+    fn from(w: stateset_core::Wishlist) -> Self {
+        Self {
+            id: w.id.to_string(),
+            customer_id: w.customer_id.to_string(),
+            name: w.name,
+            is_public: w.is_public,
+            items: w.items.into_iter().map(Into::into).collect(),
+            created_at: w.created_at.to_rfc3339(),
+            updated_at: w.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct Wishlists {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Wishlists {
+    /// Whether the wishlists backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.wishlists().is_supported())
+    }
+
+    /// Create a wishlist for a customer.
+    #[pyo3(signature = (customer_id, name, is_public=false))]
+    fn create(&self, customer_id: String, name: String, is_public: bool) -> PyResult<Wishlist> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let customer_uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let wishlist = commerce
+            .wishlists()
+            .create(stateset_core::CreateWishlist {
+                customer_id: customer_uuid.into(),
+                name,
+                is_public,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create wishlist: {}", e)))?;
+        Ok(wishlist.into())
+    }
+
+    /// Get a wishlist by ID.
+    fn get(&self, id: String) -> PyResult<Option<Wishlist>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let wishlist = commerce
+            .wishlists()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get wishlist: {}", e)))?;
+        Ok(wishlist.map(Into::into))
+    }
+
+    /// Rename a wishlist and/or change its visibility.
+    #[pyo3(signature = (id, name=None, is_public=None))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        is_public: Option<bool>,
+    ) -> PyResult<Wishlist> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let wishlist = commerce
+            .wishlists()
+            .update(uuid.into(), stateset_core::UpdateWishlist { name, is_public })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update wishlist: {}", e)))?;
+        Ok(wishlist.into())
+    }
+
+    /// List wishlists, optionally filtered by customer or visibility.
+    #[pyo3(signature = (customer_id=None, is_public=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        customer_id: Option<String>,
+        is_public: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Wishlist>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let customer_id = match customer_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let wishlists = commerce
+            .wishlists()
+            .list(stateset_core::WishlistFilter { customer_id, is_public, limit, offset })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list wishlists: {}", e)))?;
+        Ok(wishlists.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a wishlist.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        commerce
+            .wishlists()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete wishlist: {}", e)))?;
+        Ok(())
+    }
+
+    /// Add a product to a wishlist, returning the added item.
+    #[pyo3(signature = (wishlist_id, product_id, variant_id=None, note=None, quantity=None, priority=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_item(
+        &self,
+        wishlist_id: String,
+        product_id: String,
+        variant_id: Option<String>,
+        note: Option<String>,
+        quantity: Option<u32>,
+        priority: Option<i32>,
+    ) -> PyResult<WishlistItem> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let wishlist_uuid: uuid::Uuid =
+            wishlist_id.parse().map_err(|_| PyValueError::new_err("Invalid wishlist UUID"))?;
+        let product_uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
+        let added = commerce
+            .wishlists()
+            .add_item(
+                wishlist_uuid.into(),
+                stateset_core::AddWishlistItem {
+                    product_id: product_uuid.into(),
+                    variant_id,
+                    note,
+                    quantity,
+                    priority,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to add wishlist item: {}", e)))?;
+        Ok(added.into())
+    }
+
+    /// Remove a product from a wishlist.
+    fn remove_item(&self, wishlist_id: String, product_id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let wishlist_uuid: uuid::Uuid =
+            wishlist_id.parse().map_err(|_| PyValueError::new_err("Invalid wishlist UUID"))?;
+        let product_uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
+        commerce.wishlists().remove_item(wishlist_uuid.into(), product_uuid.into()).map_err(
+            |e| PyRuntimeError::new_err(format!("Failed to remove wishlist item: {}", e)),
+        )?;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Customer segments
+// ============================================================================
+
+/// A segment rule (field/operator/value) passed to create/update.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct SegmentRuleInput {
+    #[pyo3(get, set)]
+    field: String,
+    /// One of: eq, neq, gt, gte, lt, lte, contains, in, between, starts_with,
+    /// ends_with
+    #[pyo3(get, set)]
+    operator: String,
+    #[pyo3(get, set)]
+    value: String,
+}
+
+#[pymethods]
+impl SegmentRuleInput {
+    #[new]
+    fn new(field: String, operator: String, value: String) -> Self {
+        Self { field, operator, value }
+    }
+}
+
+// Output-only; Clone is needed for the nested `rules` getter on Segment.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct SegmentRule {
+    #[pyo3(get)]
+    field: String,
+    #[pyo3(get)]
+    operator: String,
+    #[pyo3(get)]
+    value: String,
+}
+
+impl From<stateset_core::SegmentRule> for SegmentRule {
+    fn from(r: stateset_core::SegmentRule) -> Self {
+        Self { field: r.field, operator: format!("{}", r.operator), value: r.value }
+    }
+}
+
+fn parse_segment_rules(rules: Vec<SegmentRuleInput>) -> PyResult<Vec<stateset_core::SegmentRule>> {
+    rules
+        .into_iter()
+        .map(|r| {
+            Ok(stateset_core::SegmentRule {
+                field: r.field,
+                operator: r.operator.parse::<stateset_core::SegmentOperator>().map_err(|_| {
+                    PyValueError::new_err(format!("Invalid segment operator '{}'", r.operator))
+                })?,
+                value: r.value,
+            })
+        })
+        .collect()
+}
+
+#[pyclass]
+pub struct Segment {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    segment_type: String,
+    #[pyo3(get)]
+    rules: Vec<SegmentRule>,
+    #[pyo3(get)]
+    member_count: u64,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Segment> for Segment {
+    fn from(s: stateset_core::Segment) -> Self {
+        Self {
+            id: s.id.to_string(),
+            name: s.name,
+            description: s.description,
+            segment_type: format!("{}", s.segment_type),
+            rules: s.rules.into_iter().map(Into::into).collect(),
+            member_count: s.member_count,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct SegmentMembership {
+    #[pyo3(get)]
+    segment_id: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    joined_at: String,
+}
+
+impl From<stateset_core::SegmentMembership> for SegmentMembership {
+    fn from(m: stateset_core::SegmentMembership) -> Self {
+        Self {
+            segment_id: m.segment_id.to_string(),
+            customer_id: m.customer_id.to_string(),
+            joined_at: m.joined_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct Segments {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Segments {
+    /// Whether the segments backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.segments().is_supported())
+    }
+
+    /// Create a customer segment. `segment_type` is "static" (default) or
+    /// "dynamic"; `rules` is a list of `SegmentRuleInput`.
+    #[pyo3(signature = (name, description=None, segment_type=None, rules=Vec::new()))]
+    fn create(
+        &self,
+        name: String,
+        description: Option<String>,
+        segment_type: Option<String>,
+        rules: Vec<SegmentRuleInput>,
+    ) -> PyResult<Segment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let segment_type = match segment_type.as_deref() {
+            Some(s) => s.parse::<stateset_core::SegmentType>().map_err(|_| {
+                PyValueError::new_err("Invalid segment_type (use static or dynamic)")
+            })?,
+            None => stateset_core::SegmentType::default(),
+        };
+        let rules = parse_segment_rules(rules)?;
+        let segment = commerce
+            .segments()
+            .create(stateset_core::CreateSegment { name, description, segment_type, rules })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create segment: {}", e)))?;
+        Ok(segment.into())
+    }
+
+    /// Get a segment by ID.
+    fn get(&self, id: String) -> PyResult<Option<Segment>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let segment = commerce
+            .segments()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get segment: {}", e)))?;
+        Ok(segment.map(Into::into))
+    }
+
+    /// Update a segment's name, description, and/or rules.
+    #[pyo3(signature = (id, name=None, description=None, rules=None))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        description: Option<String>,
+        rules: Option<Vec<SegmentRuleInput>>,
+    ) -> PyResult<Segment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let rules = match rules {
+            Some(r) => Some(parse_segment_rules(r)?),
+            None => None,
+        };
+        let segment = commerce
+            .segments()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateSegment { name, description: description.map(Some), rules },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update segment: {}", e)))?;
+        Ok(segment.into())
+    }
+
+    /// List segments, optionally filtered by type or name.
+    #[pyo3(signature = (segment_type=None, name=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        segment_type: Option<String>,
+        name: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Segment>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let segment_type = match segment_type.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::SegmentType>()
+                    .map_err(|_| PyValueError::new_err("Invalid segment_type"))?,
+            ),
+            None => None,
+        };
+        let segments = commerce
+            .segments()
+            .list(stateset_core::SegmentFilter { segment_type, name, limit, offset })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list segments: {}", e)))?;
+        Ok(segments.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a segment.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        commerce
+            .segments()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete segment: {}", e)))?;
+        Ok(())
+    }
+
+    /// Add a customer to a (static) segment, returning the membership record.
+    fn add_member(&self, segment_id: String, customer_id: String) -> PyResult<SegmentMembership> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let seg: uuid::Uuid =
+            segment_id.parse().map_err(|_| PyValueError::new_err("Invalid segment UUID"))?;
+        let cust: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let membership = commerce
+            .segments()
+            .add_member(seg.into(), cust.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to add segment member: {}", e)))?;
+        Ok(membership.into())
+    }
+
+    /// Remove a customer from a segment.
+    fn remove_member(&self, segment_id: String, customer_id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let seg: uuid::Uuid =
+            segment_id.parse().map_err(|_| PyValueError::new_err("Invalid segment UUID"))?;
+        let cust: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        commerce.segments().remove_member(seg.into(), cust.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to remove segment member: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// List a segment's members.
+    #[pyo3(signature = (segment_id, limit=None, offset=None))]
+    fn list_members(
+        &self,
+        segment_id: String,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<SegmentMembership>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let seg: uuid::Uuid =
+            segment_id.parse().map_err(|_| PyValueError::new_err("Invalid segment UUID"))?;
+        let members = commerce.segments().list_members(seg.into(), limit, offset).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list segment members: {}", e))
+        })?;
+        Ok(members.into_iter().map(Into::into).collect())
+    }
+
+    /// Whether a customer is a member of a segment.
+    fn is_member(&self, segment_id: String, customer_id: String) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let seg: uuid::Uuid =
+            segment_id.parse().map_err(|_| PyValueError::new_err("Invalid segment UUID"))?;
+        let cust: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        commerce.segments().is_member(seg.into(), cust.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to check segment membership: {}", e))
+        })
+    }
+}
+
+// ============================================================================
+// Loyalty  (points are integers; reward `value` is an exact decimal string)
+// ============================================================================
+
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct LoyaltyTierInput {
+    #[pyo3(get, set)]
+    name: String,
+    #[pyo3(get, set)]
+    min_points: i64,
+    #[pyo3(get, set)]
+    multiplier: f64,
+    #[pyo3(get, set)]
+    perks: Vec<String>,
+}
+
+#[pymethods]
+impl LoyaltyTierInput {
+    #[new]
+    #[pyo3(signature = (name, min_points=0, multiplier=1.0, perks=Vec::new()))]
+    fn new(name: String, min_points: i64, multiplier: f64, perks: Vec<String>) -> Self {
+        Self { name, min_points, multiplier, perks }
+    }
+}
+
+// Output-only; Clone is needed for the nested `tiers` getter on
+// LoyaltyProgram, but this type is never extracted from Python.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct LoyaltyTier {
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    min_points: i64,
+    #[pyo3(get)]
+    multiplier: f64,
+    #[pyo3(get)]
+    perks: Vec<String>,
+}
+
+impl From<stateset_core::LoyaltyTier> for LoyaltyTier {
+    fn from(t: stateset_core::LoyaltyTier) -> Self {
+        Self {
+            name: t.name,
+            min_points: t.min_points as i64,
+            multiplier: t.multiplier,
+            perks: t.perks,
+        }
+    }
+}
+
+#[pyclass]
+pub struct LoyaltyProgram {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    points_per_dollar: u32,
+    #[pyo3(get)]
+    tiers: Vec<LoyaltyTier>,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::LoyaltyProgram> for LoyaltyProgram {
+    fn from(p: stateset_core::LoyaltyProgram) -> Self {
+        Self {
+            id: p.id.to_string(),
+            name: p.name,
+            description: p.description,
+            points_per_dollar: p.points_per_dollar,
+            tiers: p.tiers.into_iter().map(Into::into).collect(),
+            status: format!("{}", p.status),
+            created_at: p.created_at.to_rfc3339(),
+            updated_at: p.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct LoyaltyAccount {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    program_id: String,
+    #[pyo3(get)]
+    points_balance: i64,
+    #[pyo3(get)]
+    lifetime_points: i64,
+    #[pyo3(get)]
+    tier: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::LoyaltyAccount> for LoyaltyAccount {
+    fn from(a: stateset_core::LoyaltyAccount) -> Self {
+        Self {
+            id: a.id.to_string(),
+            customer_id: a.customer_id.to_string(),
+            program_id: a.program_id.to_string(),
+            points_balance: a.points_balance,
+            lifetime_points: a.lifetime_points as i64,
+            tier: a.tier,
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct LoyaltyTransaction {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    account_id: String,
+    #[pyo3(get)]
+    points: i64,
+    #[pyo3(get)]
+    transaction_type: String,
+    #[pyo3(get)]
+    reference_id: Option<String>,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::LoyaltyTransaction> for LoyaltyTransaction {
+    fn from(t: stateset_core::LoyaltyTransaction) -> Self {
+        Self {
+            id: t.id.to_string(),
+            account_id: t.account_id.to_string(),
+            points: t.points,
+            transaction_type: format!("{}", t.transaction_type),
+            reference_id: t.reference_id,
+            description: t.description,
+            created_at: t.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct Reward {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    program_id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    points_cost: i64,
+    #[pyo3(get)]
+    reward_type: String,
+    /// Exact decimal string, if set
+    #[pyo3(get)]
+    value: Option<String>,
+    #[pyo3(get)]
+    is_active: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Reward> for Reward {
+    fn from(r: stateset_core::Reward) -> Self {
+        Self {
+            id: r.id.to_string(),
+            program_id: r.program_id.to_string(),
+            name: r.name,
+            description: r.description,
+            points_cost: r.points_cost as i64,
+            reward_type: format!("{}", r.reward_type),
+            value: r.value.map(|v| v.to_string()),
+            is_active: r.is_active,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct Loyalty {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Loyalty {
+    /// Whether the loyalty backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.loyalty().is_supported())
+    }
+
+    /// Create a loyalty program. `tiers` is a list of LoyaltyTierInput.
+    #[pyo3(signature = (name, points_per_dollar, description=None, tiers=Vec::new()))]
+    fn create_program(
+        &self,
+        name: String,
+        points_per_dollar: u32,
+        description: Option<String>,
+        tiers: Vec<LoyaltyTierInput>,
+    ) -> PyResult<LoyaltyProgram> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let tiers = tiers
+            .into_iter()
+            .map(|t| stateset_core::LoyaltyTier {
+                name: t.name,
+                min_points: t.min_points.max(0) as u64,
+                multiplier: t.multiplier,
+                perks: t.perks,
+            })
+            .collect();
+        let program = commerce
+            .loyalty()
+            .create_program(stateset_core::CreateLoyaltyProgram {
+                name,
+                description,
+                points_per_dollar,
+                tiers,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create program: {}", e)))?;
+        Ok(program.into())
+    }
+
+    fn get_program(&self, id: String) -> PyResult<Option<LoyaltyProgram>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let program = commerce
+            .loyalty()
+            .get_program(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get program: {}", e)))?;
+        Ok(program.map(Into::into))
+    }
+
+    fn list_programs(&self) -> PyResult<Vec<LoyaltyProgram>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let programs = commerce
+            .loyalty()
+            .list_programs()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list programs: {}", e)))?;
+        Ok(programs.into_iter().map(Into::into).collect())
+    }
+
+    /// Enroll a customer in a loyalty program.
+    fn enroll(&self, customer_id: String, program_id: String) -> PyResult<LoyaltyAccount> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let customer_id: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let program_id: uuid::Uuid =
+            program_id.parse().map_err(|_| PyValueError::new_err("Invalid program UUID"))?;
+        let account = commerce
+            .loyalty()
+            .enroll(stateset_core::EnrollCustomer {
+                customer_id: customer_id.into(),
+                program_id: program_id.into(),
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to enroll: {}", e)))?;
+        Ok(account.into())
+    }
+
+    fn get_account(&self, id: String) -> PyResult<Option<LoyaltyAccount>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let account = commerce
+            .loyalty()
+            .get_account(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get account: {}", e)))?;
+        Ok(account.map(Into::into))
+    }
+
+    /// Adjust an account's points. `transaction_type` is e.g. "earn", "redeem".
+    #[pyo3(signature = (account_id, points, transaction_type, reference_id=None, description=None))]
+    fn adjust_points(
+        &self,
+        account_id: String,
+        points: i64,
+        transaction_type: String,
+        reference_id: Option<String>,
+        description: Option<String>,
+    ) -> PyResult<LoyaltyTransaction> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let account_id: uuid::Uuid =
+            account_id.parse().map_err(|_| PyValueError::new_err("Invalid account UUID"))?;
+        let transaction_type = transaction_type
+            .parse::<stateset_core::LoyaltyTransactionType>()
+            .map_err(|_| PyValueError::new_err("Invalid transaction_type"))?;
+        let txn = commerce
+            .loyalty()
+            .adjust_points(stateset_core::AdjustPoints {
+                account_id: account_id.into(),
+                points,
+                transaction_type,
+                reference_id,
+                description,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to adjust points: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    #[pyo3(signature = (account_id, limit=None))]
+    fn get_transactions(
+        &self,
+        account_id: String,
+        limit: Option<u32>,
+    ) -> PyResult<Vec<LoyaltyTransaction>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            account_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let txns = commerce
+            .loyalty()
+            .get_transactions(uuid.into(), limit)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get transactions: {}", e)))?;
+        Ok(txns.into_iter().map(Into::into).collect())
+    }
+
+    /// Create a reward. `value` is an exact decimal string (optional).
+    #[pyo3(signature = (program_id, name, points_cost, reward_type, description=None, value=None))]
+    fn create_reward(
+        &self,
+        program_id: String,
+        name: String,
+        points_cost: i64,
+        reward_type: String,
+        description: Option<String>,
+        value: Option<String>,
+    ) -> PyResult<Reward> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let program_id: uuid::Uuid =
+            program_id.parse().map_err(|_| PyValueError::new_err("Invalid program UUID"))?;
+        let reward_type = reward_type
+            .parse::<stateset_core::RewardType>()
+            .map_err(|_| PyValueError::new_err("Invalid reward_type"))?;
+        let value = match value.as_deref() {
+            Some(s) => Some(
+                s.parse::<Decimal>().map_err(|_| PyValueError::new_err("Invalid value decimal"))?,
+            ),
+            None => None,
+        };
+        let reward = commerce
+            .loyalty()
+            .create_reward(stateset_core::CreateReward {
+                program_id: program_id.into(),
+                name,
+                description,
+                points_cost: points_cost.max(0) as u64,
+                reward_type,
+                value,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create reward: {}", e)))?;
+        Ok(reward.into())
+    }
+
+    fn get_reward(&self, id: String) -> PyResult<Option<Reward>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let reward = commerce
+            .loyalty()
+            .get_reward(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get reward: {}", e)))?;
+        Ok(reward.map(Into::into))
+    }
+
+    fn delete_reward(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        commerce
+            .loyalty()
+            .delete_reward(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete reward: {}", e)))?;
+        Ok(())
+    }
+
+    fn get_account_by_customer(
+        &self,
+        customer_id: String,
+        program_id: String,
+    ) -> PyResult<Option<LoyaltyAccount>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let customer_id: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let program_id: uuid::Uuid =
+            program_id.parse().map_err(|_| PyValueError::new_err("Invalid program UUID"))?;
+        let account = commerce
+            .loyalty()
+            .get_account_by_customer(customer_id.into(), program_id.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get account: {}", e)))?;
+        Ok(account.map(Into::into))
+    }
+
+    #[pyo3(signature = (customer_id=None, program_id=None, tier=None, limit=None, offset=None))]
+    fn list_accounts(
+        &self,
+        customer_id: Option<String>,
+        program_id: Option<String>,
+        tier: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<LoyaltyAccount>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let customer_id = match customer_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let program_id = match program_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| PyValueError::new_err("Invalid program UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let accounts = commerce
+            .loyalty()
+            .list_accounts(stateset_core::LoyaltyAccountFilter {
+                customer_id,
+                program_id,
+                tier,
+                limit,
+                offset,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list accounts: {}", e)))?;
+        Ok(accounts.into_iter().map(Into::into).collect())
+    }
+
+    #[pyo3(signature = (program_id=None, reward_type=None, is_active=None, limit=None, offset=None))]
+    fn list_rewards(
+        &self,
+        program_id: Option<String>,
+        reward_type: Option<String>,
+        is_active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Reward>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let program_id = match program_id.as_deref() {
+            Some(s) => Some(
+                s.parse::<uuid::Uuid>()
+                    .map_err(|_| PyValueError::new_err("Invalid program UUID"))?
+                    .into(),
+            ),
+            None => None,
+        };
+        let reward_type = match reward_type.as_deref() {
+            Some(s) => Some(
+                s.parse::<stateset_core::RewardType>()
+                    .map_err(|_| PyValueError::new_err("Invalid reward_type"))?,
+            ),
+            None => None,
+        };
+        let rewards = commerce
+            .loyalty()
+            .list_rewards(stateset_core::RewardFilter {
+                program_id,
+                reward_type,
+                is_active,
+                limit,
+                offset,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list rewards: {}", e)))?;
+        Ok(rewards.into_iter().map(Into::into).collect())
+    }
 }

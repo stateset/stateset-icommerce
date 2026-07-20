@@ -558,7 +558,11 @@ impl Cart {
 }
 
 impl CartItem {
-    /// Calculate item total
+    /// Calculate a line item's money total, rounded to the currency minor unit
+    /// (2 dp) so the stored/returned line total is a real money amount rather
+    /// than a sub-cent value like `9.999`. This matches the Postgres
+    /// `cart_items.total DECIMAL(12,2)` column (which coerces to 2 dp) and the
+    /// order pipeline's `OrderItem::calculate_total`.
     #[must_use]
     pub fn calculate_total(
         quantity: i32,
@@ -567,7 +571,7 @@ impl CartItem {
         tax: Decimal,
     ) -> Decimal {
         let subtotal = unit_price * Decimal::from(quantity);
-        subtotal - discount + tax
+        (subtotal - discount + tax).round_dp(2)
     }
 
     /// Recalculate this item's total

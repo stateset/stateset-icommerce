@@ -38,13 +38,14 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AdjustLocationInventory, BatchResult, CreateLocation, CreateWarehouse, CreateZone, Location,
-    LocationFilter, LocationInventory, LocationInventoryFilter, LocationMovement, MoveInventory,
-    MovementFilter, Result, UpdateLocation, UpdateWarehouse, UpdateZone, Warehouse,
-    WarehouseFilter, Zone,
+    AdjustLocationInventory, BatchResult, CreateCycleCount, CreateLocation, CreateWarehouse,
+    CreateZone, CycleCount, CycleCountFilter, Location, LocationFilter, LocationInventory,
+    LocationInventoryFilter, LocationMovement, MoveInventory, MovementFilter, RecordCycleCountLine,
+    Result, UpdateLocation, UpdateWarehouse, UpdateZone, Warehouse, WarehouseFilter, Zone,
 };
 use stateset_db::Database;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Warehouse and Location management interface.
 pub struct WarehouseOps {
@@ -424,5 +425,74 @@ impl WarehouseOps {
     /// Count movements matching the filter.
     pub fn count_movements(&self, filter: MovementFilter) -> Result<u64> {
         self.db.warehouse().count_movements(filter)
+    }
+
+    // ========================================================================
+    // Cycle Count Operations
+    // ========================================================================
+
+    /// Create a cycle count (draft) with its expected lines.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateCycleCount, CreateCycleCountLine};
+    /// use rust_decimal_macros::dec;
+    ///
+    /// let commerce = Commerce::new(":memory:")?;
+    ///
+    /// let count = commerce.warehouse().create_cycle_count(CreateCycleCount {
+    ///     warehouse_id: 1,
+    ///     location_id: Some(1),
+    ///     counted_by: Some("counter@example.com".into()),
+    ///     lines: vec![CreateCycleCountLine {
+    ///         sku: "PROD-001".into(),
+    ///         lot_id: None,
+    ///         expected_quantity: dec!(100),
+    ///     }],
+    ///     ..Default::default()
+    /// })?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    pub fn create_cycle_count(&self, input: CreateCycleCount) -> Result<CycleCount> {
+        self.db.warehouse().create_cycle_count(input)
+    }
+
+    /// Get a cycle count (with lines) by ID.
+    pub fn get_cycle_count(&self, id: Uuid) -> Result<Option<CycleCount>> {
+        self.db.warehouse().get_cycle_count(id)
+    }
+
+    /// List cycle counts matching the filter.
+    pub fn list_cycle_counts(&self, filter: CycleCountFilter) -> Result<Vec<CycleCount>> {
+        self.db.warehouse().list_cycle_counts(filter)
+    }
+
+    /// Start a draft cycle count (`draft` → `in_progress`).
+    pub fn start_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        self.db.warehouse().start_cycle_count(id)
+    }
+
+    /// Record physical counts against an in-progress cycle count.
+    pub fn record_cycle_counts(
+        &self,
+        id: Uuid,
+        counts: Vec<RecordCycleCountLine>,
+    ) -> Result<CycleCount> {
+        self.db.warehouse().record_cycle_counts(id, counts)
+    }
+
+    /// Complete an in-progress cycle count.
+    ///
+    /// Computes each line's variance (counted - expected) and applies matching
+    /// inventory adjustments to `location_inventory`, recording `cycle_count`
+    /// movements for the audit trail.
+    pub fn complete_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        self.db.warehouse().complete_cycle_count(id)
+    }
+
+    /// Cancel a draft or in-progress cycle count. No adjustments are applied.
+    pub fn cancel_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        self.db.warehouse().cancel_cycle_count(id)
     }
 }

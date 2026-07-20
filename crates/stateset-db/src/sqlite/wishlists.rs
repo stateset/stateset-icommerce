@@ -57,15 +57,15 @@ impl SqliteWishlistRepository {
                 "product_id",
             )?
             .into(),
-            variant_id: None,
+            variant_id: row.get("variant_id")?,
             added_at: parse_datetime_row(
                 &row.get::<_, String>("added_at")?,
                 "wishlist_item",
                 "added_at",
             )?,
             note: row.get("notes")?,
-            quantity: 1,
-            priority: None,
+            quantity: row.get::<_, i64>("quantity")? as u32,
+            priority: row.get("priority")?,
         })
     }
 
@@ -174,12 +174,7 @@ impl WishlistRepository for SqliteWishlistRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {offset}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
@@ -226,11 +221,21 @@ impl WishlistRepository for SqliteWishlistRepository {
             })?;
 
             let product_id_str = item.product_id.to_string();
+            let quantity = i64::from(item.quantity.unwrap_or(1));
 
             tx.execute(
-                "INSERT INTO wishlist_items (id, wishlist_id, product_id, added_at, notes)
-                 VALUES (?, ?, ?, ?, ?)",
-                rusqlite::params![&item_id, &wl_id_str, &product_id_str, &now_str, &item.note,],
+                "INSERT INTO wishlist_items (id, wishlist_id, product_id, variant_id, priority, quantity, added_at, notes)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &item_id,
+                    &wl_id_str,
+                    &product_id_str,
+                    &item.variant_id,
+                    &item.priority,
+                    quantity,
+                    &now_str,
+                    &item.note,
+                ],
             )?;
 
             // Update wishlist updated_at
@@ -334,21 +339,30 @@ mod tests {
                 wishlist.id,
                 AddWishlistItem {
                     product_id,
-                    variant_id: None,
+                    variant_id: Some("VAR-1".into()),
                     note: Some("Love this one".into()),
-                    quantity: Some(1),
-                    priority: None,
+                    quantity: Some(3),
+                    priority: Some(2),
                 },
             )
             .expect("add_item");
 
         assert_eq!(item.product_id, product_id);
         assert_eq!(item.note.as_deref(), Some("Love this one"));
+        assert_eq!(item.variant_id.as_deref(), Some("VAR-1"));
+        assert_eq!(item.quantity, 3);
+        assert_eq!(item.priority, Some(2));
 
-        // Verify the item shows up in get
+        // Re-read from the database: variant_id, quantity, and priority must
+        // survive the round-trip (previously they were dropped and quantity
+        // always read back as 1).
         let fetched = repo.get(wishlist.id).expect("get").expect("Some");
         assert_eq!(fetched.items.len(), 1);
-        assert_eq!(fetched.items[0].product_id, product_id);
+        let stored = &fetched.items[0];
+        assert_eq!(stored.product_id, product_id);
+        assert_eq!(stored.variant_id.as_deref(), Some("VAR-1"));
+        assert_eq!(stored.quantity, 3, "quantity must survive persistence");
+        assert_eq!(stored.priority, Some(2));
     }
 
     #[test]
