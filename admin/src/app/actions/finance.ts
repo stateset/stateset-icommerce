@@ -109,7 +109,7 @@ export async function closeMonthDryRun(periodId: string): Promise<CloseMonthRepo
  */
 export async function runCloseMonth(
   periodId: string,
-  closedBy?: string
+  closedBy?: string,
 ): Promise<CloseMonthReport> {
   await requireAdminSession();
   assertNonEmpty(periodId, 'periodId');
@@ -225,7 +225,7 @@ export async function getFixedAssets(status?: string): Promise<FixedAsset[]> {
 }
 
 export async function getAssetDepreciationSchedule(
-  assetId: string
+  assetId: string,
 ): Promise<DepreciationSchedule | null> {
   await requireAdminSession();
   assertNonEmpty(assetId, 'assetId');

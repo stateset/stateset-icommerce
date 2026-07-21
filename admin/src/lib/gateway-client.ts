@@ -20,7 +20,7 @@ async function gatewayFetch<T>(path: string): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(
-      body?.data?.error || body?.error?.message || `Gateway request failed: ${res.status}`
+      body?.data?.error || body?.error?.message || `Gateway request failed: ${res.status}`,
     );
   }
   const json = await res.json();

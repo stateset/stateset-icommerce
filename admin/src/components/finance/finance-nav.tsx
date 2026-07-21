@@ -29,7 +29,7 @@ export default function FinanceNav() {
               'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
               active
                 ? 'bg-ds-primary/10 text-ds-primary'
-                : 'text-ds-muted-foreground hover:bg-ds-muted hover:text-ds-foreground'
+                : 'text-ds-muted-foreground hover:bg-ds-muted hover:text-ds-foreground',
             )}
           >
             {link.name}

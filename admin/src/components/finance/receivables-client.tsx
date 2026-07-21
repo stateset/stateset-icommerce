@@ -67,7 +67,10 @@ export default function ReceivablesClient() {
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {AGING_BUCKETS.map((bucket) => (
-          <Card key={bucket.key} className={bucket.key === 'total' ? 'border-ds-primary/40' : undefined}>
+          <Card
+            key={bucket.key}
+            className={bucket.key === 'total' ? 'border-ds-primary/40' : undefined}
+          >
             <CardContent>
               <p className="text-xs uppercase tracking-ds-kicker text-ds-muted-foreground">
                 {bucket.label}
@@ -106,7 +109,9 @@ export default function ReceivablesClient() {
                     <td className="py-2 pr-4 text-right font-mono">{formatMoney(row.days130)}</td>
                     <td className="py-2 pr-4 text-right font-mono">{formatMoney(row.days3160)}</td>
                     <td className="py-2 pr-4 text-right font-mono">{formatMoney(row.days6190)}</td>
-                    <td className="py-2 pr-4 text-right font-mono">{formatMoney(row.daysOver90)}</td>
+                    <td className="py-2 pr-4 text-right font-mono">
+                      {formatMoney(row.daysOver90)}
+                    </td>
                     <td className="py-2 text-right font-mono font-semibold">
                       {formatMoney(row.total)}
                     </td>

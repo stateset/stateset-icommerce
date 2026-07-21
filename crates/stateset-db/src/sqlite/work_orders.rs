@@ -486,7 +486,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         let ids = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let limit = i64::from(filter.limit.unwrap_or(100));
+            let limit = i64::from(super::effective_limit(filter.limit));
             let offset = i64::from(filter.offset.unwrap_or(0));
 
             let mut sql = "SELECT id FROM manufacturing_work_orders WHERE 1=1".to_string();

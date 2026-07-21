@@ -7,7 +7,14 @@ import { getPurchasingPageData } from '@/app/actions/operations';
 import { formatMoney } from '@/lib/finance/format';
 import type { PurchaseOrder } from '@/lib/embedded';
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const statusBadgeVariants: Record<string, DsBadgeVariant> = {
   draft: 'outline',
@@ -113,9 +120,13 @@ export default function PurchasingClient() {
                 {purchaseOrders.map((po) => (
                   <tr key={po.id} className="border-b border-ds-border/50">
                     <td className="py-2 pr-4 font-mono">{po.poNumber}</td>
-                    <td className="py-2 pr-4">{supplierNames.get(po.supplierId) || po.supplierId}</td>
                     <td className="py-2 pr-4">
-                      <Badge variant={statusBadgeVariants[po.status] || 'default'}>{po.status}</Badge>
+                      {supplierNames.get(po.supplierId) || po.supplierId}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <Badge variant={statusBadgeVariants[po.status] || 'default'}>
+                        {po.status}
+                      </Badge>
                     </td>
                     <td className="py-2 pr-4">{po.createdAt.slice(0, 10)}</td>
                     <td className="py-2 pr-4">{po.updatedAt.slice(0, 10)}</td>

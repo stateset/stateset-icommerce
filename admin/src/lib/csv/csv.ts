@@ -31,9 +31,7 @@ export interface CsvColumn<T> {
  */
 export function rowsToCsv<T>(rows: T[], columns: CsvColumn<T>[]): string {
   const header = columns.map((c) => c.key).join(',');
-  const lines = rows.map((row) =>
-    columns.map((col) => toCsvCell(col.accessor(row))).join(','),
-  );
+  const lines = rows.map((row) => columns.map((col) => toCsvCell(col.accessor(row))).join(','));
   return [header, ...lines].join('\n');
 }
 

@@ -9,7 +9,12 @@ import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getFinancialReconciliationData } from '@/app/actions/commerce';
 import { SimulatedDataBadge } from '@/components/shared/simulated-data-badge';
 import { formatCurrency, formatPercentage } from '@/lib/utils';
-import type { FinancialReconciliationData, ReconciliationCategory, DiscrepancyItem, ReconciliationTransaction } from '@/lib/types/dashboard-data';
+import type {
+  FinancialReconciliationData,
+  ReconciliationCategory,
+  DiscrepancyItem,
+  ReconciliationTransaction,
+} from '@/lib/types/dashboard-data';
 
 interface FinancialReconciliationProps {
   data?: FinancialReconciliationData;
@@ -23,10 +28,10 @@ const statusBadgeVariants: Record<string, 'success' | 'warning' | 'danger' | 'pr
 };
 
 function FinancialReconciliationInner({ data: propData }: FinancialReconciliationProps) {
-  const { data, isLoading, error } = useEmbeddedData(
-    () => getFinancialReconciliationData(),
-    { initialData: propData, refreshInterval: 60000 }
-  );
+  const { data, isLoading, error } = useEmbeddedData(() => getFinancialReconciliationData(), {
+    initialData: propData,
+    refreshInterval: 60000,
+  });
 
   if (isLoading && !data) {
     return (
@@ -71,7 +76,9 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
               <p className="text-sm text-ds-muted-foreground">Total Reconciled</p>
               <SimulatedDataBadge />
             </div>
-            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatCurrency(summary?.totalReconciled || 458000)}</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">
+              {formatCurrency(summary?.totalReconciled || 458000)}
+            </p>
             <p className="text-xs text-ds-status-ok mt-1">
               {formatPercentage(summary?.reconciledRate || 0.982)} of transactions
             </p>
@@ -83,7 +90,9 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
               <p className="text-sm text-ds-muted-foreground">Pending Review</p>
               <SimulatedDataBadge />
             </div>
-            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatCurrency(summary?.pendingAmount || 12500)}</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">
+              {formatCurrency(summary?.pendingAmount || 12500)}
+            </p>
             <p className="text-xs text-ds-status-warn mt-1">
               {summary?.pendingCount || 23} transactions
             </p>
@@ -95,7 +104,9 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
               <p className="text-sm text-ds-muted-foreground">Discrepancies</p>
               <SimulatedDataBadge />
             </div>
-            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatCurrency(summary?.discrepancyAmount || 3200)}</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">
+              {formatCurrency(summary?.discrepancyAmount || 3200)}
+            </p>
             <p className="text-xs text-ds-status-fail mt-1">
               {summary?.discrepancyCount || 8} items flagged
             </p>
@@ -104,7 +115,9 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
         <Card className="border-t-2 border-t-ds-status-run">
           <CardContent>
             <p className="text-sm text-ds-muted-foreground">Net Cash Position</p>
-            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatCurrency(summary?.netCash || 125000)}</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">
+              {formatCurrency(summary?.netCash || 125000)}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -117,7 +130,9 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
           <div className="flex items-center justify-between mb-4">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Reconciliation Progress</h3>
+                <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                  Reconciliation Progress
+                </h3>
                 <SimulatedDataBadge />
               </div>
               <p className="text-sm text-ds-muted-foreground">Current period status</p>
@@ -127,23 +142,37 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
             </Badge>
           </div>
           <div className="space-y-4">
-            {(reconciliationRate?.byCategory || generateDemoReconciliationCategories()).map((category: ReconciliationCategory) => (
-              <div key={category.name}>
-                <div className="flex justify-between mb-1">
-                  <p className="text-sm font-medium text-ds-foreground">{category.name}</p>
-                  <div className="flex items-center space-x-2">
-                    <p className="text-sm text-ds-muted-foreground">{formatCurrency(category.reconciled)} / {formatCurrency(category.total)}</p>
-                    <Badge variant={category.rate >= 0.95 ? 'success' : category.rate >= 0.8 ? 'warning' : 'danger'}>
-                      {formatPercentage(category.rate)}
-                    </Badge>
+            {(reconciliationRate?.byCategory || generateDemoReconciliationCategories()).map(
+              (category: ReconciliationCategory) => (
+                <div key={category.name}>
+                  <div className="flex justify-between mb-1">
+                    <p className="text-sm font-medium text-ds-foreground">{category.name}</p>
+                    <div className="flex items-center space-x-2">
+                      <p className="text-sm text-ds-muted-foreground">
+                        {formatCurrency(category.reconciled)} / {formatCurrency(category.total)}
+                      </p>
+                      <Badge
+                        variant={
+                          category.rate >= 0.95
+                            ? 'success'
+                            : category.rate >= 0.8
+                              ? 'warning'
+                              : 'danger'
+                        }
+                      >
+                        {formatPercentage(category.rate)}
+                      </Badge>
+                    </div>
                   </div>
+                  <ProgressBar
+                    value={category.rate * 100}
+                    color={
+                      category.rate >= 0.95 ? 'emerald' : category.rate >= 0.8 ? 'amber' : 'red'
+                    }
+                  />
                 </div>
-                <ProgressBar
-                  value={category.rate * 100}
-                  color={category.rate >= 0.95 ? 'emerald' : category.rate >= 0.8 ? 'amber' : 'red'}
-                />
-              </div>
-            ))}
+              ),
+            )}
           </div>
         </CardContent>
       </Card>
@@ -176,10 +205,14 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
         <Card>
           <CardContent>
             <div className="flex items-center justify-between">
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Transaction Status Distribution</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                Transaction Status Distribution
+              </h3>
               <SimulatedDataBadge />
             </div>
-            <p className="text-sm text-ds-muted-foreground mb-4">Breakdown by reconciliation status</p>
+            <p className="text-sm text-ds-muted-foreground mb-4">
+              Breakdown by reconciliation status
+            </p>
             <DonutChart
               className="h-64"
               data={summary?.statusDistribution || generateDemoStatusDistribution()}
@@ -198,7 +231,9 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
         <Card>
           <CardContent>
             <div className="flex items-center justify-between">
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Discrepancy Analysis</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                Discrepancy Analysis
+              </h3>
               <SimulatedDataBadge />
             </div>
             <p className="text-sm text-ds-muted-foreground mb-4">Common discrepancy types</p>
@@ -222,50 +257,53 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
           <div className="flex items-center justify-between mb-4">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Flagged Discrepancies</h3>
+                <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                  Flagged Discrepancies
+                </h3>
                 <SimulatedDataBadge />
               </div>
               <p className="text-sm text-ds-muted-foreground">Items requiring attention</p>
             </div>
-            <Badge variant="danger">
-              {discrepancies?.items?.length || 5} items
-            </Badge>
+            <Badge variant="danger">{discrepancies?.items?.length || 5} items</Badge>
           </div>
           <div className="space-y-3">
-            {(discrepancies?.items || generateDemoDiscrepancies()).map((item: DiscrepancyItem, index: number) => (
-              <motion.div
-                key={item.id || index}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.1 }}
-                className="flex items-center justify-between p-4 border rounded-lg border-ds-status-fail/25 bg-ds-status-fail/10"
-              >
-                <div className="flex items-center space-x-4">
-                  <div className="w-10 h-10 rounded-full bg-ds-status-fail/15 flex items-center justify-center">
-                    <ExclamationTriangleIcon className="w-5 h-5 text-ds-status-fail" />
+            {(discrepancies?.items || generateDemoDiscrepancies()).map(
+              (item: DiscrepancyItem, index: number) => (
+                <motion.div
+                  key={item.id || index}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                  className="flex items-center justify-between p-4 border rounded-lg border-ds-status-fail/25 bg-ds-status-fail/10"
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className="w-10 h-10 rounded-full bg-ds-status-fail/15 flex items-center justify-center">
+                      <ExclamationTriangleIcon className="w-5 h-5 text-ds-status-fail" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-ds-foreground">{item.description}</p>
+                      <p className="text-xs text-ds-muted-foreground">
+                        {item.transactionId} • {item.source}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-ds-foreground">{item.description}</p>
-                    <p className="text-xs text-ds-muted-foreground">
-                      {item.transactionId} • {item.source}
-                    </p>
+                  <div className="flex items-center space-x-4">
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-ds-status-fail">
+                        {item.difference > 0 ? '+' : ''}
+                        {formatCurrency(item.difference)}
+                      </p>
+                      <p className="text-xs text-ds-muted-foreground">
+                        Expected: {formatCurrency(item.expected)}
+                      </p>
+                    </div>
+                    <Badge variant={statusBadgeVariants[item.status] || 'default'}>
+                      {item.status.replace('_', ' ')}
+                    </Badge>
                   </div>
-                </div>
-                <div className="flex items-center space-x-4">
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-ds-status-fail">
-                      {item.difference > 0 ? '+' : ''}{formatCurrency(item.difference)}
-                    </p>
-                    <p className="text-xs text-ds-muted-foreground">
-                      Expected: {formatCurrency(item.expected)}
-                    </p>
-                  </div>
-                  <Badge variant={statusBadgeVariants[item.status] || 'default'}>
-                    {item.status.replace('_', ' ')}
-                  </Badge>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              ),
+            )}
           </div>
         </CardContent>
       </Card>
@@ -276,7 +314,9 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
       <Card>
         <CardContent>
           <div className="flex items-center justify-between">
-            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Recent Transactions</h3>
+            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+              Recent Transactions
+            </h3>
             <SimulatedDataBadge />
           </div>
           <p className="text-sm text-ds-muted-foreground mb-4">Latest reconciled transactions</p>
@@ -284,43 +324,62 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
             <table className="w-full">
               <thead>
                 <tr className="border-b border-ds-enterprise-line">
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Transaction ID</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Type</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Source</th>
-                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">Amount</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Status</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Date</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Transaction ID
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Type
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Source
+                  </th>
+                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Amount
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Status
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Date
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {(transactions || generateDemoTransactions()).slice(0, 10).map((txn, index: number) => (
-                  <motion.tr
-                    key={txn.id || index}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: index * 0.03 }}
-                    className="border-b border-ds-enterprise-line hover:bg-ds-muted"
-                  >
-                    <td className="py-2 px-3 text-sm font-mono">{txn.id}</td>
-                    <td className="py-2 px-3">
-                      <Badge variant={txn.type === 'inflow' ? 'success' : 'danger'}>
-                        {txn.type}
-                      </Badge>
-                    </td>
-                    <td className="py-2 px-3 text-sm">{txn.source}</td>
-                    <td className="py-2 px-3 text-sm text-right font-medium">
-                      <span className={txn.type === 'inflow' ? 'text-ds-status-ok' : 'text-ds-status-fail'}>
-                        {txn.type === 'inflow' ? '+' : '-'}{formatCurrency(Math.abs(txn.amount))}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3">
-                      <Badge variant={statusBadgeVariants[txn.status] || 'default'}>
-                        {txn.status}
-                      </Badge>
-                    </td>
-                    <td className="py-2 px-3 text-sm text-ds-muted-foreground">{txn.date}</td>
-                  </motion.tr>
-                ))}
+                {(transactions || generateDemoTransactions())
+                  .slice(0, 10)
+                  .map((txn, index: number) => (
+                    <motion.tr
+                      key={txn.id || index}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: index * 0.03 }}
+                      className="border-b border-ds-enterprise-line hover:bg-ds-muted"
+                    >
+                      <td className="py-2 px-3 text-sm font-mono">{txn.id}</td>
+                      <td className="py-2 px-3">
+                        <Badge variant={txn.type === 'inflow' ? 'success' : 'danger'}>
+                          {txn.type}
+                        </Badge>
+                      </td>
+                      <td className="py-2 px-3 text-sm">{txn.source}</td>
+                      <td className="py-2 px-3 text-sm text-right font-medium">
+                        <span
+                          className={
+                            txn.type === 'inflow' ? 'text-ds-status-ok' : 'text-ds-status-fail'
+                          }
+                        >
+                          {txn.type === 'inflow' ? '+' : '-'}
+                          {formatCurrency(Math.abs(txn.amount))}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3">
+                        <Badge variant={statusBadgeVariants[txn.status] || 'default'}>
+                          {txn.status}
+                        </Badge>
+                      </td>
+                      <td className="py-2 px-3 text-sm text-ds-muted-foreground">{txn.date}</td>
+                    </motion.tr>
+                  ))}
               </tbody>
             </table>
           </div>
@@ -373,23 +432,115 @@ function generateDemoDiscrepancyTypes() {
 
 function generateDemoDiscrepancies() {
   return [
-    { id: '1', transactionId: 'TXN-2847', description: 'Payment amount mismatch', source: 'Stripe', expected: 125.00, actual: 122.50, difference: -2.50, status: 'under_review' },
-    { id: '2', transactionId: 'TXN-2851', description: 'Missing refund record', source: 'PayPal', expected: 89.99, actual: 0, difference: -89.99, status: 'discrepancy' },
-    { id: '3', transactionId: 'TXN-2856', description: 'Duplicate charge detected', source: 'Stripe', expected: 45.00, actual: 90.00, difference: 45.00, status: 'pending' },
-    { id: '4', transactionId: 'TXN-2862', description: 'Currency conversion variance', source: 'Bank', expected: 1250.00, actual: 1247.85, difference: -2.15, status: 'under_review' },
+    {
+      id: '1',
+      transactionId: 'TXN-2847',
+      description: 'Payment amount mismatch',
+      source: 'Stripe',
+      expected: 125.0,
+      actual: 122.5,
+      difference: -2.5,
+      status: 'under_review',
+    },
+    {
+      id: '2',
+      transactionId: 'TXN-2851',
+      description: 'Missing refund record',
+      source: 'PayPal',
+      expected: 89.99,
+      actual: 0,
+      difference: -89.99,
+      status: 'discrepancy',
+    },
+    {
+      id: '3',
+      transactionId: 'TXN-2856',
+      description: 'Duplicate charge detected',
+      source: 'Stripe',
+      expected: 45.0,
+      actual: 90.0,
+      difference: 45.0,
+      status: 'pending',
+    },
+    {
+      id: '4',
+      transactionId: 'TXN-2862',
+      description: 'Currency conversion variance',
+      source: 'Bank',
+      expected: 1250.0,
+      actual: 1247.85,
+      difference: -2.15,
+      status: 'under_review',
+    },
   ];
 }
 
 function generateDemoTransactions(): ReconciliationTransaction[] {
   return [
-    { id: 'TXN-2890', type: 'inflow', source: 'Stripe', amount: 1250.00, status: 'reconciled', date: 'Today' },
-    { id: 'TXN-2889', type: 'inflow', source: 'PayPal', amount: 89.99, status: 'reconciled', date: 'Today' },
-    { id: 'TXN-2888', type: 'outflow', source: 'Vendor', amount: 450.00, status: 'reconciled', date: 'Today' },
-    { id: 'TXN-2887', type: 'inflow', source: 'Stripe', amount: 329.00, status: 'pending', date: 'Yesterday' },
-    { id: 'TXN-2886', type: 'outflow', source: 'Refund', amount: 75.50, status: 'reconciled', date: 'Yesterday' },
-    { id: 'TXN-2885', type: 'inflow', source: 'Bank Transfer', amount: 5000.00, status: 'reconciled', date: 'Yesterday' },
-    { id: 'TXN-2884', type: 'outflow', source: 'Payroll', amount: 12500.00, status: 'reconciled', date: '2 days ago' },
-    { id: 'TXN-2883', type: 'inflow', source: 'Stripe', amount: 2100.00, status: 'reconciled', date: '2 days ago' },
+    {
+      id: 'TXN-2890',
+      type: 'inflow',
+      source: 'Stripe',
+      amount: 1250.0,
+      status: 'reconciled',
+      date: 'Today',
+    },
+    {
+      id: 'TXN-2889',
+      type: 'inflow',
+      source: 'PayPal',
+      amount: 89.99,
+      status: 'reconciled',
+      date: 'Today',
+    },
+    {
+      id: 'TXN-2888',
+      type: 'outflow',
+      source: 'Vendor',
+      amount: 450.0,
+      status: 'reconciled',
+      date: 'Today',
+    },
+    {
+      id: 'TXN-2887',
+      type: 'inflow',
+      source: 'Stripe',
+      amount: 329.0,
+      status: 'pending',
+      date: 'Yesterday',
+    },
+    {
+      id: 'TXN-2886',
+      type: 'outflow',
+      source: 'Refund',
+      amount: 75.5,
+      status: 'reconciled',
+      date: 'Yesterday',
+    },
+    {
+      id: 'TXN-2885',
+      type: 'inflow',
+      source: 'Bank Transfer',
+      amount: 5000.0,
+      status: 'reconciled',
+      date: 'Yesterday',
+    },
+    {
+      id: 'TXN-2884',
+      type: 'outflow',
+      source: 'Payroll',
+      amount: 12500.0,
+      status: 'reconciled',
+      date: '2 days ago',
+    },
+    {
+      id: 'TXN-2883',
+      type: 'inflow',
+      source: 'Stripe',
+      amount: 2100.0,
+      status: 'reconciled',
+      date: '2 days ago',
+    },
   ];
 }
 

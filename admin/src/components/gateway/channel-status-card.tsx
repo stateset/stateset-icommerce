@@ -52,9 +52,7 @@ export function ChannelStatusCard({ name, stats, onClick }: ChannelStatusCardPro
   const displayName = CHANNEL_DISPLAY[name] || name;
   const isActive = stats.lastMessageAt !== null;
   const errorRate =
-    stats.messagesReceived > 0
-      ? ((stats.errors / stats.messagesReceived) * 100).toFixed(1)
-      : '0.0';
+    stats.messagesReceived > 0 ? ((stats.errors / stats.messagesReceived) * 100).toFixed(1) : '0.0';
 
   return (
     <Card
@@ -80,15 +78,11 @@ export function ChannelStatusCard({ name, stats, onClick }: ChannelStatusCardPro
             <div>
               <p className="text-sm font-medium text-ds-foreground">{displayName}</p>
               <p className="text-xs text-ds-muted-foreground">
-                {isActive
-                  ? `Active ${formatRelativeTime(stats.lastMessageAt!)}`
-                  : 'No activity'}
+                {isActive ? `Active ${formatRelativeTime(stats.lastMessageAt!)}` : 'No activity'}
               </p>
             </div>
           </div>
-          <StatusPill status={isActive ? 'ok' : 'idle'}>
-            {isActive ? 'Online' : 'Idle'}
-          </StatusPill>
+          <StatusPill status={isActive ? 'ok' : 'idle'}>{isActive ? 'Online' : 'Idle'}</StatusPill>
         </div>
         <div className="grid grid-cols-3 gap-4 mt-4">
           <div>
@@ -105,7 +99,9 @@ export function ChannelStatusCard({ name, stats, onClick }: ChannelStatusCardPro
           </div>
           <div>
             <p className="text-xs text-ds-muted-foreground">Avg Response</p>
-            <p className="text-sm font-semibold text-ds-foreground">{Math.round(stats.avgResponseMs)}ms</p>
+            <p className="text-sm font-semibold text-ds-foreground">
+              {Math.round(stats.avgResponseMs)}ms
+            </p>
           </div>
         </div>
       </CardContent>

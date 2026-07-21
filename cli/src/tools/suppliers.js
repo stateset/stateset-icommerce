@@ -66,11 +66,44 @@ export const supplierTools = [
 
   {
     name: 'list_purchase_orders',
-    description: 'List all purchase orders.',
-    inputSchema: {},
+    description:
+      'List purchase orders, optionally filtered by supplier, status, date range or total.',
+    inputSchema: {
+      supplierId: z.string().min(1).optional().describe('Filter by supplier ID'),
+      status: z.string().min(1).optional().describe('Filter by status'),
+      fromDate: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Inclusive lower bound on order date (RFC 3339)'),
+      toDate: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Inclusive upper bound on order date (RFC 3339)'),
+      minTotal: z.string().min(1).optional().describe('Minimum order total (exact decimal string)'),
+      maxTotal: z.string().min(1).optional().describe('Maximum order total (exact decimal string)'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Maximum results (server default 500, cap 1000)'),
+      offset: z.number().int().min(0).optional().describe('Results to skip'),
+    },
     permission: 'read',
-    handler: async ({ commerce }) => {
-      const purchaseOrders = await commerce.purchaseOrders.list();
+    handler: async ({ commerce, params }) => {
+      const filter = {
+        supplierId: params.supplierId,
+        status: params.status,
+        fromDate: params.fromDate,
+        toDate: params.toDate,
+        minTotal: params.minTotal,
+        maxTotal: params.maxTotal,
+        limit: params.limit,
+        offset: params.offset,
+      };
+      const purchaseOrders = await commerce.purchaseOrders.list(filter);
       const count = await commerce.purchaseOrders.count();
       return { success: true, count, purchaseOrders };
     },

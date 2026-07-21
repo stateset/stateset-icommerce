@@ -6,7 +6,14 @@ import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getWarehousePageData } from '@/app/actions/operations';
 import type { CycleCount, WarehouseLocation } from '@/lib/embedded';
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const countStatusVariants: Record<string, DsBadgeVariant> = {
   draft: 'outline',
@@ -67,9 +74,7 @@ export default function WarehouseClient() {
     countStatusFilter === 'all'
       ? data.cycleCounts
       : data.cycleCounts.filter((count) => count.status === countStatusFilter)
-  ).filter(
-    (count) => warehouseFilter === 'all' || String(count.warehouseId) === warehouseFilter
-  );
+  ).filter((count) => warehouseFilter === 'all' || String(count.warehouseId) === warehouseFilter);
 
   return (
     <div className="space-y-6">

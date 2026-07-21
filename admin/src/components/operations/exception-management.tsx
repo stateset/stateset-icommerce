@@ -14,7 +14,11 @@ import {
 } from '@stateset/design';
 import { ExclamationTriangleIcon, BoltIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
-import type { ExceptionManagementData, ExceptionItem, ExceptionResolution } from '@/lib/types/dashboard-data';
+import type {
+  ExceptionManagementData,
+  ExceptionItem,
+  ExceptionResolution,
+} from '@/lib/types/dashboard-data';
 
 interface ExceptionManagementProps {
   data?: ExceptionManagementData;
@@ -61,16 +65,8 @@ export default function ExceptionManagement({ data: propData }: ExceptionManagem
           subtitle={`${summary.criticalCount} critical`}
           tone="danger"
         />
-        <MetricCard
-          label="Investigating"
-          value={summary.investigatingCount}
-          tone="warning"
-        />
-        <MetricCard
-          label="Resolved Today"
-          value={summary.resolvedToday}
-          tone="success"
-        />
+        <MetricCard label="Investigating" value={summary.investigatingCount} tone="warning" />
+        <MetricCard label="Resolved Today" value={summary.resolvedToday} tone="success" />
         <MetricCard
           label="Auto-Resolved"
           value={`${summary.autoResolvedPercent}%`}
@@ -123,61 +119,70 @@ export default function ExceptionManagement({ data: propData }: ExceptionManagem
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {exceptions.filter((e: ExceptionItem) => e.status !== 'resolved').slice(0, 8).map((exception: ExceptionItem, index: number) => (
-              <motion.div
-                key={exception.id || index}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.05 }}
-                className={`p-4 border rounded-lg ${
-                  exception.severity === 'critical' ? 'border-ds-status-fail/40 bg-ds-status-fail/10' :
-                  exception.severity === 'high' ? 'border-ds-status-warn/40 bg-ds-status-warn/10' :
-                  'border-ds-enterprise-line'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start space-x-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      exception.severity === 'critical' ? 'bg-ds-status-fail/15' :
-                      exception.severity === 'high' ? 'bg-ds-status-warn/15' :
-                      'bg-ds-status-run/15'
-                    }`}>
-                      <ExclamationTriangleIcon className={`w-5 h-5 ${
-                        exception.severity === 'critical' ? 'text-ds-status-fail' :
-                        exception.severity === 'high' ? 'text-ds-status-warn' :
-                        'text-ds-status-run'
-                      }`} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-ds-foreground">{exception.title}</p>
-                      <p className="text-sm text-ds-muted-foreground">{exception.description}</p>
-                      <div className="flex items-center space-x-3 mt-2">
-                        <StatusPill status={severityStatus[exception.severity] || 'idle'}>
-                          {exception.severity}
-                        </StatusPill>
-                        <StatusPill status={statusPillMap[exception.status] || 'idle'}>
-                          {exception.status}
-                        </StatusPill>
-                        <p className="text-xs text-ds-muted-foreground">
-                          {exception.category}
-                        </p>
+            {exceptions
+              .filter((e: ExceptionItem) => e.status !== 'resolved')
+              .slice(0, 8)
+              .map((exception: ExceptionItem, index: number) => (
+                <motion.div
+                  key={exception.id || index}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  className={`p-4 border rounded-lg ${
+                    exception.severity === 'critical'
+                      ? 'border-ds-status-fail/40 bg-ds-status-fail/10'
+                      : exception.severity === 'high'
+                        ? 'border-ds-status-warn/40 bg-ds-status-warn/10'
+                        : 'border-ds-enterprise-line'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start space-x-3">
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                          exception.severity === 'critical'
+                            ? 'bg-ds-status-fail/15'
+                            : exception.severity === 'high'
+                              ? 'bg-ds-status-warn/15'
+                              : 'bg-ds-status-run/15'
+                        }`}
+                      >
+                        <ExclamationTriangleIcon
+                          className={`w-5 h-5 ${
+                            exception.severity === 'critical'
+                              ? 'text-ds-status-fail'
+                              : exception.severity === 'high'
+                                ? 'text-ds-status-warn'
+                                : 'text-ds-status-run'
+                          }`}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-ds-foreground">{exception.title}</p>
+                        <p className="text-sm text-ds-muted-foreground">{exception.description}</p>
+                        <div className="flex items-center space-x-3 mt-2">
+                          <StatusPill status={severityStatus[exception.severity] || 'idle'}>
+                            {exception.severity}
+                          </StatusPill>
+                          <StatusPill status={statusPillMap[exception.status] || 'idle'}>
+                            {exception.status}
+                          </StatusPill>
+                          <p className="text-xs text-ds-muted-foreground">{exception.category}</p>
+                        </div>
                       </div>
                     </div>
+                    <div className="text-right">
+                      <p className="text-xs text-ds-muted-foreground">{exception.timestamp}</p>
+                      {exception.suggestedAction && (
+                        <div className="mt-2 flex items-center space-x-1 text-ds-primary">
+                          <BoltIcon className="w-3 h-3" />
+                          <p className="text-xs">Auto-fix available</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs text-ds-muted-foreground">
-                      {exception.timestamp}
-                    </p>
-                    {exception.suggestedAction && (
-                      <div className="mt-2 flex items-center space-x-1 text-ds-primary">
-                        <BoltIcon className="w-3 h-3" />
-                        <p className="text-xs">Auto-fix available</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              ))}
           </div>
         </CardContent>
       </Card>
@@ -193,10 +198,18 @@ export default function ExceptionManagement({ data: propData }: ExceptionManagem
             <table className="w-full">
               <thead>
                 <tr className="border-b border-ds-enterprise-line">
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Exception</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Resolution</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Method</th>
-                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">Time to Resolve</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Exception
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Resolution
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Method
+                  </th>
+                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Time to Resolve
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -211,13 +224,17 @@ export default function ExceptionManagement({ data: propData }: ExceptionManagem
                     <td className="py-2 px-3">
                       <p className="text-sm font-medium text-ds-foreground">{resolution.title}</p>
                     </td>
-                    <td className="py-2 px-3 text-sm text-ds-foreground">{resolution.resolution}</td>
+                    <td className="py-2 px-3 text-sm text-ds-foreground">
+                      {resolution.resolution}
+                    </td>
                     <td className="py-2 px-3">
                       <Badge variant={resolution.method === 'auto' ? 'success' : 'primary'}>
                         {resolution.method === 'auto' ? 'Auto-resolved' : 'Manual'}
                       </Badge>
                     </td>
-                    <td className="py-2 px-3 text-sm text-right text-ds-foreground">{resolution.timeToResolve}</td>
+                    <td className="py-2 px-3 text-sm text-right text-ds-foreground">
+                      {resolution.timeToResolve}
+                    </td>
                   </motion.tr>
                 ))}
               </tbody>
@@ -245,18 +262,96 @@ function generateDemoData(): ExceptionManagementData {
       },
     },
     exceptions: [
-      { id: '1', title: 'Payment Processing Failed', description: 'Multiple payment attempts failing for Stripe gateway', severity: 'critical', status: 'investigating', category: 'Payments', timestamp: '5 min ago', suggestedAction: true },
-      { id: '2', title: 'Inventory Sync Delayed', description: 'Warehouse inventory sync exceeded 15 minute threshold', severity: 'high', status: 'open', category: 'Inventory', timestamp: '12 min ago', suggestedAction: true },
-      { id: '3', title: 'Order Fulfillment Stuck', description: '3 orders stuck in processing for over 2 hours', severity: 'high', status: 'investigating', category: 'Orders', timestamp: '25 min ago', suggestedAction: false },
-      { id: '4', title: 'High Return Rate Alert', description: 'Product SKU-1234 return rate exceeds 15%', severity: 'medium', status: 'open', category: 'Returns', timestamp: '1 hour ago', suggestedAction: true },
-      { id: '5', title: 'Customer Complaint Spike', description: 'Unusual increase in customer complaints detected', severity: 'medium', status: 'open', category: 'Support', timestamp: '2 hours ago', suggestedAction: false },
-      { id: '6', title: 'Low Stock Warning', description: '5 popular items below safety stock levels', severity: 'low', status: 'open', category: 'Inventory', timestamp: '3 hours ago', suggestedAction: true },
+      {
+        id: '1',
+        title: 'Payment Processing Failed',
+        description: 'Multiple payment attempts failing for Stripe gateway',
+        severity: 'critical',
+        status: 'investigating',
+        category: 'Payments',
+        timestamp: '5 min ago',
+        suggestedAction: true,
+      },
+      {
+        id: '2',
+        title: 'Inventory Sync Delayed',
+        description: 'Warehouse inventory sync exceeded 15 minute threshold',
+        severity: 'high',
+        status: 'open',
+        category: 'Inventory',
+        timestamp: '12 min ago',
+        suggestedAction: true,
+      },
+      {
+        id: '3',
+        title: 'Order Fulfillment Stuck',
+        description: '3 orders stuck in processing for over 2 hours',
+        severity: 'high',
+        status: 'investigating',
+        category: 'Orders',
+        timestamp: '25 min ago',
+        suggestedAction: false,
+      },
+      {
+        id: '4',
+        title: 'High Return Rate Alert',
+        description: 'Product SKU-1234 return rate exceeds 15%',
+        severity: 'medium',
+        status: 'open',
+        category: 'Returns',
+        timestamp: '1 hour ago',
+        suggestedAction: true,
+      },
+      {
+        id: '5',
+        title: 'Customer Complaint Spike',
+        description: 'Unusual increase in customer complaints detected',
+        severity: 'medium',
+        status: 'open',
+        category: 'Support',
+        timestamp: '2 hours ago',
+        suggestedAction: false,
+      },
+      {
+        id: '6',
+        title: 'Low Stock Warning',
+        description: '5 popular items below safety stock levels',
+        severity: 'low',
+        status: 'open',
+        category: 'Inventory',
+        timestamp: '3 hours ago',
+        suggestedAction: true,
+      },
     ],
     recentResolutions: [
-      { id: '1', title: 'Database Connection Pool Exhausted', resolution: 'Increased pool size from 20 to 50', method: 'manual', timeToResolve: '15 min' },
-      { id: '2', title: 'Shipping Label Generation Failed', resolution: 'Retried with backup carrier API', method: 'auto', timeToResolve: '2 min' },
-      { id: '3', title: 'Duplicate Order Detection', resolution: 'Merged duplicate orders automatically', method: 'auto', timeToResolve: '30 sec' },
-      { id: '4', title: 'Price Discrepancy Alert', resolution: 'Updated price from source of truth', method: 'auto', timeToResolve: '1 min' },
+      {
+        id: '1',
+        title: 'Database Connection Pool Exhausted',
+        resolution: 'Increased pool size from 20 to 50',
+        method: 'manual',
+        timeToResolve: '15 min',
+      },
+      {
+        id: '2',
+        title: 'Shipping Label Generation Failed',
+        resolution: 'Retried with backup carrier API',
+        method: 'auto',
+        timeToResolve: '2 min',
+      },
+      {
+        id: '3',
+        title: 'Duplicate Order Detection',
+        resolution: 'Merged duplicate orders automatically',
+        method: 'auto',
+        timeToResolve: '30 sec',
+      },
+      {
+        id: '4',
+        title: 'Price Discrepancy Alert',
+        resolution: 'Updated price from source of truth',
+        method: 'auto',
+        timeToResolve: '1 min',
+      },
     ],
   };
 }

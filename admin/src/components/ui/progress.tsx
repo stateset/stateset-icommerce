@@ -43,17 +43,12 @@ export function ProgressBar({
           <span>{percentage.toFixed(0)}%</span>
         </div>
       )}
-      <div
-        className={cn(
-          'w-full rounded-full bg-ds-muted',
-          sizeClasses[size]
-        )}
-      >
+      <div className={cn('w-full rounded-full bg-ds-muted', sizeClasses[size])}>
         <div
           className={cn(
             'rounded-full transition-all duration-300',
             sizeClasses[size],
-            colorClasses[color]
+            colorClasses[color],
           )}
           style={{ width: `${percentage}%` }}
         />

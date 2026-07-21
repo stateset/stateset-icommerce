@@ -52,6 +52,19 @@ vi.mock('@/lib/embedded', () => ({
     listInspections: vi.fn().mockResolvedValue([]),
     listNcrs: vi.fn().mockResolvedValue([]),
   },
+  fulfillmentApi: {
+    listWaves: vi.fn().mockResolvedValue([]),
+    listPicks: vi.fn().mockResolvedValue([]),
+  },
+  lotsApi: {
+    list: vi.fn().mockResolvedValue([]),
+  },
+  serialsApi: {
+    list: vi.fn().mockResolvedValue([]),
+  },
+  receivingApi: {
+    listReceipts: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 import {
@@ -68,6 +81,13 @@ import {
   getQualityInspections,
   getNonConformanceReports,
   getManufacturingPageData,
+  getFulfillmentWaves,
+  getPickTasks,
+  getFulfillmentPageData,
+  getLots,
+  getSerials,
+  getReceipts,
+  getTraceabilityPageData,
 } from '@/app/actions/operations';
 import {
   purchaseOrdersApi,
@@ -75,6 +95,10 @@ import {
   cycleCountsApi,
   workOrdersApi,
   qualityApi,
+  fulfillmentApi,
+  lotsApi,
+  serialsApi,
+  receivingApi,
 } from '@/lib/embedded';
 
 beforeEach(() => {
@@ -106,6 +130,24 @@ describe('operations actions auth guard', () => {
       await expect(getWarehousePageData()).rejects.toMatchObject(UNAUTHORIZED);
       expect(warehouseApi.listWarehouses).not.toHaveBeenCalled();
       expect(cycleCountsApi.list).not.toHaveBeenCalled();
+    });
+
+    it('rejects fulfillment reads', async () => {
+      await expect(getFulfillmentWaves()).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(getPickTasks()).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(getFulfillmentPageData()).rejects.toMatchObject(UNAUTHORIZED);
+      expect(fulfillmentApi.listWaves).not.toHaveBeenCalled();
+      expect(fulfillmentApi.listPicks).not.toHaveBeenCalled();
+    });
+
+    it('rejects traceability reads', async () => {
+      await expect(getLots()).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(getSerials()).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(getReceipts()).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(getTraceabilityPageData()).rejects.toMatchObject(UNAUTHORIZED);
+      expect(lotsApi.list).not.toHaveBeenCalled();
+      expect(serialsApi.list).not.toHaveBeenCalled();
+      expect(receivingApi.listReceipts).not.toHaveBeenCalled();
     });
 
     it('rejects manufacturing and quality reads', async () => {
@@ -183,6 +225,49 @@ describe('operations actions auth guard', () => {
     it('rejects an empty work order id before touching the engine', async () => {
       await expect(getWorkOrder('')).rejects.toThrow(/id is required/);
       expect(workOrdersApi.get).not.toHaveBeenCalled();
+    });
+
+    it('aggregates waves + pick tasks', async () => {
+      await expect(getFulfillmentPageData()).resolves.toEqual({ waves: [], picks: [] });
+      expect(fulfillmentApi.listWaves).toHaveBeenCalled();
+      expect(fulfillmentApi.listPicks).toHaveBeenCalled();
+    });
+
+    it('filters waves by status and rejects a blank status', async () => {
+      vi.mocked(fulfillmentApi.listWaves).mockResolvedValueOnce([
+        { id: 'w1', waveNumber: 'WAVE-1', warehouseId: 1, orderCount: 2, status: 'released', createdAt: 'x' },
+        { id: 'w2', waveNumber: 'WAVE-2', warehouseId: 1, orderCount: 3, status: 'completed', createdAt: 'x' },
+      ]);
+      await expect(getFulfillmentWaves('released')).resolves.toMatchObject([{ id: 'w1' }]);
+
+      await expect(getFulfillmentWaves('   ')).rejects.toThrow(/status is required/);
+    });
+
+    it('filters lots by status and rejects a blank status', async () => {
+      vi.mocked(lotsApi.list).mockResolvedValueOnce([
+        {
+          id: 'l1', lotNumber: 'LOT-1', sku: 'SKU-1', quantityProduced: 10,
+          quantityAvailable: 10, quantityReserved: 0, status: 'active', createdAt: 'x',
+        },
+        {
+          id: 'l2', lotNumber: 'LOT-2', sku: 'SKU-2', quantityProduced: 5,
+          quantityAvailable: 0, quantityReserved: 0, status: 'expired', createdAt: 'x',
+        },
+      ]);
+      await expect(getLots('expired')).resolves.toMatchObject([{ id: 'l2' }]);
+
+      await expect(getLots('')).rejects.toThrow(/status is required/);
+    });
+
+    it('aggregates lots + serials + receipts', async () => {
+      await expect(getTraceabilityPageData()).resolves.toEqual({
+        lots: [],
+        serials: [],
+        receipts: [],
+      });
+      expect(lotsApi.list).toHaveBeenCalled();
+      expect(serialsApi.list).toHaveBeenCalled();
+      expect(receivingApi.listReceipts).toHaveBeenCalled();
     });
   });
 });

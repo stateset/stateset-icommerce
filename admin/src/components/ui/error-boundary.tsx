@@ -14,10 +14,7 @@ interface ErrorBoundaryState {
   error?: Error;
 }
 
-export class ErrorBoundary extends React.Component<
-  ErrorBoundaryProps,
-  ErrorBoundaryState
-> {
+export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false };
@@ -80,9 +77,7 @@ export class ErrorBoundary extends React.Component<
           className="flex flex-col items-center justify-center min-h-[200px] p-6 rounded-lg border border-ds-status-fail/25 bg-ds-status-fail/10"
         >
           <ExclamationTriangleIcon className="w-12 h-12 text-ds-status-fail mb-4" />
-          <h3 className="text-lg font-semibold text-ds-status-fail mb-2">
-            Something went wrong
-          </h3>
+          <h3 className="text-lg font-semibold text-ds-status-fail mb-2">Something went wrong</h3>
           <p className="text-sm text-ds-status-fail/90 mb-4 text-center max-w-md">
             {this.state.error?.message || 'An unexpected error occurred'}
           </p>
@@ -114,12 +109,8 @@ export function ErrorDisplay({ error, onRetry }: ErrorDisplayProps) {
       className="flex flex-col items-center justify-center min-h-[200px] p-6 rounded-lg border border-ds-status-fail/25 bg-ds-status-fail/10"
     >
       <ExclamationTriangleIcon className="w-12 h-12 text-ds-status-fail mb-4" />
-      <h3 className="text-lg font-semibold text-ds-status-fail mb-2">
-        Error
-      </h3>
-      <p className="text-sm text-ds-status-fail/90 mb-4 text-center max-w-md">
-        {message}
-      </p>
+      <h3 className="text-lg font-semibold text-ds-status-fail mb-2">Error</h3>
+      <p className="text-sm text-ds-status-fail/90 mb-4 text-center max-w-md">{message}</p>
       {onRetry && (
         <Button variant="outline" onClick={onRetry}>
           Retry

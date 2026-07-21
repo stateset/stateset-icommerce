@@ -13,33 +13,38 @@ const API_URL = getServerStateSetApiUrl();
  *
  * Authenticate a user and return a session token.
  */
-export const POST = withErrorHandler(async (request: NextRequest) => {
-  const body = await request.json();
-  const validation = validateBody(body, loginSchema);
-  if (!validation.success) {
-    throw AppError.validationError(validation.errors.map(e => `${e.field}: ${e.message}`).join('; '));
-  }
-
-  const { email, password } = validation.data;
-
-  const response = await fetch(`${API_URL}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-
-  if (!response.ok) {
-    if (response.status === 401) {
-      throw AppError.unauthorized('Invalid email or password');
+export const POST = withErrorHandler(
+  async (request: NextRequest) => {
+    const body = await request.json();
+    const validation = validateBody(body, loginSchema);
+    if (!validation.success) {
+      throw AppError.validationError(
+        validation.errors.map((e) => `${e.field}: ${e.message}`).join('; '),
+      );
     }
-    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new AppError(errorData.error || 'Login failed', response.status, 'AUTH_ERROR');
-  }
 
-  const data = await response.json();
-  const loginResponse = sendSuccess(data);
-  if (typeof data?.token === 'string' && data.token.trim()) {
-    setSessionCookie(loginResponse, data.token);
-  }
-  return loginResponse;
-}, { requireCsrf: true });
+    const { email, password } = validation.data;
+
+    const response = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw AppError.unauthorized('Invalid email or password');
+      }
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new AppError(errorData.error || 'Login failed', response.status, 'AUTH_ERROR');
+    }
+
+    const data = await response.json();
+    const loginResponse = sendSuccess(data);
+    if (typeof data?.token === 'string' && data.token.trim()) {
+      setSessionCookie(loginResponse, data.token);
+    }
+    return loginResponse;
+  },
+  { requireCsrf: true },
+);

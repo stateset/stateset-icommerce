@@ -60,7 +60,7 @@ export function sendSuccess<T>(data: T, status: number = 200): NextResponse<Succ
       data,
       meta: buildMeta(),
     },
-    { status }
+    { status },
   );
 }
 
@@ -70,7 +70,7 @@ export function sendSuccess<T>(data: T, status: number = 200): NextResponse<Succ
 export function sendError(
   status: number,
   message: string,
-  code: string = 'ERROR'
+  code: string = 'ERROR',
 ): NextResponse<ErrorResponse> {
   return NextResponse.json(
     {
@@ -78,7 +78,7 @@ export function sendError(
       error: { message, code },
       meta: buildMeta(),
     },
-    { status }
+    { status },
   );
 }
 
@@ -87,7 +87,7 @@ export function sendError(
  */
 export function sendPaginated<T>(
   data: T[],
-  pagination: { total: number; limit: number; offset: number }
+  pagination: { total: number; limit: number; offset: number },
 ): NextResponse<PaginatedResponse<T>> {
   return NextResponse.json({
     success: true as const,

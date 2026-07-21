@@ -28,9 +28,7 @@ export default function RootError({ error, reset }: RootErrorProps) {
         className="flex w-full max-w-md flex-col items-center rounded-lg border border-ds-status-fail/25 bg-ds-status-fail/10 p-6 text-center"
       >
         <ExclamationTriangleIcon className="mb-4 h-12 w-12 text-ds-status-fail" />
-        <h2 className="mb-2 text-lg font-semibold text-ds-foreground">
-          Something went wrong
-        </h2>
+        <h2 className="mb-2 text-lg font-semibold text-ds-foreground">Something went wrong</h2>
         <p className="mb-4 text-sm text-ds-status-fail">
           {error.message || 'An unexpected error occurred while loading this page.'}
         </p>

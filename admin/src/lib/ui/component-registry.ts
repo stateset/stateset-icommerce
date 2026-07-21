@@ -19,12 +19,14 @@ export const orderStatusBoardSchema = z.object({
     inProgressCount: z.number(),
     exceptionsCount: z.number(),
   }),
-  statusGroups: z.array(z.object({
-    key: z.string(),
-    label: z.string(),
-    count: z.number(),
-    totalValue: z.number(),
-  })),
+  statusGroups: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      count: z.number(),
+      totalValue: z.number(),
+    }),
+  ),
 });
 
 export const inventoryAnalyticsSchema = z.object({
@@ -33,11 +35,13 @@ export const inventoryAnalyticsSchema = z.object({
   totalValue: z.number(),
   lowStockItems: z.number(),
   outOfStockItems: z.number(),
-  categories: z.array(z.object({
-    name: z.string(),
-    units: z.number(),
-    value: z.number(),
-  })),
+  categories: z.array(
+    z.object({
+      name: z.string(),
+      units: z.number(),
+      value: z.number(),
+    }),
+  ),
 });
 
 export const returnAnalyticsSchema = z.object({
@@ -131,7 +135,7 @@ class ComponentRegistryClass {
     const ids = this.categoryIndex.get(category);
     if (!ids) return [];
     return Array.from(ids)
-      .map(id => this.components.get(id)!)
+      .map((id) => this.components.get(id)!)
       .filter(Boolean);
   }
 
@@ -146,7 +150,7 @@ class ComponentRegistryClass {
     for (const keyword of keywords) {
       const matchingIds = this.promptIndex.get(keyword);
       if (matchingIds) {
-        Array.from(matchingIds).forEach(id => {
+        Array.from(matchingIds).forEach((id) => {
           scores.set(id, (scores.get(id) || 0) + 1);
         });
       }
@@ -158,9 +162,7 @@ class ComponentRegistryClass {
       .slice(0, limit)
       .map(([id]) => id);
 
-    return sortedIds
-      .map(id => this.components.get(id)!)
-      .filter(Boolean);
+    return sortedIds.map((id) => this.components.get(id)!).filter(Boolean);
   }
 
   selectOptimalComponent(context: ComponentContext): GenerativeComponent | null {
@@ -176,12 +178,12 @@ class ComponentRegistryClass {
     // Filter by intent if provided
     if (context.intent) {
       const intentMatches = this.searchComponents(context.intent, 10);
-      const intentIds = new Set(intentMatches.map(c => c.id));
-      candidates = candidates.filter(c => intentIds.has(c.id));
+      const intentIds = new Set(intentMatches.map((c) => c.id));
+      candidates = candidates.filter((c) => intentIds.has(c.id));
     }
 
     // Score remaining candidates
-    const scored = candidates.map(component => {
+    const scored = candidates.map((component) => {
       let score = 0;
 
       // Category match
@@ -193,8 +195,10 @@ class ComponentRegistryClass {
       if (context.intent) {
         const intentLower = context.intent.toLowerCase();
         for (const prompt of component.aiPrompts) {
-          if (prompt.toLowerCase().includes(intentLower) ||
-              intentLower.includes(prompt.toLowerCase())) {
+          if (
+            prompt.toLowerCase().includes(intentLower) ||
+            intentLower.includes(prompt.toLowerCase())
+          ) {
             score += 20;
             break;
           }
@@ -244,12 +248,35 @@ class ComponentRegistryClass {
   }
 
   private extractKeywords(text: string): string[] {
-    const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'for', 'to', 'of', 'and', 'or', 'in', 'on', 'at', 'by', 'my', 'me', 'show', 'display', 'what', 'how', 'where', 'when']);
+    const stopWords = new Set([
+      'the',
+      'a',
+      'an',
+      'is',
+      'are',
+      'for',
+      'to',
+      'of',
+      'and',
+      'or',
+      'in',
+      'on',
+      'at',
+      'by',
+      'my',
+      'me',
+      'show',
+      'display',
+      'what',
+      'how',
+      'where',
+      'when',
+    ]);
     return text
       .toLowerCase()
       .replace(/[^\w\s]/g, '')
       .split(/\s+/)
-      .filter(word => word.length > 2 && !stopWords.has(word));
+      .filter((word) => word.length > 2 && !stopWords.has(word));
   }
 }
 
@@ -262,7 +289,8 @@ export const componentRegistry = new ComponentRegistryClass();
 componentRegistry.register({
   id: 'unified-dashboard',
   name: 'Unified Dashboard',
-  description: 'Executive-level operations dashboard with real-time KPIs and system health monitoring',
+  description:
+    'Executive-level operations dashboard with real-time KPIs and system health monitoring',
   category: 'operations',
   aiPrompts: [
     'Show unified dashboard',
@@ -273,13 +301,14 @@ componentRegistry.register({
   ],
   features: ['Live metrics', 'Department health', 'AI insights', 'Critical alerts'],
   dataShape: dashboardMetricsSchema,
-  load: () => import('@/components/operations/unified-dashboard').then(m => m.default),
+  load: () => import('@/components/operations/unified-dashboard').then((m) => m.default),
 });
 
 componentRegistry.register({
   id: 'order-pipeline',
   name: 'Order Pipeline',
-  description: 'Real-time order flow visualization showing orders progressing through fulfillment stages',
+  description:
+    'Real-time order flow visualization showing orders progressing through fulfillment stages',
   category: 'orders',
   aiPrompts: [
     'Show order pipeline',
@@ -288,15 +317,21 @@ componentRegistry.register({
     'Show orders by status',
     'Display order stages',
   ],
-  features: ['Stage-by-stage tracking', 'Order velocity metrics', 'Exception handling', 'Priority management'],
+  features: [
+    'Stage-by-stage tracking',
+    'Order velocity metrics',
+    'Exception handling',
+    'Priority management',
+  ],
   dataShape: orderStatusBoardSchema,
-  load: () => import('@/components/orders/order-pipeline').then(m => m.default),
+  load: () => import('@/components/orders/order-pipeline').then((m) => m.default),
 });
 
 componentRegistry.register({
   id: 'inventory-analytics',
   name: 'Inventory Analytics',
-  description: 'Real-time inventory tracking with stock levels, low stock alerts, and trend visualization',
+  description:
+    'Real-time inventory tracking with stock levels, low stock alerts, and trend visualization',
   category: 'inventory',
   aiPrompts: [
     'Show inventory analytics',
@@ -305,9 +340,14 @@ componentRegistry.register({
     'Show stock levels',
     'Display inventory health',
   ],
-  features: ['Stock level monitoring', 'Low stock alerts', 'Category distribution', 'Trend analysis'],
+  features: [
+    'Stock level monitoring',
+    'Low stock alerts',
+    'Category distribution',
+    'Trend analysis',
+  ],
   dataShape: inventoryAnalyticsSchema,
-  load: () => import('@/components/inventory/inventory-analytics').then(m => m.default),
+  load: () => import('@/components/inventory/inventory-analytics').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -323,7 +363,7 @@ componentRegistry.register({
     'Show forecast',
   ],
   features: ['8-week forecasts', 'Critical stock alerts', 'Seasonal factors', 'Category accuracy'],
-  load: () => import('@/components/inventory/demand-forecasting').then(m => m.default),
+  load: () => import('@/components/inventory/demand-forecasting').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -340,7 +380,7 @@ componentRegistry.register({
   ],
   features: ['Auto-approval AI', 'Processing pipeline', 'Return analytics', 'Fraud detection'],
   dataShape: returnAnalyticsSchema,
-  load: () => import('@/components/returns/returns-management').then(m => m.default),
+  load: () => import('@/components/returns/returns-management').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -357,7 +397,7 @@ componentRegistry.register({
   ],
   features: ['Health scoring', 'Churn prediction', 'Intervention triggers', 'Success tracking'],
   dataShape: customerAnalyticsSchema,
-  load: () => import('@/components/customers/customer-health-score').then(m => m.default),
+  load: () => import('@/components/customers/customer-health-score').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -373,7 +413,7 @@ componentRegistry.register({
     'Display ARR',
   ],
   features: ['Revenue tracking', 'Plan distribution', 'Growth trends', 'MRR analysis'],
-  load: () => import('@/components/subscriptions/subscription-analytics').then(m => m.default),
+  load: () => import('@/components/subscriptions/subscription-analytics').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -388,7 +428,7 @@ componentRegistry.register({
     'Show autonomous operations',
   ],
   features: ['Task tracking', 'Success rates', 'Learning progress', 'System health'],
-  load: () => import('@/components/agents/agent-performance').then(m => m.default),
+  load: () => import('@/components/agents/agent-performance').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -403,7 +443,7 @@ componentRegistry.register({
     'Show financial overview',
   ],
   features: ['Payment matching', 'Discrepancy detection', 'Cash flow analysis', 'Fee tracking'],
-  load: () => import('@/components/finance/financial-reconciliation').then(m => m.default),
+  load: () => import('@/components/finance/financial-reconciliation').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -419,7 +459,7 @@ componentRegistry.register({
     'Display problems',
   ],
   features: ['Priority queue', 'Auto-resolve tracking', 'Suggested actions', 'Impact assessment'],
-  load: () => import('@/components/operations/exception-management').then(m => m.default),
+  load: () => import('@/components/operations/exception-management').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -434,7 +474,7 @@ componentRegistry.register({
     'Show workflows',
   ],
   features: ['Visual builder', 'Trigger conditions', 'Multi-step workflows', 'AI suggestions'],
-  load: () => import('@/components/operations/workflow-builder').then(m => m.default),
+  load: () => import('@/components/operations/workflow-builder').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -449,7 +489,7 @@ componentRegistry.register({
     'Show cost analysis',
   ],
   features: ['Cost breakdown', 'Savings projection', 'Outcome pricing', 'Payback period'],
-  load: () => import('@/components/finance/roi-calculator').then(m => m.default),
+  load: () => import('@/components/finance/roi-calculator').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -457,14 +497,9 @@ componentRegistry.register({
   name: 'Product Catalog',
   description: 'Comprehensive product management with inventory integration',
   category: 'products',
-  aiPrompts: [
-    'Show product catalog',
-    'Display products',
-    'Show product list',
-    'Manage products',
-  ],
+  aiPrompts: ['Show product catalog', 'Display products', 'Show product list', 'Manage products'],
   features: ['Product listing', 'Inventory sync', 'Pricing management', 'Category organization'],
-  load: () => import('@/components/products/product-catalog').then(m => m.default),
+  load: () => import('@/components/products/product-catalog').then((m) => m.default),
 });
 
 componentRegistry.register({
@@ -479,6 +514,5 @@ componentRegistry.register({
     'Show performance metrics',
   ],
   features: ['Database latency', 'Error rates', 'Connection pool', 'Query performance'],
-  load: () => import('@/components/operations/system-health').then(m => m.default),
+  load: () => import('@/components/operations/system-health').then((m) => m.default),
 });
-

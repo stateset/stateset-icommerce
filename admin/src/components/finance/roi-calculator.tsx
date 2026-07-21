@@ -2,11 +2,29 @@
 
 import { memo } from 'react';
 import { BarChart, DonutChart, ProgressBar } from '@tremor/react';
-import { Badge, Card, CardContent, CardHeader, CardTitle, CardDescription, Separator } from '@stateset/design';
-import { CurrencyDollarIcon, ClockIcon, ArrowTrendingUpIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  Separator,
+} from '@stateset/design';
+import {
+  CurrencyDollarIcon,
+  ClockIcon,
+  ArrowTrendingUpIcon,
+  CheckCircleIcon,
+} from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { formatCurrency, formatNumber, formatPercentage } from '@/lib/utils';
-import type { ROICalculatorData, CostCategory, SavingsCategory, ROIMilestone } from '@/lib/types/dashboard-data';
+import type {
+  ROICalculatorData,
+  CostCategory,
+  SavingsCategory,
+  ROIMilestone,
+} from '@/lib/types/dashboard-data';
 
 interface ROICalculatorProps {
   data?: ROICalculatorData;
@@ -29,7 +47,9 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
         <Card className="border-t-2 border-t-ds-status-ok">
           <CardContent>
             <p className="text-sm text-ds-muted-foreground">Annual Savings</p>
-            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatCurrency(summary.annualSavings)}</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">
+              {formatCurrency(summary.annualSavings)}
+            </p>
             <p className="text-xs text-ds-status-ok mt-1">
               +{formatPercentage(summary.savingsGrowth)} vs last year
             </p>
@@ -47,16 +67,18 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
         <Card className="border-t-2 border-t-ds-brand-500">
           <CardContent>
             <p className="text-sm text-ds-muted-foreground">Hours Saved</p>
-            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatNumber(summary.hoursSaved)}</p>
-            <p className="text-xs text-ds-brand-600 mt-1">
-              Per month
+            <p className="ds-instrument-number text-3xl text-ds-foreground">
+              {formatNumber(summary.hoursSaved)}
             </p>
+            <p className="text-xs text-ds-brand-600 mt-1">Per month</p>
           </CardContent>
         </Card>
         <Card className="border-t-2 border-t-ds-status-warn">
           <CardContent>
             <p className="text-sm text-ds-muted-foreground">Cost per Transaction</p>
-            <p className="ds-instrument-number text-3xl text-ds-foreground">{formatCurrency(summary.costPerTransaction)}</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground">
+              {formatCurrency(summary.costPerTransaction)}
+            </p>
             <p className="text-xs text-ds-status-warn mt-1">
               -{formatPercentage(summary.costReduction)} reduction
             </p>
@@ -86,12 +108,10 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
                 <div key={index} className="flex justify-between items-center">
                   <p className="text-sm text-ds-muted-foreground">{category.name}</p>
                   <div className="flex items-center space-x-2">
-                    <p className="text-sm font-medium text-ds-foreground">{formatCurrency(category.value)}</p>
-                    {category.trend < 0 && (
-                      <Badge variant="success">
-                        {category.trend}%
-                      </Badge>
-                    )}
+                    <p className="text-sm font-medium text-ds-foreground">
+                      {formatCurrency(category.value)}
+                    </p>
+                    {category.trend < 0 && <Badge variant="success">{category.trend}%</Badge>}
                   </div>
                 </div>
               ))}
@@ -119,10 +139,7 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
                       </p>
                     </div>
                   </div>
-                  <ProgressBar
-                    value={(category.saved / category.previous) * 100}
-                    color="emerald"
-                  />
+                  <ProgressBar value={(category.saved / category.previous) * 100} color="emerald" />
                   <p className="text-xs text-ds-muted-foreground mt-1">
                     {formatPercentage(category.saved / category.previous)} reduction
                   </p>
@@ -157,12 +174,12 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
         <CardContent>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Payback Analysis</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                Payback Analysis
+              </h3>
               <p className="text-sm text-ds-muted-foreground">Investment recovery timeline</p>
             </div>
-            <Badge variant="success">
-              {summary.paybackMonths} month payback
-            </Badge>
+            <Badge variant="success">{summary.paybackMonths} month payback</Badge>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -171,21 +188,27 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
                 <CurrencyDollarIcon className="w-5 h-5 text-ds-status-run" />
                 <p className="text-sm font-medium text-ds-foreground">Initial Investment</p>
               </div>
-              <p className="ds-instrument-number text-3xl text-ds-status-run">{formatCurrency(paybackAnalysis.initialInvestment)}</p>
+              <p className="ds-instrument-number text-3xl text-ds-status-run">
+                {formatCurrency(paybackAnalysis.initialInvestment)}
+              </p>
             </div>
             <div className="p-4 bg-ds-muted rounded-lg">
               <div className="flex items-center space-x-2 mb-2">
                 <ClockIcon className="w-5 h-5 text-ds-status-warn" />
                 <p className="text-sm font-medium text-ds-foreground">Monthly Cost</p>
               </div>
-              <p className="ds-instrument-number text-3xl text-ds-status-warn">{formatCurrency(paybackAnalysis.monthlyCost)}</p>
+              <p className="ds-instrument-number text-3xl text-ds-status-warn">
+                {formatCurrency(paybackAnalysis.monthlyCost)}
+              </p>
             </div>
             <div className="p-4 bg-ds-status-ok/10 rounded-lg">
               <div className="flex items-center space-x-2 mb-2">
                 <ArrowTrendingUpIcon className="w-5 h-5 text-ds-status-ok" />
                 <p className="text-sm font-medium text-ds-foreground">Monthly Savings</p>
               </div>
-              <p className="ds-instrument-number text-3xl text-ds-status-ok">{formatCurrency(paybackAnalysis.monthlySavings)}</p>
+              <p className="ds-instrument-number text-3xl text-ds-status-ok">
+                {formatCurrency(paybackAnalysis.monthlySavings)}
+              </p>
             </div>
           </div>
 
@@ -196,9 +219,11 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
             <div className="flex items-center justify-between">
               {paybackAnalysis.milestones.map((milestone: ROIMilestone, index: number) => (
                 <div key={index} className="flex items-center space-x-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                    milestone.achieved ? 'bg-ds-status-ok/15' : 'bg-ds-muted'
-                  }`}>
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                      milestone.achieved ? 'bg-ds-status-ok/15' : 'bg-ds-muted'
+                    }`}
+                  >
                     {milestone.achieved ? (
                       <CheckCircleIcon className="w-5 h-5 text-ds-status-ok" />
                     ) : (
@@ -224,11 +249,15 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
         <CardContent>
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Total Value Generated</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                Total Value Generated
+              </h3>
               <p className="text-sm text-ds-muted-foreground">Since implementation</p>
             </div>
             <div className="text-right">
-              <p className="ds-instrument-number text-3xl text-ds-status-ok">{formatCurrency(summary.totalValueGenerated)}</p>
+              <p className="ds-instrument-number text-3xl text-ds-status-ok">
+                {formatCurrency(summary.totalValueGenerated)}
+              </p>
               <p className="text-sm text-ds-muted-foreground">across all optimizations</p>
             </div>
           </div>

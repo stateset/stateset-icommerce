@@ -10,10 +10,7 @@ import { getActiveOrgId } from '@/lib/shared/active-org';
 import { OrgSwitcher } from '@/components/shared/org-switcher';
 
 export async function TopBar() {
-  const [activeOrgId, organizations] = await Promise.all([
-    getActiveOrgId(),
-    listOrganizations(),
-  ]);
+  const [activeOrgId, organizations] = await Promise.all([getActiveOrgId(), listOrganizations()]);
 
   // OrgSwitcher hides itself when there's ≤ 1 option; until the org-list
   // API exists, that's the production default. Devs can flip

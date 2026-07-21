@@ -117,7 +117,9 @@ export function Sidebar() {
           {/* Footer */}
           <div className="flex flex-shrink-0 border-t border-ds-sidebar-border p-4">
             <div className="w-full">
-              <p className="text-xs text-ds-sidebar-foreground/70">StateSet iCommerce v{APP_VERSION}</p>
+              <p className="text-xs text-ds-sidebar-foreground/70">
+                StateSet iCommerce v{APP_VERSION}
+              </p>
               <p className="text-xs text-ds-sidebar-foreground/50">Embedded Commerce Engine</p>
             </div>
           </div>

@@ -3,14 +3,19 @@
 import { useState, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { Card, Badge } from '@stateset/design';
-import { PaperAirplaneIcon, SparklesIcon, UserIcon, CpuChipIcon } from '@heroicons/react/24/outline';
+import {
+  PaperAirplaneIcon,
+  SparklesIcon,
+  UserIcon,
+  CpuChipIcon,
+} from '@heroicons/react/24/outline';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { componentRegistry } from '@/lib/ui/component-registry';
 
 // Dynamic import for heavy GenerativeRenderer component
 const GenerativeRenderer = dynamic(
-  () => import('@/lib/ui/generative-renderer').then(mod => mod.GenerativeRenderer),
+  () => import('@/lib/ui/generative-renderer').then((mod) => mod.GenerativeRenderer),
   {
     loading: () => (
       <div className="animate-pulse p-4 rounded-lg border border-ds-enterprise-line bg-ds-muted">
@@ -18,7 +23,7 @@ const GenerativeRenderer = dynamic(
       </div>
     ),
     ssr: false,
-  }
+  },
 );
 
 interface Message {
@@ -60,23 +65,52 @@ function classifyIntent(query: string): { componentId: string; context: ChatComp
   }
 
   // Fallback keyword matching
-  if (queryLower.includes('dashboard') || queryLower.includes('overview') || queryLower.includes('kpi')) {
+  if (
+    queryLower.includes('dashboard') ||
+    queryLower.includes('overview') ||
+    queryLower.includes('kpi')
+  ) {
     return { componentId: 'unified-dashboard', context: { intent: query, category: 'operations' } };
   }
   if (queryLower.includes('order') || queryLower.includes('fulfillment')) {
     return { componentId: 'order-pipeline', context: { intent: query, category: 'orders' } };
   }
-  if (queryLower.includes('inventory') || queryLower.includes('stock') || queryLower.includes('sku')) {
-    return { componentId: 'inventory-analytics', context: { intent: query, category: 'inventory' } };
+  if (
+    queryLower.includes('inventory') ||
+    queryLower.includes('stock') ||
+    queryLower.includes('sku')
+  ) {
+    return {
+      componentId: 'inventory-analytics',
+      context: { intent: query, category: 'inventory' },
+    };
   }
-  if (queryLower.includes('return') || queryLower.includes('rma') || queryLower.includes('refund')) {
+  if (
+    queryLower.includes('return') ||
+    queryLower.includes('rma') ||
+    queryLower.includes('refund')
+  ) {
     return { componentId: 'returns-management', context: { intent: query, category: 'returns' } };
   }
-  if (queryLower.includes('customer') || queryLower.includes('churn') || queryLower.includes('segment')) {
-    return { componentId: 'customer-health-score', context: { intent: query, category: 'customers' } };
+  if (
+    queryLower.includes('customer') ||
+    queryLower.includes('churn') ||
+    queryLower.includes('segment')
+  ) {
+    return {
+      componentId: 'customer-health-score',
+      context: { intent: query, category: 'customers' },
+    };
   }
-  if (queryLower.includes('subscription') || queryLower.includes('mrr') || queryLower.includes('recurring')) {
-    return { componentId: 'subscription-analytics', context: { intent: query, category: 'subscriptions' } };
+  if (
+    queryLower.includes('subscription') ||
+    queryLower.includes('mrr') ||
+    queryLower.includes('recurring')
+  ) {
+    return {
+      componentId: 'subscription-analytics',
+      context: { intent: query, category: 'subscriptions' },
+    };
   }
 
   return null;
@@ -87,7 +121,8 @@ export default function ChatPage() {
     {
       id: '1',
       role: 'assistant',
-      content: 'Hello! This is a scripted demo of the commerce assistant: your message is matched against keywords (no AI model is involved) to pick a dashboard view rendered from the embedded StateSet engine. Try asking about orders, inventory, customers, or operations.',
+      content:
+        'Hello! This is a scripted demo of the commerce assistant: your message is matched against keywords (no AI model is involved) to pick a dashboard view rendered from the embedded StateSet engine. Try asking about orders, inventory, customers, or operations.',
       timestamp: new Date(),
     },
   ]);
@@ -114,13 +149,13 @@ export default function ChatPage() {
       timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsProcessing(true);
 
     // Artificial delay so the scripted demo reads as "thinking"; there is
     // no model call here — see the scripted-demo badge in the header.
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     // Classify intent and select component (keyword/registry matching)
     const result = classifyIntent(input);
@@ -140,12 +175,13 @@ export default function ChatPage() {
       assistantMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'I\'m not sure which view you\'re looking for. Try asking about orders, inventory, returns, customers, or the main dashboard. You can also use the suggested queries below.',
+        content:
+          "I'm not sure which view you're looking for. Try asking about orders, inventory, returns, customers, or the main dashboard. You can also use the suggested queries below.",
         timestamp: new Date(),
       };
     }
 
-    setMessages(prev => [...prev, assistantMessage]);
+    setMessages((prev) => [...prev, assistantMessage]);
     setIsProcessing(false);
   };
 
@@ -162,18 +198,26 @@ export default function ChatPage() {
       <div className="mb-4">
         <div className="flex items-center space-x-2 mb-2">
           <SparklesIcon className="w-8 h-8 text-ds-primary" />
-          <h3 className="font-ds-display text-2xl font-semibold text-ds-foreground">Commerce Assistant</h3>
+          <h3 className="font-ds-display text-2xl font-semibold text-ds-foreground">
+            Commerce Assistant
+          </h3>
           <Badge variant="warning">Scripted demo — no AI model</Badge>
         </div>
         <p className="text-sm text-ds-muted-foreground">
-          Demo interface: your question is matched against keywords to pick a dashboard view. Data in the views comes from the embedded commerce engine.
+          Demo interface: your question is matched against keywords to pick a dashboard view. Data
+          in the views comes from the embedded commerce engine.
         </p>
       </div>
 
       {/* Chat Area */}
       <Card className="flex-1 flex flex-col overflow-hidden">
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4" aria-busy={isProcessing} aria-live="polite" role="log">
+        <div
+          className="flex-1 overflow-y-auto p-4 space-y-4"
+          aria-busy={isProcessing}
+          aria-live="polite"
+          role="log"
+        >
           <AnimatePresence>
             {messages.map((message) => (
               <motion.div
@@ -183,12 +227,16 @@ export default function ChatPage() {
                 exit={{ opacity: 0, y: -20 }}
                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <div className={`flex items-start space-x-2 max-w-[85%] ${message.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    message.role === 'user'
-                      ? 'bg-ds-brand-100 dark:bg-ds-brand-900'
-                      : 'bg-ds-muted'
-                  }`}>
+                <div
+                  className={`flex items-start space-x-2 max-w-[85%] ${message.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}
+                >
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                      message.role === 'user'
+                        ? 'bg-ds-brand-100 dark:bg-ds-brand-900'
+                        : 'bg-ds-muted'
+                    }`}
+                  >
                     {message.role === 'user' ? (
                       <UserIcon className="w-5 h-5 text-ds-primary" />
                     ) : (
@@ -197,12 +245,16 @@ export default function ChatPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <div className={`rounded-lg p-3 ${
-                      message.role === 'user'
-                        ? 'bg-ds-primary text-ds-primary-foreground'
-                        : 'bg-ds-muted text-ds-foreground'
-                    }`}>
-                      <p className={`text-sm ${message.role === 'user' ? 'text-ds-primary-foreground' : 'text-ds-foreground'}`}>
+                    <div
+                      className={`rounded-lg p-3 ${
+                        message.role === 'user'
+                          ? 'bg-ds-primary text-ds-primary-foreground'
+                          : 'bg-ds-muted text-ds-foreground'
+                      }`}
+                    >
+                      <p
+                        className={`text-sm ${message.role === 'user' ? 'text-ds-primary-foreground' : 'text-ds-foreground'}`}
+                      >
                         {message.content}
                       </p>
                     </div>
@@ -240,9 +292,18 @@ export default function ChatPage() {
               </div>
               <div className="bg-ds-muted rounded-lg p-3">
                 <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-ds-accent rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 bg-ds-accent rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 bg-ds-accent rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  <div
+                    className="w-2 h-2 bg-ds-accent rounded-full animate-bounce"
+                    style={{ animationDelay: '0ms' }}
+                  />
+                  <div
+                    className="w-2 h-2 bg-ds-accent rounded-full animate-bounce"
+                    style={{ animationDelay: '150ms' }}
+                  />
+                  <div
+                    className="w-2 h-2 bg-ds-accent rounded-full animate-bounce"
+                    style={{ animationDelay: '300ms' }}
+                  />
                 </div>
               </div>
             </motion.div>

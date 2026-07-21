@@ -2,7 +2,11 @@ import { NextRequest } from 'next/server';
 import { withErrorHandler } from '@/lib/shared/with-error-handler';
 import { sendSuccess } from '@/lib/shared/response';
 import { AppError } from '@/lib/shared/errors';
-import { getRequestSessionToken, getServiceSessionToken, isAdminAuthDisabled } from '@/lib/shared/auth-session';
+import {
+  getRequestSessionToken,
+  getServiceSessionToken,
+  isAdminAuthDisabled,
+} from '@/lib/shared/auth-session';
 import { getServerStateSetApiUrl } from '@/lib/stateset-api-url';
 
 const API_URL = getServerStateSetApiUrl();
@@ -13,7 +17,8 @@ const API_URL = getServerStateSetApiUrl();
  * Fetches summary statistics for agent sessions.
  */
 export const GET = withErrorHandler(async (request: NextRequest) => {
-  const token = getRequestSessionToken(request) ?? (isAdminAuthDisabled() ? getServiceSessionToken() : null);
+  const token =
+    getRequestSessionToken(request) ?? (isAdminAuthDisabled() ? getServiceSessionToken() : null);
 
   if (!token) {
     if (isAdminAuthDisabled()) {
@@ -52,7 +57,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     throw new AppError(
       errorData.error || `API request failed: ${response.status}`,
       response.status,
-      'UPSTREAM_ERROR'
+      'UPSTREAM_ERROR',
     );
   }
 

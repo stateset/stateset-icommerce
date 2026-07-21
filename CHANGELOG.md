@@ -6,7 +6,28 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-## [1.20.0] - 2026-07-21
+## [1.21.0] - 2026-07-21
+
+### Fixed
+- **Seven list-filter fields were accepted but silently ignored** by
+  the stores — `purchase_orders` (date and total ranges),
+  `quality` inspections and NCRs (date ranges, reference/inspector/
+  source/sku filters in count queries, NCR cursor), plus a PostgreSQL
+  parameter-index bug and an offset-not-zeroed-in-cursor-mode bug. All
+  now honored, each proven by a store-level test. Hardcoded
+  `LIMIT 100` defaults on these lists replaced with the shared
+  500/1000 policy.
+
+### Added
+- `purchaseOrders.list`, `workOrders.list`, `quality.listInspections`
+  and `listNcrs` now accept optional filter/pagination arguments across
+  the embedded accessor, both bindings, and the CLI tools (zero-arg
+  calls still work).
+- **Admin Operations**: fulfillment (waves, pick tasks) and
+  traceability (lots with expiry highlighting, serial numbers,
+  receipts) pages — admin suite at 951 tests, ~17 domains now exposed.
+
+
 
 ### Added
 - **Backup, restore, and portable export/import** — the recovery layer.

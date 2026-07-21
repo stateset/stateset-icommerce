@@ -15,17 +15,21 @@ import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getDemandForecastingData } from '@/app/actions/commerce';
 import { formatCurrency, formatNumber } from '@/lib/utils';
-import type { DemandForecastingData, DemandHighProduct, DemandAlert } from '@/lib/types/dashboard-data';
+import type {
+  DemandForecastingData,
+  DemandHighProduct,
+  DemandAlert,
+} from '@/lib/types/dashboard-data';
 
 interface DemandForecastingProps {
   data?: DemandForecastingData;
 }
 
 export default function DemandForecasting({ data: propData }: DemandForecastingProps) {
-  const { data, isLoading, error } = useEmbeddedData(
-    () => getDemandForecastingData(),
-    { initialData: propData, refreshInterval: 60000 }
-  );
+  const { data, isLoading, error } = useEmbeddedData(() => getDemandForecastingData(), {
+    initialData: propData,
+    refreshInterval: 60000,
+  });
 
   if (isLoading && !data) {
     return (
@@ -74,11 +78,7 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
           label="Predicted Revenue"
           value={hasForecastTimeline ? formatCurrency(forecast.predictedRevenue) : 'Unavailable'}
         />
-        <MetricCard
-          tone="warning"
-          label="Stock Alerts"
-          value={alerts.length}
-        />
+        <MetricCard tone="warning" label="Stock Alerts" value={alerts.length} />
         <MetricCard
           tone="accent"
           label="Trend Score"
@@ -106,7 +106,8 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
           ) : (
             <div className="flex h-72 items-center justify-center rounded-lg border border-dashed border-ds-enterprise-line">
               <p className="text-sm text-ds-muted-foreground">
-                No live demand forecast is available yet. Enable forecast coverage for at least one SKU.
+                No live demand forecast is available yet. Enable forecast coverage for at least one
+                SKU.
               </p>
             </div>
           )}
@@ -124,7 +125,10 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
             {hasHighDemandProducts ? (
               <div className="space-y-3">
                 {topProducts.highDemand.map((product: DemandHighProduct, index: number) => (
-                  <div key={product.id || index} className="flex items-center justify-between p-3 border border-ds-enterprise-line rounded-lg">
+                  <div
+                    key={product.id || index}
+                    className="flex items-center justify-between p-3 border border-ds-enterprise-line rounded-lg"
+                  >
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 rounded-full bg-ds-status-ok/10 flex items-center justify-center">
                         <ArrowTrendingUpIcon className="w-4 h-4 text-ds-status-ok" />
@@ -135,7 +139,10 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
                       </div>
                     </div>
                     <div className="text-right">
-                      <Badge variant="success">{product.growthRate >= 0 ? '+' : ''}{product.growthRate}%</Badge>
+                      <Badge variant="success">
+                        {product.growthRate >= 0 ? '+' : ''}
+                        {product.growthRate}%
+                      </Badge>
                       <p className="text-xs text-ds-muted-foreground mt-1">
                         {formatNumber(product.predictedUnits)} units
                       </p>
@@ -162,13 +169,18 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
             {hasAlerts ? (
               <div className="space-y-3">
                 {alerts.map((alert: DemandAlert, index: number) => (
-                  <div key={alert.productId || index} className="flex items-center justify-between p-3 border rounded-lg border-ds-status-warn/25">
+                  <div
+                    key={alert.productId || index}
+                    className="flex items-center justify-between p-3 border rounded-lg border-ds-status-warn/25"
+                  >
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 rounded-full bg-ds-status-warn/10 flex items-center justify-center">
                         <ExclamationTriangleIcon className="w-4 h-4 text-ds-status-warn" />
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-ds-foreground">{alert.productName}</p>
+                        <p className="text-sm font-medium text-ds-foreground">
+                          {alert.productName}
+                        </p>
                         <p className="text-xs text-ds-muted-foreground">{alert.reason}</p>
                       </div>
                     </div>
@@ -183,7 +195,9 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-ds-enterprise-line p-6 text-center">
-                <p className="text-sm text-ds-muted-foreground">No active restock alerts from live forecast data.</p>
+                <p className="text-sm text-ds-muted-foreground">
+                  No active restock alerts from live forecast data.
+                </p>
               </div>
             )}
           </CardContent>
@@ -209,7 +223,8 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
           ) : (
             <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-ds-enterprise-line">
               <p className="text-sm text-ds-muted-foreground">
-                Category demand will appear after forecast coverage is available for synced inventory.
+                Category demand will appear after forecast coverage is available for synced
+                inventory.
               </p>
             </div>
           )}

@@ -57,7 +57,7 @@ export function OrgSwitcher({ options, activeOrgId }: OrgSwitcherProps) {
   if (options.length <= 1) return null;
 
   const activeName = activeOrgId
-    ? options.find((o) => o.id === activeOrgId)?.name ?? activeOrgId
+    ? (options.find((o) => o.id === activeOrgId)?.name ?? activeOrgId)
     : 'Default';
 
   return (

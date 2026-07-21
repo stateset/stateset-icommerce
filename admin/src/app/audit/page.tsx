@@ -29,9 +29,8 @@ export default function AuditLogPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Audit Log</h1>
         <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-          Live stream of domain events. Filter by event-type prefix
-          (e.g. <code>order.*</code>, <code>inventory.*</code>). Pause to
-          inspect or export the current buffer to CSV.
+          Live stream of domain events. Filter by event-type prefix (e.g. <code>order.*</code>,{' '}
+          <code>inventory.*</code>). Pause to inspect or export the current buffer to CSV.
         </p>
       </header>
       <AuditLogClient />

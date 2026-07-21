@@ -24,15 +24,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       logger.warn('Billing webhook: missing signature header');
       return NextResponse.json(
         { success: false, error: { message: 'Missing signature', code: 'WEBHOOK_INVALID' } },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!webhookSecret) {
       logger.error('Billing webhook: STRIPE_WEBHOOK_SECRET not configured');
       return NextResponse.json(
-        { success: false, error: { message: 'Webhook not configured', code: 'WEBHOOK_CONFIG_ERROR' } },
-        { status: 500 }
+        {
+          success: false,
+          error: { message: 'Webhook not configured', code: 'WEBHOOK_CONFIG_ERROR' },
+        },
+        { status: 500 },
       );
     }
 
@@ -44,7 +47,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       logger.warn('Billing webhook: malformed signature header');
       return NextResponse.json(
         { success: false, error: { message: 'Malformed signature', code: 'WEBHOOK_INVALID' } },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -54,7 +57,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       logger.warn('Billing webhook: timestamp too old', { age: timestampAge });
       return NextResponse.json(
         { success: false, error: { message: 'Timestamp too old', code: 'WEBHOOK_EXPIRED' } },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -64,7 +67,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       encoder.encode(webhookSecret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
-      ['sign']
+      ['sign'],
     );
     const expectedSig = await crypto.subtle.sign('HMAC', key, encoder.encode(signedPayload));
     const expectedHex = Array.from(new Uint8Array(expectedSig))
@@ -75,7 +78,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       logger.warn('Billing webhook: signature mismatch');
       return NextResponse.json(
         { success: false, error: { message: 'Invalid signature', code: 'WEBHOOK_INVALID' } },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -104,7 +107,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
     return NextResponse.json(
       { success: false, error: { message: 'Webhook processing failed', code: 'WEBHOOK_ERROR' } },
-      { status: 500 }
+      { status: 500 },
     );
   }
 });

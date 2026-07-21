@@ -12,11 +12,45 @@ const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyD
 export const qualityTools = withPolicyDomain('quality', [
   {
     name: 'list_inspections',
-    description: 'List quality inspections.',
-    inputSchema: {},
+    description:
+      'List quality inspections, optionally filtered by type, status, reference, inspector or date range.',
+    inputSchema: {
+      inspectionType: z.string().min(1).optional().describe('Filter by inspection type'),
+      status: z.string().min(1).optional().describe('Filter by status'),
+      referenceType: z.string().min(1).optional().describe('Filter by reference entity type'),
+      referenceId: z.string().min(1).optional().describe('Filter by reference entity ID'),
+      inspectorId: z.string().min(1).optional().describe('Filter by inspector ID'),
+      fromDate: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Inclusive lower bound on created_at (RFC 3339)'),
+      toDate: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Inclusive upper bound on created_at (RFC 3339)'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Maximum results (server default 500, cap 1000)'),
+      offset: z.number().int().min(0).optional().describe('Results to skip'),
+    },
     permission: 'read',
-    handler: async ({ commerce }) => {
-      const inspections = await commerce.quality.listInspections();
+    handler: async ({ commerce, params }) => {
+      const inspections = await commerce.quality.listInspections({
+        inspectionType: params.inspectionType,
+        status: params.status,
+        referenceType: params.referenceType,
+        referenceId: params.referenceId,
+        inspectorId: params.inspectorId,
+        fromDate: params.fromDate,
+        toDate: params.toDate,
+        limit: params.limit,
+        offset: params.offset,
+      });
       return { success: true, count: inspections.length, inspections };
     },
   },
@@ -97,11 +131,47 @@ export const qualityTools = withPolicyDomain('quality', [
   },
   {
     name: 'list_ncrs',
-    description: 'List non-conformance reports.',
-    inputSchema: {},
+    description:
+      'List non-conformance reports, optionally filtered by source, severity, status, SKU, lot, assignee or date range.',
+    inputSchema: {
+      source: z.string().min(1).optional().describe('Filter by NCR source'),
+      severity: z.string().min(1).optional().describe('Filter by severity'),
+      status: z.string().min(1).optional().describe('Filter by status'),
+      sku: z.string().min(1).optional().describe('Filter by SKU'),
+      lotNumber: z.string().min(1).optional().describe('Filter by lot number'),
+      assignedTo: z.string().min(1).optional().describe('Filter by assignee'),
+      fromDate: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Inclusive lower bound on created_at (RFC 3339)'),
+      toDate: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Inclusive upper bound on created_at (RFC 3339)'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Maximum results (server default 500, cap 1000)'),
+      offset: z.number().int().min(0).optional().describe('Results to skip'),
+    },
     permission: 'read',
-    handler: async ({ commerce }) => {
-      const ncrs = await commerce.quality.listNcrs();
+    handler: async ({ commerce, params }) => {
+      const ncrs = await commerce.quality.listNcrs({
+        source: params.source,
+        severity: params.severity,
+        status: params.status,
+        sku: params.sku,
+        lotNumber: params.lotNumber,
+        assignedTo: params.assignedTo,
+        fromDate: params.fromDate,
+        toDate: params.toDate,
+        limit: params.limit,
+        offset: params.offset,
+      });
       return { success: true, count: ncrs.length, ncrs };
     },
   },

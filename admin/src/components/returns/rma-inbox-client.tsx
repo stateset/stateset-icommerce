@@ -5,12 +5,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import {
-  approveReturn,
-  processRefund,
-  receiveReturn,
-  rejectReturn,
-} from '@/app/actions/commerce';
+import { approveReturn, processRefund, receiveReturn, rejectReturn } from '@/app/actions/commerce';
 import type { Return } from '@/lib/types';
 
 const STATUS_BADGE_COLOR: Record<Return['status'], React.ComponentProps<typeof Badge>['color']> = {

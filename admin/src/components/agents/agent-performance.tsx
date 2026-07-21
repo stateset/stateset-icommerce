@@ -2,7 +2,16 @@
 
 import { memo } from 'react';
 import { AreaChart, BarChart, DonutChart, ProgressBar } from '@tremor/react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, StatusPill, MetricCard } from '@stateset/design';
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  Badge,
+  StatusPill,
+  MetricCard,
+} from '@stateset/design';
 import { CpuChipIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
@@ -31,10 +40,10 @@ const statusPillMap: Record<string, AgentStatusKind> = {
 };
 
 function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
-  const { data, isLoading, error } = useEmbeddedData(
-    () => getAgentPerformanceData(),
-    { initialData: propData, refreshInterval: 15000 }
-  );
+  const { data, isLoading, error } = useEmbeddedData(() => getAgentPerformanceData(), {
+    initialData: propData,
+    refreshInterval: 15000,
+  });
 
   if (isLoading && !data) {
     return (
@@ -146,11 +155,15 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <p className="text-sm text-ds-muted-foreground">Tasks</p>
-                    <p className="text-sm text-ds-foreground">{formatNumber(agent.tasksCompleted)}</p>
+                    <p className="text-sm text-ds-foreground">
+                      {formatNumber(agent.tasksCompleted)}
+                    </p>
                   </div>
                   <div className="flex justify-between text-sm">
                     <p className="text-sm text-ds-muted-foreground">Success</p>
-                    <p className="text-sm text-ds-foreground">{formatPercentage(agent.successRate)}</p>
+                    <p className="text-sm text-ds-foreground">
+                      {formatPercentage(agent.successRate)}
+                    </p>
                   </div>
                   <div className="flex justify-between text-sm">
                     <p className="text-sm text-ds-muted-foreground">Avg Time</p>
@@ -158,7 +171,13 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
                   </div>
                   <ProgressBar
                     value={agent.utilization * 100}
-                    color={agent.utilization > 0.8 ? 'red' : agent.utilization > 0.6 ? 'amber' : 'emerald'}
+                    color={
+                      agent.utilization > 0.8
+                        ? 'red'
+                        : agent.utilization > 0.6
+                          ? 'amber'
+                          : 'emerald'
+                    }
                   />
                   <p className="text-xs text-ds-muted-foreground text-center">
                     {formatPercentage(agent.utilization)} utilization
@@ -226,52 +245,70 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-ds-enterprise-line">
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Task ID</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Agent</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Type</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Status</th>
-                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">Duration</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Time</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Task ID
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Agent
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Type
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Status
+                  </th>
+                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Duration
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Time
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {(taskMetrics?.recentTasks || generateDemoRecentTasks()).map((task: RecentTask, index: number) => (
-                  <motion.tr
-                    key={task.id || index}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.03 }}
-                    className="border-b border-ds-enterprise-line hover:bg-ds-muted"
-                  >
-                    <td className="py-2 px-3 text-sm font-mono text-ds-foreground">{task.id}</td>
-                    <td className="py-2 px-3">
-                      <div className="flex items-center space-x-2">
-                        <CpuChipIcon className="w-4 h-4 text-ds-primary" />
-                        <p className="text-sm text-ds-foreground">{task.agent}</p>
-                      </div>
-                    </td>
-                    <td className="py-2 px-3">
-                      <Badge variant="primary">{task.type}</Badge>
-                    </td>
-                    <td className="py-2 px-3">
-                      {task.status === 'success' ? (
-                        <div className="flex items-center space-x-1">
-                          <CheckCircleIcon className="w-4 h-4 text-ds-status-ok" />
-                          <p className="text-sm text-ds-status-ok">Success</p>
+                {(taskMetrics?.recentTasks || generateDemoRecentTasks()).map(
+                  (task: RecentTask, index: number) => (
+                    <motion.tr
+                      key={task.id || index}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.03 }}
+                      className="border-b border-ds-enterprise-line hover:bg-ds-muted"
+                    >
+                      <td className="py-2 px-3 text-sm font-mono text-ds-foreground">{task.id}</td>
+                      <td className="py-2 px-3">
+                        <div className="flex items-center space-x-2">
+                          <CpuChipIcon className="w-4 h-4 text-ds-primary" />
+                          <p className="text-sm text-ds-foreground">{task.agent}</p>
                         </div>
-                      ) : task.status === 'failed' ? (
-                        <div className="flex items-center space-x-1">
-                          <XCircleIcon className="w-4 h-4 text-ds-status-fail" />
-                          <p className="text-sm text-ds-status-fail">Failed</p>
-                        </div>
-                      ) : (
-                        <Badge variant="warning">{task.status}</Badge>
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-sm text-right text-ds-foreground">{task.duration}ms</td>
-                    <td className="py-2 px-3 text-sm text-ds-muted-foreground">{task.timestamp}</td>
-                  </motion.tr>
-                ))}
+                      </td>
+                      <td className="py-2 px-3">
+                        <Badge variant="primary">{task.type}</Badge>
+                      </td>
+                      <td className="py-2 px-3">
+                        {task.status === 'success' ? (
+                          <div className="flex items-center space-x-1">
+                            <CheckCircleIcon className="w-4 h-4 text-ds-status-ok" />
+                            <p className="text-sm text-ds-status-ok">Success</p>
+                          </div>
+                        ) : task.status === 'failed' ? (
+                          <div className="flex items-center space-x-1">
+                            <XCircleIcon className="w-4 h-4 text-ds-status-fail" />
+                            <p className="text-sm text-ds-status-fail">Failed</p>
+                          </div>
+                        ) : (
+                          <Badge variant="warning">{task.status}</Badge>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-sm text-right text-ds-foreground">
+                        {task.duration}ms
+                      </td>
+                      <td className="py-2 px-3 text-sm text-ds-muted-foreground">
+                        {task.timestamp}
+                      </td>
+                    </motion.tr>
+                  ),
+                )}
               </tbody>
             </table>
           </div>
@@ -297,14 +334,78 @@ function generateDemoResponseTimeTrend(): NonNullable<AgentPerformanceData['resp
 
 function generateDemoAgents(): Agent[] {
   return [
-    { id: '1', name: 'Order Agent', status: 'online', tasksCompleted: 3245, successRate: 0.992, avgResponseTime: 850, utilization: 0.72 },
-    { id: '2', name: 'Inventory Agent', status: 'online', tasksCompleted: 2890, successRate: 0.988, avgResponseTime: 920, utilization: 0.65 },
-    { id: '3', name: 'Returns Agent', status: 'busy', tasksCompleted: 1560, successRate: 0.975, avgResponseTime: 1100, utilization: 0.88 },
-    { id: '4', name: 'Customer Agent', status: 'online', tasksCompleted: 2100, successRate: 0.981, avgResponseTime: 780, utilization: 0.55 },
-    { id: '5', name: 'Analytics Agent', status: 'online', tasksCompleted: 1890, successRate: 0.995, avgResponseTime: 1250, utilization: 0.42 },
-    { id: '6', name: 'Support Agent', status: 'online', tasksCompleted: 2450, successRate: 0.968, avgResponseTime: 650, utilization: 0.78 },
-    { id: '7', name: 'Pricing Agent', status: 'offline', tasksCompleted: 980, successRate: 0.991, avgResponseTime: 450, utilization: 0 },
-    { id: '8', name: 'Fulfillment Agent', status: 'online', tasksCompleted: 3100, successRate: 0.986, avgResponseTime: 890, utilization: 0.68 },
+    {
+      id: '1',
+      name: 'Order Agent',
+      status: 'online',
+      tasksCompleted: 3245,
+      successRate: 0.992,
+      avgResponseTime: 850,
+      utilization: 0.72,
+    },
+    {
+      id: '2',
+      name: 'Inventory Agent',
+      status: 'online',
+      tasksCompleted: 2890,
+      successRate: 0.988,
+      avgResponseTime: 920,
+      utilization: 0.65,
+    },
+    {
+      id: '3',
+      name: 'Returns Agent',
+      status: 'busy',
+      tasksCompleted: 1560,
+      successRate: 0.975,
+      avgResponseTime: 1100,
+      utilization: 0.88,
+    },
+    {
+      id: '4',
+      name: 'Customer Agent',
+      status: 'online',
+      tasksCompleted: 2100,
+      successRate: 0.981,
+      avgResponseTime: 780,
+      utilization: 0.55,
+    },
+    {
+      id: '5',
+      name: 'Analytics Agent',
+      status: 'online',
+      tasksCompleted: 1890,
+      successRate: 0.995,
+      avgResponseTime: 1250,
+      utilization: 0.42,
+    },
+    {
+      id: '6',
+      name: 'Support Agent',
+      status: 'online',
+      tasksCompleted: 2450,
+      successRate: 0.968,
+      avgResponseTime: 650,
+      utilization: 0.78,
+    },
+    {
+      id: '7',
+      name: 'Pricing Agent',
+      status: 'offline',
+      tasksCompleted: 980,
+      successRate: 0.991,
+      avgResponseTime: 450,
+      utilization: 0,
+    },
+    {
+      id: '8',
+      name: 'Fulfillment Agent',
+      status: 'online',
+      tasksCompleted: 3100,
+      successRate: 0.986,
+      avgResponseTime: 890,
+      utilization: 0.68,
+    },
   ];
 }
 
@@ -332,12 +433,54 @@ function generateDemoTaskOutcomes(): DailyOutcomeEntry[] {
 
 function generateDemoRecentTasks(): RecentTask[] {
   return [
-    { id: 'TSK-001', agent: 'Order Agent', type: 'order.process', status: 'success', duration: 856, timestamp: '2 min ago' },
-    { id: 'TSK-002', agent: 'Customer Agent', type: 'customer.query', status: 'success', duration: 423, timestamp: '3 min ago' },
-    { id: 'TSK-003', agent: 'Returns Agent', type: 'return.approve', status: 'success', duration: 1120, timestamp: '5 min ago' },
-    { id: 'TSK-004', agent: 'Inventory Agent', type: 'stock.check', status: 'failed', duration: 2500, timestamp: '6 min ago' },
-    { id: 'TSK-005', agent: 'Analytics Agent', type: 'report.generate', status: 'success', duration: 1890, timestamp: '8 min ago' },
-    { id: 'TSK-006', agent: 'Fulfillment Agent', type: 'shipment.track', status: 'success', duration: 650, timestamp: '10 min ago' },
+    {
+      id: 'TSK-001',
+      agent: 'Order Agent',
+      type: 'order.process',
+      status: 'success',
+      duration: 856,
+      timestamp: '2 min ago',
+    },
+    {
+      id: 'TSK-002',
+      agent: 'Customer Agent',
+      type: 'customer.query',
+      status: 'success',
+      duration: 423,
+      timestamp: '3 min ago',
+    },
+    {
+      id: 'TSK-003',
+      agent: 'Returns Agent',
+      type: 'return.approve',
+      status: 'success',
+      duration: 1120,
+      timestamp: '5 min ago',
+    },
+    {
+      id: 'TSK-004',
+      agent: 'Inventory Agent',
+      type: 'stock.check',
+      status: 'failed',
+      duration: 2500,
+      timestamp: '6 min ago',
+    },
+    {
+      id: 'TSK-005',
+      agent: 'Analytics Agent',
+      type: 'report.generate',
+      status: 'success',
+      duration: 1890,
+      timestamp: '8 min ago',
+    },
+    {
+      id: 'TSK-006',
+      agent: 'Fulfillment Agent',
+      type: 'shipment.track',
+      status: 'success',
+      duration: 650,
+      timestamp: '10 min ago',
+    },
   ];
 }
 

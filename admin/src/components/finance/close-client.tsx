@@ -8,7 +8,14 @@ import { getGlPeriods, closeMonthDryRun, runCloseMonth } from '@/app/actions/fin
 import { formatMoney } from '@/lib/finance/format';
 import type { CloseMonthReport, CloseMonthStep, GlPeriod } from '@/lib/embedded';
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const periodBadgeVariants: Record<string, DsBadgeVariant> = {
   open: 'primary',
@@ -23,7 +30,13 @@ const stepBadgeVariants: Record<string, DsBadgeVariant> = {
   skipped: 'outline',
 };
 
-const STEP_ROWS: { key: keyof Pick<CloseMonthReport, 'depreciation' | 'revenueRecognition' | 'fxRevaluation' | 'periodClose'>; label: string }[] = [
+const STEP_ROWS: {
+  key: keyof Pick<
+    CloseMonthReport,
+    'depreciation' | 'revenueRecognition' | 'fxRevaluation' | 'periodClose'
+  >;
+  label: string;
+}[] = [
   { key: 'depreciation', label: 'Depreciation' },
   { key: 'revenueRecognition', label: 'Revenue recognition' },
   { key: 'fxRevaluation', label: 'FX revaluation' },
@@ -147,7 +160,12 @@ export default function CloseClient() {
   const canDryRun = Boolean(selectedPeriod && selectedPeriod.status === 'open' && !busy);
   const confirmMatches = Boolean(selectedPeriod && confirmText === selectedPeriod.periodName);
   const canRealClose = Boolean(
-    selectedPeriod && report && report.dryRun && report.periodId === selectedPeriod.id && confirmMatches && !busy
+    selectedPeriod &&
+    report &&
+    report.dryRun &&
+    report.periodId === selectedPeriod.id &&
+    confirmMatches &&
+    !busy,
   );
 
   return (

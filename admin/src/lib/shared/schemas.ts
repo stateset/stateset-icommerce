@@ -23,7 +23,8 @@ export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
 
 export const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
-  password: z.string()
+  password: z
+    .string()
     .min(8, 'Password must be at least 8 characters')
     .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
@@ -32,7 +33,8 @@ export const loginSchema = z.object({
 
 export const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
-  password: z.string()
+  password: z
+    .string()
     .min(8, 'Password must be at least 8 characters')
     .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
@@ -48,7 +50,8 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z.object({
   token: z.string().min(1, 'Token is required'),
-  password: z.string()
+  password: z
+    .string()
     .min(8, 'Password must be at least 8 characters')
     .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
@@ -167,10 +170,7 @@ export type ValidationResult<T> =
 /**
  * Validate request body against a Zod schema.
  */
-export function validateBody<T>(
-  body: unknown,
-  schema: z.ZodType<T>
-): ValidationResult<T> {
+export function validateBody<T>(body: unknown, schema: z.ZodType<T>): ValidationResult<T> {
   const result = schema.safeParse(body);
   if (result.success) {
     return { success: true, data: result.data };
@@ -189,7 +189,7 @@ export function validateBody<T>(
  */
 export function validateQuery<T>(
   params: URLSearchParams,
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
 ): ValidationResult<T> {
   const raw: Record<string, string> = {};
   params.forEach((value, key) => {

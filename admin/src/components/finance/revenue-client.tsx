@@ -6,7 +6,14 @@ import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getRevenueContracts } from '@/app/actions/finance';
 import { formatMoney } from '@/lib/finance/format';
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const statusBadgeVariants: Record<string, DsBadgeVariant> = {
   draft: 'outline',
@@ -105,9 +112,7 @@ export default function RevenueClient() {
                       <tr
                         className="cursor-pointer border-b border-ds-border/50 hover:bg-ds-muted/40"
                         aria-expanded={expanded}
-                        onClick={() =>
-                          setExpandedId(expanded ? null : contract.id)
-                        }
+                        onClick={() => setExpandedId(expanded ? null : contract.id)}
                       >
                         <td className="py-2 pr-4 font-mono">{contract.contractNumber}</td>
                         <td className="py-2 pr-4 font-mono">{contract.customerId}</td>

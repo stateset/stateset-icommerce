@@ -8,7 +8,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withErrorHandler } from '@/lib/shared/with-error-handler';
 import { AppError } from '@/lib/shared/errors';
-import { isAdminAuthDisabled, requireRequestSessionToken, validateSessionToken } from '@/lib/shared/auth-session';
+import {
+  isAdminAuthDisabled,
+  requireRequestSessionToken,
+  validateSessionToken,
+} from '@/lib/shared/auth-session';
 import { getRequestId } from '@/lib/shared/request-context';
 
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://127.0.0.1:8080';
@@ -31,14 +35,11 @@ function isAllowedPath(path: string): boolean {
   const normalized = path.replace(/\/+/g, '/').replace(/\/$/, '');
   if (normalized.includes('..')) return false;
   return ALLOWED_PREFIXES.some(
-    (prefix) => normalized === prefix || normalized.startsWith(prefix + '/')
+    (prefix) => normalized === prefix || normalized.startsWith(prefix + '/'),
   );
 }
 
-async function proxyToGateway(
-  request: NextRequest,
-  path: string
-): Promise<NextResponse> {
+async function proxyToGateway(request: NextRequest, path: string): Promise<NextResponse> {
   if (!isAdminAuthDisabled()) {
     const sessionToken = requireRequestSessionToken(request);
     const isValidSession = await validateSessionToken(sessionToken);
@@ -81,7 +82,7 @@ async function proxyToGateway(
           timestamp: new Date().toISOString(),
         },
       },
-      { status: response.status }
+      { status: response.status },
     );
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError') {
@@ -90,7 +91,7 @@ async function proxyToGateway(
     throw new AppError(
       `Gateway unreachable: ${error instanceof Error ? error.message : 'Unknown error'}`,
       502,
-      'GATEWAY_UNREACHABLE'
+      'GATEWAY_UNREACHABLE',
     );
   }
 }
@@ -101,8 +102,11 @@ export const GET = withErrorHandler(async (request: NextRequest, context) => {
   return proxyToGateway(request, path);
 });
 
-export const POST = withErrorHandler(async (request: NextRequest, context) => {
-  const params = await context!.params;
-  const path = '/' + (params.path as unknown as string[]).join('/');
-  return proxyToGateway(request, path);
-}, { requireCsrf: true });
+export const POST = withErrorHandler(
+  async (request: NextRequest, context) => {
+    const params = await context!.params;
+    const path = '/' + (params.path as unknown as string[]).join('/');
+    return proxyToGateway(request, path);
+  },
+  { requireCsrf: true },
+);

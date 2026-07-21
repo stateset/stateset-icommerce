@@ -147,9 +147,7 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
           <div className="flex items-center gap-3">
             <Badge color="blue">{visible.length} shown</Badge>
             <span className="text-sm text-ds-muted-foreground">{orders.length} total</span>
-            {selected.size > 0 && (
-              <Badge color="indigo">{selected.size} selected</Badge>
-            )}
+            {selected.size > 0 && <Badge color="indigo">{selected.size} selected</Badge>}
           </div>
           <div className="flex items-center gap-2">
             {STATUS_FILTER_OPTIONS.map((opt) => (
@@ -237,10 +235,7 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
                 {visible.map((o) => {
                   const isSelected = selected.has(o.id);
                   return (
-                    <tr
-                      key={o.id}
-                      className={isSelected ? 'bg-ds-brand-50' : ''}
-                    >
+                    <tr key={o.id} className={isSelected ? 'bg-ds-brand-50' : ''}>
                       <td className="px-4 py-3">
                         <input
                           type="checkbox"

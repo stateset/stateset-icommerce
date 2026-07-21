@@ -12,12 +12,21 @@ import {
   MetricCard,
   StatusPill,
 } from '@stateset/design';
-import { CreditCardIcon, ArrowTrendingUpIcon, UserMinusIcon, CalendarIcon } from '@heroicons/react/24/outline';
+import {
+  CreditCardIcon,
+  ArrowTrendingUpIcon,
+  UserMinusIcon,
+  CalendarIcon,
+} from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getSubscriptionAnalyticsData } from '@/app/actions/commerce';
 import { formatCurrency, formatNumber, formatPercentage } from '@/lib/utils';
-import type { SubscriptionAnalyticsData, ChurnReason, UpcomingRenewal } from '@/lib/types/dashboard-data';
+import type {
+  SubscriptionAnalyticsData,
+  ChurnReason,
+  UpcomingRenewal,
+} from '@/lib/types/dashboard-data';
 
 type DsStatus = 'ok' | 'run' | 'warn' | 'fail' | 'review' | 'idle';
 
@@ -34,10 +43,10 @@ const statusPills: Record<string, DsStatus> = {
 };
 
 function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsProps) {
-  const { data, isLoading, error } = useEmbeddedData(
-    () => getSubscriptionAnalyticsData(),
-    { initialData: propData, refreshInterval: 60000 }
-  );
+  const { data, isLoading, error } = useEmbeddedData(() => getSubscriptionAnalyticsData(), {
+    initialData: propData,
+    refreshInterval: 60000,
+  });
 
   if (isLoading && !data) {
     return (
@@ -78,9 +87,21 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
           subtitle={`+${formatPercentage(summary?.mrrGrowth || 0.12)} vs last month`}
           tone="success"
         />
-        <MetricCard label="Active Subscriptions" value={formatNumber(summary?.activeCount || 1250)} tone="primary" />
-        <MetricCard label="Churn Rate" value={formatPercentage(summary?.churnRate || 0.032)} tone="warning" />
-        <MetricCard label="Avg Revenue/User" value={formatCurrency(summary?.arpu || 36)} tone="accent" />
+        <MetricCard
+          label="Active Subscriptions"
+          value={formatNumber(summary?.activeCount || 1250)}
+          tone="primary"
+        />
+        <MetricCard
+          label="Churn Rate"
+          value={formatPercentage(summary?.churnRate || 0.032)}
+          tone="warning"
+        />
+        <MetricCard
+          label="Avg Revenue/User"
+          value={formatCurrency(summary?.arpu || 36)}
+          tone="accent"
+        />
       </div>
 
       {/* MRR Trend */}
@@ -138,13 +159,12 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
                     <p className="text-sm font-medium text-ds-foreground">{reason.name}</p>
                     <div className="flex items-center space-x-2">
                       <Badge variant="default">{reason.count}</Badge>
-                      <p className="text-sm text-ds-muted-foreground">{formatPercentage(reason.percentage)}</p>
+                      <p className="text-sm text-ds-muted-foreground">
+                        {formatPercentage(reason.percentage)}
+                      </p>
                     </div>
                   </div>
-                  <ProgressBar
-                    value={reason.percentage * 100}
-                    color="rose"
-                  />
+                  <ProgressBar value={reason.percentage * 100} color="rose" />
                 </div>
               ))}
             </div>
@@ -160,14 +180,21 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-            {Object.entries(summary?.statusBreakdown || generateDemoStatusBreakdown()).map(([status, count]) => (
-              <div key={status} className="text-center p-4 border border-ds-enterprise-line rounded-lg">
-                <StatusPill status={statusPills[status] || 'idle'}>
-                  {status.replace('_', ' ')}
-                </StatusPill>
-                <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{count as number}</p>
-              </div>
-            ))}
+            {Object.entries(summary?.statusBreakdown || generateDemoStatusBreakdown()).map(
+              ([status, count]) => (
+                <div
+                  key={status}
+                  className="text-center p-4 border border-ds-enterprise-line rounded-lg"
+                >
+                  <StatusPill status={statusPills[status] || 'idle'}>
+                    {status.replace('_', ' ')}
+                  </StatusPill>
+                  <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
+                    {count as number}
+                  </p>
+                </div>
+              ),
+            )}
           </div>
         </CardContent>
       </Card>
@@ -181,7 +208,13 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
               <CardDescription>Subscriptions renewing in the next 7 days</CardDescription>
             </div>
             <Badge variant="primary">
-              {formatCurrency((upcomingRenewals || []).reduce((sum: number, r: UpcomingRenewal) => sum + r.amount, 0))} expected
+              {formatCurrency(
+                (upcomingRenewals || []).reduce(
+                  (sum: number, r: UpcomingRenewal) => sum + r.amount,
+                  0,
+                ),
+              )}{' '}
+              expected
             </Badge>
           </div>
         </CardHeader>
@@ -190,47 +223,75 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
             <table className="w-full">
               <thead>
                 <tr className="border-b border-ds-enterprise-line">
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Customer</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Plan</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Renewal Date</th>
-                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">Amount</th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">Risk</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Customer
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Plan
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Renewal Date
+                  </th>
+                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Amount
+                  </th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                    Risk
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {(upcomingRenewals || generateDemoUpcomingRenewals()).map((renewal: UpcomingRenewal, index: number) => (
-                  <motion.tr
-                    key={renewal.id || index}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="border-b border-ds-enterprise-line hover:bg-ds-muted"
-                  >
-                    <td className="py-3 px-3">
-                      <div>
-                        <p className="text-sm font-medium text-ds-foreground">{renewal.customerName}</p>
-                        <p className="text-xs text-ds-muted-foreground">{renewal.email}</p>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3">
-                      <Badge variant="primary">{renewal.plan}</Badge>
-                    </td>
-                    <td className="py-3 px-3">
-                      <div className="flex items-center space-x-2">
-                        <CalendarIcon className="w-4 h-4 text-ds-muted-foreground" />
-                        <p className="text-sm text-ds-foreground">{renewal.renewalDate}</p>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      <p className="text-sm font-medium text-ds-foreground">{formatCurrency(renewal.amount)}</p>
-                    </td>
-                    <td className="py-3 px-3">
-                      <StatusPill status={renewal.churnRisk < 0.2 ? 'ok' : renewal.churnRisk < 0.5 ? 'warn' : 'fail'}>
-                        {renewal.churnRisk < 0.2 ? 'Low' : renewal.churnRisk < 0.5 ? 'Medium' : 'High'}
-                      </StatusPill>
-                    </td>
-                  </motion.tr>
-                ))}
+                {(upcomingRenewals || generateDemoUpcomingRenewals()).map(
+                  (renewal: UpcomingRenewal, index: number) => (
+                    <motion.tr
+                      key={renewal.id || index}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      className="border-b border-ds-enterprise-line hover:bg-ds-muted"
+                    >
+                      <td className="py-3 px-3">
+                        <div>
+                          <p className="text-sm font-medium text-ds-foreground">
+                            {renewal.customerName}
+                          </p>
+                          <p className="text-xs text-ds-muted-foreground">{renewal.email}</p>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <Badge variant="primary">{renewal.plan}</Badge>
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="flex items-center space-x-2">
+                          <CalendarIcon className="w-4 h-4 text-ds-muted-foreground" />
+                          <p className="text-sm text-ds-foreground">{renewal.renewalDate}</p>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        <p className="text-sm font-medium text-ds-foreground">
+                          {formatCurrency(renewal.amount)}
+                        </p>
+                      </td>
+                      <td className="py-3 px-3">
+                        <StatusPill
+                          status={
+                            renewal.churnRisk < 0.2
+                              ? 'ok'
+                              : renewal.churnRisk < 0.5
+                                ? 'warn'
+                                : 'fail'
+                          }
+                        >
+                          {renewal.churnRisk < 0.2
+                            ? 'Low'
+                            : renewal.churnRisk < 0.5
+                              ? 'Medium'
+                              : 'High'}
+                        </StatusPill>
+                      </td>
+                    </motion.tr>
+                  ),
+                )}
               </tbody>
             </table>
           </div>
@@ -245,8 +306,12 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
               <ArrowTrendingUpIcon className="w-5 h-5 text-ds-status-ok" />
               <p className="text-sm font-medium text-ds-foreground">New MRR</p>
             </div>
-            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{formatCurrency(summary?.newMrr || 5200)}</p>
-            <p className="text-xs text-ds-muted-foreground">From {summary?.newSubscribers || 145} new subscribers</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
+              {formatCurrency(summary?.newMrr || 5200)}
+            </p>
+            <p className="text-xs text-ds-muted-foreground">
+              From {summary?.newSubscribers || 145} new subscribers
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -255,8 +320,12 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
               <CreditCardIcon className="w-5 h-5 text-ds-primary" />
               <p className="text-sm font-medium text-ds-foreground">Expansion MRR</p>
             </div>
-            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{formatCurrency(summary?.expansionMrr || 1800)}</p>
-            <p className="text-xs text-ds-muted-foreground">From {summary?.upgrades || 32} upgrades</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
+              {formatCurrency(summary?.expansionMrr || 1800)}
+            </p>
+            <p className="text-xs text-ds-muted-foreground">
+              From {summary?.upgrades || 32} upgrades
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -265,8 +334,12 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
               <UserMinusIcon className="w-5 h-5 text-ds-status-fail" />
               <p className="text-sm font-medium text-ds-foreground">Churned MRR</p>
             </div>
-            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{formatCurrency(summary?.churnedMrr || 1400)}</p>
-            <p className="text-xs text-ds-muted-foreground">From {summary?.cancellations || 38} cancellations</p>
+            <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
+              {formatCurrency(summary?.churnedMrr || 1400)}
+            </p>
+            <p className="text-xs text-ds-muted-foreground">
+              From {summary?.cancellations || 38} cancellations
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -301,7 +374,7 @@ function generateDemoChurnReasons() {
     { name: 'Missing features', count: 8, percentage: 0.21 },
     { name: 'Switched competitor', count: 7, percentage: 0.18 },
     { name: 'No longer needed', count: 5, percentage: 0.13 },
-    { name: 'Other', count: 3, percentage: 0.10 },
+    { name: 'Other', count: 3, percentage: 0.1 },
   ];
 }
 
@@ -317,11 +390,51 @@ function generateDemoStatusBreakdown() {
 
 function generateDemoUpcomingRenewals() {
   return [
-    { id: '1', customerName: 'Acme Corp', email: 'billing@acme.com', plan: 'Business', renewalDate: '2024-12-22', amount: 99, churnRisk: 0.1 },
-    { id: '2', customerName: 'TechStart Inc', email: 'admin@techstart.io', plan: 'Pro', renewalDate: '2024-12-23', amount: 49, churnRisk: 0.3 },
-    { id: '3', customerName: 'Global Retail', email: 'it@globalretail.com', plan: 'Enterprise', renewalDate: '2024-12-24', amount: 299, churnRisk: 0.15 },
-    { id: '4', customerName: 'Local Shop', email: 'owner@localshop.com', plan: 'Basic', renewalDate: '2024-12-25', amount: 19, churnRisk: 0.55 },
-    { id: '5', customerName: 'Digital Agency', email: 'accounts@digital.agency', plan: 'Pro', renewalDate: '2024-12-26', amount: 49, churnRisk: 0.2 },
+    {
+      id: '1',
+      customerName: 'Acme Corp',
+      email: 'billing@acme.com',
+      plan: 'Business',
+      renewalDate: '2024-12-22',
+      amount: 99,
+      churnRisk: 0.1,
+    },
+    {
+      id: '2',
+      customerName: 'TechStart Inc',
+      email: 'admin@techstart.io',
+      plan: 'Pro',
+      renewalDate: '2024-12-23',
+      amount: 49,
+      churnRisk: 0.3,
+    },
+    {
+      id: '3',
+      customerName: 'Global Retail',
+      email: 'it@globalretail.com',
+      plan: 'Enterprise',
+      renewalDate: '2024-12-24',
+      amount: 299,
+      churnRisk: 0.15,
+    },
+    {
+      id: '4',
+      customerName: 'Local Shop',
+      email: 'owner@localshop.com',
+      plan: 'Basic',
+      renewalDate: '2024-12-25',
+      amount: 19,
+      churnRisk: 0.55,
+    },
+    {
+      id: '5',
+      customerName: 'Digital Agency',
+      email: 'accounts@digital.agency',
+      plan: 'Pro',
+      renewalDate: '2024-12-26',
+      amount: 49,
+      churnRisk: 0.2,
+    },
   ];
 }
 

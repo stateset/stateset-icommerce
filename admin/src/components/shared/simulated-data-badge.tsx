@@ -27,7 +27,7 @@ export function SimulatedDataBadge({
       title={title}
       className={cn(
         'inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-        className
+        className,
       )}
     >
       {label}

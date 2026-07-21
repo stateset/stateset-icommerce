@@ -30,7 +30,12 @@ import LoadingSkeleton from '../ui/loading-skeleton';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getDashboardMetrics, getHourlyActivity, getSystemHealth } from '@/app/actions/commerce';
 import type { DashboardMetrics, HourlyActivity, SystemHealth } from '@/lib/types';
-import { formatCurrency, formatCompactNumber, formatPercentage, formatRelativeTime } from '@/lib/utils';
+import {
+  formatCurrency,
+  formatCompactNumber,
+  formatPercentage,
+  formatRelativeTime,
+} from '@/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface KPI {
@@ -231,7 +236,9 @@ function CoverageBar({ value, ok }: { value: number; ok: boolean }) {
   return (
     <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ds-muted">
       <div
-        className={ok ? 'h-full rounded-full bg-ds-primary' : 'h-full rounded-full bg-ds-status-warn'}
+        className={
+          ok ? 'h-full rounded-full bg-ds-primary' : 'h-full rounded-full bg-ds-status-warn'
+        }
         style={{ width: `${value}%` }}
       />
     </div>
@@ -255,16 +262,50 @@ function UnifiedDashboardInner() {
 
   const keyMetrics: KPI[] = metrics
     ? [
-        { name: 'GMV Today', value: metrics.gmvToday, change: metrics.gmvChange, unit: '$', icon: CurrencyDollarIcon },
-        { name: 'Orders Processed', value: metrics.ordersToday, change: metrics.ordersChange, icon: ShoppingCartIcon },
-        { name: 'Avg Order Value', value: metrics.averageOrderValue, change: metrics.aovChange, unit: '$', icon: ReceiptPercentIcon },
-        { name: 'Conversion Rate', value: metrics.conversionRate, change: metrics.conversionChange, unit: '%', target: 3.5, icon: ArrowTrendingUpIcon },
+        {
+          name: 'GMV Today',
+          value: metrics.gmvToday,
+          change: metrics.gmvChange,
+          unit: '$',
+          icon: CurrencyDollarIcon,
+        },
+        {
+          name: 'Orders Processed',
+          value: metrics.ordersToday,
+          change: metrics.ordersChange,
+          icon: ShoppingCartIcon,
+        },
+        {
+          name: 'Avg Order Value',
+          value: metrics.averageOrderValue,
+          change: metrics.aovChange,
+          unit: '$',
+          icon: ReceiptPercentIcon,
+        },
+        {
+          name: 'Conversion Rate',
+          value: metrics.conversionRate,
+          change: metrics.conversionChange,
+          unit: '%',
+          target: 3.5,
+          icon: ArrowTrendingUpIcon,
+        },
         { name: 'Active Customers', value: metrics.activeCustomers, change: 0, icon: UsersIcon },
-        { name: 'Inventory Health', value: metrics.inventoryHealth, change: 0, unit: '%', icon: CubeIcon },
+        {
+          name: 'Inventory Health',
+          value: metrics.inventoryHealth,
+          change: 0,
+          unit: '%',
+          icon: CubeIcon,
+        },
       ]
     : [];
 
-  const dataCoverage = buildDataCoverage(metrics || null, hourlyActivity || null, systemHealth || null);
+  const dataCoverage = buildDataCoverage(
+    metrics || null,
+    hourlyActivity || null,
+    systemHealth || null,
+  );
   const criticalAlerts = buildOperationalAlerts(metrics || null, systemHealth || null);
   const aiInsights = buildOperationalInsights(metrics || null, systemHealth || null);
 
@@ -338,13 +379,17 @@ function UnifiedDashboardInner() {
                     index="hour"
                     categories={['orders', 'revenue']}
                     colors={['indigo', 'emerald']}
-                    valueFormatter={(value) => (value > 1000 ? `$${(value / 1000).toFixed(0)}k` : value.toString())}
+                    valueFormatter={(value) =>
+                      value > 1000 ? `$${(value / 1000).toFixed(0)}k` : value.toString()
+                    }
                     showAnimation
                   />
                   <div className="mt-4 grid grid-cols-3 gap-4 border-t border-ds-enterprise-line/70 pt-4 text-center">
                     <div>
                       <p className="text-xs text-ds-muted-foreground">Total Orders</p>
-                      <p className="ds-instrument-number mt-1 text-lg text-ds-foreground">{totalOrders}</p>
+                      <p className="ds-instrument-number mt-1 text-lg text-ds-foreground">
+                        {totalOrders}
+                      </p>
                     </div>
                     <div>
                       <p className="text-xs text-ds-muted-foreground">Total Revenue</p>
@@ -380,7 +425,9 @@ function UnifiedDashboardInner() {
                   <div key={feed.name}>
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <p className="text-sm font-medium text-ds-foreground">{feed.name}</p>
-                      <StatusPill status={ok ? 'ok' : 'warn'}>{ok ? 'Connected' : 'Unavailable'}</StatusPill>
+                      <StatusPill status={ok ? 'ok' : 'warn'}>
+                        {ok ? 'Connected' : 'Unavailable'}
+                      </StatusPill>
                     </div>
                     <p className="text-xs text-ds-muted-foreground">{feed.detail}</p>
                     <CoverageBar value={feed.coverage} ok={ok} />
@@ -406,7 +453,10 @@ function UnifiedDashboardInner() {
           <Card>
             <CardHeader className="flex-row items-center justify-between">
               <CardTitle>Critical Alerts</CardTitle>
-              <StatusPill status={criticalAlerts.length > 0 ? 'fail' : 'ok'} pulse={criticalAlerts.length > 0}>
+              <StatusPill
+                status={criticalAlerts.length > 0 ? 'fail' : 'ok'}
+                pulse={criticalAlerts.length > 0}
+              >
                 {criticalAlerts.length} active
               </StatusPill>
             </CardHeader>
@@ -422,7 +472,9 @@ function UnifiedDashboardInner() {
                         <p className="text-sm font-medium text-ds-foreground">{alert.message}</p>
                         <p className="text-xs text-ds-muted-foreground">{alert.time}</p>
                       </div>
-                      <StatusPill status={SEVERITY_STATUS[alert.severity]}>{alert.severity}</StatusPill>
+                      <StatusPill status={SEVERITY_STATUS[alert.severity]}>
+                        {alert.severity}
+                      </StatusPill>
                     </div>
                   ))}
                 </div>
@@ -450,7 +502,8 @@ function UnifiedDashboardInner() {
                         <p className="text-sm text-ds-foreground">{insight.insight}</p>
                       </div>
                       <p className="mt-2 pl-1 text-xs text-ds-muted-foreground">
-                        <span className="font-semibold text-ds-primary">Suggested:</span> {insight.action}
+                        <span className="font-semibold text-ds-primary">Suggested:</span>{' '}
+                        {insight.action}
                       </p>
                     </div>
                   ))}

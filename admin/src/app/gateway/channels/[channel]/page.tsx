@@ -15,7 +15,7 @@ const ChannelDetail = dynamic(
       </div>
     ),
     ssr: false,
-  }
+  },
 );
 
 export default function ChannelDetailPage() {
@@ -23,10 +23,5 @@ export default function ChannelDetailPage() {
   const router = useRouter();
   const channel = params.channel as string;
 
-  return (
-    <ChannelDetail
-      channelName={channel}
-      onBack={() => router.push('/gateway')}
-    />
-  );
+  return <ChannelDetail channelName={channel} onBack={() => router.push('/gateway')} />;
 }

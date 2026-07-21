@@ -7,7 +7,14 @@ import { getBillsPageData } from '@/app/actions/finance';
 import { formatMoney } from '@/lib/finance/format';
 import type { Bill } from '@/lib/embedded';
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const statusBadgeVariants: Record<string, DsBadgeVariant> = {
   open: 'primary',
@@ -61,9 +68,7 @@ export default function BillsClient() {
   }
 
   const bills: Bill[] =
-    statusFilter === 'all'
-      ? data.bills
-      : data.bills.filter((bill) => bill.status === statusFilter);
+    statusFilter === 'all' ? data.bills : data.bills.filter((bill) => bill.status === statusFilter);
 
   return (
     <div className="space-y-6">
@@ -93,7 +98,10 @@ export default function BillsClient() {
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {AGING_BUCKETS.map((bucket) => (
-          <Card key={bucket.key} className={bucket.key === 'total' ? 'border-ds-primary/40' : undefined}>
+          <Card
+            key={bucket.key}
+            className={bucket.key === 'total' ? 'border-ds-primary/40' : undefined}
+          >
             <CardContent>
               <p className="text-xs uppercase tracking-ds-kicker text-ds-muted-foreground">
                 {bucket.label}
@@ -135,8 +143,12 @@ export default function BillsClient() {
                       </Badge>
                     </td>
                     <td className="py-2 pr-4">{bill.dueDate}</td>
-                    <td className="py-2 pr-4 text-right font-mono">{formatMoney(bill.totalAmount)}</td>
-                    <td className="py-2 pr-4 text-right font-mono">{formatMoney(bill.amountPaid)}</td>
+                    <td className="py-2 pr-4 text-right font-mono">
+                      {formatMoney(bill.totalAmount)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono">
+                      {formatMoney(bill.amountPaid)}
+                    </td>
                     <td className="py-2 text-right font-mono">{formatMoney(bill.amountDue)}</td>
                   </tr>
                 ))}

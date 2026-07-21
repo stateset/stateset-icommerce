@@ -173,12 +173,7 @@ export function AuditLogClient() {
             <Button variant="outline" size="sm" onClick={onClear}>
               Clear
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onExport}
-              disabled={filtered.length === 0}
-            >
+            <Button variant="outline" size="sm" onClick={onExport} disabled={filtered.length === 0}>
               Export CSV
             </Button>
           </div>

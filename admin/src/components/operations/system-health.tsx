@@ -11,7 +11,15 @@ import {
   StatusPill,
   type StatusTone,
 } from '@stateset/design';
-import { ServerIcon, CpuChipIcon, CircleStackIcon, BoltIcon, CheckCircleIcon, ExclamationCircleIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import {
+  ServerIcon,
+  CpuChipIcon,
+  CircleStackIcon,
+  BoltIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+  MagnifyingGlassIcon,
+} from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getSystemHealthData } from '@/app/actions/commerce';
@@ -32,7 +40,7 @@ const serviceStatusMap: Record<string, StatusTone> = {
 export default function SystemHealth({ data: propData }: SystemHealthProps) {
   const { data, isLoading, error } = useEmbeddedData<SystemHealthData>(
     () => getSystemHealthData(),
-    { initialData: propData, refreshInterval: 10000 }
+    { initialData: propData, refreshInterval: 10000 },
   );
 
   const healthData = data || propData;
@@ -78,28 +86,42 @@ export default function SystemHealth({ data: propData }: SystemHealthProps) {
       className="space-y-6"
     >
       {/* Overall Health Status */}
-      <Card className={`p-5 ${
-        summary.overallStatus === 'healthy' ? 'bg-ds-status-ok/10' :
-        summary.overallStatus === 'degraded' ? 'bg-ds-status-warn/10' :
-        'bg-ds-status-fail/10'
-      }`}>
+      <Card
+        className={`p-5 ${
+          summary.overallStatus === 'healthy'
+            ? 'bg-ds-status-ok/10'
+            : summary.overallStatus === 'degraded'
+              ? 'bg-ds-status-warn/10'
+              : 'bg-ds-status-fail/10'
+        }`}
+      >
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-              summary.overallStatus === 'healthy' ? 'bg-ds-status-ok/15' :
-              summary.overallStatus === 'degraded' ? 'bg-ds-status-warn/15' :
-              'bg-ds-status-fail/15'
-            }`}>
+            <div
+              className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                summary.overallStatus === 'healthy'
+                  ? 'bg-ds-status-ok/15'
+                  : summary.overallStatus === 'degraded'
+                    ? 'bg-ds-status-warn/15'
+                    : 'bg-ds-status-fail/15'
+              }`}
+            >
               {summary.overallStatus === 'healthy' ? (
                 <CheckCircleIcon className="w-6 h-6 text-ds-status-ok" />
               ) : (
-                <ExclamationCircleIcon className={`w-6 h-6 ${
-                  summary.overallStatus === 'degraded' ? 'text-ds-status-warn' : 'text-ds-status-fail'
-                }`} />
+                <ExclamationCircleIcon
+                  className={`w-6 h-6 ${
+                    summary.overallStatus === 'degraded'
+                      ? 'text-ds-status-warn'
+                      : 'text-ds-status-fail'
+                  }`}
+                />
               )}
             </div>
             <div>
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">System Status: {summary.overallStatus.toUpperCase()}</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                System Status: {summary.overallStatus.toUpperCase()}
+              </h3>
               <p className="text-sm text-ds-muted-foreground">
                 {summary.healthyServices}/{summary.totalServices} services operational
               </p>
@@ -186,11 +208,15 @@ export default function SystemHealth({ data: propData }: SystemHealthProps) {
               >
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center space-x-2">
-                    <div className={`w-2 h-2 rounded-full ${
-                      service.status === 'healthy' ? 'bg-ds-status-ok animate-pulse' :
-                      service.status === 'degraded' ? 'bg-ds-status-warn' :
-                      'bg-ds-status-fail'
-                    }`} />
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        service.status === 'healthy'
+                          ? 'bg-ds-status-ok animate-pulse'
+                          : service.status === 'degraded'
+                            ? 'bg-ds-status-warn'
+                            : 'bg-ds-status-fail'
+                      }`}
+                    />
                     <p className="text-sm font-medium text-ds-foreground">{service.name}</p>
                   </div>
                   <StatusPill status={serviceStatusMap[service.status] || 'idle'}>
@@ -204,13 +230,23 @@ export default function SystemHealth({ data: propData }: SystemHealthProps) {
                   </div>
                   <div className="flex justify-between text-sm">
                     <p className="text-ds-muted-foreground">Success Rate</p>
-                    <p className={service.successRate >= 99 ? 'text-ds-status-ok' : 'text-ds-status-warn'}>
+                    <p
+                      className={
+                        service.successRate >= 99 ? 'text-ds-status-ok' : 'text-ds-status-warn'
+                      }
+                    >
                       {service.successRate}%
                     </p>
                   </div>
                   <ProgressBar
                     value={service.successRate}
-                    color={service.successRate >= 99 ? 'emerald' : service.successRate >= 95 ? 'amber' : 'red'}
+                    color={
+                      service.successRate >= 99
+                        ? 'emerald'
+                        : service.successRate >= 95
+                          ? 'amber'
+                          : 'red'
+                    }
                   />
                 </div>
               </motion.div>
@@ -229,7 +265,9 @@ export default function SystemHealth({ data: propData }: SystemHealthProps) {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div className="p-4 bg-ds-muted rounded-lg">
               <p className="text-sm text-ds-muted-foreground">Connection Pool</p>
-              <p className="ds-instrument-number text-3xl text-ds-foreground">{database.connections}/{database.maxConnections}</p>
+              <p className="ds-instrument-number text-3xl text-ds-foreground">
+                {database.connections}/{database.maxConnections}
+              </p>
               <ProgressBar
                 value={(database.connections / database.maxConnections) * 100}
                 color="indigo"
@@ -238,11 +276,15 @@ export default function SystemHealth({ data: propData }: SystemHealthProps) {
             </div>
             <div className="p-4 bg-ds-muted rounded-lg">
               <p className="text-sm text-ds-muted-foreground">Query Time (avg)</p>
-              <p className="ds-instrument-number text-3xl text-ds-foreground">{database.avgQueryTime}ms</p>
+              <p className="ds-instrument-number text-3xl text-ds-foreground">
+                {database.avgQueryTime}ms
+              </p>
             </div>
             <div className="p-4 bg-ds-muted rounded-lg">
               <p className="text-sm text-ds-muted-foreground">Queries/sec</p>
-              <p className="ds-instrument-number text-3xl text-ds-foreground">{formatNumber(database.queriesPerSecond)}</p>
+              <p className="ds-instrument-number text-3xl text-ds-foreground">
+                {formatNumber(database.queriesPerSecond)}
+              </p>
             </div>
             <div className="p-4 bg-ds-muted rounded-lg">
               <p className="text-sm text-ds-muted-foreground">Database Size</p>
@@ -268,19 +310,27 @@ export default function SystemHealth({ data: propData }: SystemHealthProps) {
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <div className="p-4 bg-ds-muted rounded-lg">
                 <p className="text-sm text-ds-muted-foreground">Products</p>
-                <p className="ds-instrument-number text-3xl text-ds-foreground">{formatNumber(vectorSearch.counts.products)}</p>
+                <p className="ds-instrument-number text-3xl text-ds-foreground">
+                  {formatNumber(vectorSearch.counts.products)}
+                </p>
               </div>
               <div className="p-4 bg-ds-muted rounded-lg">
                 <p className="text-sm text-ds-muted-foreground">Customers</p>
-                <p className="ds-instrument-number text-3xl text-ds-foreground">{formatNumber(vectorSearch.counts.customers)}</p>
+                <p className="ds-instrument-number text-3xl text-ds-foreground">
+                  {formatNumber(vectorSearch.counts.customers)}
+                </p>
               </div>
               <div className="p-4 bg-ds-muted rounded-lg">
                 <p className="text-sm text-ds-muted-foreground">Orders</p>
-                <p className="ds-instrument-number text-3xl text-ds-foreground">{formatNumber(vectorSearch.counts.orders)}</p>
+                <p className="ds-instrument-number text-3xl text-ds-foreground">
+                  {formatNumber(vectorSearch.counts.orders)}
+                </p>
               </div>
               <div className="p-4 bg-ds-muted rounded-lg">
                 <p className="text-sm text-ds-muted-foreground">Inventory</p>
-                <p className="ds-instrument-number text-3xl text-ds-foreground">{formatNumber(vectorSearch.counts.inventory)}</p>
+                <p className="ds-instrument-number text-3xl text-ds-foreground">
+                  {formatNumber(vectorSearch.counts.inventory)}
+                </p>
               </div>
             </div>
             <div className="mt-4 p-3 bg-ds-brand-50 rounded-lg">
@@ -315,12 +365,17 @@ export default function SystemHealth({ data: propData }: SystemHealthProps) {
                   className="flex items-center justify-between p-3 border border-ds-enterprise-line rounded-lg"
                 >
                   <div className="flex items-center space-x-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                      event.type === 'success' ? 'bg-ds-status-ok/15' :
-                      event.type === 'warning' ? 'bg-ds-status-warn/15' :
-                      event.type === 'error' ? 'bg-ds-status-fail/15' :
-                      'bg-ds-status-run/15'
-                    }`}>
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        event.type === 'success'
+                          ? 'bg-ds-status-ok/15'
+                          : event.type === 'warning'
+                            ? 'bg-ds-status-warn/15'
+                            : event.type === 'error'
+                              ? 'bg-ds-status-fail/15'
+                              : 'bg-ds-status-run/15'
+                      }`}
+                    >
                       {event.type === 'success' ? (
                         <CheckCircleIcon className="w-4 h-4 text-ds-status-ok" />
                       ) : event.type === 'warning' ? (

@@ -7,16 +7,8 @@ import { motion } from 'framer-motion';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import LoadingSkeleton from '@/components/ui/loading-skeleton';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
-import {
-  getGatewayHealth,
-  getGatewayMetrics,
-  getGatewayReadiness,
-} from '@/lib/gateway-client';
-import type {
-  GatewayHealth,
-  GatewayMetrics,
-  GatewayReadiness,
-} from '@/lib/types/gateway';
+import { getGatewayHealth, getGatewayMetrics, getGatewayReadiness } from '@/lib/gateway-client';
+import type { GatewayHealth, GatewayMetrics, GatewayReadiness } from '@/lib/types/gateway';
 
 import { MetricsSummary } from './metrics-summary';
 import { SubsystemPanel } from './subsystem-panel';
@@ -29,16 +21,19 @@ import { ChannelDetail } from './channel-detail';
 export default function GatewayOverview() {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
 
-  const { data: health, isLoading: loadingHealth } =
-    useEmbeddedData<GatewayHealth>(getGatewayHealth, { refreshInterval: 10_000 });
-
-  const { data: metrics, isLoading: loadingMetrics } =
-    useEmbeddedData<GatewayMetrics>(getGatewayMetrics, { refreshInterval: 15_000 });
-
-  const { data: readiness } = useEmbeddedData<GatewayReadiness>(
-    getGatewayReadiness,
-    { refreshInterval: 30_000 }
+  const { data: health, isLoading: loadingHealth } = useEmbeddedData<GatewayHealth>(
+    getGatewayHealth,
+    { refreshInterval: 10_000 },
   );
+
+  const { data: metrics, isLoading: loadingMetrics } = useEmbeddedData<GatewayMetrics>(
+    getGatewayMetrics,
+    { refreshInterval: 15_000 },
+  );
+
+  const { data: readiness } = useEmbeddedData<GatewayReadiness>(getGatewayReadiness, {
+    refreshInterval: 30_000,
+  });
 
   const isLoading = loadingHealth || loadingMetrics;
 
@@ -59,12 +54,7 @@ export default function GatewayOverview() {
   }
 
   if (selectedChannel && metrics.channels[selectedChannel]) {
-    return (
-      <ChannelDetail
-        channelName={selectedChannel}
-        onBack={() => setSelectedChannel(null)}
-      />
-    );
+    return <ChannelDetail channelName={selectedChannel} onBack={() => setSelectedChannel(null)} />;
   }
 
   return (
@@ -94,7 +84,9 @@ export default function GatewayOverview() {
 
         {/* Subsystems */}
         <div>
-          <h3 className="font-ds-display text-lg font-semibold text-ds-foreground mb-3">Subsystems</h3>
+          <h3 className="font-ds-display text-lg font-semibold text-ds-foreground mb-3">
+            Subsystems
+          </h3>
           <SubsystemPanel subsystems={health.subsystems} />
         </div>
 
@@ -103,7 +95,9 @@ export default function GatewayOverview() {
           <Card>
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
-                <h3 className="font-ds-display text-lg font-semibold text-ds-foreground">Readiness</h3>
+                <h3 className="font-ds-display text-lg font-semibold text-ds-foreground">
+                  Readiness
+                </h3>
                 <StatusPill status={readiness.status === 'ready' ? 'ok' : 'fail'}>
                   {readiness.status.toUpperCase()}
                 </StatusPill>
@@ -128,7 +122,9 @@ export default function GatewayOverview() {
 
         {/* Channels Grid */}
         <div>
-          <h3 className="font-ds-display text-lg font-semibold text-ds-foreground mb-3">Channels</h3>
+          <h3 className="font-ds-display text-lg font-semibold text-ds-foreground mb-3">
+            Channels
+          </h3>
           {Object.keys(metrics.channels).length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {Object.entries(metrics.channels).map(([name, stats]) => (

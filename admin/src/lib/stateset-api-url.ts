@@ -29,10 +29,10 @@ export function getServerStateSetApiUrl(): string {
 
 export function getStateSetApiConnectSources(): string[] {
   return Array.from(
-    new Set([
-      DEFAULT_STATESET_API_URL,
-      getPublicStateSetApiUrl(),
-      getServerStateSetApiUrl(),
-    ].map(toOrigin))
+    new Set(
+      [DEFAULT_STATESET_API_URL, getPublicStateSetApiUrl(), getServerStateSetApiUrl()].map(
+        toOrigin,
+      ),
+    ),
   );
 }

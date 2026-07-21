@@ -224,9 +224,21 @@ describe('manufacturingTools — input schemas', () => {
     assert.ok(schema.bomId, 'missing bomId field');
   });
 
-  it('list_work_orders has empty inputSchema', () => {
+  it('list_work_orders exposes optional filter fields', () => {
     const schema = findTool('list_work_orders').inputSchema;
-    assert.deepStrictEqual(schema, {});
+    for (const field of [
+      'productId',
+      'bomId',
+      'status',
+      'priority',
+      'assignedTo',
+      'workCenterId',
+      'overdueOnly',
+      'limit',
+      'offset',
+    ]) {
+      assert.ok(schema[field], `missing ${field} field`);
+    }
   });
 
   it('get_work_order has workOrderId field', () => {

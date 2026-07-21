@@ -12,12 +12,21 @@ import {
   StatusPill,
   MetricCard,
 } from '@stateset/design';
-import { ExclamationTriangleIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon } from '@heroicons/react/24/outline';
+import {
+  ExclamationTriangleIcon,
+  ArrowTrendingUpIcon,
+  ArrowTrendingDownIcon,
+} from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getInventoryAnalyticsData } from '@/app/actions/commerce';
 import { formatCurrency, formatCompactNumber } from '@/lib/utils';
-import type { InventoryAnalyticsData, InventoryCategory, TopMovingItem, SlowMovingItem } from '@/lib/types/dashboard-data';
+import type {
+  InventoryAnalyticsData,
+  InventoryCategory,
+  TopMovingItem,
+  SlowMovingItem,
+} from '@/lib/types/dashboard-data';
 import type { InventoryItem } from '@/lib/types';
 
 interface InventoryAnalyticsProps {
@@ -25,10 +34,10 @@ interface InventoryAnalyticsProps {
 }
 
 function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
-  const { data, isLoading, error } = useEmbeddedData(
-    () => getInventoryAnalyticsData(),
-    { initialData: propData, refreshInterval: 60000 }
-  );
+  const { data, isLoading, error } = useEmbeddedData(() => getInventoryAnalyticsData(), {
+    initialData: propData,
+    refreshInterval: 60000,
+  });
 
   if (isLoading && !data) {
     return (
@@ -53,11 +62,15 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
     );
   }
 
-  const healthScore = Math.max(0, 100 - (data.lowStockItems * 2) - (data.outOfStockItems * 5));
+  const healthScore = Math.max(0, 100 - data.lowStockItems * 2 - data.outOfStockItems * 5);
   const healthStatus = healthScore >= 80 ? 'ok' : healthScore >= 60 ? 'warn' : 'fail';
   const healthLabel = healthScore >= 80 ? 'Healthy' : healthScore >= 60 ? 'Fair' : 'Critical';
   const healthTextClass =
-    healthScore >= 80 ? 'text-ds-status-ok' : healthScore >= 60 ? 'text-ds-status-warn' : 'text-ds-status-fail';
+    healthScore >= 80
+      ? 'text-ds-status-ok'
+      : healthScore >= 60
+        ? 'text-ds-status-warn'
+        : 'text-ds-status-fail';
   const healthBarColor = healthScore >= 80 ? 'emerald' : healthScore >= 60 ? 'amber' : 'rose';
 
   return (
@@ -69,7 +82,11 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
       {/* Key Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         <MetricCard tone="primary" label="Total SKUs" value={formatCompactNumber(data.totalSKUs)} />
-        <MetricCard tone="success" label="Total Units" value={formatCompactNumber(data.totalUnits)} />
+        <MetricCard
+          tone="success"
+          label="Total Units"
+          value={formatCompactNumber(data.totalUnits)}
+        />
         <MetricCard tone="primary" label="Total Value" value={formatCurrency(data.totalValue)} />
         <Card className="p-5">
           <p className="text-sm text-ds-muted-foreground">Low Stock</p>
@@ -89,7 +106,11 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
             </Badge>
           )}
         </Card>
-        <MetricCard tone="accent" label="Turnover Rate" value={`${(data.turnoverRate || 0).toFixed(1)}x`} />
+        <MetricCard
+          tone="accent"
+          label="Turnover Rate"
+          value={`${(data.turnoverRate || 0).toFixed(1)}x`}
+        />
       </div>
 
       {/* Inventory Health */}
@@ -97,13 +118,13 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
         <CardContent className="p-5">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Inventory Health Score</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                Inventory Health Score
+              </h3>
               <p className="text-sm text-ds-muted-foreground">Overall inventory status</p>
             </div>
             <div className="text-right">
-              <p className={`ds-instrument-number text-3xl ${healthTextClass}`}>
-                {healthScore}%
-              </p>
+              <p className={`ds-instrument-number text-3xl ${healthTextClass}`}>{healthScore}%</p>
               <StatusPill status={healthStatus}>{healthLabel}</StatusPill>
             </div>
           </div>
@@ -193,11 +214,16 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
           <CardContent className="p-5">
             <div className="flex items-center space-x-2 mb-4">
               <ArrowTrendingUpIcon className="w-5 h-5 text-ds-status-ok" />
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Top Moving Items</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                Top Moving Items
+              </h3>
             </div>
             <div className="space-y-3">
               {(data.topMovingItems || []).slice(0, 5).map((item: TopMovingItem, index: number) => (
-                <div key={item.sku} className="flex items-center justify-between p-3 border border-ds-enterprise-line rounded-lg">
+                <div
+                  key={item.sku}
+                  className="flex items-center justify-between p-3 border border-ds-enterprise-line rounded-lg"
+                >
                   <div className="flex items-center space-x-3">
                     <div className="w-8 h-8 bg-ds-status-ok/10 rounded-full flex items-center justify-center">
                       <span className="text-sm font-bold text-ds-status-ok">{index + 1}</span>
@@ -211,7 +237,9 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
                 </div>
               ))}
               {(!data.topMovingItems || data.topMovingItems.length === 0) && (
-                <p className="text-sm text-ds-muted-foreground text-center py-4">No data available</p>
+                <p className="text-sm text-ds-muted-foreground text-center py-4">
+                  No data available
+                </p>
               )}
             </div>
           </CardContent>
@@ -221,25 +249,34 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
           <CardContent className="p-5">
             <div className="flex items-center space-x-2 mb-4">
               <ArrowTrendingDownIcon className="w-5 h-5 text-ds-status-fail" />
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Slow Moving Items</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                Slow Moving Items
+              </h3>
             </div>
             <div className="space-y-3">
-              {(data.slowMovingItems || []).slice(0, 5).map((item: SlowMovingItem, index: number) => (
-                <div key={item.sku} className="flex items-center justify-between p-3 border border-ds-enterprise-line rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-ds-status-fail/10 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-bold text-ds-status-fail">{index + 1}</span>
+              {(data.slowMovingItems || [])
+                .slice(0, 5)
+                .map((item: SlowMovingItem, index: number) => (
+                  <div
+                    key={item.sku}
+                    className="flex items-center justify-between p-3 border border-ds-enterprise-line rounded-lg"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-ds-status-fail/10 rounded-full flex items-center justify-center">
+                        <span className="text-sm font-bold text-ds-status-fail">{index + 1}</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-ds-foreground">{item.name}</p>
+                        <p className="text-xs text-ds-muted-foreground">{item.sku}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-ds-foreground">{item.name}</p>
-                      <p className="text-xs text-ds-muted-foreground">{item.sku}</p>
-                    </div>
+                    <Badge variant="danger">{item.daysSinceLastSale}+ days</Badge>
                   </div>
-                  <Badge variant="danger">{item.daysSinceLastSale}+ days</Badge>
-                </div>
-              ))}
+                ))}
               {(!data.slowMovingItems || data.slowMovingItems.length === 0) && (
-                <p className="text-sm text-ds-muted-foreground text-center py-4">No data available</p>
+                <p className="text-sm text-ds-muted-foreground text-center py-4">
+                  No data available
+                </p>
               )}
             </div>
           </CardContent>
@@ -252,20 +289,23 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
           <CardContent className="p-5">
             <div className="flex items-center space-x-2 mb-4">
               <ExclamationTriangleIcon className="w-5 h-5 text-ds-status-fail" />
-              <h3 className="font-ds-display text-base font-semibold text-ds-status-fail">Critical Stock Alerts</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-status-fail">
+                Critical Stock Alerts
+              </h3>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {data.criticalItems.slice(0, 6).map((item: InventoryItem) => (
-                <div key={item.sku} className="bg-ds-card p-3 rounded-lg border border-ds-status-fail/25">
+                <div
+                  key={item.sku}
+                  className="bg-ds-card p-3 rounded-lg border border-ds-status-fail/25"
+                >
                   <p className="text-sm font-medium text-ds-foreground">{item.productName}</p>
                   <p className="text-xs text-ds-muted-foreground font-mono">{item.sku}</p>
                   <div className="flex items-center justify-between mt-2">
                     <p className="text-sm font-medium text-ds-status-fail">
                       {item.availableQuantity} left
                     </p>
-                    <Badge variant="danger">
-                      Reorder: {item.reorderPoint}
-                    </Badge>
+                    <Badge variant="danger">Reorder: {item.reorderPoint}</Badge>
                   </div>
                 </div>
               ))}

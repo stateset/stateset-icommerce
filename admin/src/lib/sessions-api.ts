@@ -190,7 +190,7 @@ class SessionsApi {
 
   async getSessionEvents(
     sessionId: string,
-    params?: { limit?: number; offset?: number; after_sequence?: number }
+    params?: { limit?: number; offset?: number; after_sequence?: number },
   ): Promise<{ events: AgentEventRow[]; total: number }> {
     const query = this.buildQuery({
       limit: params?.limit,
@@ -204,7 +204,9 @@ class SessionsApi {
   // Fetch all sessions with pagination
   // ============================================
 
-  async fetchAllSessions(params: Omit<ListSessionsParams, 'limit' | 'offset'> = {}): Promise<AgentSessionsResponse> {
+  async fetchAllSessions(
+    params: Omit<ListSessionsParams, 'limit' | 'offset'> = {},
+  ): Promise<AgentSessionsResponse> {
     const PAGE_SIZE = 100;
     let allSessions: AgentSessionRow[] = [];
     let offset = 0;

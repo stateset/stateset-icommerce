@@ -3403,16 +3403,56 @@ impl PurchaseOrders {
         convert_optional_output(po)
     }
 
-    /// List all purchase orders.
-    fn list(&self) -> PyResult<Vec<PurchaseOrder>> {
+    /// List purchase orders with optional filtering and pagination.
+    #[pyo3(signature = (
+        supplier_id=None,
+        status=None,
+        from_date=None,
+        to_date=None,
+        min_total=None,
+        max_total=None,
+        limit=None,
+        offset=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn list(
+        &self,
+        supplier_id: Option<String>,
+        status: Option<String>,
+        from_date: Option<String>,
+        to_date: Option<String>,
+        min_total: Option<String>,
+        max_total: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PurchaseOrder>> {
         let commerce = self
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
+        let filter = stateset_core::PurchaseOrderFilter {
+            supplier_id: parse_uuid_arg(supplier_id.as_deref(), "supplier_id")?,
+            status: status
+                .as_deref()
+                .map(|s| {
+                    s.parse::<stateset_core::PurchaseOrderStatus>().map_err(|_| {
+                        PyValueError::new_err(format!("Invalid purchase order status: {s}"))
+                    })
+                })
+                .transpose()?,
+            from_date: parse_rfc3339_arg(from_date.as_deref(), "from_date")?,
+            to_date: parse_rfc3339_arg(to_date.as_deref(), "to_date")?,
+            min_total: parse_decimal_arg(min_total.as_deref(), "min_total")?,
+            max_total: parse_decimal_arg(max_total.as_deref(), "max_total")?,
+            limit,
+            offset,
+            after_cursor: None,
+        };
+
         let pos = commerce
             .purchase_orders()
-            .list(Default::default())
+            .list(filter)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list POs: {}", e)))?;
 
         convert_outputs(pos)
@@ -4128,16 +4168,67 @@ impl WorkOrders {
         convert_optional_output(wo)
     }
 
-    /// List all work orders.
-    fn list(&self) -> PyResult<Vec<WorkOrder>> {
+    /// List work orders with optional filtering and pagination.
+    #[pyo3(signature = (
+        product_id=None,
+        bom_id=None,
+        status=None,
+        priority=None,
+        assigned_to=None,
+        work_center_id=None,
+        overdue_only=None,
+        limit=None,
+        offset=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn list(
+        &self,
+        product_id: Option<String>,
+        bom_id: Option<String>,
+        status: Option<String>,
+        priority: Option<String>,
+        assigned_to: Option<String>,
+        work_center_id: Option<String>,
+        overdue_only: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<WorkOrder>> {
         let commerce = self
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
+        let filter = stateset_core::WorkOrderFilter {
+            product_id: parse_uuid_arg(product_id.as_deref(), "product_id")?
+                .map(stateset_core::ProductId::from),
+            bom_id: parse_uuid_arg(bom_id.as_deref(), "bom_id")?,
+            status: status
+                .as_deref()
+                .map(|s| {
+                    s.parse::<stateset_core::WorkOrderStatus>().map_err(|_| {
+                        PyValueError::new_err(format!("Invalid work order status: {s}"))
+                    })
+                })
+                .transpose()?,
+            priority: priority
+                .as_deref()
+                .map(|s| {
+                    s.parse::<stateset_core::WorkOrderPriority>().map_err(|_| {
+                        PyValueError::new_err(format!("Invalid work order priority: {s}"))
+                    })
+                })
+                .transpose()?,
+            assigned_to: parse_uuid_arg(assigned_to.as_deref(), "assigned_to")?,
+            work_center_id,
+            overdue_only,
+            limit,
+            offset,
+            after_cursor: None,
+        };
+
         let wos = commerce
             .work_orders()
-            .list(Default::default())
+            .list(filter)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list work orders: {}", e)))?;
 
         convert_outputs(wos)
@@ -7753,6 +7844,37 @@ fn parse_promotion_status(s: &str) -> stateset_core::PromotionStatus {
     }
 }
 
+fn parse_uuid_arg(value: Option<&str>, field: &str) -> PyResult<Option<uuid::Uuid>> {
+    value
+        .map(|s| {
+            uuid::Uuid::parse_str(s)
+                .map_err(|_| PyValueError::new_err(format!("Invalid UUID for {field}")))
+        })
+        .transpose()
+}
+
+fn parse_rfc3339_arg(
+    value: Option<&str>,
+    field: &str,
+) -> PyResult<Option<chrono::DateTime<chrono::Utc>>> {
+    value
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).map(|d| d.with_timezone(&chrono::Utc)).map_err(
+                |_| PyValueError::new_err(format!("Invalid RFC 3339 timestamp for {field}")),
+            )
+        })
+        .transpose()
+}
+
+fn parse_decimal_arg(value: Option<&str>, field: &str) -> PyResult<Option<rust_decimal::Decimal>> {
+    value
+        .map(|s| {
+            s.parse::<rust_decimal::Decimal>()
+                .map_err(|_| PyValueError::new_err(format!("Invalid decimal for {field}")))
+        })
+        .transpose()
+}
+
 fn parse_coupon_status(s: &str) -> stateset_core::CouponStatus {
     match s.to_lowercase().as_str() {
         "active" => stateset_core::CouponStatus::Active,
@@ -9207,14 +9329,63 @@ impl QualityApi {
         Ok(inspection.map(|i| i.into()))
     }
 
-    fn list_inspections(&self) -> PyResult<Vec<Inspection>> {
+    /// List inspections with optional filtering and pagination.
+    #[pyo3(signature = (
+        inspection_type=None,
+        status=None,
+        reference_type=None,
+        reference_id=None,
+        inspector_id=None,
+        from_date=None,
+        to_date=None,
+        limit=None,
+        offset=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn list_inspections(
+        &self,
+        inspection_type: Option<String>,
+        status: Option<String>,
+        reference_type: Option<String>,
+        reference_id: Option<String>,
+        inspector_id: Option<String>,
+        from_date: Option<String>,
+        to_date: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Inspection>> {
         let commerce = self
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::InspectionFilter {
+            inspection_type: inspection_type
+                .as_deref()
+                .map(|s| {
+                    s.parse::<stateset_core::InspectionType>()
+                        .map_err(|_| PyValueError::new_err(format!("Invalid inspection type: {s}")))
+                })
+                .transpose()?,
+            status: status
+                .as_deref()
+                .map(|s| {
+                    s.parse::<stateset_core::InspectionStatus>().map_err(|_| {
+                        PyValueError::new_err(format!("Invalid inspection status: {s}"))
+                    })
+                })
+                .transpose()?,
+            reference_type,
+            reference_id: parse_uuid_arg(reference_id.as_deref(), "reference_id")?,
+            inspector_id,
+            from_date: parse_rfc3339_arg(from_date.as_deref(), "from_date")?,
+            to_date: parse_rfc3339_arg(to_date.as_deref(), "to_date")?,
+            limit,
+            offset,
+            after_cursor: None,
+        };
         let inspections = commerce
             .quality()
-            .list_inspections(Default::default())
+            .list_inspections(filter)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(inspections.into_iter().map(|i| i.into()).collect())
     }
@@ -9278,14 +9449,71 @@ impl QualityApi {
         convert_output(ncr)
     }
 
-    fn list_ncrs(&self) -> PyResult<Vec<NonConformance>> {
+    /// List non-conformance reports with optional filtering and pagination.
+    #[pyo3(signature = (
+        source=None,
+        severity=None,
+        status=None,
+        sku=None,
+        lot_number=None,
+        assigned_to=None,
+        from_date=None,
+        to_date=None,
+        limit=None,
+        offset=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn list_ncrs(
+        &self,
+        source: Option<String>,
+        severity: Option<String>,
+        status: Option<String>,
+        sku: Option<String>,
+        lot_number: Option<String>,
+        assigned_to: Option<String>,
+        from_date: Option<String>,
+        to_date: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<NonConformance>> {
         let commerce = self
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::NonConformanceFilter {
+            source: source
+                .as_deref()
+                .map(|s| {
+                    s.parse::<stateset_core::NonConformanceSource>()
+                        .map_err(|_| PyValueError::new_err(format!("Invalid NCR source: {s}")))
+                })
+                .transpose()?,
+            severity: severity
+                .as_deref()
+                .map(|s| {
+                    s.parse::<stateset_core::Severity>()
+                        .map_err(|_| PyValueError::new_err(format!("Invalid NCR severity: {s}")))
+                })
+                .transpose()?,
+            status: status
+                .as_deref()
+                .map(|s| {
+                    s.parse::<stateset_core::NcrStatus>()
+                        .map_err(|_| PyValueError::new_err(format!("Invalid NCR status: {s}")))
+                })
+                .transpose()?,
+            sku,
+            lot_number,
+            assigned_to,
+            from_date: parse_rfc3339_arg(from_date.as_deref(), "from_date")?,
+            to_date: parse_rfc3339_arg(to_date.as_deref(), "to_date")?,
+            limit,
+            offset,
+            after_cursor: None,
+        };
         let ncrs = commerce
             .quality()
-            .list_ncrs(Default::default())
+            .list_ncrs(filter)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_outputs(ncrs)
     }

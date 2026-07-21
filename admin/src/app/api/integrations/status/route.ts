@@ -28,7 +28,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       throw AppError.unauthorized('Session expired');
     }
     const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new AppError(errorData.error || 'Failed to fetch integration status', response.status, 'INTEGRATION_ERROR');
+    throw new AppError(
+      errorData.error || 'Failed to fetch integration status',
+      response.status,
+      'INTEGRATION_ERROR',
+    );
   }
 
   const data = await response.json();

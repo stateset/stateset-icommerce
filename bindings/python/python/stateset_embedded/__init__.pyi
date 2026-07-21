@@ -2003,7 +2003,17 @@ class PurchaseOrders:
 
     def get(self, id: str) -> Optional[PurchaseOrder]: ...
 
-    def list(self) -> List[PurchaseOrder]: ...
+    def list(
+        self,
+        supplier_id: Optional[str] = None,
+        status: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        min_total: Optional[str] = None,
+        max_total: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[PurchaseOrder]: ...
 
     def submit(self, id: str) -> PurchaseOrder: ...
 
@@ -2107,7 +2117,18 @@ class WorkOrders:
 
     def get(self, id: str) -> Optional[WorkOrder]: ...
 
-    def list(self) -> List[WorkOrder]: ...
+    def list(
+        self,
+        product_id: Optional[str] = None,
+        bom_id: Optional[str] = None,
+        status: Optional[str] = None,
+        priority: Optional[str] = None,
+        assigned_to: Optional[str] = None,
+        work_center_id: Optional[str] = None,
+        overdue_only: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[WorkOrder]: ...
 
     def start(self, id: str) -> WorkOrder: ...
 

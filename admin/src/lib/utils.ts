@@ -61,7 +61,10 @@ export function formatRelativeTime(date: string | Date): string {
   return formatDate(date);
 }
 
-export function getTrendColor(trend: 'up' | 'down' | 'stable', positiveIsGood: boolean = true): string {
+export function getTrendColor(
+  trend: 'up' | 'down' | 'stable',
+  positiveIsGood: boolean = true,
+): string {
   if (trend === 'stable') return 'text-gray-500';
   const isPositive = (trend === 'up' && positiveIsGood) || (trend === 'down' && !positiveIsGood);
   return isPositive ? 'text-emerald-500' : 'text-red-500';
@@ -106,12 +109,12 @@ export function generateId(): string {
 }
 
 export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function debounce<T extends (...args: unknown[]) => void>(
   fn: T,
-  delay: number
+  delay: number,
 ): (...args: Parameters<T>) => void {
   let timeoutId: NodeJS.Timeout;
   return (...args: Parameters<T>) => {
@@ -121,12 +124,15 @@ export function debounce<T extends (...args: unknown[]) => void>(
 }
 
 export function groupBy<T>(array: T[], key: keyof T): Record<string, T[]> {
-  return array.reduce((result, item) => {
-    const groupKey = String(item[key]);
-    if (!result[groupKey]) {
-      result[groupKey] = [];
-    }
-    result[groupKey].push(item);
-    return result;
-  }, {} as Record<string, T[]>);
+  return array.reduce(
+    (result, item) => {
+      const groupKey = String(item[key]);
+      if (!result[groupKey]) {
+        result[groupKey] = [];
+      }
+      result[groupKey].push(item);
+      return result;
+    },
+    {} as Record<string, T[]>,
+  );
 }

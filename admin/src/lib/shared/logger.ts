@@ -21,7 +21,11 @@ interface LogEntry {
   [key: string]: unknown;
 }
 
-function createLogEntry(level: LogLevel, message: string, meta?: Record<string, unknown>): LogEntry {
+function createLogEntry(
+  level: LogLevel,
+  message: string,
+  meta?: Record<string, unknown>,
+): LogEntry {
   const ctx = getRequestContext();
   const entry: LogEntry = {
     level,

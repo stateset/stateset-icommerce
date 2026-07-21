@@ -13,7 +13,7 @@ export class AppError extends Error {
     message: string,
     statusCode: number = 500,
     code: string = 'INTERNAL_ERROR',
-    isOperational: boolean = true
+    isOperational: boolean = true,
   ) {
     super(message);
     this.name = 'AppError';
@@ -36,7 +36,10 @@ export class AppError extends Error {
     return new AppError(message, 400, code);
   }
 
-  static unauthorized(message: string = 'Authentication required', code: string = 'UNAUTHORIZED'): AppError {
+  static unauthorized(
+    message: string = 'Authentication required',
+    code: string = 'UNAUTHORIZED',
+  ): AppError {
     return new AppError(message, 401, code);
   }
 
@@ -52,11 +55,17 @@ export class AppError extends Error {
     return new AppError(message, 409, code);
   }
 
-  static tooManyRequests(message: string = 'Rate limit exceeded', code: string = 'RATE_LIMITED'): AppError {
+  static tooManyRequests(
+    message: string = 'Rate limit exceeded',
+    code: string = 'RATE_LIMITED',
+  ): AppError {
     return new AppError(message, 429, code);
   }
 
-  static internal(message: string = 'Internal server error', code: string = 'INTERNAL_ERROR'): AppError {
+  static internal(
+    message: string = 'Internal server error',
+    code: string = 'INTERNAL_ERROR',
+  ): AppError {
     return new AppError(message, 500, code, false);
   }
 
@@ -76,7 +85,12 @@ export class ValidationError extends AppError {
     Object.setPrototypeOf(this, ValidationError.prototype);
   }
 
-  override toJSON(): { message: string; code: string; statusCode: number; details: Array<{ field: string; message: string }> } {
+  override toJSON(): {
+    message: string;
+    code: string;
+    statusCode: number;
+    details: Array<{ field: string; message: string }>;
+  } {
     return {
       ...super.toJSON(),
       details: this.details,

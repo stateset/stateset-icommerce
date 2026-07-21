@@ -89,7 +89,7 @@ export async function requireCsrf(request: NextRequest): Promise<NextResponse | 
   if (!valid) {
     return NextResponse.json(
       { success: false, error: { message: 'Invalid CSRF token', code: 'CSRF_INVALID' } },
-      { status: 403 }
+      { status: 403 },
     );
   }
 

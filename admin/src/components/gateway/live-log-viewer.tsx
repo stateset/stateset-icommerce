@@ -42,68 +42,71 @@ export function LiveLogViewer() {
   const prevMetricsRef = useRef<Record<string, ChannelStats> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const generateLogs = useCallback((metrics: GatewayMetrics) => {
-    if (paused) return;
-    const prev = prevMetricsRef.current;
-    prevMetricsRef.current = { ...metrics.channels };
+  const generateLogs = useCallback(
+    (metrics: GatewayMetrics) => {
+      if (paused) return;
+      const prev = prevMetricsRef.current;
+      prevMetricsRef.current = { ...metrics.channels };
 
-    if (!prev) return;
+      if (!prev) return;
 
-    const newEntries: LogEntry[] = [];
-    const now = new Date().toISOString();
+      const newEntries: LogEntry[] = [];
+      const now = new Date().toISOString();
 
-    for (const [channel, stats] of Object.entries(metrics.channels)) {
-      const prevStats = prev[channel];
-      if (!prevStats) {
-        newEntries.push({
-          id: String(++entryId),
-          timestamp: now,
-          channel,
-          level: 'info',
-          message: `Channel appeared: ${stats.messagesReceived} messages`,
-        });
-        continue;
+      for (const [channel, stats] of Object.entries(metrics.channels)) {
+        const prevStats = prev[channel];
+        if (!prevStats) {
+          newEntries.push({
+            id: String(++entryId),
+            timestamp: now,
+            channel,
+            level: 'info',
+            message: `Channel appeared: ${stats.messagesReceived} messages`,
+          });
+          continue;
+        }
+
+        const newMsgs = stats.messagesReceived - prevStats.messagesReceived;
+        const newErrors = stats.errors - prevStats.errors;
+        const newBlocked = stats.blocked - prevStats.blocked;
+
+        if (newMsgs > 0) {
+          newEntries.push({
+            id: String(++entryId),
+            timestamp: now,
+            channel,
+            level: 'info',
+            message: `${newMsgs} new message${newMsgs > 1 ? 's' : ''} received (avg ${Math.round(stats.avgResponseMs)}ms)`,
+          });
+        }
+
+        if (newErrors > 0) {
+          newEntries.push({
+            id: String(++entryId),
+            timestamp: now,
+            channel,
+            level: 'error',
+            message: `${newErrors} new error${newErrors > 1 ? 's' : ''} (total: ${stats.errors})`,
+          });
+        }
+
+        if (newBlocked > 0) {
+          newEntries.push({
+            id: String(++entryId),
+            timestamp: now,
+            channel,
+            level: 'warn',
+            message: `${newBlocked} message${newBlocked > 1 ? 's' : ''} blocked`,
+          });
+        }
       }
 
-      const newMsgs = stats.messagesReceived - prevStats.messagesReceived;
-      const newErrors = stats.errors - prevStats.errors;
-      const newBlocked = stats.blocked - prevStats.blocked;
-
-      if (newMsgs > 0) {
-        newEntries.push({
-          id: String(++entryId),
-          timestamp: now,
-          channel,
-          level: 'info',
-          message: `${newMsgs} new message${newMsgs > 1 ? 's' : ''} received (avg ${Math.round(stats.avgResponseMs)}ms)`,
-        });
+      if (newEntries.length > 0) {
+        setLogs((prev) => [...prev, ...newEntries].slice(-500));
       }
-
-      if (newErrors > 0) {
-        newEntries.push({
-          id: String(++entryId),
-          timestamp: now,
-          channel,
-          level: 'error',
-          message: `${newErrors} new error${newErrors > 1 ? 's' : ''} (total: ${stats.errors})`,
-        });
-      }
-
-      if (newBlocked > 0) {
-        newEntries.push({
-          id: String(++entryId),
-          timestamp: now,
-          channel,
-          level: 'warn',
-          message: `${newBlocked} message${newBlocked > 1 ? 's' : ''} blocked`,
-        });
-      }
-    }
-
-    if (newEntries.length > 0) {
-      setLogs((prev) => [...prev, ...newEntries].slice(-500));
-    }
-  }, [paused]);
+    },
+    [paused],
+  );
 
   const { data: metrics } = useEmbeddedData<GatewayMetrics>(getGatewayMetrics, {
     refreshInterval: 5_000,
@@ -133,7 +136,9 @@ export function LiveLogViewer() {
     <Card>
       <CardContent className="p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Live Activity Log</h3>
+          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+            Live Activity Log
+          </h3>
           <button
             onClick={() => setPaused((p) => !p)}
             className="flex items-center space-x-1 px-3 py-1.5 text-sm rounded-md bg-ds-muted text-ds-foreground hover:bg-ds-muted/80 transition-colors"
@@ -193,9 +198,7 @@ export function LiveLogViewer() {
                 <span className="text-ds-brand-300 shrink-0">
                   {new Date(log.timestamp).toLocaleTimeString()}
                 </span>
-                <StatusPill status={LEVEL_STATUS[log.level]}>
-                  {log.level.toUpperCase()}
-                </StatusPill>
+                <StatusPill status={LEVEL_STATUS[log.level]}>{log.level.toUpperCase()}</StatusPill>
                 <Badge variant="outline" className="shrink-0">
                   {log.channel}
                 </Badge>

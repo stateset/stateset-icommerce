@@ -9,7 +9,11 @@ import { MobileNav } from '@/components/mobile-nav';
 import { SessionsSidebar } from '@/components/sessions-sidebar';
 import { TopBar } from '@/components/shared/top-bar';
 import { AdminLoginGate } from '@/lib/shared/admin-login-gate';
-import { ADMIN_SESSION_COOKIE, isAdminAuthDisabled, validateSessionToken } from '@/lib/shared/auth-session';
+import {
+  ADMIN_SESSION_COOKIE,
+  isAdminAuthDisabled,
+  validateSessionToken,
+} from '@/lib/shared/auth-session';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -35,11 +39,7 @@ function SidebarSkeleton() {
   );
 }
 
-export default async function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const renderUnauthenticated = async () => {
     if (isAdminAuthDisabled()) {
       return null;
@@ -55,7 +55,9 @@ export default async function RootLayout({
 
     return (
       <html lang="en" suppressHydrationWarning>
-        <body className={`${inter.className} ds-app-frame min-h-screen bg-ds-enterprise-canvas text-ds-foreground`}>
+        <body
+          className={`${inter.className} ds-app-frame min-h-screen bg-ds-enterprise-canvas text-ds-foreground`}
+        >
           <main className="flex min-h-screen items-center justify-center p-6">
             <AdminLoginGate />
           </main>
@@ -71,7 +73,9 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} ds-app-frame bg-ds-enterprise-canvas text-ds-foreground`}>
+      <body
+        className={`${inter.className} ds-app-frame bg-ds-enterprise-canvas text-ds-foreground`}
+      >
         {/* Skip to content link for accessibility */}
         <a
           href="#main-content"
@@ -91,15 +95,15 @@ export default async function RootLayout({
             <Suspense fallback={null}>
               <TopBar />
             </Suspense>
-            <Suspense fallback={
-              <div className="container mx-auto animate-pulse p-6">
-                <div className="mb-4 h-8 w-1/3 rounded bg-ds-muted" />
-                <div className="h-64 rounded bg-ds-muted" />
-              </div>
-            }>
-              <div className="container mx-auto p-6 flex-1">
-                {children}
-              </div>
+            <Suspense
+              fallback={
+                <div className="container mx-auto animate-pulse p-6">
+                  <div className="mb-4 h-8 w-1/3 rounded bg-ds-muted" />
+                  <div className="h-64 rounded bg-ds-muted" />
+                </div>
+              }
+            >
+              <div className="container mx-auto p-6 flex-1">{children}</div>
             </Suspense>
           </main>
         </div>

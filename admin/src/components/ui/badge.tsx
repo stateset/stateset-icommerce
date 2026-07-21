@@ -11,10 +11,8 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default:
-          'border-transparent bg-ds-foreground text-ds-background hover:bg-ds-foreground/80',
-        secondary:
-          'border-transparent bg-ds-muted text-ds-foreground hover:bg-ds-muted/80',
+        default: 'border-transparent bg-ds-foreground text-ds-background hover:bg-ds-foreground/80',
+        secondary: 'border-transparent bg-ds-muted text-ds-foreground hover:bg-ds-muted/80',
         destructive:
           'border-transparent bg-ds-destructive text-ds-destructive-foreground hover:bg-ds-destructive/80',
         outline: 'text-ds-foreground',
@@ -50,7 +48,7 @@ const badgeVariants = cva(
       variant: 'default',
       size: 'sm',
     },
-  }
+  },
 );
 
 export type BadgeProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'color'> &

@@ -1,7 +1,8 @@
 'use server';
 
 /**
- * Operations server actions (purchasing, warehouse, manufacturing).
+ * Operations server actions (purchasing, warehouse, manufacturing,
+ * fulfillment, traceability).
  *
  * Every exported action is gated by `requireAdminSession()` — server actions
  * bypass the API middleware, so each one must enforce the admin session
@@ -27,6 +28,15 @@ import {
   type WorkOrder,
   type QualityInspection,
   type NonConformanceReport,
+  fulfillmentApi,
+  lotsApi,
+  serialsApi,
+  receivingApi,
+  type Wave,
+  type PickTask,
+  type Lot,
+  type SerialNumber,
+  type Receipt,
 } from '@/lib/embedded';
 import { requireAdminSession } from '@/lib/shared/auth-session';
 
@@ -84,9 +94,7 @@ export async function getWarehouses(): Promise<WarehouseRecord[]> {
   return warehouseApi.listWarehouses();
 }
 
-export async function getWarehouseLocations(
-  warehouseId?: number
-): Promise<WarehouseLocation[]> {
+export async function getWarehouseLocations(warehouseId?: number): Promise<WarehouseLocation[]> {
   await requireAdminSession();
   if (warehouseId !== undefined) {
     assertWarehouseId(warehouseId, 'warehouseId');
@@ -155,4 +163,75 @@ export async function getManufacturingPageData(): Promise<{
     qualityApi.listNcrs(),
   ]);
   return { workOrders, inspections, ncrs };
+}
+
+// ============================================================================
+// Fulfillment
+// ============================================================================
+
+/** Waves, optionally narrowed to a single status (filtered server-side). */
+export async function getFulfillmentWaves(status?: string): Promise<Wave[]> {
+  await requireAdminSession();
+  if (status !== undefined) {
+    assertNonEmpty(status, 'status');
+  }
+  const waves = await fulfillmentApi.listWaves();
+  return status === undefined ? waves : waves.filter((wave) => wave.status === status);
+}
+
+export async function getPickTasks(): Promise<PickTask[]> {
+  await requireAdminSession();
+  return fulfillmentApi.listPicks();
+}
+
+/** Waves + pick tasks in one round trip for the fulfillment page. */
+export async function getFulfillmentPageData(): Promise<{
+  waves: Wave[];
+  picks: PickTask[];
+}> {
+  await requireAdminSession();
+  const [waves, picks] = await Promise.all([
+    fulfillmentApi.listWaves(),
+    fulfillmentApi.listPicks(),
+  ]);
+  return { waves, picks };
+}
+
+// ============================================================================
+// Traceability (lots, serials, receipts)
+// ============================================================================
+
+/** Lots, optionally narrowed to a single status (filtered server-side). */
+export async function getLots(status?: string): Promise<Lot[]> {
+  await requireAdminSession();
+  if (status !== undefined) {
+    assertNonEmpty(status, 'status');
+  }
+  const lots = await lotsApi.list();
+  return status === undefined ? lots : lots.filter((lot) => lot.status === status);
+}
+
+export async function getSerials(): Promise<SerialNumber[]> {
+  await requireAdminSession();
+  return serialsApi.list();
+}
+
+export async function getReceipts(): Promise<Receipt[]> {
+  await requireAdminSession();
+  return receivingApi.listReceipts();
+}
+
+/** Lots + serials + receipts in one round trip for the traceability page. */
+export async function getTraceabilityPageData(): Promise<{
+  lots: Lot[];
+  serials: SerialNumber[];
+  receipts: Receipt[];
+}> {
+  await requireAdminSession();
+  const [lots, serials, receipts] = await Promise.all([
+    lotsApi.list(),
+    serialsApi.list(),
+    receivingApi.listReceipts(),
+  ]);
+  return { lots, serials, receipts };
 }

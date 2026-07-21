@@ -32,7 +32,7 @@ function hasSessionCookie(request: NextRequest): string | null {
 
 function isPublicApiPath(pathname: string): boolean {
   return PUBLIC_API_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
 }
 
@@ -49,17 +49,17 @@ function shouldTrustProxyHeaders(): boolean {
 }
 
 export function resolveRateLimitClientKey(request: NextRequest): string {
-  const runtimeIp = normalizeRateLimitIdentifier(
-    (request as unknown as { ip?: string }).ip
-  );
+  const runtimeIp = normalizeRateLimitIdentifier((request as unknown as { ip?: string }).ip);
   if (runtimeIp) {
     return runtimeIp;
   }
 
   if (shouldTrustProxyHeaders()) {
-    return normalizeRateLimitIdentifier(request.headers.get('x-forwarded-for'))
-      || normalizeRateLimitIdentifier(request.headers.get('x-real-ip'))
-      || 'unknown';
+    return (
+      normalizeRateLimitIdentifier(request.headers.get('x-forwarded-for')) ||
+      normalizeRateLimitIdentifier(request.headers.get('x-real-ip')) ||
+      'unknown'
+    );
   }
 
   return 'unknown';
@@ -68,9 +68,7 @@ export function resolveRateLimitClientKey(request: NextRequest): string {
 function applySecurityHeaders(request: NextRequest, response: NextResponse): NextResponse {
   const nonceSource = globalThis.crypto.randomUUID();
   const nonce =
-    typeof btoa === 'function'
-      ? btoa(nonceSource)
-      : Buffer.from(nonceSource).toString('base64');
+    typeof btoa === 'function' ? btoa(nonceSource) : Buffer.from(nonceSource).toString('base64');
 
   const csp = [
     `default-src 'self'`,
@@ -111,9 +109,12 @@ export async function middleware(request: NextRequest) {
           code: 'RATE_LIMITED',
         },
       },
-      { status: 429 }
+      { status: 429 },
     );
-    response.headers.set('Retry-After', String(Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000)));
+    response.headers.set(
+      'Retry-After',
+      String(Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000)),
+    );
     response.headers.set('X-RateLimit-Limit', String(rateLimitResult.limit));
     response.headers.set('X-RateLimit-Remaining', '0');
     return applySecurityHeaders(request, response);
@@ -134,8 +135,8 @@ export async function middleware(request: NextRequest) {
             code: 'UNAUTHORIZED',
           },
         },
-        { status: 401 }
-      )
+        { status: 401 },
+      ),
     );
   }
 
@@ -154,7 +155,7 @@ export async function middleware(request: NextRequest) {
         request: {
           headers,
         },
-      })
+      }),
     );
   }
 

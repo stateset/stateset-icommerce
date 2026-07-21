@@ -21,8 +21,8 @@ export default async function RmaInboxPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">RMA Inbox</h1>
           <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-            Approve, reject, receive, or refund pending returns. Bulk-select
-            to act on multiple at once.
+            Approve, reject, receive, or refund pending returns. Bulk-select to act on multiple at
+            once.
           </p>
         </div>
       </header>

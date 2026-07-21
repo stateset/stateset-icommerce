@@ -161,11 +161,37 @@ export const manufacturingTools = [
 
   {
     name: 'list_work_orders',
-    description: 'List all manufacturing work orders. Work orders track production runs.',
-    inputSchema: {},
+    description:
+      'List manufacturing work orders (production runs), optionally filtered by product, BOM, status, priority, assignee or work center.',
+    inputSchema: {
+      productId: z.string().min(1).optional().describe('Filter by product ID'),
+      bomId: z.string().min(1).optional().describe('Filter by BOM ID'),
+      status: z.string().min(1).optional().describe('Filter by status'),
+      priority: z.string().min(1).optional().describe('Filter by priority'),
+      assignedTo: z.string().min(1).optional().describe('Filter by assignee ID'),
+      workCenterId: z.string().min(1).optional().describe('Filter by work center ID'),
+      overdueOnly: z.boolean().optional().describe('Only overdue work orders'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Maximum results (server default 500, cap 1000)'),
+      offset: z.number().int().min(0).optional().describe('Results to skip'),
+    },
     permission: 'read',
-    handler: async ({ commerce }) => {
-      const workOrders = await commerce.workOrders.list();
+    handler: async ({ commerce, params }) => {
+      const workOrders = await commerce.workOrders.list({
+        productId: params.productId,
+        bomId: params.bomId,
+        status: params.status,
+        priority: params.priority,
+        assignedTo: params.assignedTo,
+        workCenterId: params.workCenterId,
+        overdueOnly: params.overdueOnly,
+        limit: params.limit,
+        offset: params.offset,
+      });
       const count = await commerce.workOrders.count();
       return {
         success: true,

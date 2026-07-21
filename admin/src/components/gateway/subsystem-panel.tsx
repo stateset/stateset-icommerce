@@ -1,12 +1,7 @@
 'use client';
 
 import { Card, CardContent, StatusPill } from '@stateset/design';
-import {
-  MicrophoneIcon,
-  GlobeAltIcon,
-  CpuChipIcon,
-  HeartIcon,
-} from '@heroicons/react/24/outline';
+import { MicrophoneIcon, GlobeAltIcon, CpuChipIcon, HeartIcon } from '@heroicons/react/24/outline';
 import type { GatewayHealth } from '@/lib/types/gateway';
 
 interface SubsystemPanelProps {

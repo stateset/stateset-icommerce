@@ -7,7 +7,14 @@ import { getFixedAssets, getAssetDepreciationSchedule } from '@/app/actions/fina
 import { formatMoney } from '@/lib/finance/format';
 import type { DepreciationSchedule } from '@/lib/embedded';
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const statusBadgeVariants: Record<string, DsBadgeVariant> = {
   draft: 'outline',
@@ -172,16 +179,24 @@ export default function AssetsClient() {
                             {scheduleState?.status === 'loaded' && scheduleState.schedule && (
                               <div className="space-y-2">
                                 <p className="text-xs uppercase tracking-ds-kicker text-ds-muted-foreground">
-                                  Depreciation schedule ({scheduleState.schedule.method.replaceAll('_', ' ')})
-                                  — total {formatMoney(scheduleState.schedule.totalDepreciation, asset.currency)}
+                                  Depreciation schedule (
+                                  {scheduleState.schedule.method.replaceAll('_', ' ')}) — total{' '}
+                                  {formatMoney(
+                                    scheduleState.schedule.totalDepreciation,
+                                    asset.currency,
+                                  )}
                                 </p>
                                 <table className="min-w-[32rem] text-xs">
                                   <thead>
                                     <tr className="text-left text-ds-muted-foreground">
                                       <th className="py-1 pr-4 font-medium">Period</th>
                                       <th className="py-1 pr-4 text-right font-medium">Amount</th>
-                                      <th className="py-1 pr-4 text-right font-medium">Accumulated</th>
-                                      <th className="py-1 pr-4 text-right font-medium">Book value</th>
+                                      <th className="py-1 pr-4 text-right font-medium">
+                                        Accumulated
+                                      </th>
+                                      <th className="py-1 pr-4 text-right font-medium">
+                                        Book value
+                                      </th>
                                       <th className="py-1 font-medium">Status</th>
                                     </tr>
                                   </thead>

@@ -17,9 +17,8 @@ export default function ExportHubPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Export Hub</h1>
         <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-          One-click CSV export for orders, customers, and inventory. The
-          column schemas are stable — automations can rely on consistent
-          headers across releases.
+          One-click CSV export for orders, customers, and inventory. The column schemas are stable —
+          automations can rely on consistent headers across releases.
         </p>
       </header>
       <ExportHubClient />

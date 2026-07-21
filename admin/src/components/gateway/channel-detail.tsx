@@ -60,7 +60,7 @@ export function ChannelDetail({ channelName, onBack }: ChannelDetailProps) {
 
       setHistory((h) => [...h.slice(-(MAX_HISTORY - 1)), snapshot]);
     },
-    [channelName]
+    [channelName],
   );
 
   const { data: metrics } = useEmbeddedData<GatewayMetrics>(getGatewayMetrics, {
@@ -98,10 +98,7 @@ export function ChannelDetail({ channelName, onBack }: ChannelDetailProps) {
   }
 
   const displayName = DISPLAY_NAMES[channelName] || channelName;
-  const errorRate =
-    stats.messagesReceived > 0
-      ? (stats.errors / stats.messagesReceived) * 100
-      : 0;
+  const errorRate = stats.messagesReceived > 0 ? (stats.errors / stats.messagesReceived) * 100 : 0;
 
   return (
     <div className="space-y-6">
@@ -130,12 +127,7 @@ export function ChannelDetail({ channelName, onBack }: ChannelDetailProps) {
           format="number"
           tone="primary"
         />
-        <MetricCard
-          label="Responses"
-          value={stats.responsesSent}
-          format="number"
-          tone="accent"
-        />
+        <MetricCard label="Responses" value={stats.responsesSent} format="number" tone="accent" />
         <MetricCard
           label="Errors"
           value={stats.errors}
@@ -153,7 +145,9 @@ export function ChannelDetail({ channelName, onBack }: ChannelDetailProps) {
       <Card>
         <CardContent className="p-5">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Error Rate</h3>
+            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+              Error Rate
+            </h3>
             <p className="text-sm font-semibold text-ds-foreground">{errorRate.toFixed(2)}%</p>
           </div>
           <ProgressBar

@@ -69,7 +69,12 @@ async function checkStateSetAPI(): Promise<DependencyStatus> {
     if (response.ok) {
       return { name: 'stateset-api', status: 'healthy', latencyMs };
     }
-    return { name: 'stateset-api', status: 'degraded', latencyMs, error: `HTTP ${response.status}` };
+    return {
+      name: 'stateset-api',
+      status: 'degraded',
+      latencyMs,
+      error: `HTTP ${response.status}`,
+    };
   } catch (error) {
     return {
       name: 'stateset-api',

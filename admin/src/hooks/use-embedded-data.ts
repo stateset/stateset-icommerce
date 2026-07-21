@@ -16,7 +16,7 @@ export function useEmbeddedData<T>(
     refreshInterval?: number;
     initialData?: T;
     enabled?: boolean;
-  }
+  },
 ): UseEmbeddedDataResult<T> {
   const { refreshInterval, initialData, enabled = true } = options || {};
 
@@ -77,7 +77,7 @@ export function useEmbeddedPaginatedData<T>(
   options?: {
     pageSize?: number;
     enabled?: boolean;
-  }
+  },
 ) {
   const { pageSize = 20, enabled = true } = options || {};
 

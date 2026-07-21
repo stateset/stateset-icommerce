@@ -27,13 +27,10 @@ interface ErrorHandlerOptions {
 
 type RouteHandler = (
   request: NextRequest,
-  context?: { params: Promise<Record<string, string>> }
+  context?: { params: Promise<Record<string, string>> },
 ) => Promise<NextResponse | Response>;
 
-async function requestBodyExceedsLimit(
-  request: NextRequest,
-  maxSize: number
-): Promise<boolean> {
+async function requestBodyExceedsLimit(request: NextRequest, maxSize: number): Promise<boolean> {
   if (SAFE_METHODS.has(request.method.toUpperCase()) || !request.body) {
     return false;
   }
@@ -77,7 +74,7 @@ async function requestBodyExceedsLimit(
  */
 export function withErrorHandler(
   handler: RouteHandler,
-  options: ErrorHandlerOptions = {}
+  options: ErrorHandlerOptions = {},
 ): RouteHandler {
   return async (request: NextRequest, routeContext?) => {
     const requestId = generateRequestId();
@@ -121,10 +118,18 @@ export function withErrorHandler(
         const contentLength = request.headers.get('content-length');
         const maxSize = options.maxBodySize ?? DEFAULT_MAX_BODY_SIZE;
         if (contentLength && parseInt(contentLength, 10) > maxSize) {
-          return sendError(413, `Request body exceeds maximum size of ${maxSize} bytes`, 'PAYLOAD_TOO_LARGE');
+          return sendError(
+            413,
+            `Request body exceeds maximum size of ${maxSize} bytes`,
+            'PAYLOAD_TOO_LARGE',
+          );
         }
         if (await requestBodyExceedsLimit(request, maxSize)) {
-          return sendError(413, `Request body exceeds maximum size of ${maxSize} bytes`, 'PAYLOAD_TOO_LARGE');
+          return sendError(
+            413,
+            `Request body exceeds maximum size of ${maxSize} bytes`,
+            'PAYLOAD_TOO_LARGE',
+          );
         }
 
         logger.info('Request started', {

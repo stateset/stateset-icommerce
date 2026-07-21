@@ -5,10 +5,9 @@ import { getGatewayHealth } from '@/lib/gateway-client';
 import type { GatewayHealth } from '@/lib/types/gateway';
 
 export function GatewayConnectionStatus() {
-  const { data, error, isLoading } = useEmbeddedData<GatewayHealth>(
-    getGatewayHealth,
-    { refreshInterval: 15_000 }
-  );
+  const { data, error, isLoading } = useEmbeddedData<GatewayHealth>(getGatewayHealth, {
+    refreshInterval: 15_000,
+  });
 
   const isConnected = !error && data?.status === 'ok';
 

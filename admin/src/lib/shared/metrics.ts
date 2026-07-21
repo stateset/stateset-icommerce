@@ -18,10 +18,18 @@ const counters = {
 /**
  * Record an HTTP request metric.
  */
-export function recordRequest(method: string, path: string, status: number, durationMs: number): void {
+export function recordRequest(
+  method: string,
+  path: string,
+  status: number,
+  durationMs: number,
+): void {
   const key = `method="${method}",path="${path}",status="${status}"`;
   counters.httpRequestsTotal.set(key, (counters.httpRequestsTotal.get(key) || 0) + 1);
-  counters.httpRequestDurationSum.set(key, (counters.httpRequestDurationSum.get(key) || 0) + durationMs / 1000);
+  counters.httpRequestDurationSum.set(
+    key,
+    (counters.httpRequestDurationSum.get(key) || 0) + durationMs / 1000,
+  );
   counters.httpRequestDurationCount.set(key, (counters.httpRequestDurationCount.get(key) || 0) + 1);
 }
 

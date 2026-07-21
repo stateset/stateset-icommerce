@@ -2,7 +2,14 @@
 
 import { Card, CardContent, MetricCard, Badge } from '@stateset/design';
 import { BarChart, ProgressBar, type Color } from '@tremor/react';
-import { ShoppingCartIcon, TruckIcon, CheckCircleIcon, XCircleIcon, ClockIcon, ArrowRightIcon } from '@heroicons/react/24/outline';
+import {
+  ShoppingCartIcon,
+  TruckIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  ClockIcon,
+  ArrowRightIcon,
+} from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { memo } from 'react';
 import type { ForwardRefExoticComponent, RefAttributes, SVGProps } from 'react';
@@ -32,7 +39,14 @@ const statusIcons: Record<string, HeroIcon> = {
   cancelled: XCircleIcon,
 };
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const statusBadgeVariants: Record<string, DsBadgeVariant> = {
   pending: 'warning',
@@ -53,10 +67,10 @@ const progressColors: Record<string, Color> = {
 };
 
 function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
-  const { data, isLoading, error } = useEmbeddedData(
-    () => getOrderPipelineData(),
-    { initialData: propData, refreshInterval: 30000 }
-  );
+  const { data, isLoading, error } = useEmbeddedData(() => getOrderPipelineData(), {
+    initialData: propData,
+    refreshInterval: 30000,
+  });
 
   if (isLoading && !data) {
     return (
@@ -91,10 +105,22 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
     >
       {/* Summary Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-        <MetricCard label="Total Orders" value={formatCompactNumber(summary.totalOrders)} tone="primary" />
+        <MetricCard
+          label="Total Orders"
+          value={formatCompactNumber(summary.totalOrders)}
+          tone="primary"
+        />
         <MetricCard label="Total Value" value={formatCurrency(summary.totalValue)} tone="success" />
-        <MetricCard label="Avg Order Value" value={formatCurrency(summary.averageOrderValue)} tone="primary" />
-        <MetricCard label="Delivered Rate" value={`${summary.deliveredRate.toFixed(1)}%`} tone="accent" />
+        <MetricCard
+          label="Avg Order Value"
+          value={formatCurrency(summary.averageOrderValue)}
+          tone="primary"
+        />
+        <MetricCard
+          label="Delivered Rate"
+          value={`${summary.deliveredRate.toFixed(1)}%`}
+          tone="accent"
+        />
         <MetricCard label="In Progress" value={summary.inProgressCount} tone="warning" />
         <MetricCard label="Exceptions" value={summary.exceptionsCount} tone="danger" />
       </div>
@@ -102,8 +128,12 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
       {/* Order Pipeline Flow */}
       <Card>
         <CardContent>
-          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Order Pipeline</h3>
-          <p className="text-sm text-ds-muted-foreground mb-6">Orders moving through fulfillment stages</p>
+          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+            Order Pipeline
+          </h3>
+          <p className="text-sm text-ds-muted-foreground mb-6">
+            Orders moving through fulfillment stages
+          </p>
 
           <div className="flex items-center justify-between overflow-x-auto pb-4">
             {statusGroups.map((group: OrderPipelineStatusGroup, index: number) => {
@@ -122,7 +152,9 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
                       <Icon className="w-6 h-6 text-ds-muted-foreground" />
                     </div>
                     <p className="text-sm font-medium text-ds-foreground">{group.label}</p>
-                    <p className="ds-instrument-number text-2xl text-ds-foreground">{group.count}</p>
+                    <p className="ds-instrument-number text-2xl text-ds-foreground">
+                      {group.count}
+                    </p>
                     <p className="text-xs text-ds-muted-foreground">
                       {formatCurrency(group.totalValue)}
                     </p>
@@ -141,7 +173,9 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardContent>
-            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Orders by Status</h3>
+            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+              Orders by Status
+            </h3>
             <BarChart
               className="h-64 mt-4"
               data={statusGroups.map((g: OrderPipelineStatusGroup) => ({
@@ -158,12 +192,13 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
 
         <Card>
           <CardContent>
-            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Status Distribution</h3>
+            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+              Status Distribution
+            </h3>
             <div className="mt-4 space-y-4">
               {statusGroups.map((group: OrderPipelineStatusGroup) => {
-                const percentage = summary.totalOrders > 0
-                  ? (group.count / summary.totalOrders) * 100
-                  : 0;
+                const percentage =
+                  summary.totalOrders > 0 ? (group.count / summary.totalOrders) * 100 : 0;
 
                 return (
                   <div key={group.key}>
@@ -176,10 +211,7 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
                         <p className="text-sm text-ds-muted-foreground">{percentage.toFixed(1)}%</p>
                       </div>
                     </div>
-                    <ProgressBar
-                      value={percentage}
-                      color={progressColors[group.key] || 'indigo'}
-                    />
+                    <ProgressBar value={percentage} color={progressColors[group.key] || 'indigo'} />
                   </div>
                 );
               })}
@@ -191,23 +223,31 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
       {/* Recent Orders by Stage */}
       <Card>
         <CardContent>
-          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Recent Orders by Stage</h3>
+          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+            Recent Orders by Stage
+          </h3>
           <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
             {statusGroups
-              .filter((g: OrderPipelineStatusGroup) => ['pending', 'processing', 'shipped'].includes(g.key))
+              .filter((g: OrderPipelineStatusGroup) =>
+                ['pending', 'processing', 'shipped'].includes(g.key),
+              )
               .map((group: OrderPipelineStatusGroup) => (
                 <div key={group.key} className="border border-ds-enterprise-line rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-sm font-medium text-ds-foreground">{group.label}</p>
-                    <Badge variant={statusBadgeVariants[group.key] || 'default'}>{group.count}</Badge>
+                    <Badge variant={statusBadgeVariants[group.key] || 'default'}>
+                      {group.count}
+                    </Badge>
                   </div>
                   <div className="space-y-2">
-                    {(group.orders || []).slice(0, 3).map((order: Pick<Order, 'id' | 'totalAmount'>) => (
-                      <div key={order.id} className="flex justify-between text-sm">
-                        <p className="font-mono text-ds-foreground">{order.id.slice(0, 8)}...</p>
-                        <p className="text-ds-foreground">{formatCurrency(order.totalAmount)}</p>
-                      </div>
-                    ))}
+                    {(group.orders || [])
+                      .slice(0, 3)
+                      .map((order: Pick<Order, 'id' | 'totalAmount'>) => (
+                        <div key={order.id} className="flex justify-between text-sm">
+                          <p className="font-mono text-ds-foreground">{order.id.slice(0, 8)}...</p>
+                          <p className="text-ds-foreground">{formatCurrency(order.totalAmount)}</p>
+                        </div>
+                      ))}
                     {(!group.orders || group.orders.length === 0) && (
                       <p className="text-ds-muted-foreground text-sm">No orders</p>
                     )}

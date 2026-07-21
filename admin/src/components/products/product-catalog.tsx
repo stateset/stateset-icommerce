@@ -41,10 +41,9 @@ const statusPills: Record<string, StatusPillStatus> = {
 };
 
 function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
-  const { data, isLoading, error } = useEmbeddedData(
-    () => getProducts(),
-    { refreshInterval: 60000 }
-  );
+  const { data, isLoading, error } = useEmbeddedData(() => getProducts(), {
+    refreshInterval: 60000,
+  });
 
   const products: Product[] = data || [];
   const catalogData = propData || buildCatalogData(products);
@@ -73,9 +72,8 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
   }
 
   const { summary, categoryDistribution, topProducts } = catalogData;
-  const displayProducts: TopProduct[] = products.length > 0
-    ? products.slice(0, 9).map(toTopProduct)
-    : topProducts;
+  const displayProducts: TopProduct[] =
+    products.length > 0 ? products.slice(0, 9).map(toTopProduct) : topProducts;
 
   return (
     <motion.div
@@ -85,7 +83,11 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
     >
       {/* Key Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <MetricCard label="Total Products" value={formatNumber(summary.totalProducts)} tone="primary" />
+        <MetricCard
+          label="Total Products"
+          value={formatNumber(summary.totalProducts)}
+          tone="primary"
+        />
         <MetricCard label="Active" value={formatNumber(summary.activeProducts)} tone="success" />
         <MetricCard label="Low Stock" value={summary.lowStockProducts} tone="warning" />
         <MetricCard label="Avg Price" value={formatCurrency(summary.avgPrice)} tone="accent" />
@@ -94,8 +96,12 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
       {/* Category Distribution */}
       <Card>
         <CardContent>
-          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Products by Category</h3>
-          <p className="text-sm text-ds-muted-foreground mb-4">Count and inventory value by category</p>
+          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+            Products by Category
+          </h3>
+          <p className="text-sm text-ds-muted-foreground mb-4">
+            Count and inventory value by category
+          </p>
           {categoryDistribution.length > 0 ? (
             <BarChart
               className="h-64"
@@ -108,7 +114,9 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
             />
           ) : (
             <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-ds-enterprise-line">
-              <p className="text-sm text-ds-muted-foreground">No category coverage is available until products are synced.</p>
+              <p className="text-sm text-ds-muted-foreground">
+                No category coverage is available until products are synced.
+              </p>
             </div>
           )}
         </CardContent>
@@ -119,12 +127,12 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
         <CardContent>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Product Catalog</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                Product Catalog
+              </h3>
               <p className="text-sm text-ds-muted-foreground">All products in your inventory</p>
             </div>
-            <Badge variant="primary">
-              {formatNumber(summary.totalProducts)} products
-            </Badge>
+            <Badge variant="primary">{formatNumber(summary.totalProducts)} products</Badge>
           </div>
 
           {displayProducts.length > 0 ? (
@@ -141,7 +149,11 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
                     <div className="w-12 h-12 rounded-lg bg-ds-muted flex items-center justify-center">
                       {product.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover rounded-lg" />
+                        <img
+                          src={product.imageUrl}
+                          alt={product.name}
+                          className="w-full h-full object-cover rounded-lg"
+                        />
                       ) : (
                         <PhotoIcon className="w-6 h-6 text-ds-muted-foreground" />
                       )}
@@ -152,11 +164,15 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
                   </div>
 
                   <p className="text-sm font-medium text-ds-foreground">{product.name}</p>
-                  <p className="text-xs text-ds-muted-foreground mt-1">{product.sku || `SKU-${product.id?.slice(0, 8)}`}</p>
+                  <p className="text-xs text-ds-muted-foreground mt-1">
+                    {product.sku || `SKU-${product.id?.slice(0, 8)}`}
+                  </p>
 
                   <div className="flex items-center justify-between mt-3">
                     <div>
-                      <p className="text-lg font-bold text-ds-foreground">{formatCurrency(product.price)}</p>
+                      <p className="text-lg font-bold text-ds-foreground">
+                        {formatCurrency(product.price)}
+                      </p>
                       {product.compareAtPrice && (
                         <p className="text-xs text-ds-muted-foreground line-through">
                           {formatCurrency(product.compareAtPrice)}
@@ -166,7 +182,9 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
                     <div className="text-right">
                       <div className="flex items-center space-x-1">
                         <CubeIcon className="w-4 h-4 text-ds-muted-foreground" />
-                        <p className="text-sm text-ds-foreground">{product.inventory || 0} in stock</p>
+                        <p className="text-sm text-ds-foreground">
+                          {product.inventory || 0} in stock
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -174,7 +192,9 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
                   {product.categories && product.categories.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
                       {product.categories.slice(0, 2).map((cat: string, i: number) => (
-                        <Badge key={i} variant="outline">{cat}</Badge>
+                        <Badge key={i} variant="outline">
+                          {cat}
+                        </Badge>
                       ))}
                     </div>
                   )}
@@ -183,7 +203,9 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
             </div>
           ) : (
             <div className="rounded-lg border border-dashed border-ds-enterprise-line p-8 text-center">
-              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">No products found</h3>
+              <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+                No products found
+              </h3>
               <p className="mt-2 text-sm text-ds-muted-foreground">
                 No products have been synced into the embedded catalog yet.
               </p>
@@ -195,8 +217,12 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
       {/* Inventory Snapshot */}
       <Card>
         <CardContent>
-          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Inventory Snapshot</h3>
-          <p className="text-sm text-ds-muted-foreground mb-4">Products ranked by current inventory value</p>
+          <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+            Inventory Snapshot
+          </h3>
+          <p className="text-sm text-ds-muted-foreground mb-4">
+            Products ranked by current inventory value
+          </p>
           {topProducts.length > 0 ? (
             <div className="overflow-x-auto">
               <Table>
@@ -226,7 +252,9 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
                       <TableCell>
                         <Badge variant="outline">{product.category}</Badge>
                       </TableCell>
-                      <TableCell tone="numeric" className="font-medium">{formatCurrency(product.price)}</TableCell>
+                      <TableCell tone="numeric" className="font-medium">
+                        {formatCurrency(product.price)}
+                      </TableCell>
                       <TableCell tone="numeric">{formatNumber(product.inventory || 0)}</TableCell>
                       <TableCell tone="numeric" className="font-medium text-ds-status-ok">
                         {formatCurrency((product.inventory || 0) * product.price)}
@@ -238,7 +266,9 @@ function ProductCatalogInner({ data: propData }: ProductCatalogProps) {
             </div>
           ) : (
             <div className="rounded-lg border border-dashed border-ds-enterprise-line p-6 text-center">
-              <p className="text-sm text-ds-muted-foreground">Inventory rankings will appear after products are synced.</p>
+              <p className="text-sm text-ds-muted-foreground">
+                Inventory rankings will appear after products are synced.
+              </p>
             </div>
           )}
         </CardContent>
@@ -283,10 +313,14 @@ function buildCatalogData(products: Product[]): ProductCatalogData {
     summary: {
       totalProducts: topProducts.length,
       activeProducts: topProducts.filter((product) => product.status === 'active').length,
-      lowStockProducts: topProducts.filter((product) => (product.inventory || 0) > 0 && (product.inventory || 0) <= 10).length,
+      lowStockProducts: topProducts.filter(
+        (product) => (product.inventory || 0) > 0 && (product.inventory || 0) <= 10,
+      ).length,
       avgPrice: roundAverage(topProducts.map((product) => product.price)),
     },
-    categoryDistribution: Array.from(categoryDistributionMap.values()).sort((a, b) => b.count - a.count),
+    categoryDistribution: Array.from(categoryDistributionMap.values()).sort(
+      (a, b) => b.count - a.count,
+    ),
     topProducts: [...topProducts]
       .sort((a, b) => (b.inventory || 0) * b.price - (a.inventory || 0) * a.price)
       .slice(0, 9),

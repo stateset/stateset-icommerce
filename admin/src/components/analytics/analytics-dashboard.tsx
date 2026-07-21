@@ -1,50 +1,67 @@
 'use client';
 
 import { AreaChart, BarChart, DonutChart } from '@tremor/react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, MetricCard } from '@stateset/design';
-import { ChartBarIcon, CurrencyDollarIcon, ShoppingBagIcon, UsersIcon } from '@heroicons/react/24/outline';
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  Badge,
+  MetricCard,
+} from '@stateset/design';
+import {
+  ChartBarIcon,
+  CurrencyDollarIcon,
+  ShoppingBagIcon,
+  UsersIcon,
+} from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import LoadingSkeleton from '@/components/ui/loading-skeleton';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
-import { getDashboardMetrics, getOrderAnalytics, getCustomerAnalytics, getRevenueByPeriod, getTopProducts, getConversionFunnel } from '@/app/actions/commerce';
+import {
+  getDashboardMetrics,
+  getOrderAnalytics,
+  getCustomerAnalytics,
+  getRevenueByPeriod,
+  getTopProducts,
+  getConversionFunnel,
+} from '@/app/actions/commerce';
 import type { DashboardMetrics, OrderAnalytics, CustomerAnalytics } from '@/lib/types';
 import { formatCurrency, formatCompactNumber, formatPercentage } from '@/lib/utils';
 
 export default function AnalyticsDashboard() {
   const { data: metrics, isLoading: loadingMetrics } = useEmbeddedData<DashboardMetrics>(
     () => getDashboardMetrics(),
-    { refreshInterval: 60000 }
+    { refreshInterval: 60000 },
   );
 
   const { data: orderAnalytics, isLoading: loadingOrders } = useEmbeddedData<OrderAnalytics>(
     () => getOrderAnalytics(),
-    { refreshInterval: 60000 }
+    { refreshInterval: 60000 },
   );
 
-  const { data: customerAnalytics, isLoading: loadingCustomers } = useEmbeddedData<CustomerAnalytics>(
-    () => getCustomerAnalytics(),
-    { refreshInterval: 60000 }
-  );
+  const { data: customerAnalytics, isLoading: loadingCustomers } =
+    useEmbeddedData<CustomerAnalytics>(() => getCustomerAnalytics(), { refreshInterval: 60000 });
 
   const { data: revenueData } = useEmbeddedData(
-    () => getRevenueByPeriod({
-      startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-      endDate: new Date().toISOString(),
-      groupBy: 'day'
-    }),
-    { refreshInterval: 300000 }
+    () =>
+      getRevenueByPeriod({
+        startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+        endDate: new Date().toISOString(),
+        groupBy: 'day',
+      }),
+    { refreshInterval: 300000 },
   );
 
-  const { data: topProducts } = useEmbeddedData(
-    () => getTopProducts(10),
-    { refreshInterval: 300000 }
-  );
+  const { data: topProducts } = useEmbeddedData(() => getTopProducts(10), {
+    refreshInterval: 300000,
+  });
 
-  const { data: conversionFunnel } = useEmbeddedData(
-    () => getConversionFunnel(),
-    { refreshInterval: 300000 }
-  );
+  const { data: conversionFunnel } = useEmbeddedData(() => getConversionFunnel(), {
+    refreshInterval: 300000,
+  });
 
   const isLoading = loadingMetrics || loadingOrders || loadingCustomers;
 
@@ -52,17 +69,19 @@ export default function AnalyticsDashboard() {
     return <LoadingSkeleton type="chart" count={4} />;
   }
 
-  const ordersByStatusData = orderAnalytics?.ordersByStatus ?
-    Object.entries(orderAnalytics.ordersByStatus).map(([status, count]) => ({
-      status: status.charAt(0).toUpperCase() + status.slice(1),
-      count
-    })) : [];
+  const ordersByStatusData = orderAnalytics?.ordersByStatus
+    ? Object.entries(orderAnalytics.ordersByStatus).map(([status, count]) => ({
+        status: status.charAt(0).toUpperCase() + status.slice(1),
+        count,
+      }))
+    : [];
 
-  const customerSegmentData = customerAnalytics?.customersBySegment ?
-    Object.entries(customerAnalytics.customersBySegment).map(([segment, count]) => ({
-      segment: segment.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()),
-      customers: count
-    })) : [];
+  const customerSegmentData = customerAnalytics?.customersBySegment
+    ? Object.entries(customerAnalytics.customersBySegment).map(([segment, count]) => ({
+        segment: segment.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+        customers: count,
+      }))
+    : [];
 
   return (
     <ErrorBoundary>
@@ -177,7 +196,7 @@ export default function AnalyticsDashboard() {
               {topProducts && topProducts.length > 0 ? (
                 <BarChart
                   className="h-72"
-                  data={topProducts.map(p => ({ name: p.name, revenue: p.revenue }))}
+                  data={topProducts.map((p) => ({ name: p.name, revenue: p.revenue }))}
                   index="name"
                   categories={['revenue']}
                   colors={['indigo']}
@@ -231,8 +250,14 @@ export default function AnalyticsDashboard() {
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-sm font-medium text-ds-foreground">{stage.stage}</p>
                       <div className="flex items-center space-x-2">
-                        <p className="text-sm text-ds-muted-foreground">{formatCompactNumber(stage.count)}</p>
-                        <Badge variant={stage.rate > 50 ? 'success' : stage.rate > 25 ? 'warning' : 'danger'}>
+                        <p className="text-sm text-ds-muted-foreground">
+                          {formatCompactNumber(stage.count)}
+                        </p>
+                        <Badge
+                          variant={
+                            stage.rate > 50 ? 'success' : stage.rate > 25 ? 'warning' : 'danger'
+                          }
+                        >
                           {formatPercentage(stage.rate)}
                         </Badge>
                       </div>

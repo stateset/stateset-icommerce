@@ -16,7 +16,12 @@ import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getCustomerHealthData } from '@/app/actions/commerce';
 import { formatCurrency, formatNumber } from '@/lib/utils';
-import type { CustomerHealthData, CustomerHealthMetric, AtRiskCustomer, CustomerSegmentDetail } from '@/lib/types/dashboard-data';
+import type {
+  CustomerHealthData,
+  CustomerHealthMetric,
+  AtRiskCustomer,
+  CustomerSegmentDetail,
+} from '@/lib/types/dashboard-data';
 
 interface CustomerHealthScoreProps {
   data?: CustomerHealthData;
@@ -30,10 +35,10 @@ const healthIconColors: Record<string, string> = {
 };
 
 function CustomerHealthScoreInner({ data: propData }: CustomerHealthScoreProps) {
-  const { data, isLoading, error } = useEmbeddedData(
-    () => getCustomerHealthData(),
-    { initialData: propData, refreshInterval: 60000 }
-  );
+  const { data, isLoading, error } = useEmbeddedData(() => getCustomerHealthData(), {
+    initialData: propData,
+    refreshInterval: 60000,
+  });
 
   if (isLoading && !data) {
     return (
@@ -73,10 +78,22 @@ function CustomerHealthScoreInner({ data: propData }: CustomerHealthScoreProps) 
     >
       {/* Key Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <MetricCard label="Overall Health Score" value={`${summary?.overallScore || 78}/100`} tone="success" />
-        <MetricCard label="Total Customers" value={formatNumber(summary?.totalCustomers || 2450)} tone="primary" />
+        <MetricCard
+          label="Overall Health Score"
+          value={`${summary?.overallScore || 78}/100`}
+          tone="success"
+        />
+        <MetricCard
+          label="Total Customers"
+          value={formatNumber(summary?.totalCustomers || 2450)}
+          tone="primary"
+        />
         <MetricCard label="At Risk" value={summary?.atRiskCount || 127} tone="warning" />
-        <MetricCard label="Avg Lifetime Value" value={formatCurrency(summary?.avgLifetimeValue || 485)} tone="accent" />
+        <MetricCard
+          label="Avg Lifetime Value"
+          value={formatCurrency(summary?.avgLifetimeValue || 485)}
+          tone="accent"
+        />
       </div>
 
       {/* Health Distribution */}
@@ -130,44 +147,48 @@ function CustomerHealthScoreInner({ data: propData }: CustomerHealthScoreProps) 
               <CardTitle>At-Risk Customers</CardTitle>
               <CardDescription>Customers requiring immediate attention</CardDescription>
             </div>
-            <Badge variant="danger">
-              {atRiskCustomers?.length || 5} customers
-            </Badge>
+            <Badge variant="danger">{atRiskCustomers?.length || 5} customers</Badge>
           </div>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {(atRiskCustomers || generateDemoAtRiskCustomers()).map((customer: AtRiskCustomer, index: number) => (
-              <motion.div
-                key={customer.id || index}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.1 }}
-                className="flex items-center justify-between p-4 border rounded-lg border-ds-status-fail/25 bg-ds-status-fail/10"
-              >
-                <div className="flex items-center space-x-4">
-                  <div className="w-10 h-10 rounded-full bg-ds-status-fail/15 flex items-center justify-center">
-                    <ExclamationCircleIcon className="w-5 h-5 text-ds-status-fail" />
+            {(atRiskCustomers || generateDemoAtRiskCustomers()).map(
+              (customer: AtRiskCustomer, index: number) => (
+                <motion.div
+                  key={customer.id || index}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                  className="flex items-center justify-between p-4 border rounded-lg border-ds-status-fail/25 bg-ds-status-fail/10"
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className="w-10 h-10 rounded-full bg-ds-status-fail/15 flex items-center justify-center">
+                      <ExclamationCircleIcon className="w-5 h-5 text-ds-status-fail" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-ds-foreground">{customer.name}</p>
+                      <p className="text-xs text-ds-muted-foreground">{customer.email}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-ds-foreground">{customer.name}</p>
-                    <p className="text-xs text-ds-muted-foreground">{customer.email}</p>
+                  <div className="flex items-center space-x-4">
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-ds-foreground">
+                        Health: {customer.healthScore}
+                      </p>
+                      <p className="text-xs text-ds-status-fail">{customer.riskReason}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-ds-foreground">
+                        LTV: {formatCurrency(customer.lifetimeValue)}
+                      </p>
+                      <p className="text-xs text-ds-muted-foreground">
+                        Last order: {customer.daysSinceLastOrder}d ago
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center space-x-4">
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-ds-foreground">Health: {customer.healthScore}</p>
-                    <p className="text-xs text-ds-status-fail">{customer.riskReason}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm text-ds-foreground">LTV: {formatCurrency(customer.lifetimeValue)}</p>
-                    <p className="text-xs text-ds-muted-foreground">
-                      Last order: {customer.daysSinceLastOrder}d ago
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              ),
+            )}
           </div>
         </CardContent>
       </Card>
@@ -193,14 +214,25 @@ function CustomerHealthScoreInner({ data: propData }: CustomerHealthScoreProps) 
 
       {/* Segment Details */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {(Object.entries(segments || generateDemoSegmentDetails()) as [string, number | CustomerSegmentDetail][]).map(([segment, data]) => (
+        {(
+          Object.entries(segments || generateDemoSegmentDetails()) as [
+            string,
+            number | CustomerSegmentDetail,
+          ][]
+        ).map(([segment, data]) => (
           <Card key={segment}>
             <CardContent className="p-5">
               <div className="flex items-center space-x-2 mb-2">
-                <HeartIcon className={`w-5 h-5 ${healthIconColors[segment] || 'text-ds-muted-foreground'}`} />
-                <p className="text-sm font-medium text-ds-foreground capitalize">{segment.replace('_', ' ')}</p>
+                <HeartIcon
+                  className={`w-5 h-5 ${healthIconColors[segment] || 'text-ds-muted-foreground'}`}
+                />
+                <p className="text-sm font-medium text-ds-foreground capitalize">
+                  {segment.replace('_', ' ')}
+                </p>
               </div>
-              <p className="ds-instrument-number text-3xl text-ds-foreground">{typeof data === 'number' ? data : data.count}</p>
+              <p className="ds-instrument-number text-3xl text-ds-foreground">
+                {typeof data === 'number' ? data : data.count}
+              </p>
               <p className="text-xs text-ds-muted-foreground mt-1">
                 {typeof data === 'number' ? 'customers' : `Avg LTV: ${formatCurrency(data.avgLtv)}`}
               </p>
@@ -234,10 +266,42 @@ function generateDemoMetrics() {
 
 function generateDemoAtRiskCustomers() {
   return [
-    { id: '1', name: 'John Smith', email: 'john@example.com', healthScore: 25, riskReason: 'No orders in 90 days', lifetimeValue: 1250, daysSinceLastOrder: 95 },
-    { id: '2', name: 'Sarah Johnson', email: 'sarah@example.com', healthScore: 32, riskReason: 'High return rate', lifetimeValue: 890, daysSinceLastOrder: 45 },
-    { id: '3', name: 'Mike Wilson', email: 'mike@example.com', healthScore: 28, riskReason: 'Negative feedback', lifetimeValue: 2100, daysSinceLastOrder: 60 },
-    { id: '4', name: 'Emily Brown', email: 'emily@example.com', healthScore: 35, riskReason: 'Declining order value', lifetimeValue: 650, daysSinceLastOrder: 30 },
+    {
+      id: '1',
+      name: 'John Smith',
+      email: 'john@example.com',
+      healthScore: 25,
+      riskReason: 'No orders in 90 days',
+      lifetimeValue: 1250,
+      daysSinceLastOrder: 95,
+    },
+    {
+      id: '2',
+      name: 'Sarah Johnson',
+      email: 'sarah@example.com',
+      healthScore: 32,
+      riskReason: 'High return rate',
+      lifetimeValue: 890,
+      daysSinceLastOrder: 45,
+    },
+    {
+      id: '3',
+      name: 'Mike Wilson',
+      email: 'mike@example.com',
+      healthScore: 28,
+      riskReason: 'Negative feedback',
+      lifetimeValue: 2100,
+      daysSinceLastOrder: 60,
+    },
+    {
+      id: '4',
+      name: 'Emily Brown',
+      email: 'emily@example.com',
+      healthScore: 35,
+      riskReason: 'Declining order value',
+      lifetimeValue: 650,
+      daysSinceLastOrder: 30,
+    },
   ];
 }
 

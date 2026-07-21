@@ -4430,6 +4430,82 @@ export interface PortableDomainsOutput {
   exportable: Array<string>
   importable: Array<string>
 }
+/** Filter for `purchaseOrders.list()` */
+export interface PurchaseOrderFilterInput {
+  supplierId?: string
+  /** draft, submitted, approved, sent, partially_received, received, cancelled, closed */
+  status?: string
+  /** RFC 3339 timestamp (inclusive lower bound on order date) */
+  fromDate?: string
+  /** RFC 3339 timestamp (inclusive upper bound on order date) */
+  toDate?: string
+  /** Exact decimal string */
+  minTotal?: string
+  /** Exact decimal string */
+  maxTotal?: string
+  /** Page size (server default 500, hard cap 1000) */
+  limit?: number
+  offset?: number
+  /** Keyset cursor: `[orderDate, id]` */
+  afterCursor?: Array<string>
+}
+/** Filter for `workOrders.list()` */
+export interface WorkOrderFilterInput {
+  productId?: string
+  bomId?: string
+  /** draft, planned, released, in_progress, on_hold, completed, cancelled */
+  status?: string
+  /** low, normal, high, urgent */
+  priority?: string
+  assignedTo?: string
+  workCenterId?: string
+  overdueOnly?: boolean
+  /** Page size (server default 500, hard cap 1000) */
+  limit?: number
+  offset?: number
+  /** Keyset cursor: `[createdAt, id]` */
+  afterCursor?: Array<string>
+}
+/** Filter for `quality.listInspections()` */
+export interface InspectionFilterInput {
+  /** incoming, in_process, final, return, audit */
+  inspectionType?: string
+  /** pending, in_progress, passed, failed, cancelled */
+  status?: string
+  referenceType?: string
+  referenceId?: string
+  inspectorId?: string
+  /** RFC 3339 timestamp (inclusive lower bound on created_at) */
+  fromDate?: string
+  /** RFC 3339 timestamp (inclusive upper bound on created_at) */
+  toDate?: string
+  /** Page size (server default 500, hard cap 1000) */
+  limit?: number
+  offset?: number
+  /** Keyset cursor: `[createdAt, id]` */
+  afterCursor?: Array<string>
+}
+/** Filter for `quality.listNcrs()` */
+export interface NcrFilterInput {
+  /** inspection, customer_complaint, production, supplier, internal_audit */
+  source?: string
+  /** minor, major, critical */
+  severity?: string
+  /** open, investigating, corrective_action, verification, closed, cancelled */
+  status?: string
+  sku?: string
+  lotNumber?: string
+  assignedTo?: string
+  /** RFC 3339 timestamp (inclusive lower bound on created_at) */
+  fromDate?: string
+  /** RFC 3339 timestamp (inclusive upper bound on created_at) */
+  toDate?: string
+  /** Page size (server default 500, hard cap 1000) */
+  limit?: number
+  offset?: number
+  /** Keyset cursor: `[createdAt, id]` */
+  afterCursor?: Array<string>
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -4696,7 +4772,12 @@ export declare class PurchaseOrders {
   listSuppliers(): Promise<Array<SupplierOutput>>
   create(input: CreatePurchaseOrderInput): Promise<PurchaseOrderOutput>
   get(id: string): Promise<PurchaseOrderOutput | null>
-  list(): Promise<Array<PurchaseOrderOutput>>
+  /**
+   * List purchase orders, optionally filtered/paginated.
+   *
+   * Calling with no argument keeps the previous behaviour (server default page size).
+   */
+  list(filter?: PurchaseOrderFilterInput | undefined | null): Promise<Array<PurchaseOrderOutput>>
   submit(id: string): Promise<PurchaseOrderOutput>
   approve(id: string, approvedBy: string): Promise<PurchaseOrderOutput>
   send(id: string): Promise<PurchaseOrderOutput>
@@ -4725,7 +4806,12 @@ export declare class Bom {
 export declare class WorkOrders {
   create(input: CreateWorkOrderInput): Promise<WorkOrderOutput>
   get(id: string): Promise<WorkOrderOutput | null>
-  list(): Promise<Array<WorkOrderOutput>>
+  /**
+   * List work orders, optionally filtered/paginated.
+   *
+   * Calling with no argument keeps the previous behaviour (server default page size).
+   */
+  list(filter?: WorkOrderFilterInput | undefined | null): Promise<Array<WorkOrderOutput>>
   start(id: string): Promise<WorkOrderOutput>
   complete(id: string, quantityCompleted: number): Promise<WorkOrderOutput>
   cancel(id: string): Promise<WorkOrderOutput>
@@ -4989,8 +5075,12 @@ export declare class Quality {
   createInspection(input: CreateInspectionInput): Promise<InspectionOutput>
   /** Get an inspection by ID */
   getInspection(id: string): Promise<InspectionOutput | null>
-  /** List all inspections */
-  listInspections(): Promise<Array<InspectionOutput>>
+  /**
+   * List inspections, optionally filtered/paginated.
+   *
+   * Calling with no argument keeps the previous behaviour (server default page size).
+   */
+  listInspections(filter?: InspectionFilterInput | undefined | null): Promise<Array<InspectionOutput>>
   /** Start an inspection */
   startInspection(id: string): Promise<InspectionOutput>
   /** Complete an inspection */
@@ -4999,8 +5089,12 @@ export declare class Quality {
   createNcr(input: CreateNcrInput): Promise<NcrOutput>
   /** Get an NCR by ID */
   getNcr(id: string): Promise<NcrOutput | null>
-  /** List all NCRs */
-  listNcrs(): Promise<Array<NcrOutput>>
+  /**
+   * List NCRs, optionally filtered/paginated.
+   *
+   * Calling with no argument keeps the previous behaviour (server default page size).
+   */
+  listNcrs(filter?: NcrFilterInput | undefined | null): Promise<Array<NcrOutput>>
   /** Close an NCR */
   closeNcr(id: string): Promise<NcrOutput>
   /** Create a quality hold */

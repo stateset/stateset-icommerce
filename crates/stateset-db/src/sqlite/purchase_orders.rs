@@ -709,6 +709,22 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
         }
+        if let Some(from_date) = &filter.from_date {
+            sql.push_str(" AND order_date >= ?");
+            params_vec.push(Box::new(from_date.to_rfc3339()));
+        }
+        if let Some(to_date) = &filter.to_date {
+            sql.push_str(" AND order_date <= ?");
+            params_vec.push(Box::new(to_date.to_rfc3339()));
+        }
+        if let Some(min_total) = &filter.min_total {
+            sql.push_str(" AND CAST(total AS REAL) >= ?");
+            params_vec.push(Box::new(min_total.to_string().parse::<f64>().unwrap_or(f64::MIN)));
+        }
+        if let Some(max_total) = &filter.max_total {
+            sql.push_str(" AND CAST(total AS REAL) <= ?");
+            params_vec.push(Box::new(max_total.to_string().parse::<f64>().unwrap_or(f64::MAX)));
+        }
 
         // Keyset cursor: (order_date, id) for stable DESC ordering
         if let Some((cursor_date, cursor_id)) = &filter.after_cursor {
@@ -724,7 +740,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         // 100 and always honor the offset (SQLite previously ignored `offset` and
         // had no default cap, so it returned a different page than Postgres).
         // Offset pagination applies only in non-cursor mode.
-        let limit = filter.limit.unwrap_or(100);
+        let limit = super::effective_limit(filter.limit);
         let offset = if filter.after_cursor.is_none() { filter.offset.unwrap_or(0) } else { 0 };
         sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
@@ -1160,6 +1176,22 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
+        }
+        if let Some(from_date) = &filter.from_date {
+            sql.push_str(" AND order_date >= ?");
+            params_vec.push(Box::new(from_date.to_rfc3339()));
+        }
+        if let Some(to_date) = &filter.to_date {
+            sql.push_str(" AND order_date <= ?");
+            params_vec.push(Box::new(to_date.to_rfc3339()));
+        }
+        if let Some(min_total) = &filter.min_total {
+            sql.push_str(" AND CAST(total AS REAL) >= ?");
+            params_vec.push(Box::new(min_total.to_string().parse::<f64>().unwrap_or(f64::MIN)));
+        }
+        if let Some(max_total) = &filter.max_total {
+            sql.push_str(" AND CAST(total AS REAL) <= ?");
+            params_vec.push(Box::new(max_total.to_string().parse::<f64>().unwrap_or(f64::MAX)));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1848,6 +1880,72 @@ mod tests {
             .expect("approved");
         assert!(drafts.iter().any(|p| p.id == po_draft.id));
         assert!(approved.iter().any(|p| p.id == po_to_approve.id));
+    }
+
+    #[test]
+    fn list_filters_by_total_range() {
+        let repo = fresh_repo();
+        let s = make_supplier(&repo, "TOTALS");
+        // cheap PO: total 5, pricey PO: total 100
+        let cheap = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item("SKU-CHEAP", dec!(5), dec!(1))],
+                ..Default::default()
+            })
+            .expect("cheap");
+        let pricey = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item("SKU-PRICEY", dec!(1), dec!(100))],
+                ..Default::default()
+            })
+            .expect("pricey");
+
+        let base = PurchaseOrderFilter { supplier_id: Some(s.id), ..Default::default() };
+
+        let min = repo
+            .list(PurchaseOrderFilter { min_total: Some(dec!(50)), ..base.clone() })
+            .expect("min");
+        assert!(min.iter().any(|p| p.id == pricey.id));
+        assert!(!min.iter().any(|p| p.id == cheap.id), "min_total must exclude cheap PO");
+
+        let max =
+            repo.list(PurchaseOrderFilter { max_total: Some(dec!(50)), ..base }).expect("max");
+        assert!(max.iter().any(|p| p.id == cheap.id));
+        assert!(!max.iter().any(|p| p.id == pricey.id), "max_total must exclude pricey PO");
+    }
+
+    #[test]
+    fn list_filters_by_date_range() {
+        let repo = fresh_repo();
+        let s = make_supplier(&repo, "DATES");
+        let po = repo
+            .create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item("SKU-DT", dec!(1), dec!(1))],
+                ..Default::default()
+            })
+            .expect("po");
+
+        let base = PurchaseOrderFilter { supplier_id: Some(s.id), ..Default::default() };
+        let future = chrono::Utc::now() + chrono::Duration::days(1);
+        let past = chrono::Utc::now() - chrono::Duration::days(1);
+
+        // Order within [past, future] is returned.
+        let within = repo
+            .list(PurchaseOrderFilter {
+                from_date: Some(past),
+                to_date: Some(future),
+                ..base.clone()
+            })
+            .expect("within");
+        assert!(within.iter().any(|p| p.id == po.id));
+
+        // to_date in the past excludes it (silent-ignore regression guard).
+        let before =
+            repo.list(PurchaseOrderFilter { to_date: Some(past), ..base }).expect("before");
+        assert!(!before.iter().any(|p| p.id == po.id), "to_date must exclude newer orders");
     }
 
     #[test]

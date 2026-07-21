@@ -82,7 +82,7 @@ function SessionItem({ session, isSelected, onClick }: SessionItemProps) {
         'ds-focus-ring w-full rounded-lg border p-3 text-left transition-all',
         isSelected
           ? 'border-ds-brand-200 bg-ds-brand-50 dark:border-ds-brand-700 dark:bg-ds-brand-950/30'
-          : 'border-transparent hover:bg-ds-muted'
+          : 'border-transparent hover:bg-ds-muted',
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -104,9 +104,7 @@ function SessionItem({ session, isSelected, onClick }: SessionItemProps) {
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <StatusPill status={statusTone(session.status)}>{session.status}</StatusPill>
-        <span className="text-[10px] text-ds-muted-foreground">
-          {session.total_exec_count} ops
-        </span>
+        <span className="text-[10px] text-ds-muted-foreground">{session.total_exec_count} ops</span>
         {session.budget_consumed.cost_cents > 0 && (
           <span className="text-[10px] text-ds-muted-foreground">
             {formatCost(session.budget_consumed.cost_cents)}
@@ -119,10 +117,12 @@ function SessionItem({ session, isSelected, onClick }: SessionItemProps) {
         <div className="mt-1.5 truncate text-[10px] text-ds-destructive">
           {truncate(session.error_message, 40)}
         </div>
-      ) : session.budget_consumed.duration_seconds > 0 && (
-        <div className="mt-1.5 text-[10px] text-ds-muted-foreground">
-          Duration: {formatDuration(session.budget_consumed.duration_seconds)}
-        </div>
+      ) : (
+        session.budget_consumed.duration_seconds > 0 && (
+          <div className="mt-1.5 text-[10px] text-ds-muted-foreground">
+            Duration: {formatDuration(session.budget_consumed.duration_seconds)}
+          </div>
+        )
       )}
 
       <div className="mt-1.5 flex items-center gap-1 text-[10px] text-ds-muted-foreground">
@@ -165,11 +165,13 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
       const response = await fetch(`/api/sessions?${params.toString()}`);
 
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
+        const payload = await response
+          .json()
+          .catch(() => ({ error: { message: 'Unknown error' } }));
         throw new Error(payload.error?.message || `Failed to fetch sessions: ${response.status}`);
       }
 
-      const payload = await response.json() as ApiEnvelope<AgentSession[]>;
+      const payload = (await response.json()) as ApiEnvelope<AgentSession[]>;
       setSessions(Array.isArray(payload.data) ? payload.data : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load sessions');
@@ -181,10 +183,12 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
     try {
       const response = await fetch('/api/sessions/summary');
       if (response.ok) {
-        const payload = await response.json() as ApiEnvelope<AgentSessionSummary>;
+        const payload = (await response.json()) as ApiEnvelope<AgentSessionSummary>;
         setSummary(payload.data ?? null);
       } else {
-        const payload = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
+        const payload = await response
+          .json()
+          .catch(() => ({ error: { message: 'Unknown error' } }));
         console.error('Error fetching summary:', payload.error?.message || response.statusText);
       }
     } catch (err) {
@@ -217,18 +221,24 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
     return () => clearTimeout(debounce);
   }, [searchQuery, statusFilter, fetchSessions]);
 
-  const activeSessions = sessions.filter(s =>
-    s.status === 'running' || s.status === 'pending' || s.status === 'rotating' || s.status === 'paused'
+  const activeSessions = sessions.filter(
+    (s) =>
+      s.status === 'running' ||
+      s.status === 'pending' ||
+      s.status === 'rotating' ||
+      s.status === 'paused',
   );
-  const completedSessions = sessions.filter(s =>
-    s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled'
+  const completedSessions = sessions.filter(
+    (s) => s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled',
   );
 
   return (
-    <div className={cn(
-      'flex w-64 flex-col border-r border-ds-enterprise-line bg-ds-enterprise-surface',
-      className
-    )}>
+    <div
+      className={cn(
+        'flex w-64 flex-col border-r border-ds-enterprise-line bg-ds-enterprise-surface',
+        className,
+      )}
+    >
       {/* Header */}
       <div className="border-b border-ds-enterprise-line p-4">
         <div className="mb-3 flex items-center justify-between">
@@ -238,11 +248,16 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => { fetchSessions(); fetchSummary(); }}
+              onClick={() => {
+                fetchSessions();
+                fetchSummary();
+              }}
               className="ds-focus-ring rounded-md p-1.5 transition-colors hover:bg-ds-muted"
               title="Refresh"
             >
-              <ArrowPathIcon className={cn("h-4 w-4 text-ds-muted-foreground", isLoading && "animate-spin")} />
+              <ArrowPathIcon
+                className={cn('h-4 w-4 text-ds-muted-foreground', isLoading && 'animate-spin')}
+              />
             </button>
             <button
               className="ds-focus-ring rounded-md p-1.5 transition-colors hover:bg-ds-muted"
@@ -296,7 +311,10 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
             <ExclamationCircleIcon className="mx-auto h-8 w-8 text-ds-destructive/70" />
             <p className="mt-2 text-xs text-ds-destructive">{error}</p>
             <button
-              onClick={() => { fetchSessions(); fetchSummary(); }}
+              onClick={() => {
+                fetchSessions();
+                fetchSummary();
+              }}
               className="mt-2 text-xs font-medium text-ds-primary hover:underline"
             >
               Try again
@@ -311,7 +329,7 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
                   Active ({activeSessions.length})
                 </div>
                 <div className="space-y-1">
-                  {activeSessions.map(session => (
+                  {activeSessions.map((session) => (
                     <SessionItem
                       key={session.id}
                       session={session}
@@ -330,7 +348,7 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
                   Recent ({completedSessions.length})
                 </div>
                 <div className="space-y-1">
-                  {completedSessions.map(session => (
+                  {completedSessions.map((session) => (
                     <SessionItem
                       key={session.id}
                       session={session}
@@ -347,7 +365,9 @@ export function SessionsSidebar({ className }: SessionsSidebarProps) {
               <div className="px-4 py-8 text-center">
                 <ChatBubbleLeftIcon className="mx-auto h-8 w-8 text-ds-muted-foreground/50" />
                 <p className="mt-2 text-xs text-ds-muted-foreground">
-                  {searchQuery || statusFilter ? 'No sessions match your filters' : 'No sessions yet'}
+                  {searchQuery || statusFilter
+                    ? 'No sessions match your filters'
+                    : 'No sessions yet'}
                 </p>
               </div>
             )}

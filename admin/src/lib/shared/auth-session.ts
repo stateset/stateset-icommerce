@@ -38,9 +38,10 @@ export function getRequestSessionToken(request: NextRequest): string | null {
 
 export function requireRequestSessionToken(
   request: NextRequest,
-  message: string = 'Authentication required'
+  message: string = 'Authentication required',
 ): string {
-  const token = getRequestSessionToken(request) ?? (isAdminAuthDisabled() ? getServiceSessionToken() : null);
+  const token =
+    getRequestSessionToken(request) ?? (isAdminAuthDisabled() ? getServiceSessionToken() : null);
   if (!token) {
     throw AppError.unauthorized(message);
   }
@@ -53,7 +54,7 @@ export async function getServerSessionToken(): Promise<string | null> {
 }
 
 export async function requireServerSessionToken(
-  message: string = 'Authentication required'
+  message: string = 'Authentication required',
 ): Promise<string> {
   const token = await getServerSessionToken();
   if (!token) {
@@ -71,7 +72,7 @@ export async function requireServerSessionToken(
  * Returns the session token, or `null` when auth is disabled.
  */
 export async function requireAdminSession(
-  message: string = 'Authentication required'
+  message: string = 'Authentication required',
 ): Promise<string | null> {
   if (isAdminAuthDisabled()) {
     return null;
@@ -102,7 +103,9 @@ export function clearSessionCookie(response: NextResponse): NextResponse {
 }
 
 export function isAuthenticatedRequest(request: NextRequest): boolean {
-  return Boolean(getRequestSessionToken(request) || (isAdminAuthDisabled() && getServiceSessionToken()));
+  return Boolean(
+    getRequestSessionToken(request) || (isAdminAuthDisabled() && getServiceSessionToken()),
+  );
 }
 
 export async function validateSessionToken(token: string): Promise<boolean> {

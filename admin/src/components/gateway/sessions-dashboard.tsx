@@ -35,10 +35,9 @@ const DISPLAY_NAMES: Record<string, string> = {
 };
 
 export default function SessionsDashboard() {
-  const { data: metrics, isLoading } = useEmbeddedData<GatewayMetrics>(
-    getGatewayMetrics,
-    { refreshInterval: 10_000 }
-  );
+  const { data: metrics, isLoading } = useEmbeddedData<GatewayMetrics>(getGatewayMetrics, {
+    refreshInterval: 10_000,
+  });
 
   if (isLoading && !metrics) {
     return <LoadingSkeleton type="table" count={1} />;
@@ -53,15 +52,14 @@ export default function SessionsDashboard() {
     );
   }
 
-  const channels = Object.entries(metrics.channels)
-    .sort(([, a], [, b]) => {
-      if (a.lastMessageAt && !b.lastMessageAt) return -1;
-      if (!a.lastMessageAt && b.lastMessageAt) return 1;
-      if (a.lastMessageAt && b.lastMessageAt) {
-        return new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
-      }
-      return b.messagesReceived - a.messagesReceived;
-    });
+  const channels = Object.entries(metrics.channels).sort(([, a], [, b]) => {
+    if (a.lastMessageAt && !b.lastMessageAt) return -1;
+    if (!a.lastMessageAt && b.lastMessageAt) return 1;
+    if (a.lastMessageAt && b.lastMessageAt) {
+      return new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
+    }
+    return b.messagesReceived - a.messagesReceived;
+  });
 
   const activeCount = channels.filter(([, s]) => s.lastMessageAt !== null).length;
 
@@ -125,13 +123,9 @@ export default function SessionsDashboard() {
                         {stats.errors}
                       </span>
                     </TableCell>
-                    <TableCell tone="numeric">
-                      {Math.round(stats.avgResponseMs)}ms
-                    </TableCell>
+                    <TableCell tone="numeric">{Math.round(stats.avgResponseMs)}ms</TableCell>
                     <TableCell className="text-ds-muted-foreground">
-                      {stats.lastMessageAt
-                        ? formatRelativeTime(stats.lastMessageAt)
-                        : '-'}
+                      {stats.lastMessageAt ? formatRelativeTime(stats.lastMessageAt) : '-'}
                     </TableCell>
                   </TableRow>
                 ))}

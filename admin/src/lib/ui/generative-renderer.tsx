@@ -1,7 +1,11 @@
 'use client';
 
 import React, { Suspense, useState, useEffect, useCallback, useRef } from 'react';
-import { componentRegistry, type GenerativeComponent, type ComponentContext } from './component-registry';
+import {
+  componentRegistry,
+  type GenerativeComponent,
+  type ComponentContext,
+} from './component-registry';
 import { Card, CardContent, Badge } from '@stateset/design';
 import { AlertCircle, Loader2, RefreshCw, Sparkles, Zap, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -46,18 +50,22 @@ interface ComponentState {
 
 // Component cache for faster subsequent loads
 const componentCache = new Map<string, React.ComponentType<Record<string, unknown>>>();
-const dataCache = new Map<string, { data: Record<string, unknown>; timestamp: number; ttl: number }>();
+const dataCache = new Map<
+  string,
+  { data: Record<string, unknown>; timestamp: number; ttl: number }
+>();
 const DATA_CACHE_TTL = 30000; // 30 seconds
 
 // Skeleton loading component
 function SkeletonLoader({ style = 'wave' }: { style: 'default' | 'pulse' | 'wave' | 'none' }) {
   if (style === 'none') return null;
 
-  const animationClass = style === 'wave'
-    ? 'animate-pulse bg-gradient-to-r from-ds-muted via-ds-muted/60 to-ds-muted'
-    : style === 'pulse'
-    ? 'animate-pulse bg-ds-muted'
-    : 'bg-ds-muted/60';
+  const animationClass =
+    style === 'wave'
+      ? 'animate-pulse bg-gradient-to-r from-ds-muted via-ds-muted/60 to-ds-muted'
+      : style === 'pulse'
+        ? 'animate-pulse bg-ds-muted'
+        : 'bg-ds-muted/60';
 
   return (
     <Card className="w-full overflow-hidden">
@@ -93,7 +101,7 @@ function PhaseIndicator({ phase }: { phase: ComponentState['phase'] }) {
     { key: 'loading', label: 'Rendering', icon: Loader2 },
   ];
 
-  const currentIndex = phases.findIndex(p => p.key === phase);
+  const currentIndex = phases.findIndex((p) => p.key === phase);
 
   return (
     <div className="flex items-center space-x-2 text-sm text-ds-muted-foreground">
@@ -104,14 +112,22 @@ function PhaseIndicator({ phase }: { phase: ComponentState['phase'] }) {
 
         return (
           <React.Fragment key={p.key}>
-            <div className={`flex items-center space-x-1 ${
-              isActive ? 'text-ds-status-run' : isComplete ? 'text-ds-status-ok' : 'text-ds-muted-foreground'
-            }`}>
+            <div
+              className={`flex items-center space-x-1 ${
+                isActive
+                  ? 'text-ds-status-run'
+                  : isComplete
+                    ? 'text-ds-status-ok'
+                    : 'text-ds-muted-foreground'
+              }`}
+            >
               <Icon className={`h-4 w-4 ${isActive ? 'animate-spin' : ''}`} />
               <span className={isActive ? 'font-medium' : ''}>{p.label}</span>
             </div>
             {index < phases.length - 1 && (
-              <ChevronRight className={`h-3 w-3 ${isComplete ? 'text-ds-status-ok' : 'text-ds-muted-foreground/60'}`} />
+              <ChevronRight
+                className={`h-3 w-3 ${isComplete ? 'text-ds-status-ok' : 'text-ds-muted-foreground/60'}`}
+              />
             )}
           </React.Fragment>
         );
@@ -173,9 +189,12 @@ export function GenerativeRenderer({
     return null;
   }, []);
 
-  const setCachedData = useCallback((cacheKey: string, data: Record<string, unknown>, ttl = DATA_CACHE_TTL) => {
-    dataCache.set(cacheKey, { data, timestamp: Date.now(), ttl });
-  }, []);
+  const setCachedData = useCallback(
+    (cacheKey: string, data: Record<string, unknown>, ttl = DATA_CACHE_TTL) => {
+      dataCache.set(cacheKey, { data, timestamp: Date.now(), ttl });
+    },
+    [],
+  );
 
   // Select component based on context
   const selectComponent = useCallback(async (): Promise<GenerativeComponent | null> => {
@@ -199,7 +218,7 @@ export function GenerativeRenderer({
         // Fallback to search
         const searchResults = componentRegistry.searchComponents(
           context.intent || context.category || 'dashboard',
-          10
+          10,
         );
         selectedComponent = searchResults[0] || null;
       }
@@ -210,205 +229,241 @@ export function GenerativeRenderer({
   }, [componentId, context, data]);
 
   // Load component with caching
-  const loadComponent = useCallback(async (component: GenerativeComponent): Promise<React.ComponentType<Record<string, unknown>>> => {
-    const startTime = performance.now();
+  const loadComponent = useCallback(
+    async (
+      component: GenerativeComponent,
+    ): Promise<React.ComponentType<Record<string, unknown>>> => {
+      const startTime = performance.now();
 
-    const cached = componentCache.get(component.id);
-    if (cached) {
+      const cached = componentCache.get(component.id);
+      if (cached) {
+        performanceRef.current.loadTime = performance.now() - startTime;
+        return cached;
+      }
+
+      const LoadedComponent = await component.load();
+      componentCache.set(component.id, LoadedComponent);
+
       performanceRef.current.loadTime = performance.now() - startTime;
-      return cached;
-    }
-
-    const LoadedComponent = await component.load();
-    componentCache.set(component.id, LoadedComponent);
-
-    performanceRef.current.loadTime = performance.now() - startTime;
-    return LoadedComponent;
-  }, []);
+      return LoadedComponent;
+    },
+    [],
+  );
 
   // Resolve data with caching
-  const resolveData = useCallback(async (component: GenerativeComponent): Promise<Record<string, unknown> | null> => {
-    const startTime = performance.now();
+  const resolveData = useCallback(
+    async (component: GenerativeComponent): Promise<Record<string, unknown> | null> => {
+      const startTime = performance.now();
 
-    if (data) {
+      if (data) {
+        performanceRef.current.dataResolutionTime = performance.now() - startTime;
+        return data;
+      }
+
+      if (!component.resolveData) {
+        performanceRef.current.dataResolutionTime = performance.now() - startTime;
+        return null;
+      }
+
+      const cacheKey = `${component.id}:${JSON.stringify(context)}`;
+      const cachedData = getCachedData(cacheKey);
+      if (cachedData) {
+        performanceRef.current.dataResolutionTime = performance.now() - startTime;
+        return cachedData;
+      }
+
+      const resolvedData = await component.resolveData(context);
+
+      setCachedData(cacheKey, resolvedData);
       performanceRef.current.dataResolutionTime = performance.now() - startTime;
-      return data;
-    }
-
-    if (!component.resolveData) {
-      performanceRef.current.dataResolutionTime = performance.now() - startTime;
-      return null;
-    }
-
-    const cacheKey = `${component.id}:${JSON.stringify(context)}`;
-    const cachedData = getCachedData(cacheKey);
-    if (cachedData) {
-      performanceRef.current.dataResolutionTime = performance.now() - startTime;
-      return cachedData;
-    }
-
-    const resolvedData = await component.resolveData(context);
-
-    setCachedData(cacheKey, resolvedData);
-    performanceRef.current.dataResolutionTime = performance.now() - startTime;
-    return resolvedData;
-  }, [data, context, getCachedData, setCachedData]);
+      return resolvedData;
+    },
+    [data, context, getCachedData, setCachedData],
+  );
 
   // Calculate confidence score
-  const calculateConfidence = useCallback((component: GenerativeComponent, ctx: ComponentContext): number => {
-    let score = 0.5;
+  const calculateConfidence = useCallback(
+    (component: GenerativeComponent, ctx: ComponentContext): number => {
+      let score = 0.5;
 
-    if (ctx.category === component.category) score += 0.2;
+      if (ctx.category === component.category) score += 0.2;
 
-    if (ctx.intent) {
-      const intentMatch = component.aiPrompts.some(prompt =>
-        prompt.toLowerCase().includes(ctx.intent!.toLowerCase()) ||
-        ctx.intent!.toLowerCase().includes(prompt.toLowerCase())
-      );
-      if (intentMatch) score += 0.2;
-    }
-
-    if (data && component.dataShape) {
-      try {
-        component.dataShape.parse(data);
-        score += 0.3;
-      } catch {
-        score += 0.1;
+      if (ctx.intent) {
+        const intentMatch = component.aiPrompts.some(
+          (prompt) =>
+            prompt.toLowerCase().includes(ctx.intent!.toLowerCase()) ||
+            ctx.intent!.toLowerCase().includes(prompt.toLowerCase()),
+        );
+        if (intentMatch) score += 0.2;
       }
-    }
 
-    return Math.min(score, 1.0);
-  }, [data]);
+      if (data && component.dataShape) {
+        try {
+          component.dataShape.parse(data);
+          score += 0.3;
+        } catch {
+          score += 0.1;
+        }
+      }
+
+      return Math.min(score, 1.0);
+    },
+    [data],
+  );
 
   // Get alternative components
   const getAlternatives = useCallback((current: GenerativeComponent): GenerativeComponent[] => {
-    const sameCategory = componentRegistry.getComponentsByCategory(current.category)
-      .filter(c => c.id !== current.id)
+    const sameCategory = componentRegistry
+      .getComponentsByCategory(current.category)
+      .filter((c) => c.id !== current.id)
       .slice(0, 3);
     return sameCategory;
   }, []);
 
   // Main loading logic
-  const selectAndLoadComponent = useCallback(async (isRetry = false, forcedComponent?: GenerativeComponent) => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = new AbortController();
+  const selectAndLoadComponent = useCallback(
+    async (isRetry = false, forcedComponent?: GenerativeComponent) => {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = new AbortController();
 
-    const totalStartTime = performance.now();
-    performanceRef.current = {};
+      const totalStartTime = performance.now();
+      performanceRef.current = {};
 
-    if (!isRetry) {
-      setState(prev => ({
-        ...prev,
-        loading: true,
-        error: null,
-        phase: 'selecting',
-        retryCount: 0,
-      }));
-    }
-
-    let selectedComponent: GenerativeComponent | null = null;
-
-    try {
-      // Phase 1: Select
-      setState(prev => ({ ...prev, phase: 'selecting' }));
-      selectedComponent = forcedComponent || await selectComponent();
-
-      if (!selectedComponent) {
-        throw new Error('No suitable component found');
+      if (!isRetry) {
+        setState((prev) => ({
+          ...prev,
+          loading: true,
+          error: null,
+          phase: 'selecting',
+          retryCount: 0,
+        }));
       }
 
-      // Start loading in parallel with data resolution
-      const loadPromise = loadComponent(selectedComponent);
+      let selectedComponent: GenerativeComponent | null = null;
 
-      // Phase 2: Resolve data
-      setState(prev => ({ ...prev, phase: 'resolving' }));
-      const resolvedData = await resolveData(selectedComponent);
+      try {
+        // Phase 1: Select
+        setState((prev) => ({ ...prev, phase: 'selecting' }));
+        selectedComponent = forcedComponent || (await selectComponent());
 
-      // Calculate confidence
-      const conf = calculateConfidence(selectedComponent, context);
-      setConfidence(conf);
+        if (!selectedComponent) {
+          throw new Error('No suitable component found');
+        }
 
-      // Load alternatives
-      if (showAlternatives) {
-        const alts = getAlternatives(selectedComponent);
-        setAlternatives(alts);
+        // Start loading in parallel with data resolution
+        const loadPromise = loadComponent(selectedComponent);
 
-        // Preload alternatives in background
-        if (enablePreloading) {
-          alts.slice(0, 2).forEach(alt => {
-            loadComponent(alt).catch((err) => console.warn('[generative-renderer] Preload failed:', err.message));
+        // Phase 2: Resolve data
+        setState((prev) => ({ ...prev, phase: 'resolving' }));
+        const resolvedData = await resolveData(selectedComponent);
+
+        // Calculate confidence
+        const conf = calculateConfidence(selectedComponent, context);
+        setConfidence(conf);
+
+        // Load alternatives
+        if (showAlternatives) {
+          const alts = getAlternatives(selectedComponent);
+          setAlternatives(alts);
+
+          // Preload alternatives in background
+          if (enablePreloading) {
+            alts.slice(0, 2).forEach((alt) => {
+              loadComponent(alt).catch((err) =>
+                console.warn('[generative-renderer] Preload failed:', err.message),
+              );
+            });
+          }
+        }
+
+        // Phase 3: Load component
+        setState((prev) => ({ ...prev, phase: 'loading' }));
+        const LoadedComponent = await loadPromise;
+
+        // Track usage
+        componentRegistry.trackUsage(selectedComponent.id);
+
+        // Report performance
+        const totalTime = performance.now() - totalStartTime;
+        if (onPerformance) {
+          onPerformance({
+            ...(performanceRef.current as PerformanceMetrics),
+            totalTime,
+            componentId: selectedComponent.id,
+            timestamp: new Date(),
           });
         }
+
+        // Smooth transition
+        setIsTransitioning(true);
+
+        if (mountedRef.current) {
+          setState({
+            component: selectedComponent,
+            loading: false,
+            error: null,
+            LoadedComponent,
+            resolvedData: resolvedData ?? null,
+            retryCount: 0,
+            phase: 'ready',
+          });
+        }
+
+        setTimeout(() => setIsTransitioning(false), transitionDuration);
+        onComponentSelect?.(selectedComponent, conf);
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error('Component loading failed');
+
+        if (state.retryCount < maxRetries) {
+          setState((prev) => ({
+            ...prev,
+            retryCount: prev.retryCount + 1,
+            phase: 'selecting',
+          }));
+
+          setTimeout(
+            () => {
+              if (mountedRef.current) {
+                selectAndLoadComponent(true);
+              }
+            },
+            retryDelay * (state.retryCount + 1),
+          );
+          return;
+        }
+
+        if (mountedRef.current) {
+          setState((prev) => ({
+            ...prev,
+            loading: false,
+            error: err,
+            LoadedComponent: null,
+            resolvedData: null,
+            phase: 'error',
+          }));
+        }
+
+        onError?.(err, selectedComponent);
       }
-
-      // Phase 3: Load component
-      setState(prev => ({ ...prev, phase: 'loading' }));
-      const LoadedComponent = await loadPromise;
-
-      // Track usage
-      componentRegistry.trackUsage(selectedComponent.id);
-
-      // Report performance
-      const totalTime = performance.now() - totalStartTime;
-      if (onPerformance) {
-        onPerformance({
-          ...performanceRef.current as PerformanceMetrics,
-          totalTime,
-          componentId: selectedComponent.id,
-          timestamp: new Date(),
-        });
-      }
-
-      // Smooth transition
-      setIsTransitioning(true);
-
-      if (mountedRef.current) {
-        setState({
-          component: selectedComponent,
-          loading: false,
-          error: null,
-          LoadedComponent,
-          resolvedData: resolvedData ?? null,
-          retryCount: 0,
-          phase: 'ready',
-        });
-      }
-
-      setTimeout(() => setIsTransitioning(false), transitionDuration);
-      onComponentSelect?.(selectedComponent, conf);
-
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error('Component loading failed');
-
-      if (state.retryCount < maxRetries) {
-        setState(prev => ({
-          ...prev,
-          retryCount: prev.retryCount + 1,
-          phase: 'selecting',
-        }));
-
-        setTimeout(() => {
-          if (mountedRef.current) {
-            selectAndLoadComponent(true);
-          }
-        }, retryDelay * (state.retryCount + 1));
-        return;
-      }
-
-      if (mountedRef.current) {
-        setState(prev => ({
-          ...prev,
-          loading: false,
-          error: err,
-          LoadedComponent: null,
-          resolvedData: null,
-          phase: 'error',
-        }));
-      }
-
-      onError?.(err, selectedComponent);
-    }
-  }, [selectComponent, resolveData, loadComponent, context, showAlternatives, enablePreloading, maxRetries, retryDelay, transitionDuration, onComponentSelect, onError, onPerformance, state.retryCount, calculateConfidence, getAlternatives]);
+    },
+    [
+      selectComponent,
+      resolveData,
+      loadComponent,
+      context,
+      showAlternatives,
+      enablePreloading,
+      maxRetries,
+      retryDelay,
+      transitionDuration,
+      onComponentSelect,
+      onError,
+      onPerformance,
+      state.retryCount,
+      calculateConfidence,
+      getAlternatives,
+    ],
+  );
 
   // Initial load
   useEffect(() => {
@@ -449,7 +504,9 @@ export function GenerativeRenderer({
         <CardContent className="p-6">
           <div className="flex items-center space-x-2 text-ds-status-fail mb-4">
             <AlertCircle className="h-5 w-5" />
-            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">Component Loading Error</h3>
+            <h3 className="font-ds-display text-base font-semibold text-ds-foreground">
+              Component Loading Error
+            </h3>
           </div>
           <p className="text-sm text-ds-status-fail mb-4">{state.error.message}</p>
 
@@ -561,8 +618,17 @@ export function GenerativeRenderer({
 
 // Preset configurations
 export const GenerativeRendererPresets = {
-  AgentResponse: ({ response, agentType, onPerformance }: {
-    response: { uiComponent?: string; uiParams?: Record<string, unknown>; data?: Record<string, unknown>; action?: string };
+  AgentResponse: ({
+    response,
+    agentType,
+    onPerformance,
+  }: {
+    response: {
+      uiComponent?: string;
+      uiParams?: Record<string, unknown>;
+      data?: Record<string, unknown>;
+      action?: string;
+    };
     agentType?: string;
     onPerformance?: (metrics: PerformanceMetrics) => void;
   }) => (
@@ -580,7 +646,11 @@ export const GenerativeRendererPresets = {
     />
   ),
 
-  Dashboard: ({ metrics, category, intent = 'dashboard' }: {
+  Dashboard: ({
+    metrics,
+    category,
+    intent = 'dashboard',
+  }: {
     metrics: Record<string, unknown>;
     category: string;
     intent?: string;
@@ -594,7 +664,11 @@ export const GenerativeRendererPresets = {
     />
   ),
 
-  Minimal: ({ componentId, data, context }: {
+  Minimal: ({
+    componentId,
+    data,
+    context,
+  }: {
     componentId: string;
     data?: Record<string, unknown>;
     context?: ComponentContext;

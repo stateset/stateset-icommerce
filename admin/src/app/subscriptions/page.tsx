@@ -9,7 +9,7 @@ const SubscriptionAnalytics = dynamic(
       </div>
     ),
     ssr: false,
-  }
+  },
 );
 
 export default function SubscriptionsPage() {

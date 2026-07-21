@@ -36,12 +36,8 @@ export default function MetricsDashboard() {
 
     const snapshot: MetricsSnapshot = {
       timestamp: new Date().toLocaleTimeString(),
-      messagesReceived: prev
-        ? metrics.totals.messagesReceived - prev.messagesReceived
-        : 0,
-      responsesSent: prev
-        ? metrics.totals.responsesSent - prev.responsesSent
-        : 0,
+      messagesReceived: prev ? metrics.totals.messagesReceived - prev.messagesReceived : 0,
+      responsesSent: prev ? metrics.totals.responsesSent - prev.responsesSent : 0,
       errors: prev ? metrics.totals.errors - prev.errors : 0,
       avgResponseMs: metrics.totals.avgResponseMs,
     };
@@ -49,10 +45,9 @@ export default function MetricsDashboard() {
     setHistory((h) => [...h.slice(-(MAX_HISTORY - 1)), snapshot]);
   }, []);
 
-  const { data: metrics, isLoading } = useEmbeddedData<GatewayMetrics>(
-    getGatewayMetrics,
-    { refreshInterval: 10_000 }
-  );
+  const { data: metrics, isLoading } = useEmbeddedData<GatewayMetrics>(getGatewayMetrics, {
+    refreshInterval: 10_000,
+  });
 
   useEffect(() => {
     if (!metrics) return;
@@ -142,7 +137,9 @@ export default function MetricsDashboard() {
                   </div>
                   <div>
                     <p className="text-xs text-ds-muted-foreground">Blocked</p>
-                    <p className="ds-instrument-number text-lg text-ds-foreground">{stats.blocked}</p>
+                    <p className="ds-instrument-number text-lg text-ds-foreground">
+                      {stats.blocked}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs text-ds-muted-foreground">Avg Response</p>
@@ -166,9 +163,7 @@ export default function MetricsDashboard() {
           <Card>
             <CardHeader>
               <CardTitle>Response Time Trend</CardTitle>
-              <CardDescription>
-                Average response time per polling interval (10s)
-              </CardDescription>
+              <CardDescription>Average response time per polling interval (10s)</CardDescription>
             </CardHeader>
             <CardContent>
               {history.length > 1 ? (
@@ -192,9 +187,7 @@ export default function MetricsDashboard() {
           <Card>
             <CardHeader>
               <CardTitle>Throughput Trend</CardTitle>
-              <CardDescription>
-                Messages and responses per interval
-              </CardDescription>
+              <CardDescription>Messages and responses per interval</CardDescription>
             </CardHeader>
             <CardContent>
               {history.length > 1 ? (

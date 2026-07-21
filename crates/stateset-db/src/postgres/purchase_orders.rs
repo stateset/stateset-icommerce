@@ -651,6 +651,22 @@ impl PgPurchaseOrderRepository {
             query.push_str(&format!(" AND status = ${}", param_idx));
             param_idx += 1;
         }
+        if filter.from_date.is_some() {
+            query.push_str(&format!(" AND order_date >= ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.to_date.is_some() {
+            query.push_str(&format!(" AND order_date <= ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.min_total.is_some() {
+            query.push_str(&format!(" AND total >= ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.max_total.is_some() {
+            query.push_str(&format!(" AND total <= ${}", param_idx));
+            param_idx += 1;
+        }
 
         if after_cursor.is_some() {
             // Keyset cursor: (order_date, id) for stable DESC ordering
@@ -674,6 +690,18 @@ impl PgPurchaseOrderRepository {
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());
+        }
+        if let Some(from_date) = filter.from_date {
+            q = q.bind(from_date);
+        }
+        if let Some(to_date) = filter.to_date {
+            q = q.bind(to_date);
+        }
+        if let Some(min_total) = filter.min_total {
+            q = q.bind(min_total);
+        }
+        if let Some(max_total) = filter.max_total {
+            q = q.bind(max_total);
         }
         if let Some((cursor_date, cursor_id)) = after_cursor {
             q = q.bind(cursor_date).bind(cursor_id);
@@ -1037,7 +1065,25 @@ impl PgPurchaseOrderRepository {
         }
         if filter.status.is_some() {
             query.push_str(&format!(" AND status = ${}", param_idx));
+            param_idx += 1;
         }
+        if filter.from_date.is_some() {
+            query.push_str(&format!(" AND order_date >= ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.to_date.is_some() {
+            query.push_str(&format!(" AND order_date <= ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.min_total.is_some() {
+            query.push_str(&format!(" AND total >= ${}", param_idx));
+            param_idx += 1;
+        }
+        if filter.max_total.is_some() {
+            query.push_str(&format!(" AND total <= ${}", param_idx));
+            param_idx += 1;
+        }
+        let _ = param_idx;
 
         let mut q = sqlx::query_as::<_, (i64,)>(&query);
 
@@ -1046,6 +1092,18 @@ impl PgPurchaseOrderRepository {
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());
+        }
+        if let Some(from_date) = filter.from_date {
+            q = q.bind(from_date);
+        }
+        if let Some(to_date) = filter.to_date {
+            q = q.bind(to_date);
+        }
+        if let Some(min_total) = filter.min_total {
+            q = q.bind(min_total);
+        }
+        if let Some(max_total) = filter.max_total {
+            q = q.bind(max_total);
         }
 
         let (count,) = q.fetch_one(&self.pool).await.map_err(map_db_error)?;

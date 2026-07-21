@@ -6,7 +6,14 @@ import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getManufacturingPageData } from '@/app/actions/operations';
 import type { WorkOrder } from '@/lib/embedded';
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const workOrderStatusVariants: Record<string, DsBadgeVariant> = {
   draft: 'outline',
@@ -46,7 +53,7 @@ export default function ManufacturingClient() {
 
   const inspectionCounts = useMemo(
     () => countBy(data?.inspections || [], (inspection) => inspection.status),
-    [data]
+    [data],
   );
 
   if (isLoading && !data) {

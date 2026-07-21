@@ -499,6 +499,14 @@ impl QualityRepository for SqliteQualityRepository {
             conditions.push("inspector_id = ?");
             params.push(Box::new(inspector_id.clone()));
         }
+        if let Some(from_date) = &filter.from_date {
+            conditions.push("created_at >= ?");
+            params.push(Box::new(from_date.to_rfc3339()));
+        }
+        if let Some(to_date) = &filter.to_date {
+            conditions.push("created_at <= ?");
+            params.push(Box::new(to_date.to_rfc3339()));
+        }
 
         // Keyset cursor: (created_at, id) for stable DESC ordering
         if let Some((cursor_created, cursor_id)) = &filter.after_cursor {
@@ -508,7 +516,7 @@ impl QualityRepository for SqliteQualityRepository {
             params.push(Box::new(cursor_id.clone()));
         }
 
-        let limit = filter.limit.unwrap_or(100);
+        let limit = super::effective_limit(filter.limit);
         // Offset pagination applies only in non-cursor mode.
         let offset = if filter.after_cursor.is_none() { filter.offset.unwrap_or(0) } else { 0 };
 
@@ -675,6 +683,27 @@ impl QualityRepository for SqliteQualityRepository {
         if let Some(status) = &filter.status {
             conditions.push("status = ?");
             params.push(Box::new(status.to_string()));
+        }
+
+        if let Some(reference_type) = &filter.reference_type {
+            conditions.push("reference_type = ?");
+            params.push(Box::new(reference_type.clone()));
+        }
+        if let Some(reference_id) = &filter.reference_id {
+            conditions.push("reference_id = ?");
+            params.push(Box::new(reference_id.to_string()));
+        }
+        if let Some(inspector_id) = &filter.inspector_id {
+            conditions.push("inspector_id = ?");
+            params.push(Box::new(inspector_id.clone()));
+        }
+        if let Some(from_date) = &filter.from_date {
+            conditions.push("created_at >= ?");
+            params.push(Box::new(from_date.to_rfc3339()));
+        }
+        if let Some(to_date) = &filter.to_date {
+            conditions.push("created_at <= ?");
+            params.push(Box::new(to_date.to_rfc3339()));
         }
 
         let sql = format!("SELECT COUNT(*) FROM inspections WHERE {}", conditions.join(" AND "));
@@ -852,12 +881,29 @@ impl QualityRepository for SqliteQualityRepository {
             conditions.push("assigned_to = ?");
             params.push(Box::new(assigned_to.clone()));
         }
+        if let Some(from_date) = &filter.from_date {
+            conditions.push("created_at >= ?");
+            params.push(Box::new(from_date.to_rfc3339()));
+        }
+        if let Some(to_date) = &filter.to_date {
+            conditions.push("created_at <= ?");
+            params.push(Box::new(to_date.to_rfc3339()));
+        }
 
-        let limit = filter.limit.unwrap_or(100);
-        let offset = filter.offset.unwrap_or(0);
+        // Keyset cursor: (created_at, id) for stable DESC ordering
+        if let Some((cursor_created, cursor_id)) = &filter.after_cursor {
+            conditions.push("(created_at < ? OR (created_at = ? AND id < ?))");
+            params.push(Box::new(cursor_created.clone()));
+            params.push(Box::new(cursor_created.clone()));
+            params.push(Box::new(cursor_id.clone()));
+        }
+
+        let limit = super::effective_limit(filter.limit);
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if filter.after_cursor.is_none() { filter.offset.unwrap_or(0) } else { 0 };
 
         let sql = format!(
-            "SELECT * FROM non_conformances WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM non_conformances WHERE {} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
             conditions.join(" AND ")
         );
 
@@ -921,6 +967,31 @@ impl QualityRepository for SqliteQualityRepository {
         if let Some(severity) = &filter.severity {
             conditions.push("severity = ?");
             params.push(Box::new(severity.to_string()));
+        }
+
+        if let Some(source) = &filter.source {
+            conditions.push("source = ?");
+            params.push(Box::new(source.to_string()));
+        }
+        if let Some(sku) = &filter.sku {
+            conditions.push("sku = ?");
+            params.push(Box::new(sku.clone()));
+        }
+        if let Some(lot_number) = &filter.lot_number {
+            conditions.push("lot_number = ?");
+            params.push(Box::new(lot_number.clone()));
+        }
+        if let Some(assigned_to) = &filter.assigned_to {
+            conditions.push("assigned_to = ?");
+            params.push(Box::new(assigned_to.clone()));
+        }
+        if let Some(from_date) = &filter.from_date {
+            conditions.push("created_at >= ?");
+            params.push(Box::new(from_date.to_rfc3339()));
+        }
+        if let Some(to_date) = &filter.to_date {
+            conditions.push("created_at <= ?");
+            params.push(Box::new(to_date.to_rfc3339()));
         }
 
         let sql =
@@ -1314,6 +1385,111 @@ mod tests {
             .expect("majors");
         assert!(majors.iter().all(|n| n.severity == Severity::Major));
         assert!(!majors.is_empty());
+    }
+
+    #[test]
+    fn list_ncrs_filters_by_sku_and_source() {
+        let repo = fresh_repo();
+        repo.create_ncr(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::SupplierIssue,
+            severity: Severity::Minor,
+            sku: "WIDGET".into(),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(1),
+            description: "supplier".into(),
+            assigned_to: None,
+        })
+        .expect("supplier ncr");
+        repo.create_ncr(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::InternalAudit,
+            severity: Severity::Minor,
+            sku: "GADGET".into(),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(1),
+            description: "audit".into(),
+            assigned_to: None,
+        })
+        .expect("audit ncr");
+
+        let by_sku = repo
+            .list_ncrs(NonConformanceFilter { sku: Some("WIDGET".into()), ..Default::default() })
+            .expect("by sku");
+        assert_eq!(by_sku.len(), 1);
+        assert!(by_sku.iter().all(|n| n.sku == "WIDGET"), "sku filter must exclude other SKUs");
+
+        let by_source = repo
+            .list_ncrs(NonConformanceFilter {
+                source: Some(NonConformanceSource::SupplierIssue),
+                ..Default::default()
+            })
+            .expect("by source");
+        assert!(by_source.iter().all(|n| n.source == NonConformanceSource::SupplierIssue));
+        assert_eq!(by_source.len(), 1);
+    }
+
+    #[test]
+    fn list_ncrs_filters_by_date_range() {
+        let repo = fresh_repo();
+        let ncr = repo
+            .create_ncr(CreateNonConformance {
+                inspection_id: None,
+                source: NonConformanceSource::InternalAudit,
+                severity: Severity::Minor,
+                sku: "DATED".into(),
+                lot_number: None,
+                serial_number: None,
+                quantity_affected: dec!(1),
+                description: "dated".into(),
+                assigned_to: None,
+            })
+            .expect("ncr");
+        let past = chrono::Utc::now() - chrono::Duration::days(1);
+
+        // to_date in the past must exclude the just-created NCR.
+        let before = repo
+            .list_ncrs(NonConformanceFilter { to_date: Some(past), ..Default::default() })
+            .expect("before");
+        assert!(!before.iter().any(|n| n.id == ncr.id), "to_date must exclude newer NCRs");
+    }
+
+    #[test]
+    fn list_inspections_filters_by_reference_and_date() {
+        let repo = fresh_repo();
+        let shipment_ref = Uuid::new_v4();
+        repo.create_inspection(CreateInspection {
+            inspection_type: InspectionType::Final,
+            reference_type: "shipment".into(),
+            reference_id: shipment_ref,
+            inspector_id: Some("insp-1".into()),
+            scheduled_at: None,
+            notes: None,
+            items: vec![CreateInspectionItem {
+                sku: "REF-1".into(),
+                quantity_to_inspect: dec!(1),
+                ..Default::default()
+            }],
+        })
+        .expect("shipment insp");
+        make_inspection(&repo); // an unrelated PO-reference inspection
+
+        let by_ref = repo
+            .list_inspections(InspectionFilter {
+                reference_id: Some(shipment_ref),
+                ..Default::default()
+            })
+            .expect("by ref");
+        assert_eq!(by_ref.len(), 1);
+        assert!(by_ref.iter().all(|i| i.reference_id == shipment_ref));
+
+        let past = chrono::Utc::now() - chrono::Duration::days(1);
+        let before = repo
+            .list_inspections(InspectionFilter { to_date: Some(past), ..Default::default() })
+            .expect("before");
+        assert!(before.is_empty(), "to_date in the past must exclude all inspections");
     }
 
     #[test]

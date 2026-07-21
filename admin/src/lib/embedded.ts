@@ -127,12 +127,35 @@ export interface CommerceEngine {
     listInspections: () => Promise<QualityInspection[]>;
     listNcrs: () => Promise<NonConformanceReport[]>;
   };
+  /** Optional: fulfillment waves + pick tasks. Read-only slice. */
+  fulfillment?: {
+    listWaves: () => Promise<Wave[]>;
+    listPicks: () => Promise<PickTask[]>;
+  };
+  /** Optional: lot genealogy. Read-only slice. */
+  lots?: {
+    list: () => Promise<Lot[]>;
+  };
+  /** Optional: serial numbers. Read-only slice. */
+  serials?: {
+    list: () => Promise<SerialNumber[]>;
+  };
+  /** Optional: inbound receipts. Read-only slice. */
+  receiving?: {
+    listReceipts: () => Promise<Receipt[]>;
+  };
   analytics: {
     getDashboardMetrics: () => Promise<DashboardMetrics>;
     getHourlyActivity: (date?: string) => Promise<HourlyActivity[]>;
     getSystemHealth: () => Promise<SystemHealth>;
-    getRevenueByPeriod: (params: { startDate: string; endDate: string; groupBy: 'day' | 'week' | 'month' }) => Promise<{ period: string; revenue: number; orders: number }[]>;
-    getTopProducts: (limit?: number) => Promise<{ productId: string; name: string; revenue: number; units: number }[]>;
+    getRevenueByPeriod: (params: {
+      startDate: string;
+      endDate: string;
+      groupBy: 'day' | 'week' | 'month';
+    }) => Promise<{ period: string; revenue: number; orders: number }[]>;
+    getTopProducts: (
+      limit?: number,
+    ) => Promise<{ productId: string; name: string; revenue: number; units: number }[]>;
     getConversionFunnel: () => Promise<{ stage: string; count: number; rate: number }[]>;
   };
   initialize?: () => Promise<void>;
@@ -215,12 +238,11 @@ function shouldAllowMockEngine(): boolean {
 function mockEngineError(reason: unknown): Error {
   const detail = reason instanceof Error ? reason.message : 'unknown error';
   const requestedMockMode = isTruthyFlag(process.env[MOCK_FLAG]);
-  const guidance = requestedMockMode && isProductionRuntime()
-    ? `${MOCK_FLAG}=true is rejected in production.`
-    : `Set ${MOCK_FLAG}=true only for explicit demo mode.`;
-  return new Error(
-    `Unable to load @stateset/embedded (${detail}). ${guidance}`,
-  );
+  const guidance =
+    requestedMockMode && isProductionRuntime()
+      ? `${MOCK_FLAG}=true is rejected in production.`
+      : `Set ${MOCK_FLAG}=true only for explicit demo mode.`;
+  return new Error(`Unable to load @stateset/embedded (${detail}). ${guidance}`);
 }
 
 async function loadCommerceModule() {
@@ -242,9 +264,7 @@ async function loadCommerceModule() {
       throw mockEngineError(error);
     }
 
-    console.warn(
-      `[embedded] Falling back to deterministic mock data because ${MOCK_FLAG}=true.`,
-    );
+    console.warn(`[embedded] Falling back to deterministic mock data because ${MOCK_FLAG}=true.`);
     return null;
   }
 }
@@ -322,8 +342,7 @@ function buildMockCommerceData(): MockCommerceData {
       currency: 'USD',
       category: categories[index % categories.length],
       tags: [categories[index % categories.length].toLowerCase()],
-      status:
-        index % 13 === 0 ? 'draft' : index % 17 === 0 ? 'archived' : ('active' as const),
+      status: index % 13 === 0 ? 'draft' : index % 17 === 0 ? 'archived' : ('active' as const),
       images: [],
       variants: [],
       createdAt,
@@ -385,7 +404,11 @@ function buildMockCommerceData(): MockCommerceData {
   const inventory = Array.from({ length: 100 }, (_, index) => {
     const product = products[index % products.length];
     const quantity = deterministicInt(index + 601, 40, 480);
-    const reservedQuantity = deterministicInt(index + 701, 0, Math.min(40, Math.floor(quantity / 3)));
+    const reservedQuantity = deterministicInt(
+      index + 701,
+      0,
+      Math.min(40, Math.floor(quantity / 3)),
+    );
     const availableQuantity = Math.max(quantity - reservedQuantity, 0);
     return {
       id: `inv_${index}`,
@@ -406,7 +429,9 @@ function buildMockCommerceData(): MockCommerceData {
 
   const returns = Array.from({ length: 25 }, (_, index) => {
     const order = orders[(index * 2) % orders.length];
-    const amount = roundCurrency(order.totalAmount * (0.35 + deterministicNumber(index + 801, 0, 0.45)));
+    const amount = roundCurrency(
+      order.totalAmount * (0.35 + deterministicNumber(index + 801, 0, 0.45)),
+    );
     const createdAt = formatMockDate(-(13 - (index % 14)), index % 12);
     return {
       id: `ret_${1000 + index}`,
@@ -522,7 +547,9 @@ function buildMockCommerceData(): MockCommerceData {
       gmvYesterday > 0 ? Number(((gmvToday - gmvYesterday) / gmvYesterday).toFixed(3)) : 0;
     const ordersChange =
       yesterdayOrders.length > 0
-        ? Number(((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length).toFixed(3))
+        ? Number(
+            ((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length).toFixed(3),
+          )
         : 0;
 
     return {
@@ -532,10 +559,11 @@ function buildMockCommerceData(): MockCommerceData {
       ordersChange,
       averageOrderValue,
       aovChange: Number((averageOrderValue / 140).toFixed(3)),
-      conversionRate: Number((Math.min(0.12, orders.length / 1200)).toFixed(3)),
+      conversionRate: Number(Math.min(0.12, orders.length / 1200).toFixed(3)),
       conversionChange: 0.018,
       activeCustomers: customers.filter((customer) => customer.totalOrders > 2).length,
-      newCustomers: customers.filter((customer) => customer.createdAt >= formatMockDate(-30)).length,
+      newCustomers: customers.filter((customer) => customer.createdAt >= formatMockDate(-30))
+        .length,
       returnRate: Number((returns.length / Math.max(orders.length, 1)).toFixed(3)),
       inventoryHealth: Number(
         (1 - lowStockItems.length / Math.max(inventory.length, 1)).toFixed(3),
@@ -605,8 +633,9 @@ function buildMockCommerceData(): MockCommerceData {
     customers,
     customerAnalytics: {
       totalCustomers: customers.length,
-      newCustomersThisMonth: customers.filter((customer) => customer.createdAt >= formatMockDate(-30))
-        .length,
+      newCustomersThisMonth: customers.filter(
+        (customer) => customer.createdAt >= formatMockDate(-30),
+      ).length,
       activeCustomers: customers.filter((customer) => customer.totalOrders > 2).length,
       averageLifetimeValue: roundCurrency(
         customers.reduce((sum, customer) => sum + customer.totalSpent, 0) /
@@ -653,10 +682,13 @@ function buildMockCommerceData(): MockCommerceData {
         acc[subscription.plan] = (acc[subscription.plan] || 0) + 1;
         return acc;
       }, {}),
-      subscriptionsByFrequency: subscriptions.reduce<Record<string, number>>((acc, subscription) => {
-        acc[subscription.frequency] = (acc[subscription.frequency] || 0) + 1;
-        return acc;
-      }, {}),
+      subscriptionsByFrequency: subscriptions.reduce<Record<string, number>>(
+        (acc, subscription) => {
+          acc[subscription.frequency] = (acc[subscription.frequency] || 0) + 1;
+          return acc;
+        },
+        {},
+      ),
     },
     dashboardMetrics,
     hourlyActivity,
@@ -690,8 +722,12 @@ function groupRevenueByPeriod(
         ? `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
         : params.groupBy === 'week'
           ? (() => {
-              const startOfWeek = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-              startOfWeek.setUTCDate(startOfWeek.getUTCDate() - ((startOfWeek.getUTCDay() + 6) % 7));
+              const startOfWeek = new Date(
+                Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+              );
+              startOfWeek.setUTCDate(
+                startOfWeek.getUTCDate() - ((startOfWeek.getUTCDay() + 6) % 7),
+              );
               return toDateKey(startOfWeek.toISOString());
             })()
           : toDateKey(order.createdAt);
@@ -813,7 +849,11 @@ function buildMockCustomer(params: Partial<Customer>, id: string): Customer {
   };
 }
 
-function buildMockProduct(params: Partial<Product>, id: string, status: Product['status']): Product {
+function buildMockProduct(
+  params: Partial<Product>,
+  id: string,
+  status: Product['status'],
+): Product {
   const createdAt = new Date().toISOString();
   return {
     id,
@@ -871,11 +911,18 @@ function createMockCommerceEngine(): CommerceEngine {
       get: async (id: string) => getMockOrder(id),
       create: async (params: CreateOrderParams) => buildMockOrderFromParams(params),
       updateStatus: async (id: string, status: string) => {
-        const current = getMockOrder(id) || buildMockOrderFromParams({ customerId: 'cus_100', items: [] });
-        return { ...current, id, status: status as Order['status'], updatedAt: new Date().toISOString() };
+        const current =
+          getMockOrder(id) || buildMockOrderFromParams({ customerId: 'cus_100', items: [] });
+        return {
+          ...current,
+          id,
+          status: status as Order['status'],
+          updatedAt: new Date().toISOString(),
+        };
       },
       cancel: async (id: string) => {
-        const current = getMockOrder(id) || buildMockOrderFromParams({ customerId: 'cus_100', items: [] });
+        const current =
+          getMockOrder(id) || buildMockOrderFromParams({ customerId: 'cus_100', items: [] });
         return { ...current, id, status: 'cancelled', updatedAt: new Date().toISOString() };
       },
       getAnalytics: async () => getMockData().orderAnalytics,
@@ -958,7 +1005,10 @@ function createMockCommerceEngine(): CommerceEngine {
           sku,
           currentStock,
           forecastedDemand,
-          recommendedReorder: Math.max(20, Math.round(forecastedDemand.reduce((sum, value) => sum + value, 0) * 0.4)),
+          recommendedReorder: Math.max(
+            20,
+            Math.round(forecastedDemand.reduce((sum, value) => sum + value, 0) * 0.4),
+          ),
           confidence: 0.87,
         };
       },
@@ -977,39 +1027,53 @@ function createMockCommerceEngine(): CommerceEngine {
       get: async (id: string) => getMockReturn(id),
       create: async (params: CreateReturnParams) => buildMockReturnFromParams(params),
       approve: async (id: string) => {
-        const current = getMockReturn(id) || buildMockReturnFromParams({
-          orderId: 'ord_1000',
-          items: [],
-          reason: 'Manual review',
-          reasonCategory: 'other',
-        });
+        const current =
+          getMockReturn(id) ||
+          buildMockReturnFromParams({
+            orderId: 'ord_1000',
+            items: [],
+            reason: 'Manual review',
+            reasonCategory: 'other',
+          });
         return { ...current, id, status: 'approved', updatedAt: new Date().toISOString() };
       },
       reject: async (id: string, reason?: string) => {
-        const current = getMockReturn(id) || buildMockReturnFromParams({
-          orderId: 'ord_1000',
-          items: [],
-          reason: reason || 'Rejected',
-          reasonCategory: 'other',
-        });
-        return { ...current, id, status: 'rejected', notes: reason, updatedAt: new Date().toISOString() };
+        const current =
+          getMockReturn(id) ||
+          buildMockReturnFromParams({
+            orderId: 'ord_1000',
+            items: [],
+            reason: reason || 'Rejected',
+            reasonCategory: 'other',
+          });
+        return {
+          ...current,
+          id,
+          status: 'rejected',
+          notes: reason,
+          updatedAt: new Date().toISOString(),
+        };
       },
       receive: async (id: string) => {
-        const current = getMockReturn(id) || buildMockReturnFromParams({
-          orderId: 'ord_1000',
-          items: [],
-          reason: 'Received',
-          reasonCategory: 'other',
-        });
+        const current =
+          getMockReturn(id) ||
+          buildMockReturnFromParams({
+            orderId: 'ord_1000',
+            items: [],
+            reason: 'Received',
+            reasonCategory: 'other',
+          });
         return { ...current, id, status: 'received', updatedAt: new Date().toISOString() };
       },
       processRefund: async (id: string, method?: Return['refundMethod']) => {
-        const current = getMockReturn(id) || buildMockReturnFromParams({
-          orderId: 'ord_1000',
-          items: [],
-          reason: 'Refunded',
-          reasonCategory: 'other',
-        });
+        const current =
+          getMockReturn(id) ||
+          buildMockReturnFromParams({
+            orderId: 'ord_1000',
+            items: [],
+            reason: 'Refunded',
+            reasonCategory: 'other',
+          });
         return {
           ...current,
           id,
@@ -1083,7 +1147,8 @@ function createMockCommerceEngine(): CommerceEngine {
         }
         return products;
       },
-      get: async (id: string) => getMockData().products.find((product) => product.id === id) || null,
+      get: async (id: string) =>
+        getMockData().products.find((product) => product.id === id) || null,
       create: async (params: Partial<Product>) =>
         buildMockProduct(params, nextMockId('prod'), params.status || 'draft'),
       update: async (id: string, params: Partial<Product>) => ({
@@ -1099,15 +1164,20 @@ function createMockCommerceEngine(): CommerceEngine {
       list: async (params) => {
         let subscriptions = getMockData().subscriptions;
         if (params?.status) {
-          subscriptions = subscriptions.filter((subscription) => subscription.status === params.status);
+          subscriptions = subscriptions.filter(
+            (subscription) => subscription.status === params.status,
+          );
         }
         if (params?.customerId) {
-          subscriptions = subscriptions.filter((subscription) => subscription.customerId === params.customerId);
+          subscriptions = subscriptions.filter(
+            (subscription) => subscription.customerId === params.customerId,
+          );
         }
         return subscriptions;
       },
       get: async (id: string) => getMockSubscription(id),
-      create: async (params: Partial<Subscription>) => buildMockSubscription(params, nextMockId('sub')),
+      create: async (params: Partial<Subscription>) =>
+        buildMockSubscription(params, nextMockId('sub')),
       pause: async (id: string) => ({
         ...(getMockSubscription(id) || buildMockSubscription({}, id)),
         id,
@@ -1489,7 +1559,10 @@ export const returnsApi = {
     return commerce.returns.reject(returnId, reason);
   },
 
-  async receive(returnId: string, items: { productId: string; condition: string }[]): Promise<Return> {
+  async receive(
+    returnId: string,
+    items: { productId: string; condition: string }[],
+  ): Promise<Return> {
     const commerce = await getCommerceEngine();
     return commerce.returns.receive(returnId, items);
   },
@@ -1725,12 +1798,18 @@ export const analyticsApi = {
     return commerce.analytics.getSystemHealth();
   },
 
-  async getRevenueByPeriod(params: { startDate: string; endDate: string; groupBy: 'day' | 'week' | 'month' }): Promise<{ period: string; revenue: number; orders: number }[]> {
+  async getRevenueByPeriod(params: {
+    startDate: string;
+    endDate: string;
+    groupBy: 'day' | 'week' | 'month';
+  }): Promise<{ period: string; revenue: number; orders: number }[]> {
     const commerce = await getCommerceEngine();
     return commerce.analytics.getRevenueByPeriod(params);
   },
 
-  async getTopProducts(limit?: number): Promise<{ productId: string; name: string; revenue: number; units: number }[]> {
+  async getTopProducts(
+    limit?: number,
+  ): Promise<{ productId: string; name: string; revenue: number; units: number }[]> {
     const commerce = await getCommerceEngine();
     return commerce.analytics.getTopProducts(limit);
   },
@@ -2209,7 +2288,9 @@ function buildMockFinanceData(): MockFinanceData {
   const openBills = bills.filter((bill) => bill.amountDue > 0);
   const bucketTotal = (predicate: (index: number) => boolean) =>
     roundCurrency(
-      openBills.filter((_, index) => predicate(index)).reduce((sum, bill) => sum + bill.amountDue, 0),
+      openBills
+        .filter((_, index) => predicate(index))
+        .reduce((sum, bill) => sum + bill.amountDue, 0),
     );
   const apAging: ApAgingSummary = {
     current: bucketTotal((index) => index % 5 < 2),
@@ -2275,11 +2356,20 @@ function buildMockFinanceData(): MockFinanceData {
     ['Old conveyor', 'equipment', '25000.00', '1000.00', 72, 'disposed', '21500.00'],
   ];
   const fixedAssets = assetSpecs.map(
-    ([name, category, acquisitionCost, salvageValue, usefulLifeMonths, status, accumulatedDepreciation], index) => {
+    (
+      [
+        name,
+        category,
+        acquisitionCost,
+        salvageValue,
+        usefulLifeMonths,
+        status,
+        accumulatedDepreciation,
+      ],
+      index,
+    ) => {
       const createdAt = formatMockDate(-400 + index * 30, index % 8);
-      const bookValue = (
-        Number(acquisitionCost) - Number(accumulatedDepreciation)
-      ).toFixed(2);
+      const bookValue = (Number(acquisitionCost) - Number(accumulatedDepreciation)).toFixed(2);
       return {
         id: `fa_${5000 + index}`,
         assetNumber: `FA-${5000 + index}`,
@@ -2353,7 +2443,8 @@ function buildMockFinanceData(): MockFinanceData {
       description,
       allocatedAmount: allocatedAmount.toFixed(2),
       recognitionMethod,
-      recognitionStart: recognitionMethod === 'ratable_over_time' ? toDateKey(createdAt) : undefined,
+      recognitionStart:
+        recognitionMethod === 'ratable_over_time' ? toDateKey(createdAt) : undefined,
       recognitionEnd:
         recognitionMethod === 'ratable_over_time'
           ? toDateKey(formatMockDate(-200 + index * 20 + 365))
@@ -2439,7 +2530,11 @@ function buildMockCloseMonthReport(
   const dryRun = options?.dryRun === true;
   const period = getMockFinanceData().glPeriods.find((entry) => entry.id === periodId);
   const stepStatus = dryRun ? 'dry_run' : 'executed';
-  const step = (entryCount: number, totalAmount: string, warnings: string[] = []): CloseMonthStep => ({
+  const step = (
+    entryCount: number,
+    totalAmount: string,
+    warnings: string[] = [],
+  ): CloseMonthStep => ({
     status: stepStatus,
     entryCount,
     totalAmount,
@@ -2724,7 +2819,78 @@ export interface NonConformanceReport {
   createdAt: string;
 }
 
+/** A fulfillment wave (`commerce.fulfillment.listWaves`). */
+export interface Wave {
+  id: string;
+  waveNumber: string;
+  warehouseId: number;
+  orderCount: number;
+  /** created, released, picking, completed, cancelled */
+  status: string;
+  createdAt: string;
+}
+
+/** A pick task (`commerce.fulfillment.listPicks`). */
+export interface PickTask {
+  id: string;
+  waveId?: string;
+  orderId: string;
+  sku: string;
+  quantityRequested: number;
+  quantityPicked: number;
+  /** pending, assigned, in_progress, picked, cancelled */
+  status: string;
+  sourceLocationId: number;
+  assignedTo?: string;
+}
+
+/** A production/inventory lot (`commerce.lots.list`). */
+export interface Lot {
+  id: string;
+  lotNumber: string;
+  sku: string;
+  quantityProduced: number;
+  quantityAvailable: number;
+  quantityReserved: number;
+  /** active, quarantined, expired, consumed */
+  status: string;
+  productionDate?: string;
+  expirationDate?: string;
+  createdAt: string;
+}
+
+/** A serial number (`commerce.serials.list`). */
+export interface SerialNumber {
+  id: string;
+  serial: string;
+  sku: string;
+  lotId?: string;
+  /** available, allocated, sold, quarantined */
+  status: string;
+  ownerId?: string;
+  locationId?: number;
+  createdAt: string;
+}
+
+/** An inbound receipt (`commerce.receiving.listReceipts`). */
+export interface Receipt {
+  id: string;
+  receiptNumber: string;
+  receiptType: string;
+  warehouseId: number;
+  /** pending, receiving, completed, cancelled */
+  status: string;
+  carrier?: string;
+  trackingNumber?: string;
+  createdAt: string;
+}
+
 type MockOperationsData = {
+  waves: Wave[];
+  picks: PickTask[];
+  lots: Lot[];
+  serials: SerialNumber[];
+  receipts: Receipt[];
   purchaseOrders: PurchaseOrder[];
   suppliers: Supplier[];
   warehouses: WarehouseRecord[];
@@ -2745,15 +2911,18 @@ function buildMockOperationsData(): MockOperationsData {
     ['Acme Raw Materials', 'SUP-ACM', 'hello@acme.example', true],
     ['Umbrella Logistics', 'SUP-UMB', 'ops@umbrella.example', false],
   ];
-  const suppliers = supplierSpecs.map(([name, supplierCode, email, isActive], index) => ({
-    id: `sup_${100 + index}`,
-    name,
-    supplierCode,
-    email,
-    phone: `+1-555-01${(10 + index).toString().padStart(2, '0')}`,
-    isActive,
-    createdAt: formatMockDate(-300 + index * 12, index % 9),
-  } satisfies Supplier));
+  const suppliers = supplierSpecs.map(
+    ([name, supplierCode, email, isActive], index) =>
+      ({
+        id: `sup_${100 + index}`,
+        name,
+        supplierCode,
+        email,
+        phone: `+1-555-01${(10 + index).toString().padStart(2, '0')}`,
+        isActive,
+        createdAt: formatMockDate(-300 + index * 12, index % 9),
+      }) satisfies Supplier,
+  );
 
   const poStatuses = ['draft', 'submitted', 'approved', 'sent', 'received', 'cancelled'];
   const purchaseOrders = Array.from({ length: 20 }, (_, index) => {
@@ -2776,15 +2945,18 @@ function buildMockOperationsData(): MockOperationsData {
     ['WH-EAST', 'Columbus Fulfillment', 'fulfillment'],
     ['WH-MFG', 'Fremont Manufacturing', 'manufacturing'],
   ];
-  const warehouses = warehouseSpecs.map(([code, name, warehouseType], index) => ({
-    id: index + 1,
-    code,
-    name,
-    warehouseType,
-    isActive: true,
-    timezone: index === 1 ? 'America/New_York' : 'America/Los_Angeles',
-    createdAt: formatMockDate(-500 + index * 40, index % 7),
-  } satisfies WarehouseRecord));
+  const warehouses = warehouseSpecs.map(
+    ([code, name, warehouseType], index) =>
+      ({
+        id: index + 1,
+        code,
+        name,
+        warehouseType,
+        isActive: true,
+        timezone: index === 1 ? 'America/New_York' : 'America/Los_Angeles',
+        createdAt: formatMockDate(-500 + index * 40, index % 7),
+      }) satisfies WarehouseRecord,
+  );
 
   const locationTypes = ['bin', 'bulk', 'staging', 'receiving'];
   const locations: WarehouseLocation[] = [];
@@ -2841,7 +3013,8 @@ function buildMockOperationsData(): MockOperationsData {
       lines,
       createdAt,
       updatedAt: createdAt,
-      completedAt: status === 'completed' ? formatMockDate(-(index * 5) - 1, index % 10) : undefined,
+      completedAt:
+        status === 'completed' ? formatMockDate(-(index * 5) - 1, index % 10) : undefined,
     } satisfies CycleCount;
   });
 
@@ -2890,19 +3063,121 @@ function buildMockOperationsData(): MockOperationsData {
 
   const severities = ['minor', 'major', 'critical'];
   const ncrStatuses = ['open', 'under_review', 'closed'];
-  const ncrs = Array.from({ length: 9 }, (_, index) => ({
-    id: `ncr_${9700 + index}`,
-    ncrNumber: `NCR-${9700 + index}`,
-    source: index % 2 === 0 ? 'inspection' : 'customer_return',
-    severity: severities[index % severities.length],
-    sku: `SKU-${1000 + (index % 40)}`,
-    quantityAffected: 1 + deterministicNumber(index + 2401, 0, 60),
-    status: ncrStatuses[index % ncrStatuses.length],
-    description: 'Dimensional tolerance out of spec on inbound lot',
-    createdAt: formatMockDate(-(index * 6) - 2, index % 8),
-  } satisfies NonConformanceReport));
+  const ncrs = Array.from(
+    { length: 9 },
+    (_, index) =>
+      ({
+        id: `ncr_${9700 + index}`,
+        ncrNumber: `NCR-${9700 + index}`,
+        source: index % 2 === 0 ? 'inspection' : 'customer_return',
+        severity: severities[index % severities.length],
+        sku: `SKU-${1000 + (index % 40)}`,
+        quantityAffected: 1 + deterministicNumber(index + 2401, 0, 60),
+        status: ncrStatuses[index % ncrStatuses.length],
+        description: 'Dimensional tolerance out of spec on inbound lot',
+        createdAt: formatMockDate(-(index * 6) - 2, index % 8),
+      }) satisfies NonConformanceReport,
+  );
+
+  const waveStatuses = ['created', 'released', 'picking', 'completed', 'cancelled'];
+  const waves = Array.from(
+    { length: 10 },
+    (_, index) =>
+      ({
+        id: `wave_${4000 + index}`,
+        waveNumber: `WAVE-${4000 + index}`,
+        warehouseId: warehouses[index % warehouses.length].id,
+        orderCount: 3 + deterministicNumber(index + 2501, 0, 22),
+        status: waveStatuses[index % waveStatuses.length],
+        createdAt: formatMockDate(-(index * 2) - 1, index % 10),
+      }) satisfies Wave,
+  );
+
+  const pickStatuses = ['pending', 'assigned', 'in_progress', 'picked', 'cancelled'];
+  const picks = Array.from({ length: 24 }, (_, index) => {
+    const status = pickStatuses[index % pickStatuses.length];
+    const quantityRequested = 1 + deterministicNumber(index + 2601, 0, 24);
+    const quantityPicked =
+      status === 'picked'
+        ? quantityRequested
+        : status === 'in_progress'
+          ? Math.floor(quantityRequested / 2)
+          : 0;
+    return {
+      id: `pick_${5000 + index}`,
+      waveId: waves[index % waves.length].id,
+      orderId: `ord_${6000 + (index % 18)}`,
+      sku: `SKU-${1000 + (index % 40)}`,
+      quantityRequested,
+      quantityPicked,
+      status,
+      sourceLocationId: locations[index % locations.length].id,
+      assignedTo: status === 'pending' ? undefined : `picker_${1 + (index % 4)}`,
+    } satisfies PickTask;
+  });
+
+  const lotStatuses = ['active', 'active', 'quarantined', 'expired', 'consumed'];
+  const lots = Array.from({ length: 18 }, (_, index) => {
+    const status = lotStatuses[index % lotStatuses.length];
+    const quantityProduced = 100 + deterministicNumber(index + 2701, 0, 900);
+    const quantityReserved = deterministicNumber(index + 2801, 0, 40);
+    // Spread expirations across expired / near-expiry / far-out buckets.
+    const expiryOffset = status === 'expired' ? -(5 + (index % 20)) : (index % 6) * 9 + 2;
+    const createdAt = formatMockDate(-(index * 7) - 3, index % 11);
+    return {
+      id: `lot_${3000 + index}`,
+      lotNumber: `LOT-${3000 + index}`,
+      sku: `SKU-${1000 + (index % 40)}`,
+      quantityProduced,
+      quantityAvailable:
+        status === 'consumed' ? 0 : Math.max(0, quantityProduced - quantityReserved),
+      quantityReserved: status === 'consumed' ? 0 : quantityReserved,
+      status,
+      productionDate: toDateKey(createdAt),
+      expirationDate: toDateKey(formatMockDate(expiryOffset)),
+      createdAt,
+    } satisfies Lot;
+  });
+
+  const serialStatuses = ['available', 'allocated', 'sold', 'quarantined'];
+  const serials = Array.from({ length: 20 }, (_, index) => {
+    const status = serialStatuses[index % serialStatuses.length];
+    return {
+      id: `ser_${2000 + index}`,
+      serial: `SN-${(2000 + index).toString().padStart(8, '0')}`,
+      sku: `SKU-${1000 + (index % 40)}`,
+      lotId: lots[index % lots.length].id,
+      status,
+      ownerId: status === 'sold' ? `cus_${400 + (index % 12)}` : undefined,
+      locationId: status === 'sold' ? undefined : locations[index % locations.length].id,
+      createdAt: formatMockDate(-(index * 4) - 2, index % 9),
+    } satisfies SerialNumber;
+  });
+
+  const receiptStatuses = ['pending', 'receiving', 'completed', 'completed', 'cancelled'];
+  const receiptTypes = ['purchase_order', 'return', 'transfer'];
+  const carriers = ['UPS', 'FedEx', 'DHL'];
+  const receipts = Array.from(
+    { length: 12 },
+    (_, index) =>
+      ({
+        id: `rcpt_${1500 + index}`,
+        receiptNumber: `RCV-${1500 + index}`,
+        receiptType: receiptTypes[index % receiptTypes.length],
+        warehouseId: warehouses[index % warehouses.length].id,
+        status: receiptStatuses[index % receiptStatuses.length],
+        carrier: carriers[index % carriers.length],
+        trackingNumber: `1Z${(90000 + index * 137).toString()}`,
+        createdAt: formatMockDate(-(index * 3) - 1, index % 8),
+      }) satisfies Receipt,
+  );
 
   return {
+    waves,
+    picks,
+    lots,
+    serials,
+    receipts,
     purchaseOrders,
     suppliers,
     warehouses,
@@ -2927,7 +3202,15 @@ function getMockOperationsData(): MockOperationsData {
  */
 function createMockOperationsSections(): Pick<
   CommerceEngine,
-  'purchaseOrders' | 'warehouse' | 'cycleCounts' | 'workOrders' | 'quality'
+  | 'purchaseOrders'
+  | 'warehouse'
+  | 'cycleCounts'
+  | 'workOrders'
+  | 'quality'
+  | 'fulfillment'
+  | 'lots'
+  | 'serials'
+  | 'receiving'
 > {
   return {
     purchaseOrders: {
@@ -2967,6 +3250,19 @@ function createMockOperationsSections(): Pick<
     quality: {
       listInspections: async () => getMockOperationsData().inspections,
       listNcrs: async () => getMockOperationsData().ncrs,
+    },
+    fulfillment: {
+      listWaves: async () => getMockOperationsData().waves,
+      listPicks: async () => getMockOperationsData().picks,
+    },
+    lots: {
+      list: async () => getMockOperationsData().lots,
+    },
+    serials: {
+      list: async () => getMockOperationsData().serials,
+    },
+    receiving: {
+      listReceipts: async () => getMockOperationsData().receipts,
     },
   };
 }
@@ -3067,5 +3363,61 @@ export const qualityApi = {
       return [];
     }
     return commerce.quality.listNcrs();
+  },
+};
+
+/**
+ * Fulfillment accessors (waves + pick tasks). Pack/ship task listing is not
+ * exposed by the napi binding yet, so the page reports on waves and picks
+ * only. Degrades to empty lists on older builds.
+ */
+export const fulfillmentApi = {
+  async listWaves(): Promise<Wave[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.fulfillment?.listWaves !== 'function') {
+      return [];
+    }
+    return commerce.fulfillment.listWaves();
+  },
+
+  async listPicks(): Promise<PickTask[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.fulfillment?.listPicks !== 'function') {
+      return [];
+    }
+    return commerce.fulfillment.listPicks();
+  },
+};
+
+/** Lot accessors. Degrade to an empty list on older builds. */
+export const lotsApi = {
+  async list(): Promise<Lot[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.lots?.list !== 'function') {
+      return [];
+    }
+    return commerce.lots.list();
+  },
+};
+
+/** Serial-number accessors. Degrade to an empty list on older builds. */
+export const serialsApi = {
+  async list(): Promise<SerialNumber[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.serials?.list !== 'function') {
+      return [];
+    }
+    return commerce.serials.list();
+  },
+};
+
+/** Receiving accessors. Degrade to an empty list on older builds. */
+export const receivingApi = {
+  async listReceipts(): Promise<Receipt[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.receiving?.listReceipts !== 'function') {
+      return [];
+    }
+    return commerce.receiving.listReceipts();
   },
 };

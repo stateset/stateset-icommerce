@@ -84,8 +84,7 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
       <div>
         <h1 className="text-2xl font-bold">Build &amp; Release</h1>
         <p className="text-sm text-ds-muted-foreground mt-1">
-          What binary is running, where it came from, and whether the
-          release pipeline signed it.
+          What binary is running, where it came from, and whether the release pipeline signed it.
         </p>
       </div>
 
@@ -96,8 +95,8 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
               <Badge color="red">Engine unreachable</Badge>
             </div>
             <p className="mt-3 text-sm text-ds-muted-foreground">
-              Could not fetch <code>/version</code>: {result.error}.
-              Check that the engine is running and that
+              Could not fetch <code>/version</code>: {result.error}. Check that the engine is
+              running and that
               <code className="mx-1">STATESET_API_URL</code> points to it.
             </p>
           </CardContent>
@@ -124,16 +123,14 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
           <CardContent className="text-sm text-ds-foreground">
             {version!.signed ? (
               <p>
-                This binary was built by the StateSet release pipeline and
-                signed via sigstore. The artifacts can be verified against
-                the public transparency log.
+                This binary was built by the StateSet release pipeline and signed via sigstore. The
+                artifacts can be verified against the public transparency log.
               </p>
             ) : (
               <p>
-                <strong>This binary did not come from a verified release pipeline.</strong>
-                {' '}It may be a local build, a development build, or a
-                release where signing was skipped. Do not rely on it for
-                production audits.
+                <strong>This binary did not come from a verified release pipeline.</strong> It may
+                be a local build, a development build, or a release where signing was skipped. Do
+                not rely on it for production audits.
               </p>
             )}
           </CardContent>
@@ -206,17 +203,15 @@ export function BuildInfoView({ result }: { result: FetchResult }) {
         </CardHeader>
         <CardContent className="text-sm text-ds-foreground space-y-2">
           <p>
-            Releases are built via GitHub Actions and signed via sigstore
-            using OIDC keyless signing. The public transparency log
-            anchors each signature so anyone can verify a binary came
-            from a specific commit on a specific workflow run.
+            Releases are built via GitHub Actions and signed via sigstore using OIDC keyless
+            signing. The public transparency log anchors each signature so anyone can verify a
+            binary came from a specific commit on a specific workflow run.
           </p>
           <p>
-            Local <code>cargo build</code> runs do not pass through the
-            release pipeline, so they show as <em>Unsigned build</em>{' '}
-            here even when the version number matches a real release. To
-            run a verified binary, install from the release artifacts
-            published to GitHub Releases.
+            Local <code>cargo build</code> runs do not pass through the release pipeline, so they
+            show as <em>Unsigned build</em> here even when the version number matches a real
+            release. To run a verified binary, install from the release artifacts published to
+            GitHub Releases.
           </p>
         </CardContent>
       </Card>

@@ -4,11 +4,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { CsvExportButton } from '@/components/export/csv-export-button';
 import { getCustomers, getInventory, getOrders } from '@/app/actions/commerce';
-import {
-  CUSTOMER_CSV_COLUMNS,
-  INVENTORY_CSV_COLUMNS,
-  ORDER_CSV_COLUMNS,
-} from '@/lib/csv/specs';
+import { CUSTOMER_CSV_COLUMNS, INVENTORY_CSV_COLUMNS, ORDER_CSV_COLUMNS } from '@/lib/csv/specs';
 
 interface EntityCardProps {
   title: string;

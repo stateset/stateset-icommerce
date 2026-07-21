@@ -8,13 +8,7 @@ interface SkeletonProps {
 
 export function Skeleton({ className }: SkeletonProps) {
   return (
-    <div
-      className={cn(
-        'animate-pulse rounded-md bg-ds-muted',
-        className
-      )}
-      aria-hidden="true"
-    />
+    <div className={cn('animate-pulse rounded-md bg-ds-muted', className)} aria-hidden="true" />
   );
 }
 
@@ -23,10 +17,7 @@ interface LoadingSkeletonProps {
   count?: number;
 }
 
-export default function LoadingSkeleton({
-  type = 'card',
-  count = 1,
-}: LoadingSkeletonProps) {
+export default function LoadingSkeleton({ type = 'card', count = 1 }: LoadingSkeletonProps) {
   const renderSkeleton = () => {
     switch (type) {
       case 'metric':
@@ -145,17 +136,13 @@ export function ConversationSkeleton() {
   return (
     <div className="flex-1 p-4 space-y-4" aria-label="Loading conversation">
       {[...Array(4)].map((_, i) => (
-        <div
-          key={i}
-          className={cn(
-            'flex',
-            i % 2 === 0 ? 'justify-start' : 'justify-end'
-          )}
-        >
-          <div className={cn(
-            'flex items-start space-x-2',
-            i % 2 !== 0 && 'flex-row-reverse space-x-reverse'
-          )}>
+        <div key={i} className={cn('flex', i % 2 === 0 ? 'justify-start' : 'justify-end')}>
+          <div
+            className={cn(
+              'flex items-start space-x-2',
+              i % 2 !== 0 && 'flex-row-reverse space-x-reverse',
+            )}
+          >
             <Skeleton className="w-8 h-8 rounded-full flex-shrink-0" />
             <div className="space-y-1">
               <Skeleton className={cn('h-16 rounded-lg', i % 2 === 0 ? 'w-64' : 'w-48')} />

@@ -2832,12 +2832,19 @@ impl PurchaseOrders {
         convert_optional_output(po)
     }
 
+    /// List purchase orders, optionally filtered/paginated.
+    ///
+    /// Calling with no argument keeps the previous behaviour (server default page size).
     #[napi]
-    pub async fn list(&self) -> Result<Vec<PurchaseOrderOutput>> {
+    pub async fn list(
+        &self,
+        filter: Option<PurchaseOrderFilterInput>,
+    ) -> Result<Vec<PurchaseOrderOutput>> {
         let commerce = self.commerce.lock().await;
+        let filter = purchase_order_filter_from_input(filter)?;
         let pos = commerce
             .purchase_orders()
-            .list(Default::default())
+            .list(filter)
             .map_err(|e| Error::from_reason(format!("Failed to list POs: {}", e)))?;
 
         convert_outputs(pos)
@@ -3429,12 +3436,16 @@ impl WorkOrders {
         convert_optional_output(wo)
     }
 
+    /// List work orders, optionally filtered/paginated.
+    ///
+    /// Calling with no argument keeps the previous behaviour (server default page size).
     #[napi]
-    pub async fn list(&self) -> Result<Vec<WorkOrderOutput>> {
+    pub async fn list(&self, filter: Option<WorkOrderFilterInput>) -> Result<Vec<WorkOrderOutput>> {
         let commerce = self.commerce.lock().await;
+        let filter = work_order_filter_from_input(filter)?;
         let orders = commerce
             .work_orders()
-            .list(Default::default())
+            .list(filter)
             .map_err(|e| Error::from_reason(format!("Failed to list work orders: {}", e)))?;
 
         convert_outputs(orders)
@@ -8631,13 +8642,19 @@ impl Quality {
         Ok(inspection.map(|i| i.into()))
     }
 
-    /// List all inspections
+    /// List inspections, optionally filtered/paginated.
+    ///
+    /// Calling with no argument keeps the previous behaviour (server default page size).
     #[napi]
-    pub async fn list_inspections(&self) -> Result<Vec<InspectionOutput>> {
+    pub async fn list_inspections(
+        &self,
+        filter: Option<InspectionFilterInput>,
+    ) -> Result<Vec<InspectionOutput>> {
         let commerce = self.commerce.lock().await;
+        let filter = inspection_filter_from_input(filter)?;
         let inspections = commerce
             .quality()
-            .list_inspections(Default::default())
+            .list_inspections(filter)
             .map_err(|e| Error::from_reason(format!("Failed to list inspections: {}", e)))?;
         Ok(inspections.into_iter().map(|i| i.into()).collect())
     }
@@ -8702,13 +8719,16 @@ impl Quality {
         convert_optional_output(ncr)
     }
 
-    /// List all NCRs
+    /// List NCRs, optionally filtered/paginated.
+    ///
+    /// Calling with no argument keeps the previous behaviour (server default page size).
     #[napi]
-    pub async fn list_ncrs(&self) -> Result<Vec<NcrOutput>> {
+    pub async fn list_ncrs(&self, filter: Option<NcrFilterInput>) -> Result<Vec<NcrOutput>> {
         let commerce = self.commerce.lock().await;
+        let filter = ncr_filter_from_input(filter)?;
         let ncrs = commerce
             .quality()
-            .list_ncrs(Default::default())
+            .list_ncrs(filter)
             .map_err(|e| Error::from_reason(format!("Failed to list NCRs: {}", e)))?;
         convert_outputs(ncrs)
     }
@@ -24265,4 +24285,268 @@ impl Maintenance {
                 .collect(),
         })
     }
+}
+
+// =============================================================================
+// List filters for purchase orders, work orders and quality records
+// =============================================================================
+
+fn parse_rfc3339_field(
+    value: Option<&String>,
+    field: &str,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    value
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .map_err(|_| Error::from_reason(format!("Invalid RFC 3339 timestamp for {field}")))
+        })
+        .transpose()
+}
+
+fn parse_uuid_field(value: Option<&String>, field: &str) -> Result<Option<uuid::Uuid>> {
+    value
+        .map(|s| {
+            uuid::Uuid::parse_str(s)
+                .map_err(|_| Error::from_reason(format!("Invalid UUID for {field}")))
+        })
+        .transpose()
+}
+
+/// Filter for `purchaseOrders.list()`
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct PurchaseOrderFilterInput {
+    pub supplier_id: Option<String>,
+    /// draft, submitted, approved, sent, partially_received, received, cancelled, closed
+    pub status: Option<String>,
+    /// RFC 3339 timestamp (inclusive lower bound on order date)
+    pub from_date: Option<String>,
+    /// RFC 3339 timestamp (inclusive upper bound on order date)
+    pub to_date: Option<String>,
+    /// Exact decimal string
+    pub min_total: Option<String>,
+    /// Exact decimal string
+    pub max_total: Option<String>,
+    /// Page size (server default 500, hard cap 1000)
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    /// Keyset cursor: `[orderDate, id]`
+    pub after_cursor: Option<Vec<String>>,
+}
+
+fn parse_after_cursor_input(cursor: Option<Vec<String>>) -> Result<Option<(String, String)>> {
+    match cursor {
+        None => Ok(None),
+        Some(parts) if parts.len() == 2 => {
+            let mut it = parts.into_iter();
+            let sort_key = it.next().unwrap_or_default();
+            let id = it.next().unwrap_or_default();
+            Ok(Some((sort_key, id)))
+        }
+        Some(_) => Err(Error::from_reason("afterCursor must be [sortKey, id]")),
+    }
+}
+
+fn purchase_order_filter_from_input(
+    filter: Option<PurchaseOrderFilterInput>,
+) -> Result<stateset_core::PurchaseOrderFilter> {
+    let Some(f) = filter else {
+        return Ok(stateset_core::PurchaseOrderFilter::default());
+    };
+    Ok(stateset_core::PurchaseOrderFilter {
+        supplier_id: parse_uuid_field(f.supplier_id.as_ref(), "supplierId")?,
+        status: f
+            .status
+            .as_deref()
+            .map(|s| {
+                s.parse::<stateset_core::PurchaseOrderStatus>()
+                    .map_err(|_| Error::from_reason(format!("Invalid purchase order status: {s}")))
+            })
+            .transpose()?,
+        from_date: parse_rfc3339_field(f.from_date.as_ref(), "fromDate")?,
+        to_date: parse_rfc3339_field(f.to_date.as_ref(), "toDate")?,
+        min_total: f.min_total.as_deref().map(|s| parse_decimal_str(s, "minTotal")).transpose()?,
+        max_total: f.max_total.as_deref().map(|s| parse_decimal_str(s, "maxTotal")).transpose()?,
+        limit: f.limit,
+        offset: f.offset,
+        after_cursor: parse_after_cursor_input(f.after_cursor)?,
+    })
+}
+
+/// Filter for `workOrders.list()`
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct WorkOrderFilterInput {
+    pub product_id: Option<String>,
+    pub bom_id: Option<String>,
+    /// draft, planned, released, in_progress, on_hold, completed, cancelled
+    pub status: Option<String>,
+    /// low, normal, high, urgent
+    pub priority: Option<String>,
+    pub assigned_to: Option<String>,
+    pub work_center_id: Option<String>,
+    pub overdue_only: Option<bool>,
+    /// Page size (server default 500, hard cap 1000)
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    /// Keyset cursor: `[createdAt, id]`
+    pub after_cursor: Option<Vec<String>>,
+}
+
+fn work_order_filter_from_input(
+    filter: Option<WorkOrderFilterInput>,
+) -> Result<stateset_core::WorkOrderFilter> {
+    let Some(f) = filter else {
+        return Ok(stateset_core::WorkOrderFilter::default());
+    };
+    Ok(stateset_core::WorkOrderFilter {
+        product_id: parse_uuid_field(f.product_id.as_ref(), "productId")?
+            .map(stateset_core::ProductId::from),
+        bom_id: parse_uuid_field(f.bom_id.as_ref(), "bomId")?,
+        status: f
+            .status
+            .as_deref()
+            .map(|s| {
+                s.parse::<stateset_core::WorkOrderStatus>()
+                    .map_err(|_| Error::from_reason(format!("Invalid work order status: {s}")))
+            })
+            .transpose()?,
+        priority: f
+            .priority
+            .as_deref()
+            .map(|s| {
+                s.parse::<stateset_core::WorkOrderPriority>()
+                    .map_err(|_| Error::from_reason(format!("Invalid work order priority: {s}")))
+            })
+            .transpose()?,
+        assigned_to: parse_uuid_field(f.assigned_to.as_ref(), "assignedTo")?,
+        work_center_id: f.work_center_id,
+        overdue_only: f.overdue_only,
+        limit: f.limit,
+        offset: f.offset,
+        after_cursor: parse_after_cursor_input(f.after_cursor)?,
+    })
+}
+
+/// Filter for `quality.listInspections()`
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct InspectionFilterInput {
+    /// incoming, in_process, final, return, audit
+    pub inspection_type: Option<String>,
+    /// pending, in_progress, passed, failed, cancelled
+    pub status: Option<String>,
+    pub reference_type: Option<String>,
+    pub reference_id: Option<String>,
+    pub inspector_id: Option<String>,
+    /// RFC 3339 timestamp (inclusive lower bound on created_at)
+    pub from_date: Option<String>,
+    /// RFC 3339 timestamp (inclusive upper bound on created_at)
+    pub to_date: Option<String>,
+    /// Page size (server default 500, hard cap 1000)
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    /// Keyset cursor: `[createdAt, id]`
+    pub after_cursor: Option<Vec<String>>,
+}
+
+fn inspection_filter_from_input(
+    filter: Option<InspectionFilterInput>,
+) -> Result<stateset_core::InspectionFilter> {
+    let Some(f) = filter else {
+        return Ok(stateset_core::InspectionFilter::default());
+    };
+    Ok(stateset_core::InspectionFilter {
+        inspection_type: f
+            .inspection_type
+            .as_deref()
+            .map(|s| {
+                s.parse::<stateset_core::InspectionType>()
+                    .map_err(|_| Error::from_reason(format!("Invalid inspection type: {s}")))
+            })
+            .transpose()?,
+        status: f
+            .status
+            .as_deref()
+            .map(|s| {
+                s.parse::<stateset_core::InspectionStatus>()
+                    .map_err(|_| Error::from_reason(format!("Invalid inspection status: {s}")))
+            })
+            .transpose()?,
+        reference_type: f.reference_type,
+        reference_id: parse_uuid_field(f.reference_id.as_ref(), "referenceId")?,
+        inspector_id: f.inspector_id,
+        from_date: parse_rfc3339_field(f.from_date.as_ref(), "fromDate")?,
+        to_date: parse_rfc3339_field(f.to_date.as_ref(), "toDate")?,
+        limit: f.limit,
+        offset: f.offset,
+        after_cursor: parse_after_cursor_input(f.after_cursor)?,
+    })
+}
+
+/// Filter for `quality.listNcrs()`
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct NcrFilterInput {
+    /// inspection, customer_complaint, production, supplier, internal_audit
+    pub source: Option<String>,
+    /// minor, major, critical
+    pub severity: Option<String>,
+    /// open, investigating, corrective_action, verification, closed, cancelled
+    pub status: Option<String>,
+    pub sku: Option<String>,
+    pub lot_number: Option<String>,
+    pub assigned_to: Option<String>,
+    /// RFC 3339 timestamp (inclusive lower bound on created_at)
+    pub from_date: Option<String>,
+    /// RFC 3339 timestamp (inclusive upper bound on created_at)
+    pub to_date: Option<String>,
+    /// Page size (server default 500, hard cap 1000)
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    /// Keyset cursor: `[createdAt, id]`
+    pub after_cursor: Option<Vec<String>>,
+}
+
+fn ncr_filter_from_input(
+    filter: Option<NcrFilterInput>,
+) -> Result<stateset_core::NonConformanceFilter> {
+    let Some(f) = filter else {
+        return Ok(stateset_core::NonConformanceFilter::default());
+    };
+    Ok(stateset_core::NonConformanceFilter {
+        source: f
+            .source
+            .as_deref()
+            .map(|s| {
+                s.parse::<stateset_core::NonConformanceSource>()
+                    .map_err(|_| Error::from_reason(format!("Invalid NCR source: {s}")))
+            })
+            .transpose()?,
+        severity: f
+            .severity
+            .as_deref()
+            .map(|s| {
+                s.parse::<stateset_core::Severity>()
+                    .map_err(|_| Error::from_reason(format!("Invalid NCR severity: {s}")))
+            })
+            .transpose()?,
+        status: f
+            .status
+            .as_deref()
+            .map(|s| {
+                s.parse::<stateset_core::NcrStatus>()
+                    .map_err(|_| Error::from_reason(format!("Invalid NCR status: {s}")))
+            })
+            .transpose()?,
+        sku: f.sku,
+        lot_number: f.lot_number,
+        assigned_to: f.assigned_to,
+        from_date: parse_rfc3339_field(f.from_date.as_ref(), "fromDate")?,
+        to_date: parse_rfc3339_field(f.to_date.as_ref(), "toDate")?,
+        limit: f.limit,
+        offset: f.offset,
+        after_cursor: parse_after_cursor_input(f.after_cursor)?,
+    })
 }

@@ -150,7 +150,7 @@ export async function getSystemHealthData(): Promise<SystemHealthData> {
 
   if (health.errorRate > 0.5) {
     recentEvents.push({
-      type: health.errorRate > 2 ? 'error' as const : 'warning' as const,
+      type: health.errorRate > 2 ? ('error' as const) : ('warning' as const),
       message: `Error rate is ${health.errorRate.toFixed(3)}%`,
       service: 'Request Pipeline',
       timestamp: 'live snapshot',
@@ -229,10 +229,7 @@ export async function createOrder(params: {
   return ordersApi.create(params);
 }
 
-export async function updateOrderStatus(
-  orderId: string,
-  status: Order['status']
-): Promise<Order> {
+export async function updateOrderStatus(orderId: string, status: Order['status']): Promise<Order> {
   await requireAdminSession();
   return ordersApi.updateStatus(orderId, status);
 }
@@ -260,14 +257,14 @@ export async function getOrderPipelineData() {
 
   // Group orders by status
   const statusGroups = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
-  const groupedOrders = statusGroups.map(status => ({
+  const groupedOrders = statusGroups.map((status) => ({
     key: status,
     label: status.charAt(0).toUpperCase() + status.slice(1),
     count: analytics.ordersByStatus[status] || 0,
     totalValue: orders
-      .filter(o => o.status === status)
+      .filter((o) => o.status === status)
       .reduce((sum, o) => sum + o.totalAmount, 0),
-    orders: orders.filter(o => o.status === status).slice(0, 5),
+    orders: orders.filter((o) => o.status === status).slice(0, 5),
   }));
 
   return {
@@ -275,8 +272,10 @@ export async function getOrderPipelineData() {
       totalOrders: analytics.totalOrders,
       totalValue: analytics.totalRevenue,
       averageOrderValue: analytics.averageOrderValue,
-      deliveredRate: (analytics.ordersByStatus['delivered'] || 0) / Math.max(analytics.totalOrders, 1) * 100,
-      inProgressCount: (analytics.ordersByStatus['processing'] || 0) + (analytics.ordersByStatus['shipped'] || 0),
+      deliveredRate:
+        ((analytics.ordersByStatus['delivered'] || 0) / Math.max(analytics.totalOrders, 1)) * 100,
+      inProgressCount:
+        (analytics.ordersByStatus['processing'] || 0) + (analytics.ordersByStatus['shipped'] || 0),
       exceptionsCount: analytics.ordersByStatus['cancelled'] || 0,
     },
     statusGroups: groupedOrders,
@@ -301,29 +300,17 @@ export async function getInventoryItem(sku: string): Promise<InventoryItem | nul
   return inventoryApi.get(sku);
 }
 
-export async function adjustInventory(
-  sku: string,
-  quantity: number,
-  reason?: string
-) {
+export async function adjustInventory(sku: string, quantity: number, reason?: string) {
   await requireAdminSession();
   return inventoryApi.adjust(sku, quantity, reason);
 }
 
-export async function reserveInventory(
-  sku: string,
-  quantity: number,
-  orderId: string
-) {
+export async function reserveInventory(sku: string, quantity: number, orderId: string) {
   await requireAdminSession();
   return inventoryApi.reserve(sku, quantity, orderId);
 }
 
-export async function releaseInventory(
-  sku: string,
-  quantity: number,
-  orderId: string
-) {
+export async function releaseInventory(sku: string, quantity: number, orderId: string) {
   await requireAdminSession();
   return inventoryApi.release(sku, quantity, orderId);
 }
@@ -421,7 +408,7 @@ export async function rejectReturn(returnId: string, reason: string): Promise<Re
 
 export async function receiveReturn(
   returnId: string,
-  items: { productId: string; condition: string }[]
+  items: { productId: string; condition: string }[],
 ): Promise<Return> {
   await requireAdminSession();
   return returnsApi.receive(returnId, items);
@@ -429,7 +416,7 @@ export async function receiveReturn(
 
 export async function processRefund(
   returnId: string,
-  method: Return['refundMethod']
+  method: Return['refundMethod'],
 ): Promise<Return> {
   await requireAdminSession();
   return returnsApi.processRefund(returnId, method);
@@ -446,10 +433,7 @@ export async function getReturnAnalytics(params?: {
 // Returns Management data for generative UI
 export async function getReturnsManagementData() {
   await requireAdminSession();
-  const [returns, analytics] = await Promise.all([
-    returnsApi.list(),
-    returnsApi.getAnalytics(),
-  ]);
+  const [returns, analytics] = await Promise.all([returnsApi.list(), returnsApi.getAnalytics()]);
 
   return {
     returns: returns.slice(0, 50),
@@ -502,7 +486,7 @@ export async function createCustomer(params: Partial<Customer>): Promise<Custome
 
 export async function updateCustomer(
   customerId: string,
-  params: Partial<Customer>
+  params: Partial<Customer>,
 ): Promise<Customer> {
   await requireAdminSession();
   return customersApi.update(customerId, params);
@@ -549,8 +533,7 @@ export async function getCustomerHealthData(): Promise<CustomerHealthData> {
         ? Math.max(
             0,
             Math.round(
-              (Date.now() - new Date(customer.lastOrderDate).getTime()) /
-                (24 * 60 * 60 * 1000),
+              (Date.now() - new Date(customer.lastOrderDate).getTime()) / (24 * 60 * 60 * 1000),
             ),
           )
         : 999;
@@ -576,13 +559,12 @@ export async function getCustomerHealthData(): Promise<CustomerHealthData> {
 
   const retentionScore = Math.round(analytics.retentionRate * 100);
   const churnPenalty = Math.round(analytics.churnRate * 100);
-  const frequencyScore = Math.min(
-    100,
-    Math.round(analytics.averageOrdersPerCustomer * 20),
-  );
+  const frequencyScore = Math.min(100, Math.round(analytics.averageOrdersPerCustomer * 20));
   const valueScore = Math.min(
     100,
-    Math.round((analytics.averageLifetimeValue / Math.max(analytics.averageLifetimeValue, 500)) * 100),
+    Math.round(
+      (analytics.averageLifetimeValue / Math.max(analytics.averageLifetimeValue, 500)) * 100,
+    ),
   );
 
   const acquisitionTimeline = (analytics.acquisitionTrend || []).slice(-6).map((entry) => {
@@ -619,9 +601,10 @@ export async function getCustomerHealthData(): Promise<CustomerHealthData> {
     segments: analytics.customersBySegment,
     atRiskCustomers,
     trends: {
-      timeline: acquisitionTimeline.length > 0 ? acquisitionTimeline : [
-        { month: 'Jan', excellent: 20, good: 25, fair: 10, atRisk: 4 },
-      ],
+      timeline:
+        acquisitionTimeline.length > 0
+          ? acquisitionTimeline
+          : [{ month: 'Jan', excellent: 20, good: 25, fair: 10, atRisk: 4 }],
     },
   };
 }
@@ -660,7 +643,7 @@ export async function resumeSubscription(subscriptionId: string): Promise<Subscr
 
 export async function cancelSubscription(
   subscriptionId: string,
-  reason?: string
+  reason?: string,
 ): Promise<Subscription> {
   await requireAdminSession();
   return subscriptionsApi.cancel(subscriptionId, reason);
@@ -675,10 +658,7 @@ export async function getSubscriptionAnalytics(): Promise<SubscriptionAnalytics>
 // Product Actions
 // ============================================================================
 
-export async function getProducts(params?: {
-  status?: string;
-  category?: string;
-}) {
+export async function getProducts(params?: { status?: string; category?: string }) {
   await requireAdminSession();
   return productsApi.list(params);
 }
@@ -709,9 +689,9 @@ export async function getProductAnalytics() {
 
   // Calculate analytics from products
   const totalProducts = products.length;
-  const activeProducts = products.filter(p => p.status === 'active').length;
-  const draftProducts = products.filter(p => p.status === 'draft').length;
-  const archivedProducts = products.filter(p => p.status === 'archived').length;
+  const activeProducts = products.filter((p) => p.status === 'active').length;
+  const draftProducts = products.filter((p) => p.status === 'draft').length;
+  const archivedProducts = products.filter((p) => p.status === 'archived').length;
 
   // Group by category
   const productsByCategory: Record<string, number> = {};
@@ -721,7 +701,7 @@ export async function getProductAnalytics() {
   }
 
   // Calculate price stats
-  const prices = products.map(p => p.price);
+  const prices = products.map((p) => p.price);
   const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
   const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
   const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
@@ -729,7 +709,7 @@ export async function getProductAnalytics() {
   // Calculate total inventory value
   const totalInventoryValue = products.reduce((sum, p) => {
     const variantStock = p.variants?.reduce((vs, v) => vs + (v.inventoryQuantity || 0), 0) || 0;
-    return sum + (p.price * variantStock);
+    return sum + p.price * variantStock;
   }, 0);
 
   return {
@@ -849,8 +829,7 @@ export async function getDemandForecastingData() {
     categoryDemand.set(category, {
       current: current.current + result.item.availableQuantity,
       predicted:
-        current.predicted +
-        result.forecast.forecastedDemand.reduce((sum, value) => sum + value, 0),
+        current.predicted + result.forecast.forecastedDemand.reduce((sum, value) => sum + value, 0),
     });
   }
 
@@ -871,15 +850,17 @@ export async function getDemandForecastingData() {
             (sum, value) => sum + value,
             0,
           );
-          const growthRate = item.availableQuantity > 0
-            ? Math.round(
-                clampNumber(
-                  ((predictedWindowDemand - item.availableQuantity) / item.availableQuantity) * 100,
-                  -100,
-                  999,
-                ),
-              )
-            : 100;
+          const growthRate =
+            item.availableQuantity > 0
+              ? Math.round(
+                  clampNumber(
+                    ((predictedWindowDemand - item.availableQuantity) / item.availableQuantity) *
+                      100,
+                    -100,
+                    999,
+                  ),
+                )
+              : 100;
 
           return {
             id: item.sku,
@@ -893,7 +874,12 @@ export async function getDemandForecastingData() {
         .slice(0, 4),
     },
     alerts: forecastResults
-      .filter(({ forecast, item }) => forecast.recommendedReorder > 0 || Boolean(forecast.stockoutDate) || item.availableQuantity < item.reorderPoint)
+      .filter(
+        ({ forecast, item }) =>
+          forecast.recommendedReorder > 0 ||
+          Boolean(forecast.stockoutDate) ||
+          item.availableQuantity < item.reorderPoint,
+      )
       .slice(0, 5)
       .map(({ item, forecast }) => ({
         productId: item.sku,
@@ -904,10 +890,7 @@ export async function getDemandForecastingData() {
             ? 'Out of stock'
             : 'Reorder recommended',
         daysUntilStockout: forecast.stockoutDate
-          ? Math.max(
-              1,
-              Math.ceil((Date.parse(forecast.stockoutDate) - Date.now()) / DAY_MS),
-            )
+          ? Math.max(1, Math.ceil((Date.parse(forecast.stockoutDate) - Date.now()) / DAY_MS))
           : Math.max(
               1,
               Math.round(item.availableQuantity / Math.max(1, (item.reservedQuantity || 1) / 7)),
@@ -951,7 +934,20 @@ export async function getSubscriptionAnalyticsData() {
   for (let i = 5; i >= 0; i--) {
     const date = new Date();
     date.setMonth(date.getMonth() - i);
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     const mrr = baseMrr * (1 - i * 0.03);
     mrrTrend.push({
       month: monthNames[date.getMonth()],
@@ -965,7 +961,8 @@ export async function getSubscriptionAnalyticsData() {
     summary: {
       mrr: analytics.mrr || baseMrr,
       mrrGrowth: analytics.mrrGrowth || 0.08,
-      activeCount: analytics.activeSubscriptions || subscriptions.filter(s => s.status === 'active').length,
+      activeCount:
+        analytics.activeSubscriptions || subscriptions.filter((s) => s.status === 'active').length,
       churnRate: analytics.churnRate || 0.032,
       arpu: analytics.arpu || 36,
       statusBreakdown,
@@ -983,7 +980,7 @@ export async function getSubscriptionAnalyticsData() {
         { name: 'Missing features', count: 8, percentage: 0.21 },
         { name: 'Switched competitor', count: 7, percentage: 0.18 },
         { name: 'No longer needed', count: 5, percentage: 0.13 },
-        { name: 'Other', count: 3, percentage: 0.10 },
+        { name: 'Other', count: 3, percentage: 0.1 },
       ],
     },
     planDistribution: Object.entries(planDistribution).map(([plan, data]) => ({
@@ -991,7 +988,7 @@ export async function getSubscriptionAnalyticsData() {
       ...data,
     })),
     upcomingRenewals: subscriptions
-      .filter(s => s.status === 'active' && s.currentPeriodEnd)
+      .filter((s) => s.status === 'active' && s.currentPeriodEnd)
       .slice(0, 5)
       .map((sub, i) => {
         const renewalDate = new Date();
@@ -1036,12 +1033,75 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
   ]);
 
   const agentInputs = [
-    { id: '1', name: 'Order Agent', volume: orders.length, target: 55, baseMs: 820, successBase: 0.992, multiplier: 42, baseline: 380, taskType: 'order.process' },
-    { id: '2', name: 'Inventory Agent', volume: inventory.filter((item) => item.availableQuantity <= item.reorderPoint).length + Math.round(inventory.length / 8), target: 36, baseMs: 900, successBase: 0.988, multiplier: 38, baseline: 240, taskType: 'inventory.monitor' },
-    { id: '3', name: 'Returns Agent', volume: returns.length, target: 22, baseMs: 1080, successBase: 0.978, multiplier: 34, baseline: 120, taskType: 'return.review' },
-    { id: '4', name: 'Customer Agent', volume: customers.filter((customer) => customer.totalOrders > 0).length, target: 60, baseMs: 760, successBase: 0.984, multiplier: 28, baseline: 310, taskType: 'customer.assist' },
-    { id: '5', name: 'Subscription Agent', volume: subscriptions.length, target: 26, baseMs: 870, successBase: 0.989, multiplier: 31, baseline: 180, taskType: 'subscription.renewal' },
-    { id: '6', name: 'Fulfillment Agent', volume: orders.filter((order) => order.status === 'processing' || order.status === 'shipped').length, target: 24, baseMs: 940, successBase: 0.985, multiplier: 36, baseline: 160, taskType: 'fulfillment.dispatch' },
+    {
+      id: '1',
+      name: 'Order Agent',
+      volume: orders.length,
+      target: 55,
+      baseMs: 820,
+      successBase: 0.992,
+      multiplier: 42,
+      baseline: 380,
+      taskType: 'order.process',
+    },
+    {
+      id: '2',
+      name: 'Inventory Agent',
+      volume:
+        inventory.filter((item) => item.availableQuantity <= item.reorderPoint).length +
+        Math.round(inventory.length / 8),
+      target: 36,
+      baseMs: 900,
+      successBase: 0.988,
+      multiplier: 38,
+      baseline: 240,
+      taskType: 'inventory.monitor',
+    },
+    {
+      id: '3',
+      name: 'Returns Agent',
+      volume: returns.length,
+      target: 22,
+      baseMs: 1080,
+      successBase: 0.978,
+      multiplier: 34,
+      baseline: 120,
+      taskType: 'return.review',
+    },
+    {
+      id: '4',
+      name: 'Customer Agent',
+      volume: customers.filter((customer) => customer.totalOrders > 0).length,
+      target: 60,
+      baseMs: 760,
+      successBase: 0.984,
+      multiplier: 28,
+      baseline: 310,
+      taskType: 'customer.assist',
+    },
+    {
+      id: '5',
+      name: 'Subscription Agent',
+      volume: subscriptions.length,
+      target: 26,
+      baseMs: 870,
+      successBase: 0.989,
+      multiplier: 31,
+      baseline: 180,
+      taskType: 'subscription.renewal',
+    },
+    {
+      id: '6',
+      name: 'Fulfillment Agent',
+      volume: orders.filter((order) => order.status === 'processing' || order.status === 'shipped')
+        .length,
+      target: 24,
+      baseMs: 940,
+      successBase: 0.985,
+      multiplier: 36,
+      baseline: 160,
+      taskType: 'fulfillment.dispatch',
+    },
   ] as const;
 
   const agents: AgentPerformanceData['agents'] = agentInputs.map((input, index) => {
@@ -1050,7 +1110,11 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
       2,
     );
     const successRate = roundNumber(
-      clampNumber(input.successBase - deterministicRatio(index + input.volume, 0.002, 0.018), 0.92, 0.999),
+      clampNumber(
+        input.successBase - deterministicRatio(index + input.volume, 0.002, 0.018),
+        0.92,
+        0.999,
+      ),
       3,
     );
     const avgResponseTime = Math.round(input.baseMs * (0.9 + utilization * 0.35));
@@ -1068,7 +1132,7 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
   const totalTasks = agents.reduce((sum, a) => sum + a.tasksCompleted, 0);
   const avgSuccess = agents.reduce((sum, a) => sum + a.successRate, 0) / agents.length;
   const avgResponse = agents.reduce((sum, a) => sum + a.avgResponseTime, 0) / agents.length;
-  const onlineAgents = agents.filter(a => a.status !== 'offline').length;
+  const onlineAgents = agents.filter((a) => a.status !== 'offline').length;
 
   const responseTimeTrend = Array.from({ length: 24 }, (_, hour) => {
     const avgTime = Math.round(avgResponse * (0.82 + deterministicRatio(hour + 181, 0, 0.26)));
@@ -1129,9 +1193,17 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
         count: agents[index].tasksCompleted,
       })),
       dailyOutcomes: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, index) => {
-        const success = Math.round(totalTasks / 14 + deterministicRatio(index + totalTasks, 30, 180));
-        const failed = Math.max(2, Math.round(success * deterministicRatio(index + 271, 0.008, 0.02)));
-        const timeout = Math.max(1, Math.round(success * deterministicRatio(index + 301, 0.004, 0.012)));
+        const success = Math.round(
+          totalTasks / 14 + deterministicRatio(index + totalTasks, 30, 180),
+        );
+        const failed = Math.max(
+          2,
+          Math.round(success * deterministicRatio(index + 271, 0.008, 0.02)),
+        );
+        const timeout = Math.max(
+          1,
+          Math.round(success * deterministicRatio(index + 301, 0.004, 0.012)),
+        );
         return { day, success, failed, timeout };
       }),
       recentTasks,
@@ -1197,8 +1269,13 @@ export async function getFinancialReconciliationData(): Promise<FinancialReconci
     description: `Return reconciliation for ${entry.orderId}`,
     source: ['Stripe', 'PayPal', 'Bank', 'Gateway'][index % 4],
     expected: Math.round((entry.refundAmount || 0) * 100) / 100,
-    actual: Math.round((entry.refundAmount || 0) * (0.96 + deterministicRatio(index + 1, 0, 0.08)) * 100) / 100,
-    difference: Math.round((((entry.refundAmount || 0) * deterministicRatio(index + 21, -0.05, 0.06)) * 100)) / 100,
+    actual:
+      Math.round(
+        (entry.refundAmount || 0) * (0.96 + deterministicRatio(index + 1, 0, 0.08)) * 100,
+      ) / 100,
+    difference:
+      Math.round((entry.refundAmount || 0) * deterministicRatio(index + 21, -0.05, 0.06) * 100) /
+      100,
     status: index % 3 === 0 ? 'under_review' : index % 3 === 1 ? 'discrepancy' : 'pending',
   }));
 
@@ -1222,19 +1299,60 @@ export async function getFinancialReconciliationData(): Promise<FinancialReconci
     reconciliationRate: {
       overall: 0.94,
       byCategory: [
-        { name: 'Sales Revenue', reconciled: Math.round(totalRevenue * 0.99), total: Math.round(totalRevenue), rate: 0.99 },
-        { name: 'Refunds', reconciled: Math.round(totalRefunds * 0.96), total: Math.round(totalRefunds), rate: 0.96 },
-        { name: 'Payment Processing', reconciled: Math.round(totalRevenue * 0.032), total: Math.round(totalRevenue * 0.033), rate: 0.96 },
-        { name: 'Subscription Billing', reconciled: Math.round(subscriptionBillingTotal), total: Math.round(subscriptionBillingTotal), rate: 1.0 },
-        { name: 'Vendor Payments', reconciled: Math.round(vendorPaymentsTotal * 0.85), total: vendorPaymentsTotal, rate: 0.85 },
+        {
+          name: 'Sales Revenue',
+          reconciled: Math.round(totalRevenue * 0.99),
+          total: Math.round(totalRevenue),
+          rate: 0.99,
+        },
+        {
+          name: 'Refunds',
+          reconciled: Math.round(totalRefunds * 0.96),
+          total: Math.round(totalRefunds),
+          rate: 0.96,
+        },
+        {
+          name: 'Payment Processing',
+          reconciled: Math.round(totalRevenue * 0.032),
+          total: Math.round(totalRevenue * 0.033),
+          rate: 0.96,
+        },
+        {
+          name: 'Subscription Billing',
+          reconciled: Math.round(subscriptionBillingTotal),
+          total: Math.round(subscriptionBillingTotal),
+          rate: 1.0,
+        },
+        {
+          name: 'Vendor Payments',
+          reconciled: Math.round(vendorPaymentsTotal * 0.85),
+          total: vendorPaymentsTotal,
+          rate: 0.85,
+        },
       ],
     },
     discrepancies: {
       byType: [
-        { type: 'Amount Mismatch', count: discrepancyItems.length, amount: Math.round(discrepancyAmount * 0.48) },
-        { type: 'Missing Transaction', count: returns.filter((entry) => entry.status === 'requested').length, amount: Math.round(discrepancyAmount * 0.22) },
-        { type: 'Duplicate Entry', count: returns.filter((entry) => entry.status === 'approved').length, amount: Math.round(discrepancyAmount * 0.16) },
-        { type: 'Date Discrepancy', count: returns.filter((entry) => entry.status === 'received').length, amount: Math.round(discrepancyAmount * 0.14) },
+        {
+          type: 'Amount Mismatch',
+          count: discrepancyItems.length,
+          amount: Math.round(discrepancyAmount * 0.48),
+        },
+        {
+          type: 'Missing Transaction',
+          count: returns.filter((entry) => entry.status === 'requested').length,
+          amount: Math.round(discrepancyAmount * 0.22),
+        },
+        {
+          type: 'Duplicate Entry',
+          count: returns.filter((entry) => entry.status === 'approved').length,
+          amount: Math.round(discrepancyAmount * 0.16),
+        },
+        {
+          type: 'Date Discrepancy',
+          count: returns.filter((entry) => entry.status === 'received').length,
+          amount: Math.round(discrepancyAmount * 0.14),
+        },
       ],
       items: discrepancyItems,
     },

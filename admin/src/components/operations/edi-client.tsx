@@ -6,7 +6,14 @@ import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getEdiPageData } from '@/app/actions/edi';
 import type { EdiDocument } from '@/lib/embedded';
 
-type DsBadgeVariant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'danger' | 'outline';
+type DsBadgeVariant =
+  | 'default'
+  | 'primary'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'outline';
 
 const statusBadgeVariants: Record<string, DsBadgeVariant> = {
   pending: 'warning',

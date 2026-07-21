@@ -476,6 +476,9 @@ pub struct NonConformanceFilter {
     pub to_date: Option<DateTime<Utc>>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Keyset cursor: return records after this `(sort_key, id)` pair.
+    /// Sort key is `created_at` (DESC ordering).
+    pub after_cursor: Option<(String, String)>,
 }
 
 /// Input for creating a quality hold

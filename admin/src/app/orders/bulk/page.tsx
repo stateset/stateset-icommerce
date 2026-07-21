@@ -20,9 +20,8 @@ export default async function BulkOrdersPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Bulk Orders</h1>
           <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-            Multi-select orders to cancel, advance status, or export to CSV.
-            Filter by status before selecting to avoid acting on the wrong
-            rows.
+            Multi-select orders to cancel, advance status, or export to CSV. Filter by status before
+            selecting to avoid acting on the wrong rows.
           </p>
         </div>
       </header>
