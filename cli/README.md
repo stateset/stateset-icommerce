@@ -2,13 +2,17 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 1.7.0
+**Version:** 1.18.0
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 
 ## Highlights
 
+- **802 MCP Tools / 73 Domains** - Full commerce engine surface, generated catalog in [docs/TOOLS.md](docs/TOOLS.md)
+- **Finance Suite** - General ledger, month-end close (with dry run), AP with 3-way match, AR aging, fixed assets, revenue recognition
+- **Warehouse (WMS)** - Warehouses/locations, fulfillment waves, pick tasks, receiving, cycle counts, lots/serials, quality holds
+- **Supply Chain & EDI** - Transfer orders, inbound shipments, supplier SKUs, price schedules/levels, EDI document tracking
 - **Verifiable Event Sync (VES) Protocol** - Cryptographically signed event sourcing with Ed25519
 - **gRPC Bidirectional Streaming** - Real-time sync with the StateSet Sequencer
 - **Autonomous Business Engine** - Scheduled jobs, workflows, policies, approvals (`stateset-autonomous`)
@@ -431,6 +435,23 @@ stateset-icommerce/
 | **Invoices** | B2B invoice management with payment terms |
 | **Purchase Orders** | Supplier management and procurement |
 | **Tax** | Multi-jurisdiction tax calculation (US, EU, CA) |
+| **General Ledger** | Chart of accounts, journal entries, trial balance, statements, month-end close (dry run supported) |
+| **Accounts Payable** | Bills, approvals, 3-way match, AP aging |
+| **Accounts Receivable** | Credit memos, AR aging, DSO |
+| **Fixed Assets** | Depreciation schedules, disposals, write-offs |
+| **Revenue Recognition** | Contracts, schedules, recognition runs |
+
+### Warehouse Operations
+
+| Domain | Operations |
+|--------|------------|
+| **Warehouses** | Warehouses, bin locations, location-level availability |
+| **Fulfillment** | Waves, pick tasks, ready-to-pack/ship checks |
+| **Receiving** | Receipts (incl. from POs), receiving lifecycle |
+| **Cycle Counts** | Plan, record, complete with variance posting |
+| **Lots & Serials** | Expiry tracking, quarantine, serial availability |
+| **Quality** | Inspections, NCRs, quality holds |
+| **Supply Chain** | Transfer orders, inbound shipments, supplier SKUs, price schedules/levels, EDI documents |
 
 ### Promotions & Discounts
 
@@ -810,26 +831,17 @@ The exact current tool count, policy-domain breakdown, and permission summary ar
 generated from the live MCP server export in `cli/src/mcp-server.js`. See the generated
 [MCP Tool Inventory](../docs/src/appendix/mcp-tool-inventory.md).
 
-| Domain | Count | Examples |
-|--------|-------|----------|
-| **Customers** | 3 | list, get, create |
-| **Orders** | 6 | list, get, create, update_status, ship, cancel |
-| **Products** | 4 | list, get, get_variant, create |
-| **Inventory** | 6 | get_stock, create_item, adjust, reserve, confirm, release |
-| **Returns** | 5 | list, get, create, approve, reject |
-| **Carts/Checkout** | 14 | create, add_item, set_address, set_payment, complete_checkout |
-| **Analytics** | 10 | get_sales_summary, top_products, demand_forecast, revenue_forecast |
-| **Currency** | 8 | get_rate, convert, set_rate, format |
-| **Tax** | 9 | calculate_tax, calculate_cart_tax, get_rate, list_jurisdictions |
-| **Promotions** | 10 | list, create, activate, create_coupon, validate_coupon, apply |
-| **Subscriptions** | 15 | list_plans, create_plan, create_subscription, pause, resume, cancel |
-| **Manufacturing** | 11 | list_boms, create_bom, create_work_order, complete_work_order |
-| **Payments** | 5 | list, get, create, complete, create_refund |
-| **Shipments** | 3 | list, create, deliver |
-| **Suppliers/POs** | 6 | list_suppliers, create_supplier, create_purchase_order |
-| **Invoices** | 5 | list, create, send, record_payment, get_overdue |
-| **Warranties** | 4 | list, create, create_claim, approve_claim |
-| **Stablecoin** | 4 | get_agent_wallet, get_wallet_balance, create_payment, list_chains |
+The registry currently exposes **802 tools across 73 domains**. Highlights by area
+(see [docs/TOOLS.md](docs/TOOLS.md) for the complete per-tool catalog):
+
+| Area | Domains | Examples |
+|------|---------|----------|
+| **Core commerce** | customers, orders, products, inventory, returns, carts, checkout, shipments | `create_order`, `ship_order`, `complete_checkout` |
+| **Finance** | general-ledger, accounts-payable, accounts-receivable, fixed-assets, revenue-recognition, cost-accounting, credit, prepayments, vendor-credits | `close_month`, `three_way_match_bill`, `get_trial_balance`, `post_depreciation`, `recognize_revenue` |
+| **Warehouse (WMS)** | warehouse, fulfillment, receiving, cycle-counts, backorders, lots, serials, quality | `create_fulfillment_wave`, `create_receipt_from_purchase_order`, `complete_cycle_count`, `quarantine_lot` |
+| **Supply chain** | suppliers, supplier-skus, inbound-shipments, transfer-orders, production-batches, price-schedules, price-levels, edi-documents | `create_transfer_order`, `receive_inbound_shipment_line`, `resolve_scheduled_price`, `get_edi_summary` |
+| **Growth** | analytics, promotions, subscriptions, loyalty, gift-cards, store-credits, segments, reviews, wishlists | `get_revenue_forecast`, `create_promotion`, `create_subscription` |
+| **Payments & agent commerce** | payments, stablecoin, treasury, x402, erc8004, a2a, agent-cards, policies, audit, proofs | `create_refund`, `create_stablecoin_payment`, `x402_create_payment_intent` |
 
 ## Configuration
 
@@ -991,6 +1003,12 @@ Resources:
   products        Product catalog
   inventory       Stock management
   returns         Return processing
+  vector          Hybrid vector search
+
+Note: direct mode covers only these 6 resources. The other engine domains
+(finance suite, WMS, EDI, supply chain, quality, etc. — 73 domains total) are
+available through the AI interface (`stateset "<request>"`) or any MCP client.
+See docs/TOOLS.md for the full catalog.
 ```
 
 ### `stateset-config` - Configuration

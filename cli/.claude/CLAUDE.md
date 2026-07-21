@@ -4,15 +4,18 @@ An AI-powered command-line interface for commerce operations using the Claude Ag
 
 ## Overview
 
-This CLI provides natural language access to commerce operations:
-- **Customers** - Customer management and lookup
-- **Orders** - Order lifecycle management
-- **Products** - Product catalog operations
-- **Inventory** - Stock tracking and allocation
-- **Returns** - Return request processing
+This CLI provides natural language access to commerce operations across
+**73 tool domains (802 MCP tools)** — see [docs/TOOLS.md](../docs/TOOLS.md) for the
+full generated catalog. Major areas:
+- **Core commerce** - Customers, orders, products, inventory, returns, shipments
 - **Carts/Checkout** - Shopping cart and checkout flow (Agentic Commerce Protocol)
-- **Payments** - Payment processing and refunds
-- **Currency** - Multi-currency support, exchange rates, and conversions
+- **Payments** - Payments, refunds, stablecoin, x402, treasury
+- **Finance suite** - General ledger, AP (bills, 3-way match), AR (credit memos, aging), fixed assets, revenue recognition, cost accounting, credit, prepayments, vendor credits
+- **Warehouse (WMS)** - Warehouses/locations, fulfillment waves, pick tasks, receiving, cycle counts, backorders
+- **Traceability & quality** - Lots, serials, inspections, NCRs, quality holds
+- **Supply chain** - Suppliers/POs, supplier SKUs, inbound shipments, transfer orders, production batches, price schedules/levels, EDI documents
+- **Growth** - Analytics, promotions, subscriptions, loyalty, gift cards, segments
+- **Agent commerce** - A2A, agent cards, x402, ERC-8004, policies, audit/proofs
 
 ## Entry Points
 
@@ -82,6 +85,10 @@ stateset --apply "create a cart for alice@example.com"
 5. **Session Awareness** - Track context across multi-turn conversations
 
 ## MCP Servers (Tools)
+
+The engine exposes **802 tools across 73 domains**. The sections below highlight the
+major domains with representative tools only — the complete, generated catalog lives in
+[docs/TOOLS.md](../docs/TOOLS.md) (regenerate with `npm run docs:tools`; do not edit by hand).
 
 ### commerce-customers
 - `list_customers` - List all customers
@@ -262,6 +269,124 @@ stateset --apply "create a cart for alice@example.com"
 - `create_warranty_claim` - File warranty claim (requires --apply)
 - `approve_warranty_claim` - Approve claim (requires --apply)
 
+### commerce-general-ledger (Finance)
+- `get_trial_balance` / `get_balance_sheet` / `get_income_statement` - Financial statements
+- `post_journal_entry` - Post a balanced journal entry (requires --apply)
+- `close_month` - Full month-end close: depreciation, rev rec, FX revaluation, period close; supports `dryRun` (requires --apply)
+- `initialize_chart_of_accounts` - Seed a standard chart of accounts (requires --apply)
+
+Example: `stateset "run a dry-run month-end close for period 2026-07"`
+
+### commerce-accounts-payable (Finance)
+- `list_bills` / `create_bill` / `approve_bill` - Vendor bill lifecycle
+- `three_way_match_bill` - Match bill vs purchase order vs receipt (with tolerance)
+- `get_accounts_payable_aging_summary` - AP aging buckets
+- `list_overdue_bills` / `list_bills_due_soon` - Payment planning
+
+Example: `stateset "run a three-way match on bill BILL-123 with 2% tolerance"`
+
+### commerce-accounts-receivable (Finance)
+- `get_accounts_receivable_aging_summary` - AR aging buckets
+- `get_days_sales_outstanding` - DSO metric
+- `create_credit_memo` / `void_credit_memo` - Credit memos (requires --apply)
+- `list_unapplied_credits` - Credits awaiting application
+
+Example: `stateset "show me the AR aging summary and our DSO"`
+
+### commerce-fixed-assets (Finance)
+- `create_fixed_asset` / `place_asset_in_service` - Asset lifecycle (requires --apply)
+- `generate_depreciation_schedule` / `post_depreciation` - Depreciation (requires --apply)
+- `dispose_fixed_asset` / `write_off_fixed_asset` - Disposals (requires --apply)
+
+Example: `stateset --apply "post depreciation for all assets through June"`
+
+### commerce-revenue-recognition (Finance)
+- `create_revenue_contract` - ASC 606-style contract (requires --apply)
+- `generate_revenue_schedule` / `get_revenue_schedule` - Recognition schedules
+- `recognize_revenue` - Recognize revenue through a date (requires --apply)
+
+Example: `stateset "show the revenue schedule for contract RC-100"`
+
+### commerce-cost-accounting & commerce-credit (Finance)
+- `set_item_cost` / `update_average_item_cost` - Item costing (requires --apply)
+- `get_total_inventory_value` - Inventory valuation
+- `check_customer_credit` / `adjust_credit_limit` - Customer credit management
+- `list_over_limit_credit_accounts` - Credit exposure review
+
+Example: `stateset "what's our total inventory value at average cost?"`
+
+### commerce-prepayments & commerce-vendor-credits (Finance)
+- `create_prepayment` / `apply_prepayment` / `refund_prepayment` - Customer prepayments (requires --apply)
+- `create_vendor_credit` / `apply_vendor_credit` - Vendor credits against bills (requires --apply)
+- `reverse_prepayment_application` / `reverse_vendor_credit_application` - Corrections (requires --apply)
+
+Example: `stateset --apply "apply vendor credit VC-9 to bill BILL-123"`
+
+### commerce-warehouse (WMS)
+- `list_warehouses` / `create_warehouse` - Warehouse master data
+- `create_location` / `list_pickable_locations` - Bin/location management
+- `get_warehouse_sku_available_quantity` - Location-level availability
+
+Example: `stateset "which pickable locations have WIDGET-001 in warehouse WH-1?"`
+
+### commerce-fulfillment (WMS)
+- `create_fulfillment_wave` / `release_fulfillment_wave` / `complete_fulfillment_wave` - Wave picking (requires --apply)
+- `list_pick_tasks` / `assign_pick_task` / `start_pick_task` - Pick task management
+- `check_order_ready_to_pack` / `check_order_ready_to_ship` - Fulfillment gates
+
+Example: `stateset --apply "create a fulfillment wave for today's pending orders and release it"`
+
+### commerce-receiving (WMS)
+- `create_receipt_from_purchase_order` - Receive against a PO (requires --apply)
+- `start_receiving` / `complete_receiving` - Receipt lifecycle (requires --apply)
+- `list_receipts` / `cancel_receipt` - Receipt management
+
+Example: `stateset --apply "create a receipt from purchase order PO-123 and start receiving"`
+
+### commerce-cycle-counts (WMS)
+- `create_cycle_count` / `start_cycle_count` - Plan and begin a count (requires --apply)
+- `record_cycle_counts` - Record counted quantities (requires --apply)
+- `complete_cycle_count` - Post variances and close (requires --apply)
+
+Example: `stateset --apply "start a cycle count for aisle A in warehouse WH-1"`
+
+### commerce-backorders
+- `list_backorders` / `create_backorder` / `cancel_backorder` - Backorder lifecycle
+- `list_overdue_backorders` / `get_backorder_summary` - Exposure review
+
+Example: `stateset "show me overdue backorders by SKU"`
+
+### commerce-lots & commerce-serials (Traceability)
+- `create_lot` / `list_available_lots_for_sku` / `list_expiring_lots` - Lot tracking
+- `quarantine_lot` / `release_lot_quarantine` - Lot holds (requires --apply)
+- `create_serial` / `mark_serial_sold` / `quarantine_serial` - Serial tracking
+
+Example: `stateset "which lots of SKU MILK-1L expire in the next 30 days?"`
+
+### commerce-quality
+- `create_inspection` / `start_inspection` / `complete_inspection` - Inspections (requires --apply)
+- `create_ncr` / `close_ncr` - Non-conformance reports (requires --apply)
+- `create_quality_hold` / `release_quality_hold` - Quality holds (requires --apply)
+
+Example: `stateset "list active quality holds"`
+
+### commerce-edi-documents
+- `list_edi_documents` / `get_edi_document` - EDI document tracking (850/855/856/810, etc.)
+- `create_edi_document` / `set_edi_document_status` - Document lifecycle (requires --apply)
+- `get_edi_summary` - Volume/status summary by partner and type
+
+Example: `stateset "show me EDI documents received this week and their statuses"`
+
+### commerce-supply-chain (price schedules/levels, transfers, batches, supplier SKUs, inbound)
+- `create_price_schedule` / `resolve_scheduled_price` - Date-effective pricing
+- `create_price_level` / `set_price_level_entry` - Customer price levels
+- `create_transfer_order` / `ship_transfer_order` / `receive_transfer_order_line` - Inter-warehouse transfers (requires --apply)
+- `create_production_batch` / `add_production_batch_work_orders` - Batch production (requires --apply)
+- `create_supplier_sku` / `bulk_upsert_supplier_skus` - Supplier SKU cross-references (requires --apply)
+- `create_inbound_shipment` / `mark_inbound_shipment_arrived` / `receive_inbound_shipment_line` - Inbound logistics (requires --apply)
+
+Example: `stateset --apply "create a transfer order for 50 WIDGET-001 from WH-1 to WH-2"`
+
 ## Agents
 
 Specialized agents for different commerce domains:
@@ -275,7 +400,19 @@ Specialized agents for different commerce domains:
 | `analytics` | Business intelligence & forecasting | commerce-analytics |
 | `promotions` | Promotions & discounts specialist | commerce-promotions |
 | `subscriptions` | Subscription & recurring billing | commerce-subscriptions |
+| `manufacturing` | BOM & work order specialist | commerce-manufacturing |
+| `payments` | Payment processing & refunds | commerce-payments |
+| `shipments` | Shipment tracking & delivery | commerce-shipments |
+| `suppliers` | Supplier & purchase order management | commerce-suppliers |
+| `invoices` | B2B invoice management | commerce-invoices |
+| `warranties` | Product warranty & claims | commerce-warranties |
+| `currency` | Multi-currency & exchange rates | commerce-currency |
+| `tax` | Tax calculation & compliance | commerce-tax |
+| `sync` | Verifiable Event Sync operations | sync tools |
+| `storefront` | Storefront scaffolding | storefront tools |
 | `customer-service` | Full customer service agent | All tools |
+
+Agent definitions live in `.claude/agents/` (18 on disk).
 
 ## Skills
 
@@ -288,8 +425,12 @@ Domain knowledge documents that enhance agent capabilities:
 | `commerce-inventory` | Stock tracking, reservations |
 | `commerce-returns` | Return reasons, refund workflows |
 | `commerce-analytics` | Sales metrics, forecasting, business intelligence |
-| `commerce-promotions` | Promotion types, coupon codes, discount rules |
-| `commerce-subscriptions` | Subscription plans, billing cycles, lifecycle management |
+| `commerce-storefront` | Storefront scaffolding and templates |
+| `commerce-finance` | GL, month-end close, AP/AR, fixed assets, revenue recognition |
+| `commerce-warehouse` | Locations, inbound/outbound flows, cycle counts, lots/serials |
+| `commerce-edi` | EDI document tracking (850/855/856/810) and status lifecycle |
+
+These nine skills exist in `.claude/skills/`.
 
 ## Common Workflows
 
@@ -323,6 +464,45 @@ stateset --apply "approve return <id>"
 ```bash
 stateset "show me abandoned carts"
 stateset "what items are in cart CART-123456?"
+```
+
+### Month-End Close (Finance)
+```bash
+# Preview the close — nothing is written (close_month with dryRun)
+stateset "dry-run the month-end close for period 2026-07"
+
+# Review statements first
+stateset "show me the trial balance for period 2026-07"
+stateset "show the income statement for this period"
+
+# Execute the close: depreciation, revenue recognition, FX revaluation, period close
+stateset --apply "close the month for period 2026-07"
+```
+
+### 3-Way Match (Accounts Payable)
+```bash
+stateset "list bills awaiting approval"
+stateset "run a three-way match on bill BILL-123 with 2% tolerance"
+stateset --apply "approve bill BILL-123"
+stateset "show the AP aging summary"
+```
+
+### Cycle Count (WMS)
+```bash
+stateset --apply "create a cycle count for warehouse WH-1 covering aisle A"
+stateset --apply "start cycle count CC-42"
+stateset --apply "record counts for CC-42: BIN-A1 WIDGET-001 = 47"
+stateset --apply "complete cycle count CC-42"   # posts variances
+```
+
+### Purchase Order Lifecycle (Procure to Receive)
+```bash
+stateset --apply "create a PO for 100 WIDGET-001 from Acme Corp"
+stateset --apply "approve purchase order PO-123"
+stateset --apply "send purchase order PO-123 to the supplier"
+stateset --apply "create a receipt from purchase order PO-123"
+stateset --apply "start receiving receipt RCPT-1, then complete it"
+stateset "run a three-way match on the bill for PO-123"
 ```
 
 ### Analytics & Forecasting
@@ -643,17 +823,16 @@ stateset-icommerce/cli/
 │   └── utils/
 ├── .claude/
 │   ├── CLAUDE.md             # This file
-│   ├── agents/               # Agent definitions
-│   │   ├── checkout.md       # ACP checkout specialist
-│   │   ├── orders.md         # Order lifecycle
-│   │   ├── inventory.md      # Stock management
-│   │   ├── returns.md        # RMA processing
-│   │   └── customer-service.md # Full-service agent
-│   └── skills/               # Domain knowledge
-│       ├── commerce-checkout/SKILL.md
-│       ├── commerce-orders/SKILL.md
-│       ├── commerce-inventory/SKILL.md
-│       └── commerce-returns/SKILL.md
+│   ├── agents/               # 18 agent definitions (orders, checkout, inventory,
+│   │                         # returns, analytics, promotions, subscriptions,
+│   │                         # manufacturing, payments, shipments, suppliers,
+│   │                         # invoices, warranties, currency, tax, sync,
+│   │                         # storefront, customer-service)
+│   └── skills/               # 9 domain knowledge skills (commerce-orders,
+│                             # commerce-checkout, commerce-inventory,
+│                             # commerce-returns, commerce-analytics,
+│                             # commerce-storefront, commerce-finance,
+│                             # commerce-warehouse, commerce-edi)
 └── package.json
 ```
 

@@ -214,6 +214,13 @@ SMART MATCHING:
 SAFETY:
   - Write operations require --apply
   - Confirmation prompts appear unless --yes is provided
+
+COVERAGE:
+  Direct mode covers the 6 resources above. The full engine (73 domains / 802
+  MCP tools: finance suite, warehouse/WMS, cycle counts, EDI, lots/serials,
+  quality, supply chain, and more) is available via the AI interface:
+    stateset "run a three-way match on bill BILL-123"
+  or any MCP client. See docs/TOOLS.md for the complete tool catalog.
 `;
 
 async function main() {
