@@ -622,6 +622,9 @@ pub struct AutoPostingConfig {
     pub shipping_revenue_account_id: Option<Uuid>,
     pub cogs_account_id: Uuid,
     pub bad_debt_expense_account_id: Option<Uuid>,
+    /// Account receiving unrealized FX gains/losses posted by period-end revaluation.
+    #[serde(default)]
+    pub fx_gain_loss_account_id: Option<Uuid>,
     /// Auto-post a journal entry when fixed-asset depreciation is posted.
     #[serde(default)]
     pub auto_post_depreciation: bool,
@@ -838,6 +841,9 @@ pub struct CreateAutoPostingConfig {
     pub shipping_revenue_account_id: Option<Uuid>,
     pub cogs_account_id: Uuid,
     pub bad_debt_expense_account_id: Option<Uuid>,
+    /// Account receiving unrealized FX gains/losses posted by period-end revaluation.
+    #[serde(default)]
+    pub fx_gain_loss_account_id: Option<Uuid>,
     /// Auto-post a journal entry when fixed-asset depreciation is posted (default off).
     #[serde(default)]
     pub auto_post_depreciation: bool,
@@ -888,6 +894,160 @@ pub struct JournalEntryFilter {
     pub search: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+}
+
+// ============================================================================
+// FX Revaluation
+// ============================================================================
+
+/// `reference_type` stamped on journal entry lines created by FX revaluation.
+///
+/// Lines carrying this marker are base-currency adjustments, so they are
+/// excluded when deriving an account's outstanding foreign-currency balance
+/// for subsequent revaluations.
+pub const FX_REVALUATION_REFERENCE: &str = "fx_revaluation";
+
+/// Per-account result of a period-end FX revaluation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevaluationLine {
+    /// Account being revalued.
+    pub account_id: Uuid,
+    /// Denormalized account number.
+    pub account_number: String,
+    /// Denormalized account name.
+    pub account_name: String,
+    /// Currency the account is maintained in (differs from base currency).
+    pub currency: CurrencyCode,
+    /// Side (Debit/Credit) that increases this account.
+    pub normal_balance: BalanceSide,
+    /// Outstanding balance in the account's own currency (normal-balance
+    /// terms), derived from posted lines excluding prior FX adjustments.
+    pub foreign_balance: Decimal,
+    /// Value currently carried on the books (base-currency terms).
+    pub carrying_value: Decimal,
+    /// Exchange rate used: 1 unit of account currency = `rate` base units.
+    pub rate: Decimal,
+    /// `foreign_balance * rate`, rounded to base-currency precision.
+    pub revalued_value: Decimal,
+    /// `revalued_value - carrying_value` in normal-balance terms.
+    pub adjustment: Decimal,
+    /// Unrealized FX gain (positive) or loss (negative) in base currency.
+    pub unrealized_gain_loss: Decimal,
+}
+
+/// Result of a period-end FX revaluation run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevaluationResult {
+    /// Date the revaluation is effective (journal entry date).
+    pub as_of_date: NaiveDate,
+    /// Base (functional) currency balances were revalued into.
+    pub base_currency: CurrencyCode,
+    /// Sum of `unrealized_gain_loss` across all lines.
+    pub total_unrealized_gain_loss: Decimal,
+    /// Per-account revaluation detail (includes zero-adjustment accounts).
+    pub lines: Vec<RevaluationLine>,
+    /// Balanced, posted adjusting entry for the net delta; `None` when every
+    /// evaluated account required no adjustment.
+    pub journal_entry: Option<JournalEntry>,
+}
+
+/// Compute the unrealized FX gain/loss for one foreign-currency account.
+///
+/// `foreign_balance` is the account's outstanding balance in its own currency
+/// (normal-balance terms, excluding prior revaluation adjustments); `rate`
+/// converts one unit of the account currency into the base currency;
+/// `base_decimal_places` is the base currency's precision.
+#[must_use]
+pub fn compute_revaluation_line(
+    account: &GlAccount,
+    foreign_balance: Decimal,
+    rate: Decimal,
+    base_decimal_places: u32,
+) -> RevaluationLine {
+    let normal_balance = account.account_type.normal_balance();
+    let revalued_value = (foreign_balance * rate).round_dp(base_decimal_places);
+    let adjustment = revalued_value - account.current_balance;
+    // Growing a debit-normal account (asset) is a gain; growing a
+    // credit-normal account (liability) is a loss.
+    let unrealized_gain_loss = match normal_balance {
+        BalanceSide::Credit => -adjustment,
+        _ => adjustment,
+    };
+    RevaluationLine {
+        account_id: account.id,
+        account_number: account.account_number.clone(),
+        account_name: account.name.clone(),
+        currency: account.currency,
+        normal_balance,
+        foreign_balance,
+        carrying_value: account.current_balance,
+        rate,
+        revalued_value,
+        adjustment,
+        unrealized_gain_loss,
+    }
+}
+
+/// Build balanced journal entry lines for a set of revaluation adjustments.
+///
+/// Each non-zero adjustment posts on the side that moves the account toward
+/// its revalued carrying amount; the net offset posts to `fx_account_id`
+/// (credit for a net gain, debit for a net loss). Returns an empty vector
+/// when no account requires adjustment.
+#[must_use]
+pub fn build_revaluation_journal_lines(
+    lines: &[RevaluationLine],
+    fx_account_id: Uuid,
+) -> Vec<CreateJournalEntryLine> {
+    let mut entry_lines = Vec::new();
+    // Positive => the FX account must be credited (net gain).
+    let mut fx_net = Decimal::ZERO;
+
+    for line in lines {
+        if line.adjustment.is_zero() {
+            continue;
+        }
+        let amount = line.adjustment.abs();
+        let increase = line.adjustment > Decimal::ZERO;
+        let debit_side = match line.normal_balance {
+            BalanceSide::Credit => !increase,
+            _ => increase,
+        };
+        let (debit_amount, credit_amount) = if debit_side {
+            fx_net += amount;
+            (amount, Decimal::ZERO)
+        } else {
+            fx_net -= amount;
+            (Decimal::ZERO, amount)
+        };
+        entry_lines.push(CreateJournalEntryLine {
+            account_id: line.account_id,
+            description: Some(format!(
+                "FX revaluation of {} ({})",
+                line.account_number, line.currency
+            )),
+            debit_amount,
+            credit_amount,
+            reference_type: Some(FX_REVALUATION_REFERENCE.to_string()),
+            reference_id: Some(line.account_id),
+        });
+    }
+
+    if !fx_net.is_zero() {
+        let amount = fx_net.abs();
+        let (debit_amount, credit_amount) =
+            if fx_net > Decimal::ZERO { (Decimal::ZERO, amount) } else { (amount, Decimal::ZERO) };
+        entry_lines.push(CreateJournalEntryLine {
+            account_id: fx_account_id,
+            description: Some("Unrealized FX gain/loss".to_string()),
+            debit_amount,
+            credit_amount,
+            reference_type: Some(FX_REVALUATION_REFERENCE.to_string()),
+            reference_id: None,
+        });
+    }
+
+    entry_lines
 }
 
 // ============================================================================
@@ -1061,4 +1221,120 @@ pub fn create_default_chart_of_accounts() -> Vec<CreateGlAccount> {
             currency: None,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    fn foreign_account(account_type: AccountType, carrying: Decimal) -> GlAccount {
+        let now = Utc::now();
+        GlAccount {
+            id: Uuid::new_v4(),
+            account_number: "1015".into(),
+            name: "EUR Cash".into(),
+            description: None,
+            account_type,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: false,
+            is_posting: true,
+            normal_balance: account_type.normal_balance(),
+            currency: CurrencyCode::EUR,
+            status: AccountStatus::Active,
+            current_balance: carrying,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn revaluation_gain_on_debit_normal_account() {
+        // Booked 1000 EUR at 1.00; rate is now 1.10 => 100 unrealized gain.
+        let account = foreign_account(AccountType::Asset, dec!(1000));
+        let line = compute_revaluation_line(&account, dec!(1000), dec!(1.10), 2);
+        assert_eq!(line.revalued_value, dec!(1100.00));
+        assert_eq!(line.adjustment, dec!(100.00));
+        assert_eq!(line.unrealized_gain_loss, dec!(100.00));
+    }
+
+    #[test]
+    fn revaluation_loss_on_debit_normal_account() {
+        let account = foreign_account(AccountType::Asset, dec!(1000));
+        let line = compute_revaluation_line(&account, dec!(1000), dec!(0.85), 2);
+        assert_eq!(line.adjustment, dec!(-150.00));
+        assert_eq!(line.unrealized_gain_loss, dec!(-150.00));
+    }
+
+    #[test]
+    fn revaluation_on_credit_normal_account_flips_sign() {
+        // A payable growing in base terms is a loss.
+        let account = foreign_account(AccountType::Liability, dec!(500));
+        let line = compute_revaluation_line(&account, dec!(500), dec!(1.20), 2);
+        assert_eq!(line.adjustment, dec!(100.00));
+        assert_eq!(line.unrealized_gain_loss, dec!(-100.00));
+    }
+
+    #[test]
+    fn revaluation_noop_when_rate_unchanged() {
+        let account = foreign_account(AccountType::Asset, dec!(1000));
+        let line = compute_revaluation_line(&account, dec!(1000), dec!(1), 2);
+        assert!(line.adjustment.is_zero());
+        assert!(line.unrealized_gain_loss.is_zero());
+        assert!(build_revaluation_journal_lines(&[line], Uuid::new_v4()).is_empty());
+    }
+
+    #[test]
+    fn revaluation_rounds_to_base_precision() {
+        let account = foreign_account(AccountType::Asset, dec!(0));
+        let line = compute_revaluation_line(&account, dec!(100.333), dec!(1.005), 2);
+        assert_eq!(line.revalued_value, dec!(100.83));
+    }
+
+    #[test]
+    fn revaluation_journal_lines_are_balanced() {
+        let asset = foreign_account(AccountType::Asset, dec!(1000));
+        let liability = foreign_account(AccountType::Liability, dec!(500));
+        let fx_account = Uuid::new_v4();
+
+        let lines = vec![
+            compute_revaluation_line(&asset, dec!(1000), dec!(1.10), 2), // +100 gain
+            compute_revaluation_line(&liability, dec!(500), dec!(1.20), 2), // -100 loss
+        ];
+        let je_lines = build_revaluation_journal_lines(&lines, fx_account);
+
+        // Asset debit 100, liability credit 100 — nets to zero, so no FX line.
+        assert_eq!(je_lines.len(), 2);
+        let debits: Decimal = je_lines.iter().map(|l| l.debit_amount).sum();
+        let credits: Decimal = je_lines.iter().map(|l| l.credit_amount).sum();
+        assert_eq!(debits, credits);
+        assert!(je_lines.iter().all(|l| l.reference_type.as_deref() == Some("fx_revaluation")));
+    }
+
+    #[test]
+    fn revaluation_journal_lines_offset_net_gain_to_fx_account() {
+        let asset = foreign_account(AccountType::Asset, dec!(1000));
+        let fx_account = Uuid::new_v4();
+        let lines = vec![compute_revaluation_line(&asset, dec!(1000), dec!(1.10), 2)];
+        let je_lines = build_revaluation_journal_lines(&lines, fx_account);
+
+        assert_eq!(je_lines.len(), 2);
+        assert_eq!(je_lines[0].debit_amount, dec!(100.00));
+        assert_eq!(je_lines[1].account_id, fx_account);
+        assert_eq!(je_lines[1].credit_amount, dec!(100.00));
+    }
+
+    #[test]
+    fn revaluation_journal_lines_offset_net_loss_to_fx_account() {
+        let liability = foreign_account(AccountType::Liability, dec!(500));
+        let fx_account = Uuid::new_v4();
+        let lines = vec![compute_revaluation_line(&liability, dec!(500), dec!(1.20), 2)];
+        let je_lines = build_revaluation_journal_lines(&lines, fx_account);
+
+        assert_eq!(je_lines.len(), 2);
+        assert_eq!(je_lines[0].credit_amount, dec!(100.00));
+        assert_eq!(je_lines[1].account_id, fx_account);
+        assert_eq!(je_lines[1].debit_amount, dec!(100.00));
+    }
 }

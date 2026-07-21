@@ -8,11 +8,12 @@ use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine,
     BalanceSide, BatchResult, CommerceError, CreateAutoPostingConfig, CreateGlAccount,
-    CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, CurrencyCode,
-    GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement,
-    IncomeStatementLine, InvoiceId, JournalEntry, JournalEntryFilter, JournalEntryLine,
-    JournalEntrySource, JournalEntryStatus, JournalEntryType, PeriodStatus, Result, TrialBalance,
-    TrialBalanceLine, create_default_chart_of_accounts, generate_journal_entry_number,
+    CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, Currency, CurrencyCode,
+    FX_REVALUATION_REFERENCE, GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod,
+    GlPeriodFilter, IncomeStatement, IncomeStatementLine, InvoiceId, JournalEntry,
+    JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType,
+    PeriodStatus, Result, RevaluationResult, TrialBalance, TrialBalanceLine,
+    create_default_chart_of_accounts, generate_journal_entry_number,
 };
 use uuid::Uuid;
 
@@ -110,6 +111,7 @@ struct AutoPostingConfigRow {
     shipping_revenue_account_id: Option<Uuid>,
     cogs_account_id: Uuid,
     bad_debt_expense_account_id: Option<Uuid>,
+    fx_gain_loss_account_id: Option<Uuid>,
     auto_post_depreciation: bool,
     auto_post_revenue_recognition: bool,
     is_active: bool,
@@ -320,6 +322,7 @@ impl PgGeneralLedgerRepository {
             shipping_revenue_account_id: row.shipping_revenue_account_id,
             cogs_account_id: row.cogs_account_id,
             bad_debt_expense_account_id: row.bad_debt_expense_account_id,
+            fx_gain_loss_account_id: row.fx_gain_loss_account_id,
             auto_post_depreciation: row.auto_post_depreciation,
             auto_post_revenue_recognition: row.auto_post_revenue_recognition,
             is_active: row.is_active,
@@ -1128,7 +1131,7 @@ impl PgGeneralLedgerRepository {
             "SELECT id, config_name, cash_account_id, accounts_receivable_account_id, inventory_account_id,
                     accounts_payable_account_id, unearned_revenue_account_id, sales_revenue_account_id,
                     shipping_revenue_account_id, cogs_account_id, bad_debt_expense_account_id,
-                    auto_post_depreciation, auto_post_revenue_recognition,
+                    fx_gain_loss_account_id, auto_post_depreciation, auto_post_revenue_recognition,
                     is_active, created_at, updated_at
              FROM gl_auto_posting_config WHERE is_active = TRUE LIMIT 1",
         )
@@ -1150,9 +1153,9 @@ impl PgGeneralLedgerRepository {
             "INSERT INTO gl_auto_posting_config (id, config_name, cash_account_id, accounts_receivable_account_id,
                 inventory_account_id, accounts_payable_account_id, unearned_revenue_account_id,
                 sales_revenue_account_id, shipping_revenue_account_id, cogs_account_id,
-                bad_debt_expense_account_id, auto_post_depreciation,
+                bad_debt_expense_account_id, fx_gain_loss_account_id, auto_post_depreciation,
                 auto_post_revenue_recognition, is_active, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
         .bind(id)
         .bind(&input.config_name)
@@ -1165,6 +1168,7 @@ impl PgGeneralLedgerRepository {
         .bind(input.shipping_revenue_account_id)
         .bind(input.cogs_account_id)
         .bind(input.bad_debt_expense_account_id)
+        .bind(input.fx_gain_loss_account_id)
         .bind(input.auto_post_depreciation)
         .bind(input.auto_post_revenue_recognition)
         .bind(true)
@@ -1756,6 +1760,179 @@ impl PgGeneralLedgerRepository {
         Ok(closing_entry)
     }
 
+    /// Look up the exchange rate converting one `from` unit into `to` units,
+    /// falling back to the inverse of the reverse pair when only that is set.
+    async fn lookup_rate_async(&self, from: &str, to: &str) -> Result<Option<Decimal>> {
+        let direct: Option<Decimal> = sqlx::query_scalar(
+            "SELECT rate FROM exchange_rates WHERE base_currency = $1 AND quote_currency = $2",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if let Some(rate) = direct {
+            return Ok(Some(rate));
+        }
+
+        let inverse: Option<Decimal> = sqlx::query_scalar(
+            "SELECT rate FROM exchange_rates WHERE base_currency = $1 AND quote_currency = $2",
+        )
+        .bind(to)
+        .bind(from)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        Ok(inverse.and_then(|rate| if rate.is_zero() { None } else { Some(Decimal::ONE / rate) }))
+    }
+
+    /// Resolve the account receiving unrealized FX gains/losses: the
+    /// configured `fx_gain_loss_account_id`, else the first active posting
+    /// account with an Other Expense / Other Revenue sub-type.
+    async fn resolve_fx_gain_loss_account_async(&self) -> Result<Uuid> {
+        if let Some(id) = self
+            .get_auto_posting_config_async()
+            .await?
+            .and_then(|config| config.fx_gain_loss_account_id)
+        {
+            return Ok(id);
+        }
+        for sub_type in [AccountSubType::OtherExpense, AccountSubType::OtherRevenue] {
+            let fallback = self
+                .list_accounts_async(GlAccountFilter {
+                    account_sub_type: Some(sub_type),
+                    status: Some(AccountStatus::Active),
+                    is_posting: Some(true),
+                    limit: Some(1),
+                    ..Default::default()
+                })
+                .await?
+                .into_iter()
+                .next();
+            if let Some(account) = fallback {
+                return Ok(account.id);
+            }
+        }
+        Err(CommerceError::ValidationError(
+            "No FX gain/loss account configured for revaluation".to_string(),
+        ))
+    }
+
+    pub async fn revalue_async(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult> {
+        let base = match base_currency {
+            Some(base) => base,
+            None => {
+                let code: Option<String> =
+                    sqlx::query_scalar("SELECT base_currency FROM store_currency_settings LIMIT 1")
+                        .fetch_optional(&self.pool)
+                        .await
+                        .map_err(map_db_error)?;
+                match code {
+                    Some(code) => code.parse::<Currency>().map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Invalid store base currency {code:?}: {e}"
+                        ))
+                    })?,
+                    None => Currency::default(),
+                }
+            }
+        };
+        let base_code: CurrencyCode = base.code().parse().map_err(|e| {
+            CommerceError::ValidationError(format!(
+                "Base currency {} is not a valid ISO code: {e}",
+                base.code()
+            ))
+        })?;
+        let base_places = u32::from(base.decimal_places());
+
+        let accounts = self
+            .list_accounts_async(GlAccountFilter {
+                status: Some(AccountStatus::Active),
+                is_posting: Some(true),
+                ..Default::default()
+            })
+            .await?;
+
+        let mut lines: Vec<stateset_core::RevaluationLine> = Vec::new();
+        for account in accounts {
+            if account.currency == base_code {
+                continue;
+            }
+
+            // Outstanding foreign-currency balance: posted lines excluding
+            // prior base-currency FX revaluation adjustments.
+            let row: (Decimal, Decimal) = sqlx::query_as(
+                "SELECT COALESCE(SUM(l.debit_amount), 0), COALESCE(SUM(l.credit_amount), 0)
+                 FROM gl_journal_entry_lines l
+                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
+                 WHERE l.account_id = $1 AND je.status = 'posted'
+                   AND (l.reference_type IS NULL OR l.reference_type != $2)",
+            )
+            .bind(account.id)
+            .bind(FX_REVALUATION_REFERENCE)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+            let foreign_balance = account.balance_effect(row.0, row.1);
+
+            if foreign_balance.is_zero() && account.current_balance.is_zero() {
+                continue;
+            }
+
+            let rate = self
+                .lookup_rate_async(account.currency.as_str(), base.code())
+                .await?
+                .ok_or_else(|| {
+                    CommerceError::ValidationError(format!(
+                        "No exchange rate available for {} -> {}",
+                        account.currency,
+                        base.code()
+                    ))
+                })?;
+
+            lines.push(stateset_core::compute_revaluation_line(
+                &account,
+                foreign_balance,
+                rate,
+                base_places,
+            ));
+        }
+
+        let total_unrealized_gain_loss: Decimal =
+            lines.iter().map(|l| l.unrealized_gain_loss).sum();
+
+        let journal_entry = if lines.iter().any(|l| !l.adjustment.is_zero()) {
+            let fx_account_id = self.resolve_fx_gain_loss_account_async().await?;
+            let entry_lines = stateset_core::build_revaluation_journal_lines(&lines, fx_account_id);
+            Some(
+                self.create_journal_entry_async(CreateJournalEntry {
+                    entry_date: as_of_date,
+                    entry_type: Some(JournalEntryType::Adjusting),
+                    description: format!("FX revaluation as of {as_of_date}"),
+                    lines: entry_lines,
+                    source_document_type: Some(FX_REVALUATION_REFERENCE.to_string()),
+                    source_document_id: None,
+                    auto_post: Some(true),
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        Ok(RevaluationResult {
+            as_of_date,
+            base_currency: base_code,
+            total_unrealized_gain_loss,
+            lines,
+            journal_entry,
+        })
+    }
+
     pub async fn create_accounts_batch_async(
         &self,
         inputs: Vec<CreateGlAccount>,
@@ -1950,6 +2127,14 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
 
     fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
         block_on(self.run_period_close_async(period_id, closed_by))
+    }
+
+    fn revalue(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult> {
+        block_on(self.revalue_async(as_of_date, base_currency))
     }
 
     fn create_accounts_batch(

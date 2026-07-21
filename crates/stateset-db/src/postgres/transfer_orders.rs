@@ -286,6 +286,14 @@ impl PgTransferOrderRepository {
 
     /// Cancel a transfer order.
     pub async fn cancel_async(&self, id: TransferOrderId) -> Result<TransferOrder> {
+        let current = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if matches!(current.status, TransferOrderStatus::Received | TransferOrderStatus::Cancelled)
+        {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot cancel a transfer order in status {}",
+                current.status
+            )));
+        }
         sqlx::query(
             "UPDATE transfer_orders SET status = 'cancelled', updated_at = $1 WHERE id = $2",
         )

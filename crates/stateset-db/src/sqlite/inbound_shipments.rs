@@ -295,6 +295,16 @@ impl stateset_core::InboundShipmentRepository for SqliteInboundShipmentRepositor
     }
 
     fn cancel(&self, id: InboundShipmentId) -> Result<InboundShipment> {
+        let current = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        if matches!(
+            current.status,
+            InboundShipmentStatus::Received | InboundShipmentStatus::Cancelled
+        ) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot cancel an inbound shipment in status {}",
+                current.status
+            )));
+        }
         self.set_status(id, InboundShipmentStatus::Cancelled)
     }
 }
@@ -397,6 +407,10 @@ mod tests {
         let repo = test_repo();
         let s = new_shipment(&repo);
         assert_eq!(repo.cancel(s.id).expect("cancel").status, InboundShipmentStatus::Cancelled);
+
+        // Terminal-state guard: cancelling again is rejected.
+        let err = repo.cancel(s.id).expect_err("already cancelled");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
     }
 
     #[test]

@@ -31,9 +31,9 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use stateset_core::{
     AutoPostingConfig, BalanceSheet, BatchResult, CreateAutoPostingConfig, CreateGlAccount,
-    CreateGlPeriod, CreateJournalEntry, GlAccount, GlAccountFilter, GlPeriod, GlPeriodFilter,
-    IncomeStatement, JournalEntry, JournalEntryFilter, JournalEntryLine, Result, TrialBalance,
-    UpdateGlAccount,
+    CreateGlPeriod, CreateJournalEntry, Currency, GlAccount, GlAccountFilter, GlPeriod,
+    GlPeriodFilter, IncomeStatement, JournalEntry, JournalEntryFilter, JournalEntryLine, Result,
+    RevaluationResult, TrialBalance, UpdateGlAccount,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -452,6 +452,23 @@ impl GeneralLedger {
     // ========================================================================
     // Period Close
     // ========================================================================
+
+    /// Revalue foreign-currency account balances at the as-of exchange rate.
+    ///
+    /// For every active posting account whose currency differs from the base
+    /// currency, the outstanding foreign-currency balance is revalued at the
+    /// current exchange rate and the net unrealized gain/loss is posted as a
+    /// balanced adjusting journal entry against the configured FX gain/loss
+    /// account.
+    ///
+    /// `base_currency` defaults to the store's configured base currency.
+    pub fn revalue(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult> {
+        self.db.general_ledger().revalue(as_of_date, base_currency)
+    }
 
     /// Run period close process (generate closing entries, close period).
     ///

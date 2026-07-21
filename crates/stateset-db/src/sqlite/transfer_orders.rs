@@ -306,6 +306,21 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
     fn cancel(&self, id: TransferOrderId) -> Result<TransferOrder> {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
+        let conn = self.conn()?;
+        let status: String = conn
+            .query_row("SELECT status FROM transfer_orders WHERE id = ?", [&id_str], |row| {
+                row.get(0)
+            })
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                other => map_db_error(other),
+            })?;
+        drop(conn);
+        if matches!(status.as_str(), "received" | "cancelled") {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot cancel a transfer order in status {status}"
+            )));
+        }
         with_immediate_transaction(&self.pool, |tx| {
             tx.execute(
                 "UPDATE transfer_orders SET status = 'cancelled', updated_at = ? WHERE id = ?",
@@ -411,6 +426,10 @@ mod tests {
         let o = new_order(&repo);
         let cancelled = repo.cancel(o.id).expect("cancel");
         assert_eq!(cancelled.status, TransferOrderStatus::Cancelled);
+
+        // Terminal-state guard: cancelling again is rejected.
+        let err = repo.cancel(o.id).expect_err("already cancelled");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
     }
 
     #[test]

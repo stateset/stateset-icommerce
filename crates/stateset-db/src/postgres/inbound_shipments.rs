@@ -288,6 +288,16 @@ impl PgInboundShipmentRepository {
 
     /// Cancel an inbound shipment.
     pub async fn cancel_async(&self, id: InboundShipmentId) -> Result<InboundShipment> {
+        let current = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if matches!(
+            current.status,
+            InboundShipmentStatus::Received | InboundShipmentStatus::Cancelled
+        ) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot cancel an inbound shipment in status {}",
+                current.status
+            )));
+        }
         self.set_status(id, InboundShipmentStatus::Cancelled).await
     }
 }

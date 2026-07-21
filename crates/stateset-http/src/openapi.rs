@@ -348,6 +348,23 @@ use crate::state::AppState;
         crate::routes::reports::transaction_cogs,
         crate::routes::reports::close_the_books,
         crate::routes::reports::consumption,
+        // carts
+        crate::routes::carts::create,
+        crate::routes::carts::list,
+        crate::routes::carts::get_one,
+        crate::routes::carts::add_item,
+        crate::routes::carts::update_item,
+        crate::routes::carts::remove_item,
+        crate::routes::carts::set_shipping,
+        crate::routes::carts::set_payment,
+        crate::routes::carts::complete,
+        crate::routes::carts::cancel,
+        // backorders
+        crate::routes::backorders::create,
+        crate::routes::backorders::list,
+        crate::routes::backorders::get_one,
+        crate::routes::backorders::fulfill,
+        crate::routes::backorders::cancel,
         // purchase_orders
         crate::routes::purchase_orders::create,
         crate::routes::purchase_orders::list,
@@ -386,6 +403,7 @@ use crate::state::AppState;
         crate::routes::general_ledger::close_period,
         crate::routes::general_ledger::lock_period,
         crate::routes::general_ledger::reopen_period,
+        crate::routes::general_ledger::revalue,
         // fixed_assets
         crate::routes::fixed_assets::create,
         crate::routes::fixed_assets::list,
@@ -434,6 +452,9 @@ use crate::state::AppState;
         crate::routes::accounts_receivable::reverse_write_off,
         crate::routes::accounts_receivable::send_dunning,
         crate::routes::accounts_receivable::customer_statement,
+        crate::routes::accounts_receivable::record_collection_activity,
+        crate::routes::accounts_receivable::list_collection_activities,
+        crate::routes::accounts_receivable::invoices_due_for_dunning,
         // warehouse
         crate::routes::warehouse::create_warehouse,
         crate::routes::warehouse::list_warehouses,
@@ -704,6 +725,8 @@ use crate::state::AppState;
         (name = "serials", description = "Serial number tracking: creation, lookup, reservations, and lifecycle transitions"),
         (name = "fixed_assets", description = "Fixed-asset register: acquisition, depreciation schedules, disposal, and write-off"),
         (name = "revenue_recognition", description = "Revenue contracts, performance obligations, and recognition schedules (ASC 606)"),
+        (name = "carts", description = "Cart and checkout sessions: items, shipping, payment, completion"),
+        (name = "backorders", description = "Backorder creation, fulfillment, and cancellation"),
     )
 )]
 #[derive(Debug)]

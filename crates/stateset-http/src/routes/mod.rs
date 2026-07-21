@@ -5,7 +5,9 @@ pub mod a2a_messaging;
 pub mod accounts_payable;
 pub mod accounts_receivable;
 pub mod activity_logs;
+pub mod backorders;
 pub mod bom;
+pub mod carts;
 pub mod channels;
 pub mod companies;
 pub mod currency;
@@ -159,6 +161,8 @@ fn v1_router() -> Router<AppState> {
         .merge(bom::router())
         .merge(lots::router())
         .merge(serials::router())
+        .merge(carts::router())
+        .merge(backorders::router())
         .merge(crate::openapi::router())
 }
 

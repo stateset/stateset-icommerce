@@ -9,11 +9,12 @@ use rust_decimal::Decimal;
 use stateset_core::{
     AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine,
     BalanceSide, BatchResult, CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod,
-    CreateJournalEntry, GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod,
-    GlPeriodFilter, IncomeStatement, IncomeStatementLine, InvoiceId, JournalEntry,
-    JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType,
-    PeriodStatus, Result, TrialBalance, TrialBalanceLine, UpdateGlAccount,
-    create_default_chart_of_accounts, generate_journal_entry_number,
+    CreateJournalEntry, Currency, FX_REVALUATION_REFERENCE, GeneralLedgerRepository, GlAccount,
+    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, IncomeStatementLine, InvoiceId,
+    JournalEntry, JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus,
+    JournalEntryType, PeriodStatus, Result, RevaluationLine, RevaluationResult, TrialBalance,
+    TrialBalanceLine, UpdateGlAccount, create_default_chart_of_accounts,
+    generate_journal_entry_number,
 };
 use uuid::Uuid;
 
@@ -151,11 +152,12 @@ impl SqliteGeneralLedgerRepository {
             shipping_revenue_account_id: parse_optional(row.get::<_, Option<String>>(8)?, 8)?,
             cogs_account_id: parse_required(row.get::<_, String>(9)?, 9)?,
             bad_debt_expense_account_id: parse_optional(row.get::<_, Option<String>>(10)?, 10)?,
-            auto_post_depreciation: row.get::<_, i32>(11)? != 0,
-            auto_post_revenue_recognition: row.get::<_, i32>(12)? != 0,
-            is_active: row.get::<_, i32>(13)? != 0,
-            created_at: parse_required(row.get::<_, String>(14)?, 14)?,
-            updated_at: parse_required(row.get::<_, String>(15)?, 15)?,
+            fx_gain_loss_account_id: parse_optional(row.get::<_, Option<String>>(11)?, 11)?,
+            auto_post_depreciation: row.get::<_, i32>(12)? != 0,
+            auto_post_revenue_recognition: row.get::<_, i32>(13)? != 0,
+            is_active: row.get::<_, i32>(14)? != 0,
+            created_at: parse_required(row.get::<_, String>(15)?, 15)?,
+            updated_at: parse_required(row.get::<_, String>(16)?, 16)?,
         })
     }
 
@@ -219,6 +221,69 @@ impl SqliteGeneralLedgerRepository {
         )?;
         entry.lines = Self::load_journal_entry_lines_with_conn(conn, id)?;
         Ok(entry)
+    }
+
+    /// Look up the exchange rate converting one `from` unit into `to` units,
+    /// falling back to the inverse of the reverse pair when only that is set.
+    fn lookup_rate_with_conn(
+        conn: &rusqlite::Connection,
+        from: &str,
+        to: &str,
+    ) -> Result<Option<Decimal>> {
+        let direct = conn.query_row(
+            "SELECT rate FROM exchange_rates WHERE base_currency = ?1 AND quote_currency = ?2",
+            params![from, to],
+            |row| row.get::<_, String>(0),
+        );
+        match direct {
+            Ok(rate) => Ok(Some(parse_decimal_required(rate, 0).map_err(map_db_error)?)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                let inverse = conn.query_row(
+                    "SELECT rate FROM exchange_rates
+                     WHERE base_currency = ?1 AND quote_currency = ?2",
+                    params![to, from],
+                    |row| row.get::<_, String>(0),
+                );
+                match inverse {
+                    Ok(rate) => {
+                        let rate = parse_decimal_required(rate, 0).map_err(map_db_error)?;
+                        if rate.is_zero() { Ok(None) } else { Ok(Some(Decimal::ONE / rate)) }
+                    }
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(map_db_error(e)),
+                }
+            }
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
+
+    /// Resolve the account receiving unrealized FX gains/losses: the
+    /// configured `fx_gain_loss_account_id`, else the first active posting
+    /// account with an Other Expense / Other Revenue sub-type.
+    fn resolve_fx_gain_loss_account(&self) -> Result<Uuid> {
+        if let Some(id) =
+            self.get_auto_posting_config()?.and_then(|config| config.fx_gain_loss_account_id)
+        {
+            return Ok(id);
+        }
+        for sub_type in [AccountSubType::OtherExpense, AccountSubType::OtherRevenue] {
+            let fallback = self
+                .list_accounts(GlAccountFilter {
+                    account_sub_type: Some(sub_type),
+                    status: Some(AccountStatus::Active),
+                    is_posting: Some(true),
+                    limit: Some(1),
+                    ..Default::default()
+                })?
+                .into_iter()
+                .next();
+            if let Some(account) = fallback {
+                return Ok(account.id);
+            }
+        }
+        Err(stateset_core::CommerceError::ValidationError(
+            "No FX gain/loss account configured for revaluation".to_string(),
+        ))
     }
 }
 
@@ -1107,7 +1172,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             "SELECT id, config_name, cash_account_id, accounts_receivable_account_id,
                     inventory_account_id, accounts_payable_account_id, unearned_revenue_account_id,
                     sales_revenue_account_id, shipping_revenue_account_id, cogs_account_id,
-                    bad_debt_expense_account_id, auto_post_depreciation,
+                    bad_debt_expense_account_id, fx_gain_loss_account_id, auto_post_depreciation,
                     auto_post_revenue_recognition, is_active, created_at, updated_at
              FROM gl_auto_posting_config WHERE is_active = 1 LIMIT 1",
             [],
@@ -1135,9 +1200,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             "INSERT INTO gl_auto_posting_config (id, config_name, cash_account_id,
              accounts_receivable_account_id, inventory_account_id, accounts_payable_account_id,
              unearned_revenue_account_id, sales_revenue_account_id, shipping_revenue_account_id,
-             cogs_account_id, bad_debt_expense_account_id, auto_post_depreciation,
+             cogs_account_id, bad_debt_expense_account_id, fx_gain_loss_account_id,
+             auto_post_depreciation,
              auto_post_revenue_recognition, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 id.to_string(),
                 input.config_name,
@@ -1150,6 +1216,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 input.shipping_revenue_account_id.map(|id| id.to_string()),
                 input.cogs_account_id.to_string(),
                 input.bad_debt_expense_account_id.map(|id| id.to_string()),
+                input.fx_gain_loss_account_id.map(|id| id.to_string()),
                 i32::from(input.auto_post_depreciation),
                 i32::from(input.auto_post_revenue_recognition),
                 1,
@@ -1892,6 +1959,131 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     // ========================================================================
+    // FX Revaluation
+    // ========================================================================
+
+    fn revalue(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult> {
+        let base = match base_currency {
+            Some(base) => base,
+            None => {
+                let conn = self
+                    .pool
+                    .get()
+                    .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+                match conn.query_row(
+                    "SELECT base_currency FROM store_currency_settings LIMIT 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    Ok(code) => code.parse::<Currency>().map_err(|e| {
+                        stateset_core::CommerceError::DatabaseError(format!(
+                            "Invalid store base currency {code:?}: {e}"
+                        ))
+                    })?,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Currency::default(),
+                    Err(e) => return Err(map_db_error(e)),
+                }
+            }
+        };
+        let base_code: stateset_core::CurrencyCode = base.code().parse().map_err(|e| {
+            stateset_core::CommerceError::ValidationError(format!(
+                "Base currency {} is not a valid ISO code: {e}",
+                base.code()
+            ))
+        })?;
+        let base_places = u32::from(base.decimal_places());
+
+        let accounts = self.list_accounts(GlAccountFilter {
+            status: Some(AccountStatus::Active),
+            is_posting: Some(true),
+            ..Default::default()
+        })?;
+
+        let mut lines: Vec<RevaluationLine> = Vec::new();
+        {
+            let conn = self
+                .pool
+                .get()
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+
+            for account in accounts {
+                if account.currency == base_code {
+                    continue;
+                }
+
+                // Outstanding foreign-currency balance: posted lines excluding
+                // prior base-currency FX revaluation adjustments.
+                let (debits, credits): (String, String) = conn
+                    .query_row(
+                        "SELECT decimal_sum(l.debit_amount), decimal_sum(l.credit_amount)
+                         FROM gl_journal_entry_lines l
+                         JOIN gl_journal_entries je ON l.journal_entry_id = je.id
+                         WHERE l.account_id = ?1 AND je.status = 'posted'
+                           AND (l.reference_type IS NULL OR l.reference_type != ?2)",
+                        params![account.id.to_string(), FX_REVALUATION_REFERENCE],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(map_db_error)?;
+                let debits = parse_decimal_required(debits, 0).map_err(map_db_error)?;
+                let credits = parse_decimal_required(credits, 1).map_err(map_db_error)?;
+                let foreign_balance = account.balance_effect(debits, credits);
+
+                if foreign_balance.is_zero() && account.current_balance.is_zero() {
+                    continue;
+                }
+
+                let rate =
+                    Self::lookup_rate_with_conn(&conn, account.currency.as_str(), base.code())?
+                        .ok_or_else(|| {
+                            stateset_core::CommerceError::ValidationError(format!(
+                                "No exchange rate available for {} -> {}",
+                                account.currency,
+                                base.code()
+                            ))
+                        })?;
+
+                lines.push(stateset_core::compute_revaluation_line(
+                    &account,
+                    foreign_balance,
+                    rate,
+                    base_places,
+                ));
+            }
+        }
+
+        let total_unrealized_gain_loss: Decimal =
+            lines.iter().map(|l| l.unrealized_gain_loss).sum();
+
+        let journal_entry = if lines.iter().any(|l| !l.adjustment.is_zero()) {
+            let fx_account_id = self.resolve_fx_gain_loss_account()?;
+            let entry_lines = stateset_core::build_revaluation_journal_lines(&lines, fx_account_id);
+            Some(self.create_journal_entry(stateset_core::CreateJournalEntry {
+                entry_date: as_of_date,
+                entry_type: Some(JournalEntryType::Adjusting),
+                description: format!("FX revaluation as of {as_of_date}"),
+                lines: entry_lines,
+                source_document_type: Some(FX_REVALUATION_REFERENCE.to_string()),
+                source_document_id: None,
+                auto_post: Some(true),
+            })?)
+        } else {
+            None
+        };
+
+        Ok(RevaluationResult {
+            as_of_date,
+            base_currency: base_code,
+            total_unrealized_gain_loss,
+            lines,
+            journal_entry,
+        })
+    }
+
+    // ========================================================================
     // Batch Operations
     // ========================================================================
 
@@ -2382,5 +2574,175 @@ mod tests {
             })
             .expect("list");
         assert_eq!(reversals.len(), 1, "only one reversing entry may exist");
+    }
+
+    // ========================================================================
+    // FX revaluation
+    // ========================================================================
+
+    fn make_currency_account(
+        repo: &SqliteGeneralLedgerRepository,
+        num: &str,
+        ty: AccountType,
+        currency: stateset_core::CurrencyCode,
+        sub_type: Option<AccountSubType>,
+    ) -> GlAccount {
+        repo.create_account(CreateGlAccount {
+            account_number: num.into(),
+            name: format!("Account {num}"),
+            description: None,
+            account_type: ty,
+            account_sub_type: sub_type,
+            parent_account_id: None,
+            is_header: Some(false),
+            is_posting: Some(true),
+            currency: Some(currency),
+        })
+        .expect("create account")
+    }
+
+    fn set_rate(db: &SqliteDatabase, from: Currency, to: Currency, rate: rust_decimal::Decimal) {
+        use stateset_core::CurrencyRepository;
+        db.currency()
+            .set_rate(stateset_core::SetExchangeRate {
+                base_currency: from,
+                quote_currency: to,
+                rate,
+                source: Some("test".into()),
+            })
+            .expect("set rate");
+    }
+
+    #[test]
+    fn revalue_posts_balanced_gain_entry_for_foreign_account() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.general_ledger();
+        let _period = fy_period(&repo);
+        let eur_cash = make_currency_account(
+            &repo,
+            "1015",
+            AccountType::Asset,
+            stateset_core::CurrencyCode::EUR,
+            None,
+        );
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        // Fallback FX gain/loss account (no auto-posting config set).
+        let fx = make_currency_account(
+            &repo,
+            "7900",
+            AccountType::Expense,
+            stateset_core::CurrencyCode::USD,
+            Some(AccountSubType::OtherExpense),
+        );
+
+        // Book 1000 EUR at parity, then move the rate to 1.10.
+        set_rate(&db, Currency::EUR, Currency::USD, dec!(1));
+        let entry = make_balanced_entry(&repo, &eur_cash, &revenue, dec!(1000));
+        repo.post_journal_entry(entry.id, "tester").expect("post");
+        set_rate(&db, Currency::EUR, Currency::USD, dec!(1.10));
+
+        let result = repo
+            .revalue(NaiveDate::from_ymd_opt(2026, 1, 31).expect("date"), None)
+            .expect("revalue");
+
+        assert_eq!(result.base_currency, stateset_core::CurrencyCode::USD);
+        assert_eq!(result.total_unrealized_gain_loss, dec!(100.00));
+        assert_eq!(result.lines.len(), 1);
+        let line = &result.lines[0];
+        assert_eq!(line.account_id, eur_cash.id);
+        assert_eq!(line.foreign_balance, dec!(1000));
+        assert_eq!(line.revalued_value, dec!(1100.00));
+        assert_eq!(line.adjustment, dec!(100.00));
+
+        let je = result.journal_entry.expect("journal entry");
+        assert_eq!(je.status, JournalEntryStatus::Posted);
+        assert!(je.is_balanced);
+        assert_eq!(je.total_debits, dec!(100.00));
+        assert_eq!(je.total_credits, dec!(100.00));
+        assert!(
+            je.lines.iter().any(|l| l.account_id == eur_cash.id && l.debit_amount == dec!(100.00))
+        );
+        assert!(je.lines.iter().any(|l| l.account_id == fx.id && l.credit_amount == dec!(100.00)));
+
+        // Carrying value now reflects the as-of rate.
+        assert_eq!(account_balance(&repo, eur_cash.id), dec!(1100.00));
+
+        // Re-running at the same rate is a no-op (idempotent).
+        let again = repo
+            .revalue(NaiveDate::from_ymd_opt(2026, 1, 31).expect("date"), None)
+            .expect("revalue again");
+        assert!(again.journal_entry.is_none());
+        assert_eq!(again.total_unrealized_gain_loss, dec!(0.00));
+        assert_eq!(account_balance(&repo, eur_cash.id), dec!(1100.00));
+    }
+
+    #[test]
+    fn revalue_posts_loss_entry_when_rate_drops() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.general_ledger();
+        let _period = fy_period(&repo);
+        let eur_cash = make_currency_account(
+            &repo,
+            "1015",
+            AccountType::Asset,
+            stateset_core::CurrencyCode::EUR,
+            None,
+        );
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let fx = make_currency_account(
+            &repo,
+            "7900",
+            AccountType::Expense,
+            stateset_core::CurrencyCode::USD,
+            Some(AccountSubType::OtherExpense),
+        );
+
+        set_rate(&db, Currency::EUR, Currency::USD, dec!(1));
+        let entry = make_balanced_entry(&repo, &eur_cash, &revenue, dec!(1000));
+        repo.post_journal_entry(entry.id, "tester").expect("post");
+        set_rate(&db, Currency::EUR, Currency::USD, dec!(0.85));
+
+        let result = repo
+            .revalue(NaiveDate::from_ymd_opt(2026, 1, 31).expect("date"), None)
+            .expect("revalue");
+
+        assert_eq!(result.total_unrealized_gain_loss, dec!(-150.00));
+        let je = result.journal_entry.expect("journal entry");
+        assert!(je.is_balanced);
+        assert!(
+            je.lines.iter().any(|l| l.account_id == eur_cash.id && l.credit_amount == dec!(150.00))
+        );
+        assert!(je.lines.iter().any(|l| l.account_id == fx.id && l.debit_amount == dec!(150.00)));
+        assert_eq!(account_balance(&repo, eur_cash.id), dec!(850.00));
+    }
+
+    #[test]
+    fn revalue_errors_without_fx_account_or_rate() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.general_ledger();
+        let _period = fy_period(&repo);
+        let eur_cash = make_currency_account(
+            &repo,
+            "1015",
+            AccountType::Asset,
+            stateset_core::CurrencyCode::EUR,
+            None,
+        );
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let entry = make_balanced_entry(&repo, &eur_cash, &revenue, dec!(100));
+        repo.post_journal_entry(entry.id, "tester").expect("post");
+
+        // No exchange rate configured for EUR -> USD.
+        let err = repo
+            .revalue(NaiveDate::from_ymd_opt(2026, 1, 31).expect("date"), None)
+            .expect_err("missing rate");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
+
+        // Rate configured, but no FX gain/loss account resolvable.
+        set_rate(&db, Currency::EUR, Currency::USD, dec!(1.10));
+        let err = repo
+            .revalue(NaiveDate::from_ymd_opt(2026, 1, 31).expect("date"), None)
+            .expect_err("missing fx account");
+        assert!(matches!(err, CommerceError::ValidationError(_)));
     }
 }

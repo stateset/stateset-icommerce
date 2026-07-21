@@ -171,7 +171,68 @@ pub(crate) struct ArCollectionActivityResponse {
     pub customer_id: String,
     pub activity_type: String,
     pub dunning_letter_type: Option<String>,
+    pub notes: Option<String>,
+    pub contact_method: Option<String>,
+    pub contact_result: Option<String>,
+    pub promise_to_pay_date: Option<String>,
+    pub promise_to_pay_amount: Option<String>,
+    pub performed_by: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct CreateArCollectionActivityRequest {
+    pub invoice_id: String,
+    /// One of `dunning_letter_sent`, `phone_call`, `email`, `in_person_visit`,
+    /// `promise_to_pay`, `payment_plan_created`, `sent_to_collections`,
+    /// `write_off_approved`, `dispute_logged`, `dispute_resolved`, `note`.
+    pub activity_type: String,
+    /// One of `reminder_1`, `reminder_2`, `reminder_3`, `demand_letter`, `collection_notice`.
+    pub dunning_letter_type: Option<String>,
+    pub notes: Option<String>,
+    pub contact_method: Option<String>,
+    pub contact_result: Option<String>,
+    /// RFC 3339 promised payment date.
+    pub promise_to_pay_date: Option<String>,
+    /// Decimal promised amount as a string.
+    pub promise_to_pay_amount: Option<String>,
+    pub performed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct ArCollectionActivityListResponse {
+    pub activities: Vec<ArCollectionActivityResponse>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ArCollectionActivityFilterParams {
+    pub invoice_id: Option<String>,
+    pub customer_id: Option<String>,
+    /// One of `dunning_letter_sent`, `phone_call`, `email`, `in_person_visit`,
+    /// `promise_to_pay`, `payment_plan_created`, `sent_to_collections`,
+    /// `write_off_approved`, `dispute_logged`, `dispute_resolved`, `note`.
+    pub activity_type: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct ArDunningInvoiceResponse {
+    pub id: String,
+    pub invoice_number: String,
+    pub customer_id: String,
+    pub status: String,
+    pub total: String,
+    pub balance_due: String,
+    pub due_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct ArDunningInvoiceListResponse {
+    pub invoices: Vec<ArDunningInvoiceResponse>,
+    pub total: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
@@ -285,7 +346,25 @@ fn activity_resp(a: &stateset_core::CollectionActivity) -> ArCollectionActivityR
         customer_id: a.customer_id.to_string(),
         activity_type: a.activity_type.to_string(),
         dunning_letter_type: a.dunning_letter_type.map(|t| t.to_string()),
+        notes: a.notes.clone(),
+        contact_method: a.contact_method.clone(),
+        contact_result: a.contact_result.clone(),
+        promise_to_pay_date: a.promise_to_pay_date.map(|d| d.to_rfc3339()),
+        promise_to_pay_amount: a.promise_to_pay_amount.map(|d| d.to_string()),
+        performed_by: a.performed_by.clone(),
         created_at: a.created_at.to_rfc3339(),
+    }
+}
+
+fn dunning_invoice_resp(i: &stateset_core::Invoice) -> ArDunningInvoiceResponse {
+    ArDunningInvoiceResponse {
+        id: i.id.to_string(),
+        invoice_number: i.invoice_number.clone(),
+        customer_id: i.customer_id.to_string(),
+        status: i.status.to_string(),
+        total: i.total.to_string(),
+        balance_due: i.balance_due.to_string(),
+        due_date: i.due_date.to_rfc3339(),
     }
 }
 
@@ -304,7 +383,12 @@ pub fn router() -> Router<AppState> {
         .route("/ar/credit-memos/{id}/apply", post(apply_credit_memo))
         .route("/ar/write-offs", post(create_write_off))
         .route("/ar/write-offs/{id}/reverse", post(reverse_write_off))
+        .route(
+            "/ar/collection-activities",
+            post(record_collection_activity).get(list_collection_activities),
+        )
         .route("/ar/invoices/{invoice_id}/dunning", post(send_dunning))
+        .route("/ar/dunning/due", get(invoices_due_for_dunning))
         .route("/ar/customers/{customer_id}/statement", get(customer_statement))
 }
 
@@ -559,8 +643,106 @@ pub(crate) async fn reverse_write_off(
 }
 
 // ============================================================================
+// Collection activities
+// ============================================================================
+
+#[utoipa::path(post, operation_id = "ar_record_collection_activity", path = "/api/v1/ar/collection-activities", tag = "accounts_receivable",
+    request_body = CreateArCollectionActivityRequest,
+    responses((status = 201, body = ArCollectionActivityResponse), (status = 400, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn record_collection_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateArCollectionActivityRequest>,
+) -> Result<(StatusCode, Json<ArCollectionActivityResponse>), HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let dunning_letter_type = match req.dunning_letter_type.as_deref() {
+        Some(s) => Some(parse_id(s, "dunning_letter_type")?),
+        None => None,
+    };
+    let promise_to_pay_date = match req.promise_to_pay_date.as_deref() {
+        Some(s) => Some(parse_datetime(s, "promise_to_pay_date")?),
+        None => None,
+    };
+    let promise_to_pay_amount = match req.promise_to_pay_amount.as_deref() {
+        Some(s) => Some(parse_decimal(s, "promise_to_pay_amount")?),
+        None => None,
+    };
+    let input = stateset_core::CreateCollectionActivity {
+        invoice_id: parse_id::<Uuid>(&req.invoice_id, "invoice_id")?,
+        activity_type: parse_id(&req.activity_type, "activity_type")?,
+        dunning_letter_type,
+        notes: req.notes,
+        contact_method: req.contact_method,
+        contact_result: req.contact_result,
+        promise_to_pay_date,
+        promise_to_pay_amount,
+        performed_by: req.performed_by,
+    };
+    let activity = c.accounts_receivable().log_collection_activity(input)?;
+    Ok((StatusCode::CREATED, Json(activity_resp(&activity))))
+}
+
+#[utoipa::path(get, operation_id = "ar_list_collection_activities", path = "/api/v1/ar/collection-activities", tag = "accounts_receivable",
+    params(ArCollectionActivityFilterParams),
+    responses((status = 200, body = ArCollectionActivityListResponse), (status = 400, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn list_collection_activities(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<ArCollectionActivityFilterParams>,
+) -> Result<Json<ArCollectionActivityListResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let invoice_id = match params.invoice_id.as_deref() {
+        Some(s) => Some(parse_id::<Uuid>(s, "invoice_id")?),
+        None => None,
+    };
+    let customer_id = match params.customer_id.as_deref() {
+        Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
+        None => None,
+    };
+    let activity_type = match params.activity_type.as_deref() {
+        Some(s) => Some(parse_id(s, "activity_type")?),
+        None => None,
+    };
+    let filter = stateset_core::CollectionActivityFilter {
+        invoice_id,
+        customer_id,
+        activity_type,
+        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+        offset: Some(params.offset.unwrap_or(0)),
+        ..Default::default()
+    };
+    let activities = c.accounts_receivable().list_collection_activities(filter)?;
+    let total = activities.len();
+    Ok(Json(ArCollectionActivityListResponse {
+        activities: activities.iter().map(activity_resp).collect(),
+        total,
+    }))
+}
+
+// ============================================================================
 // Dunning
 // ============================================================================
+
+#[utoipa::path(get, operation_id = "ar_invoices_due_for_dunning", path = "/api/v1/ar/dunning/due", tag = "accounts_receivable",
+    responses((status = 200, body = ArDunningInvoiceListResponse)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn invoices_due_for_dunning(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ArDunningInvoiceListResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let invoices = c.accounts_receivable().get_invoices_due_for_dunning()?;
+    let total = invoices.len();
+    Ok(Json(ArDunningInvoiceListResponse {
+        invoices: invoices.iter().map(dunning_invoice_resp).collect(),
+        total,
+    }))
+}
 
 #[utoipa::path(post, operation_id = "ar_send_dunning", path = "/api/v1/ar/invoices/{invoice_id}/dunning", tag = "accounts_receivable",
     request_body = SendArDunningRequest,
@@ -709,6 +891,67 @@ mod tests {
         let list = json_body(resp).await;
         assert_eq!(list["total"], 1);
         assert_eq!(list["credit_memos"][0]["customer_id"], memo["customer_id"]);
+    }
+
+    #[tokio::test]
+    async fn record_and_list_collection_activities() {
+        let commerce = Commerce::new(":memory:").expect("in-memory Commerce");
+        let invoice = commerce
+            .invoices()
+            .create(stateset_core::CreateInvoice {
+                customer_id: uuid::Uuid::new_v4().into(),
+                ..Default::default()
+            })
+            .expect("invoice created");
+        let app = router().with_state(AppState::new(commerce));
+        let invoice_id = invoice.id.to_string();
+        let body = serde_json::json!({
+            "invoice_id": invoice_id,
+            "activity_type": "phone_call",
+            "notes": "Spoke with customer",
+            "contact_method": "Phone",
+            "performed_by": "collector"
+        });
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post("/ar/collection-activities")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let activity = json_body(resp).await;
+        assert_eq!(activity["activity_type"], "phone_call");
+        assert_eq!(activity["invoice_id"], invoice_id);
+
+        let resp = app
+            .oneshot(
+                Request::get(format!("/ar/collection-activities?invoice_id={invoice_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let list = json_body(resp).await;
+        assert_eq!(list["total"], 1);
+        assert_eq!(list["activities"][0]["performed_by"], "collector");
+    }
+
+    #[tokio::test]
+    async fn invoices_due_for_dunning_on_empty_store() {
+        let app = app();
+        let resp = app
+            .oneshot(Request::get("/ar/dunning/due").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_body(resp).await;
+        assert_eq!(json["total"], 0);
+        assert!(json["invoices"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

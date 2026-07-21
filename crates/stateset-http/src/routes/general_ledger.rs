@@ -110,6 +110,47 @@ pub(crate) struct ReverseJournalEntryRequest {
     pub reversal_date: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default, ToSchema)]
+pub(crate) struct RevalueRequest {
+    /// Effective date in `YYYY-MM-DD` format; must fall in an open period.
+    /// Defaults to today (UTC).
+    pub as_of_date: Option<String>,
+    /// ISO-4217 base currency (e.g. `USD`). Defaults to the store's
+    /// configured base currency.
+    pub base_currency: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct RevaluationLineResponse {
+    pub account_id: String,
+    pub account_number: String,
+    pub account_name: String,
+    /// Account currency (differs from the base currency).
+    pub currency: String,
+    /// Outstanding balance in the account's own currency.
+    pub foreign_balance: String,
+    /// Value currently carried on the books (base currency).
+    pub carrying_value: String,
+    /// Exchange rate used (1 account-currency unit in base units).
+    pub rate: String,
+    /// `foreign_balance * rate` rounded to base-currency precision.
+    pub revalued_value: String,
+    /// `revalued_value - carrying_value`.
+    pub adjustment: String,
+    /// Unrealized FX gain (positive) or loss (negative) in base currency.
+    pub unrealized_gain_loss: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct RevaluationResponse {
+    pub as_of_date: String,
+    pub base_currency: String,
+    pub total_unrealized_gain_loss: String,
+    pub lines: Vec<RevaluationLineResponse>,
+    /// Balanced posted adjusting entry; absent when no adjustment was needed.
+    pub journal_entry: Option<JournalEntryResponse>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct JournalEntryLineResponse {
     pub id: String,
@@ -421,6 +462,7 @@ pub fn router() -> Router<AppState> {
         .route("/gl/journal-entries/{id}/post", post(post_journal_entry))
         .route("/gl/journal-entries/{id}/void", post(void_journal_entry))
         .route("/gl/journal-entries/{id}/reverse", post(reverse_journal_entry))
+        .route("/gl/revalue", post(revalue))
         .route("/gl/trial-balance", get(trial_balance))
         .route("/gl/balance-sheet", get(balance_sheet))
         .route("/gl/income-statement", get(income_statement))
@@ -713,6 +755,50 @@ fn as_of_or_today(params: &AsOfDateParams) -> Result<NaiveDate, HttpError> {
         Some(s) => parse_date(s, "as_of_date"),
         None => Ok(chrono::Utc::now().date_naive()),
     }
+}
+
+#[utoipa::path(post, operation_id = "general_ledger_revalue", path = "/api/v1/gl/revalue", tag = "general_ledger",
+    request_body = RevalueRequest,
+    responses((status = 200, body = RevaluationResponse), (status = 400, body = ErrorBody), (status = 422, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn revalue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<RevalueRequest>,
+) -> Result<Json<RevaluationResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let as_of_date = match req.as_of_date.as_deref() {
+        Some(s) => parse_date(s, "as_of_date")?,
+        None => chrono::Utc::now().date_naive(),
+    };
+    let base_currency = match req.base_currency.as_deref() {
+        Some(s) => Some(parse_id::<stateset_core::Currency>(s, "base_currency")?),
+        None => None,
+    };
+    let result = c.general_ledger().revalue(as_of_date, base_currency)?;
+    Ok(Json(RevaluationResponse {
+        as_of_date: result.as_of_date.to_string(),
+        base_currency: result.base_currency.to_string(),
+        total_unrealized_gain_loss: result.total_unrealized_gain_loss.to_string(),
+        lines: result
+            .lines
+            .iter()
+            .map(|l| RevaluationLineResponse {
+                account_id: l.account_id.to_string(),
+                account_number: l.account_number.clone(),
+                account_name: l.account_name.clone(),
+                currency: l.currency.to_string(),
+                foreign_balance: l.foreign_balance.to_string(),
+                carrying_value: l.carrying_value.to_string(),
+                rate: l.rate.to_string(),
+                revalued_value: l.revalued_value.to_string(),
+                adjustment: l.adjustment.to_string(),
+                unrealized_gain_loss: l.unrealized_gain_loss.to_string(),
+            })
+            .collect(),
+        journal_entry: result.journal_entry.as_ref().map(to_entry_resp),
+    }))
 }
 
 #[utoipa::path(get, operation_id = "general_ledger_trial_balance", path = "/api/v1/gl/trial-balance", tag = "general_ledger",

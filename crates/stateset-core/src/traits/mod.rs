@@ -82,32 +82,32 @@ use crate::models::{
     ReceivePurchaseOrderItems, RecordCostVariance, RecordCreditTransaction, RecordCycleCountLine,
     RecordInspectionResult, RecordInvoicePayment, Refund, ReleaseCreditHold, ReleaseQualityHold,
     ReserveInventory, ReserveLot, ReserveSerialNumber, Return, ReturnFilter, ReturnMetrics,
-    RevenueByPeriod, RevenueForecast, Review, ReviewCreditApplication, ReviewFilter, ReviewSummary,
-    Reward, RewardFilter, SalesSummary, SearchConfig, SearchConfigFilter, Segment, SegmentFilter,
-    SegmentMembership, SerialFilter, SerialHistory, SerialHistoryFilter, SerialLookupResult,
-    SerialNumber, SerialReservation, SerialValidation, SetCartPayment, SetCartShipping,
-    SetCartX402Payment, SetExchangeRate, SetItemCost, ShipTask, ShipTaskFilter, Shipment,
-    ShipmentEvent, ShipmentFilter, ShipmentItem, ShippingRate, ShippingZone, ShippingZoneFilter,
-    SignX402PaymentIntent, SkillQuote, SkillQuoteFilter, SkipBillingCycle, SkuBackorderSummary,
-    SkuCostSummary, SplitLot, StockLevel, StoreCredit, StoreCreditFilter, StoreCreditTransaction,
-    StoreCurrencySettings, SubmitCreditApplication, Subscription, SubscriptionEvent,
-    SubscriptionEventType, SubscriptionFilter, SubscriptionPlan, SubscriptionPlanFilter, Supplier,
-    SupplierApSummary, SupplierFilter, TaxAddress, TaxCalculationRequest, TaxCalculationResult,
-    TaxExemption, TaxJurisdiction, TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxSettings,
-    TimeGranularity, TopCustomer, TopProduct, TraceabilityResult, TransferLot,
-    TransferSerialOwnership, TrialBalance, TrustLevel, UpdateAgentCard, UpdateAgentIdentity,
-    UpdateBackorder, UpdateBill, UpdateBom, UpdateCart, UpdateCartItem, UpdateCreditAccount,
-    UpdateCustomObject, UpdateCustomObjectType, UpdateCustomer, UpdateFraudRule, UpdateGiftCard,
-    UpdateGlAccount, UpdateInspection, UpdateInvoice, UpdateLocation, UpdateLot,
-    UpdateNonConformance, UpdateOrder, UpdatePayment, UpdateProduct, UpdatePromotion,
-    UpdatePurchaseOrder, UpdateReceipt, UpdateReturn, UpdateReview, UpdateSearchConfig,
-    UpdateSegment, UpdateSerialNumber, UpdateShipment, UpdateShippingZone, UpdateSubscription,
-    UpdateSubscriptionPlan, UpdateSupplier, UpdateWarehouse, UpdateWarranty, UpdateWarrantyClaim,
-    UpdateWishlist, UpdateWorkOrder, UpdateWorkOrderTask, UpdateZone, ValidationSummary,
-    VectorSearchResult, Warehouse, WarehouseFilter, Warranty, WarrantyClaim, WarrantyClaimFilter,
-    WarrantyFilter, Wave, WaveFilter, Wishlist, WishlistFilter, WishlistItem, WorkOrder,
-    WorkOrderFilter, WorkOrderMaterial, WorkOrderTask, WriteOff, WriteOffFilter, X402Asset,
-    X402CheckoutResult, X402CreditAccount, X402CreditAdjustment, X402CreditTransaction,
+    RevaluationResult, RevenueByPeriod, RevenueForecast, Review, ReviewCreditApplication,
+    ReviewFilter, ReviewSummary, Reward, RewardFilter, SalesSummary, SearchConfig,
+    SearchConfigFilter, Segment, SegmentFilter, SegmentMembership, SerialFilter, SerialHistory,
+    SerialHistoryFilter, SerialLookupResult, SerialNumber, SerialReservation, SerialValidation,
+    SetCartPayment, SetCartShipping, SetCartX402Payment, SetExchangeRate, SetItemCost, ShipTask,
+    ShipTaskFilter, Shipment, ShipmentEvent, ShipmentFilter, ShipmentItem, ShippingRate,
+    ShippingZone, ShippingZoneFilter, SignX402PaymentIntent, SkillQuote, SkillQuoteFilter,
+    SkipBillingCycle, SkuBackorderSummary, SkuCostSummary, SplitLot, StockLevel, StoreCredit,
+    StoreCreditFilter, StoreCreditTransaction, StoreCurrencySettings, SubmitCreditApplication,
+    Subscription, SubscriptionEvent, SubscriptionEventType, SubscriptionFilter, SubscriptionPlan,
+    SubscriptionPlanFilter, Supplier, SupplierApSummary, SupplierFilter, TaxAddress,
+    TaxCalculationRequest, TaxCalculationResult, TaxExemption, TaxJurisdiction,
+    TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxSettings, TimeGranularity, TopCustomer,
+    TopProduct, TraceabilityResult, TransferLot, TransferSerialOwnership, TrialBalance, TrustLevel,
+    UpdateAgentCard, UpdateAgentIdentity, UpdateBackorder, UpdateBill, UpdateBom, UpdateCart,
+    UpdateCartItem, UpdateCreditAccount, UpdateCustomObject, UpdateCustomObjectType,
+    UpdateCustomer, UpdateFraudRule, UpdateGiftCard, UpdateGlAccount, UpdateInspection,
+    UpdateInvoice, UpdateLocation, UpdateLot, UpdateNonConformance, UpdateOrder, UpdatePayment,
+    UpdateProduct, UpdatePromotion, UpdatePurchaseOrder, UpdateReceipt, UpdateReturn, UpdateReview,
+    UpdateSearchConfig, UpdateSegment, UpdateSerialNumber, UpdateShipment, UpdateShippingZone,
+    UpdateSubscription, UpdateSubscriptionPlan, UpdateSupplier, UpdateWarehouse, UpdateWarranty,
+    UpdateWarrantyClaim, UpdateWishlist, UpdateWorkOrder, UpdateWorkOrderTask, UpdateZone,
+    ValidationSummary, VectorSearchResult, Warehouse, WarehouseFilter, Warranty, WarrantyClaim,
+    WarrantyClaimFilter, WarrantyFilter, Wave, WaveFilter, Wishlist, WishlistFilter, WishlistItem,
+    WorkOrder, WorkOrderFilter, WorkOrderMaterial, WorkOrderTask, WriteOff, WriteOffFilter,
+    X402Asset, X402CheckoutResult, X402CreditAccount, X402CreditAdjustment, X402CreditTransaction,
     X402CreditTransactionFilter, X402Network, X402PaymentIntent, X402PaymentIntentFilter, Zone,
     ZoneShippingMethod, ZoneShippingMethodFilter, ZoneShippingRate, ZoneShippingRateRequest,
 };
@@ -3066,6 +3066,17 @@ pub trait GeneralLedgerRepository: Send + Sync {
     // Period close process
     /// Run period close (creates closing entries)
     fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry>;
+
+    // FX revaluation
+    /// Revalue foreign-currency account balances at the as-of exchange rate,
+    /// posting the net unrealized gain/loss as a balanced adjusting entry.
+    ///
+    /// `base_currency` defaults to the store's configured base currency.
+    fn revalue(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult>;
 
     // Batch operations
     fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>)

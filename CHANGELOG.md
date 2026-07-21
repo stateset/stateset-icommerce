@@ -6,6 +6,28 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-20
+
+### Added
+- **Carts/checkout API** (10 endpoints): cart sessions, items, shipping,
+  payment, completion, cancellation.
+- **Backorders API** (5 endpoints): create, list, fulfill, cancel.
+- **AR collections API**: record/list collection activities and a
+  dunning-due queue (`GET /ar/dunning/due`).
+- **GL FX revaluation** (`POST /gl/revalue`): idempotent unrealized
+  gain/loss revaluation of foreign-currency accounts at the as-of rate,
+  posting a balanced adjusting entry to a configurable FX gain/loss
+  account; correct sign handling for credit-normal accounts; SQLite +
+  PostgreSQL.
+- **PostgreSQL integration tests** (15, live-PG, CI-discoverable):
+  fixed assets, revenue recognition, cycle counts, and smoke coverage of
+  all nine parity stores.
+
+### Fixed
+- Terminal-state guard on transfer-order and inbound-shipment
+  cancellation (both backends): received or already-cancelled documents
+  can no longer be cancelled.
+
 ## [1.8.0] - 2026-07-20
 
 ### Added

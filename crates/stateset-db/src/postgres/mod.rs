@@ -302,6 +302,8 @@ impl PostgresDatabase {
             include_str!("migrations/056_gl_auto_posting_flags.sql"),
         ));
         migrations.push(("057_cycle_counts", include_str!("migrations/057_cycle_counts.sql")));
+        migrations
+            .push(("058_gl_fx_revaluation", include_str!("migrations/058_gl_fx_revaluation.sql")));
 
         for (name, sql) in migrations {
             let mut tx =

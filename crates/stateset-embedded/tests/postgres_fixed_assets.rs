@@ -1,0 +1,263 @@
+//! Postgres integration coverage for the fixed asset register: asset
+//! lifecycle (draft → in-service → fully-depreciated), depreciation schedule
+//! persistence, and GL auto-posting of depreciation.
+//!
+//! Uses the async Postgres repositories via `AsyncCommerce::database()`
+//! because `AsyncCommerce` does not (yet) expose a `fixed_assets()` accessor.
+//! The in-service transition has no public async wrapper (only the sync
+//! `FixedAssetRepository::place_in_service`, which rejects being driven from
+//! inside a Tokio runtime), so tests stamp `in_service` directly via SQL as
+//! setup for the depreciation flow.
+//!
+//! Requires a live Postgres instance (`POSTGRES_URL` / `DATABASE_URL`);
+//! skipped otherwise.
+
+#![cfg(feature = "postgres")]
+
+use chrono::{Datelike, NaiveDate, Utc};
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
+use stateset_core::{
+    AccountSubType, AccountType, CreateAutoPostingConfig, CreateFixedAsset, CreateGlAccount,
+    CreateGlPeriod, DepreciationEntryStatus, DepreciationMethod, FixedAssetCategory,
+    FixedAssetFilter, FixedAssetStatus, JournalEntryFilter,
+};
+use stateset_embedded::AsyncCommerce;
+
+fn postgres_url() -> Option<String> {
+    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+}
+
+fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
+}
+
+fn new_asset_input(name: &str) -> CreateFixedAsset {
+    CreateFixedAsset {
+        asset_number: None,
+        name: name.into(),
+        description: Some("pg integration asset".into()),
+        category: FixedAssetCategory::Equipment,
+        acquisition_date: date(2026, 1, 1),
+        acquisition_cost: dec!(1200),
+        salvage_value: dec!(0),
+        useful_life_months: 12,
+        depreciation_method: DepreciationMethod::StraightLine,
+        in_service_date: None,
+        location_id: None,
+        asset_account_id: None,
+        accumulated_depreciation_account_id: None,
+        depreciation_expense_account_id: None,
+        currency: None,
+    }
+}
+
+/// SQL bridge for the draft → in-service transition (no public async API).
+async fn place_in_service(commerce: &AsyncCommerce, id: uuid::Uuid, service_date: NaiveDate) {
+    sqlx::query(
+        "UPDATE fixed_assets SET status = 'in_service', in_service_date = $1, updated_at = $2
+         WHERE id = $3",
+    )
+    .bind(service_date)
+    .bind(Utc::now())
+    .bind(id)
+    .execute(commerce.database().pool())
+    .await
+    .expect("stamp asset in service");
+}
+
+#[tokio::test]
+async fn postgres_fixed_asset_lifecycle_and_schedule_persistence() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping fixed asset lifecycle test");
+        return;
+    };
+    let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
+    let assets = commerce.database().fixed_assets();
+
+    let asset = assets.create_async(new_asset_input("PG Lathe")).await.expect("create asset");
+    assert_eq!(asset.status, FixedAssetStatus::Draft);
+    assert!(!asset.asset_number.is_empty(), "asset number must be generated");
+    assert_eq!(asset.accumulated_depreciation, Decimal::ZERO);
+
+    // Depreciation cannot be posted before the asset is in service.
+    assert!(assets.post_depreciation_async(asset.id, 1).await.is_err());
+
+    place_in_service(&commerce, asset.id, date(2026, 2, 1)).await;
+    let asset = assets.get_async(asset.id).await.expect("get").expect("asset exists");
+    assert_eq!(asset.status, FixedAssetStatus::InService);
+    assert_eq!(asset.in_service_date, Some(date(2026, 2, 1)));
+
+    // Generate and persist the depreciation schedule.
+    let schedule = assets.generate_schedule_async(asset.id).await.expect("generate schedule");
+    assert_eq!(schedule.entries.len(), 12);
+    assert_eq!(schedule.total_depreciation, dec!(1200));
+    assert!(schedule.entries.iter().all(|e| e.status == DepreciationEntryStatus::Scheduled));
+    assert_eq!(schedule.entries[0].amount, dec!(100));
+
+    // Schedule must survive a re-read from Postgres.
+    let persisted =
+        assets.get_schedule_async(asset.id).await.expect("get schedule").expect("schedule exists");
+    assert_eq!(persisted.entries.len(), 12);
+    assert_eq!(persisted.total_depreciation, dec!(1200));
+    assert_eq!(persisted.entries[11].accumulated, dec!(1200));
+    assert_eq!(persisted.entries[11].book_value, dec!(0));
+
+    // Post three periods and verify accumulated depreciation.
+    let asset = assets.post_depreciation_async(asset.id, 3).await.expect("post 3 periods");
+    assert_eq!(asset.accumulated_depreciation, dec!(300));
+    assert_eq!(asset.status, FixedAssetStatus::InService);
+
+    let persisted =
+        assets.get_schedule_async(asset.id).await.expect("get schedule").expect("schedule exists");
+    let posted =
+        persisted.entries.iter().filter(|e| e.status == DepreciationEntryStatus::Posted).count();
+    assert_eq!(posted, 3, "first three entries must persist as posted");
+
+    // Post the remainder: asset becomes fully depreciated.
+    let asset = assets.post_depreciation_async(asset.id, 9).await.expect("post remaining periods");
+    assert_eq!(asset.accumulated_depreciation, dec!(1200));
+    assert_eq!(asset.status, FixedAssetStatus::FullyDepreciated);
+    assert!(assets.post_depreciation_async(asset.id, 1).await.is_err(), "no entries left to post");
+
+    // Listing by status must include the asset.
+    let listed = assets
+        .list_async(FixedAssetFilter {
+            status: Some(FixedAssetStatus::FullyDepreciated),
+            ..Default::default()
+        })
+        .await
+        .expect("list assets");
+    assert!(listed.iter().any(|a| a.id == asset.id));
+}
+
+#[tokio::test]
+async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping depreciation auto-post test");
+        return;
+    };
+    let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
+    let gl = commerce.general_ledger();
+    let assets = commerce.database().fixed_assets();
+
+    gl.initialize_chart_of_accounts().await.expect("init chart of accounts");
+    let acct = |number: &'static str| {
+        let gl = &gl;
+        async move {
+            gl.get_account_by_number(number)
+                .await
+                .expect("query account")
+                .unwrap_or_else(|| panic!("account {number} exists"))
+                .id
+        }
+    };
+
+    // Dedicated depreciation accounts so the auto-post has explicit targets.
+    let suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let expense = gl
+        .create_account(CreateGlAccount {
+            account_number: format!("6D-{suffix}"),
+            name: format!("Depreciation Expense {suffix}"),
+            description: None,
+            account_type: AccountType::Expense,
+            account_sub_type: Some(AccountSubType::DepreciationExpense),
+            parent_account_id: None,
+            is_header: None,
+            is_posting: Some(true),
+            currency: None,
+        })
+        .await
+        .expect("create depreciation expense account");
+    let accumulated = gl
+        .create_account(CreateGlAccount {
+            account_number: format!("1D-{suffix}"),
+            name: format!("Accumulated Depreciation {suffix}"),
+            description: None,
+            account_type: AccountType::Asset,
+            account_sub_type: Some(AccountSubType::AccumulatedDepreciation),
+            parent_account_id: None,
+            is_header: None,
+            is_posting: Some(true),
+            currency: None,
+        })
+        .await
+        .expect("create accumulated depreciation account");
+
+    // An open GL period covering today is required to post the entry. The DB
+    // may persist across runs, so tolerate an already-existing period.
+    let today = Utc::now().date_naive();
+    let start = date(today.year(), today.month(), 1);
+    let end = if today.month() == 12 {
+        date(today.year() + 1, 1, 1)
+    } else {
+        date(today.year(), today.month() + 1, 1)
+    }
+    .pred_opt()
+    .expect("previous day");
+    if let Ok(period) = gl
+        .create_period(CreateGlPeriod {
+            period_name: format!("{}-{:02}", today.year(), today.month()),
+            fiscal_year: today.year(),
+            period_number: today.month() as i32,
+            start_date: start,
+            end_date: end,
+        })
+        .await
+    {
+        gl.open_period(period.id).await.expect("open period");
+    }
+
+    gl.set_auto_posting_config(CreateAutoPostingConfig {
+        config_name: "default".into(),
+        cash_account_id: acct("1010").await,
+        accounts_receivable_account_id: acct("1100").await,
+        inventory_account_id: acct("1200").await,
+        accounts_payable_account_id: acct("2010").await,
+        unearned_revenue_account_id: None,
+        sales_revenue_account_id: acct("4010").await,
+        shipping_revenue_account_id: None,
+        cogs_account_id: acct("5010").await,
+        bad_debt_expense_account_id: None,
+        fx_gain_loss_account_id: None,
+        auto_post_depreciation: true,
+        auto_post_revenue_recognition: false,
+    })
+    .await
+    .expect("set auto-posting config");
+
+    let mut input = new_asset_input("PG Auto-Post Press");
+    input.depreciation_expense_account_id = Some(expense.id);
+    input.accumulated_depreciation_account_id = Some(accumulated.id);
+    let asset = assets.create_async(input).await.expect("create asset");
+    place_in_service(&commerce, asset.id, date(2026, 2, 1)).await;
+    assets.generate_schedule_async(asset.id).await.expect("generate schedule");
+
+    let asset = assets.post_depreciation_async(asset.id, 2).await.expect("post depreciation");
+    assert_eq!(asset.accumulated_depreciation, dec!(200));
+
+    // A balanced journal entry must have been created for this asset.
+    let entries = gl
+        .list_journal_entries(JournalEntryFilter {
+            source_document_type: Some("fixed_asset_depreciation".into()),
+            source_document_id: Some(asset.id),
+            ..Default::default()
+        })
+        .await
+        .expect("list journal entries");
+    assert_eq!(entries.len(), 1, "exactly one depreciation entry for this posting");
+    let entry = &entries[0];
+    assert_eq!(entry.total_debits, dec!(200));
+    assert_eq!(entry.total_credits, dec!(200));
+
+    let lines = gl.get_journal_entry_lines(entry.id).await.expect("entry lines");
+    assert_eq!(lines.len(), 2);
+    assert!(
+        lines.iter().any(|l| l.account_id == expense.id && l.debit_amount == dec!(200)),
+        "debit hits the asset's depreciation expense account"
+    );
+    assert!(
+        lines.iter().any(|l| l.account_id == accumulated.id && l.credit_amount == dec!(200)),
+        "credit hits the asset's accumulated depreciation account"
+    );
+}

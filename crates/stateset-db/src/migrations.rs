@@ -213,5 +213,7 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("061_gl_auto_posting_flags", include_str!("../migrations/061_gl_auto_posting_flags.sql")),
         // Cycle counts + lines.
         ("062_cycle_counts", include_str!("../migrations/062_cycle_counts.sql")),
+        // FX gain/loss account for GL revaluation.
+        ("063_gl_fx_revaluation", include_str!("../migrations/063_gl_fx_revaluation.sql")),
     ]
 }

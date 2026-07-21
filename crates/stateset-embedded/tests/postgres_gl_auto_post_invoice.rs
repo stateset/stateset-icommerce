@@ -67,6 +67,7 @@ async fn postgres_auto_post_invoice_posts_balanced_entry() {
         shipping_revenue_account_id: None,
         cogs_account_id: acct("5010").await,
         bad_debt_expense_account_id: None,
+        fx_gain_loss_account_id: None,
         auto_post_depreciation: false,
         auto_post_revenue_recognition: false,
     })

@@ -870,6 +870,7 @@ mod tests {
                 shipping_revenue_account_id: None,
                 cogs_account_id: by_number("5010"),
                 bad_debt_expense_account_id: None,
+                fx_gain_loss_account_id: None,
                 auto_post_depreciation,
                 auto_post_revenue_recognition: false,
             })
