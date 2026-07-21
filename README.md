@@ -107,7 +107,7 @@ autonomous agents actually need to transact safely:
 - **📜 [Policy DSL](./crates/stateset-policy/)** — declarative, deny-overrides
   rules with explainable denials. Block agents from writes when limits are
   exceeded; record the reason for every decision.
-- **🛠️ [731 MCP Tools](./docs/whitepaper.md#mcp-tools) across 64 domain modules** —
+- **🛠️ [802 MCP Tools](./docs/whitepaper.md#mcp-tools) across 73 domain modules** —
   the largest known domain-specific MCP surface, generated from the domain
   registry ([`cli/docs/TOOLS.md`](./cli/docs/TOOLS.md) is the source of truth).
   Discoverable, payable per call via Machine Payments Protocol, replayable,
@@ -368,7 +368,7 @@ observability, and query discipline.**
   (fixed assets, revenue recognition, cycle counts, 3-way match,
   GL revalue/close-month), with async API parity in Rust
   (`AsyncCommerce`) and a generated tool catalog
-  ([`cli/docs/TOOLS.md`](./cli/docs/TOOLS.md), 731 tools across 64
+  ([`cli/docs/TOOLS.md`](./cli/docs/TOOLS.md), 802 tools across 73
   domains) kept fresh by a regenerate-and-diff test.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the full per-release entries
@@ -1174,7 +1174,7 @@ A capability matrix — what ships in v1.0.x, with depth links. The agentic
 primitives that distinguish iCommerce from a generic commerce engine
 ([A2A](./AGENTIC_COMMERCE.md), [x402](./docs/src/payments/x402.md),
 [VES v1.0](./docs/PQC_INITIAL_SPEC.md), [Policy DSL](./crates/stateset-policy/),
-[731 MCP tools](./docs/whitepaper.md#mcp-tools)) are summarized in
+[802 MCP tools](./docs/whitepaper.md#mcp-tools)) are summarized in
 [Why iCommerce](#why-icommerce) and not duplicated here.
 
 | Domain | Capabilities |

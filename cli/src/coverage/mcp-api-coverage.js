@@ -84,6 +84,15 @@ export const COMMERCE_GETTER_TO_MODULE = Object.freeze({
   segments: 'segments',
   storeCredits: 'store-credits',
   wishlists: 'wishlists',
+  ediDocuments: 'edi-documents',
+  prepayments: 'prepayments',
+  vendorCredits: 'vendor-credits',
+  priceSchedules: 'price-schedules',
+  priceLevels: 'price-levels',
+  transferOrders: 'transfer-orders',
+  productionBatches: 'production-batches',
+  supplierSkus: 'supplier-skus',
+  inboundShipments: 'inbound-shipments',
 });
 
 export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
@@ -206,6 +215,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       revalue: ['revalue_gl'],
       closeMonth: ['close_month'],
       createPeriod: ['create_gl_period'],
+      listPeriods: ['list_gl_periods'],
       openPeriod: ['open_gl_period'],
     },
   },

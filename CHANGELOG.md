@@ -6,6 +6,16 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-07-21
+
+### Added
+- **MCP tool parity with the binding surface**: 71 new tools across 9
+  new domain modules (EDI documents, prepayments, vendor credits, price
+  schedules, price levels, transfer orders, production batches,
+  supplier SKUs, inbound shipments) plus `list_gl_periods` — 802 tools
+  across 73 domains, with the API-coverage gate fully green (0
+  uncovered getters or audited methods).
+
 ## [1.17.0] - 2026-07-21
 
 ### Added

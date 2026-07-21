@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**731 tools** across **64 domains**.
+**802 tools** across **73 domains**.
 
 ## Domains
 
@@ -70,11 +70,20 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [cost-accounting](#cost-accounting) | 5 |
 | [credit](#credit) | 8 |
 | [backorders](#backorders) | 9 |
-| [general-ledger](#general-ledger) | 16 |
+| [general-ledger](#general-ledger) | 17 |
 | [agent-receipt](#agent-receipt) | 11 |
 | [fixed-assets](#fixed-assets) | 9 |
 | [revenue-recognition](#revenue-recognition) | 6 |
 | [cycle-counts](#cycle-counts) | 7 |
+| [edi-documents](#edi-documents) | 5 |
+| [prepayments](#prepayments) | 8 |
+| [vendor-credits](#vendor-credits) | 8 |
+| [price-schedules](#price-schedules) | 10 |
+| [price-levels](#price-levels) | 9 |
+| [transfer-orders](#transfer-orders) | 7 |
+| [production-batches](#production-batches) | 8 |
+| [supplier-skus](#supplier-skus) | 7 |
+| [inbound-shipments](#inbound-shipments) | 8 |
 
 ## customers
 
@@ -1071,6 +1080,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `revalue_gl` | write | Revalue foreign-currency general ledger balances as of a date. |
 | `close_month` | write | Close the month: post scheduled depreciation, recognize revenue through period end, revalue foreign-currency balances, then run the period close. Use dryRun to preview per-step counts and amounts without writing. |
 | `create_gl_period` | write | Create an accounting period. |
+| `list_gl_periods` | read | List accounting periods with optional filtering. |
 | `open_gl_period` | write | Open an accounting period so journal entries can be posted to it. |
 | `get_gl_account_balance` | read | Get the balance of a general ledger account. |
 
@@ -1126,3 +1136,118 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `record_cycle_counts` | write | Record counted quantities for a cycle count. |
 | `complete_cycle_count` | write | Complete a cycle count. |
 | `cancel_cycle_count` | write | Cancel a cycle count. |
+
+## edi-documents
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_edi_documents` | read | List EDI documents with optional filtering. |
+| `get_edi_document` | read | Get an EDI document by ID. |
+| `create_edi_document` | write | Create / ingest an EDI document. |
+| `set_edi_document_status` | write | Update the status of an EDI document. |
+| `get_edi_summary` | read | Get an aggregate summary of EDI documents (counts by status and type). |
+
+## prepayments
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_prepayments_supported` | read | Check whether the prepayments backend is available on this engine build. |
+| `list_prepayments` | read | List supplier prepayments with optional filtering. |
+| `get_prepayment` | read | Get a prepayment by ID. |
+| `create_prepayment` | write | Create a supplier prepayment. |
+| `apply_prepayment` | write | Apply a prepayment against a bill or payment obligation. |
+| `list_prepayment_applications` | read | List applications for a prepayment. |
+| `reverse_prepayment_application` | write | Reverse a previously-recorded prepayment application. |
+| `refund_prepayment` | write | Refund the remaining balance of a prepayment, closing it. |
+
+## vendor-credits
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_vendor_credits_supported` | read | Check whether the vendor-credits backend is available on this engine build. |
+| `list_vendor_credits` | read | List vendor credits with optional filtering. |
+| `get_vendor_credit` | read | Get a vendor credit by ID. |
+| `create_vendor_credit` | write | Create a vendor credit. |
+| `apply_vendor_credit` | write | Apply a vendor credit against a bill or payment obligation. |
+| `list_vendor_credit_applications` | read | List applications for a vendor credit. |
+| `reverse_vendor_credit_application` | write | Reverse a previously-recorded vendor credit application. |
+| `cancel_vendor_credit` | write | Cancel a vendor credit. |
+
+## price-schedules
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_price_schedules_supported` | read | Check whether the price-schedules backend is available on this engine build. |
+| `list_price_schedules` | read | List price schedules with optional filtering. |
+| `get_price_schedule` | read | Get a price schedule by ID. |
+| `create_price_schedule` | write | Create a price schedule. |
+| `update_price_schedule` | write | Update a price schedule. |
+| `delete_price_schedule` | write | Delete a price schedule and its entries. |
+| `set_price_schedule_entry` | write | Upsert a per-product scheduled price on a price schedule. |
+| `delete_price_schedule_entry` | write | Remove a per-product entry from a price schedule. |
+| `list_price_schedule_entries` | read | List per-product entries for a price schedule. |
+| `resolve_scheduled_price` | read | Resolve the effective scheduled price for a product at an instant (defaults to now). |
+
+## price-levels
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_price_levels_supported` | read | Check whether the price-levels backend is available on this engine build. |
+| `list_price_levels` | read | List price levels with optional filtering. |
+| `get_price_level` | read | Get a price level by ID. |
+| `create_price_level` | write | Create a price level. |
+| `update_price_level` | write | Update a price level. |
+| `delete_price_level` | write | Delete a price level and its entries. |
+| `set_price_level_entry` | write | Upsert a per-product fixed price entry on a price level. |
+| `delete_price_level_entry` | write | Remove a per-product entry from a price level. |
+| `list_price_level_entries` | read | List per-product entries for a price level. |
+
+## transfer-orders
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_transfer_orders_supported` | read | Check whether the transfer-orders backend is available on this engine build. |
+| `list_transfer_orders` | read | List transfer orders with optional filtering. |
+| `get_transfer_order` | read | Get a transfer order by ID. |
+| `create_transfer_order` | write | Create a transfer order between warehouses. |
+| `ship_transfer_order` | write | Mark a transfer order as shipped from the source warehouse. |
+| `receive_transfer_order_line` | write | Receive a quantity against a transfer order line at the destination. |
+| `cancel_transfer_order` | write | Cancel a transfer order. |
+
+## production-batches
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_production_batches_supported` | read | Check whether the production-batches backend is available on this engine build. |
+| `list_production_batches` | read | List production batches with optional filtering. |
+| `get_production_batch` | read | Get a production batch by ID. |
+| `create_production_batch` | write | Create a production batch. |
+| `update_production_batch` | write | Update a production batch. |
+| `delete_production_batch` | write | Delete a production batch. |
+| `add_production_batch_work_orders` | write | Link work orders to a production batch. |
+| `remove_production_batch_work_order` | write | Remove a work order from a production batch. |
+
+## supplier-skus
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_supplier_skus_supported` | read | Check whether the supplier-SKUs backend is available on this engine build. |
+| `list_supplier_skus` | read | List supplier SKUs with optional filtering. |
+| `get_supplier_sku` | read | Get a supplier SKU by ID. |
+| `create_supplier_sku` | write | Create a supplier SKU cross-reference. |
+| `update_supplier_sku` | write | Update a supplier SKU. |
+| `delete_supplier_sku` | write | Delete a supplier SKU. |
+| `bulk_upsert_supplier_skus` | write | Bulk upsert supplier SKUs for a supplier, keyed by internal product. |
+
+## inbound-shipments
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_inbound_shipments_supported` | read | Check whether the inbound-shipments backend is available on this engine build. |
+| `list_inbound_shipments` | read | List inbound shipments with optional filtering. |
+| `get_inbound_shipment` | read | Get an inbound shipment by ID. |
+| `create_inbound_shipment` | write | Create an inbound shipment. |
+| `mark_inbound_shipment_in_transit` | write | Mark an inbound shipment as in transit. |
+| `mark_inbound_shipment_arrived` | write | Mark an inbound shipment as arrived. |
+| `receive_inbound_shipment_line` | write | Receive a quantity against an inbound shipment line. |
+| `cancel_inbound_shipment` | write | Cancel an inbound shipment. |

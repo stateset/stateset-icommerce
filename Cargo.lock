@@ -3770,7 +3770,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stateset-a2a"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "hex",
@@ -3787,7 +3787,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-authz"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "serde",
@@ -3798,7 +3798,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-benches"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "axum 0.8.8",
  "chrono",
@@ -3822,7 +3822,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-core"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "auto_impl",
  "base64 0.22.1",
@@ -3853,7 +3853,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-crypto"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -3879,7 +3879,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-db"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3905,7 +3905,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-dotnet"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "libc",
@@ -3921,7 +3921,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -4018,7 +4018,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-ffi"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4036,7 +4036,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-go"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "libc",
@@ -4052,7 +4052,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-http"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "axum 0.8.8",
  "base64 0.22.1",
@@ -4084,7 +4084,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-icp-client"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -4100,7 +4100,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-icp-iut"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -4114,7 +4114,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-integration-tests"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "rust_decimal",
@@ -4136,7 +4136,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-java"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "jni",
@@ -4153,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-jobs"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "serde",
@@ -4166,7 +4166,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-kotlin"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "jni",
@@ -4182,7 +4182,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-macros"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4194,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-migrations"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "insta",
@@ -4207,7 +4207,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-observability"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
@@ -4220,7 +4220,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-policy"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "insta",
@@ -4239,7 +4239,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-pricing"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "proptest",
@@ -4252,7 +4252,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-primitives"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "proptest",
  "proptest-derive",
@@ -4267,7 +4267,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-sdk"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4289,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-swift"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "cbindgen",
  "chrono",
@@ -4306,7 +4306,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-sync"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4325,7 +4325,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-test-utils"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "chrono",
  "rust_decimal",

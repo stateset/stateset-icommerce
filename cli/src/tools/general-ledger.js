@@ -270,6 +270,29 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
     },
   },
   {
+    name: 'list_gl_periods',
+    description: 'List accounting periods with optional filtering.',
+    inputSchema: {
+      fiscalYear: z.number().int().optional().describe('Filter by fiscal year'),
+      status: z
+        .enum(['future', 'open', 'closed', 'locked'])
+        .optional()
+        .describe('Filter by status'),
+      limit: z.number().int().min(1).optional().describe('Maximum results'),
+      offset: z.number().int().min(0).optional().describe('Offset for pagination'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const periods = await commerce.generalLedger.listPeriods({
+        fiscalYear: params.fiscalYear,
+        status: params.status,
+        limit: params.limit,
+        offset: params.offset,
+      });
+      return { success: true, count: periods.length, periods };
+    },
+  },
+  {
     name: 'open_gl_period',
     description: 'Open an accounting period so journal entries can be posted to it.',
     inputSchema: {

@@ -62,6 +62,15 @@ import { agentReceiptTools } from './agent-receipt.js';
 import { fixedAssetTools } from './fixed-assets.js';
 import { revenueRecognitionTools } from './revenue-recognition.js';
 import { cycleCountTools } from './cycle-counts.js';
+import { ediDocumentTools } from './edi-documents.js';
+import { prepaymentTools } from './prepayments.js';
+import { vendorCreditTools } from './vendor-credits.js';
+import { priceScheduleTools } from './price-schedules.js';
+import { priceLevelTools } from './price-levels.js';
+import { transferOrderTools } from './transfer-orders.js';
+import { productionBatchTools } from './production-batches.js';
+import { supplierSkuTools } from './supplier-skus.js';
+import { inboundShipmentTools } from './inbound-shipments.js';
 
 export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['customers', customerTools],
@@ -128,6 +137,15 @@ export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['fixed-assets', fixedAssetTools],
   ['revenue-recognition', revenueRecognitionTools],
   ['cycle-counts', cycleCountTools],
+  ['edi-documents', ediDocumentTools],
+  ['prepayments', prepaymentTools],
+  ['vendor-credits', vendorCreditTools],
+  ['price-schedules', priceScheduleTools],
+  ['price-levels', priceLevelTools],
+  ['transfer-orders', transferOrderTools],
+  ['production-batches', productionBatchTools],
+  ['supplier-skus', supplierSkuTools],
+  ['inbound-shipments', inboundShipmentTools],
 ]);
 
 export const DOMAIN_TOOL_ARRAYS = Object.freeze(Object.fromEntries(DOMAIN_TOOL_ENTRIES));

@@ -83,6 +83,15 @@ const TOOL_MODULES = {
   'fixed-assets': namedLoader('./fixed-assets.js', 'fixedAssetTools'),
   'revenue-recognition': namedLoader('./revenue-recognition.js', 'revenueRecognitionTools'),
   'cycle-counts': namedLoader('./cycle-counts.js', 'cycleCountTools'),
+  'edi-documents': namedLoader('./edi-documents.js', 'ediDocumentTools'),
+  prepayments: namedLoader('./prepayments.js', 'prepaymentTools'),
+  'vendor-credits': namedLoader('./vendor-credits.js', 'vendorCreditTools'),
+  'price-schedules': namedLoader('./price-schedules.js', 'priceScheduleTools'),
+  'price-levels': namedLoader('./price-levels.js', 'priceLevelTools'),
+  'transfer-orders': namedLoader('./transfer-orders.js', 'transferOrderTools'),
+  'production-batches': namedLoader('./production-batches.js', 'productionBatchTools'),
+  'supplier-skus': namedLoader('./supplier-skus.js', 'supplierSkuTools'),
+  'inbound-shipments': namedLoader('./inbound-shipments.js', 'inboundShipmentTools'),
   'agentic-runtime': () => import('../mcp-server.js').then((m) => m.getStaticAgenticRuntimeTools()),
 };
 
