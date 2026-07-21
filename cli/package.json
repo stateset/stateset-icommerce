@@ -75,6 +75,7 @@
   },
   "scripts": {
     "check": "npm run check:env && npm run lint && npm run typecheck:supported && npm run test:api-coverage && npm run test:smoke",
+    "docs:tools": "node scripts/generate-tool-docs.mjs",
     "check:env": "node ../scripts/check-node.mjs 20.20.0 10.0.0",
     "prelint": "npm run check:env",
     "pretypecheck": "npm run check:env",

@@ -6,6 +6,21 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-20
+
+### Changed
+- **CLI harness decomposed**: `claude-harness.js` reduced from 3,649 to
+  1,170 lines, extracting 13 dependency-injected modules
+  (`cli/src/harness/`) with unchanged public exports; the 38-test
+  behavior lock passes unmodified and 68 new unit tests cover
+  previously untestable retry/hook/stream/budget decision points.
+- **Generated tool catalog**: `cli/docs/TOOLS.md` (731 tools across 64
+  domains) generated from the domain registry via `npm run docs:tools`,
+  with a regenerate-and-diff freshness test; stale hardcoded tool
+  counts corrected.
+- Repo hygiene: stale root `.db` artifacts removed; icp-mcp gains a
+  9-test smoke baseline.
+
 ## [1.14.0] - 2026-07-20
 
 ### Added

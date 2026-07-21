@@ -188,3 +188,34 @@ test('disallowed settler is rejected via MCP tool error result', async () => {
   });
   assert.equal(r.error.code, 'policy.settler.not_allowed');
 });
+
+test('every registered tool declares a description and an object inputSchema', async () => {
+  const r = await client.call('tools/list', {});
+  for (const tool of r.result.tools) {
+    assert.ok(tool.description && tool.description.length > 0, `${tool.name} missing description`);
+    assert.equal(tool.inputSchema?.type, 'object', `${tool.name} inputSchema.type must be "object"`);
+  }
+});
+
+test('protocol robustness: ping works, unknown tool and unknown method return -32601', async () => {
+  const ping = await client.call('ping', {});
+  assert.equal(ping.error, undefined);
+
+  const badTool = await client.call('tools/call', { name: 'icp_no_such_tool', arguments: {} });
+  assert.equal(badTool.error.code, -32601);
+  assert.match(badTool.error.message, /unknown tool/);
+
+  const badMethod = await client.call('no/such/method', {});
+  assert.equal(badMethod.error.code, -32601);
+  assert.match(badMethod.error.message, /unknown method/);
+});
+
+test('icp_escrow_state on an unknown escrow returns an ICP error result', async () => {
+  const r = await client.call('tools/call', {
+    name: 'icp_escrow_state',
+    arguments: { escrow_id: '0xdeadbeef_does_not_exist' },
+  });
+  assert.equal(r.result.isError, true);
+  const body = JSON.parse(r.result.content[0].text);
+  assert.equal(body.error.code, 'format.unknown_escrow');
+});
