@@ -2,11 +2,9 @@
 //! completed flow, variance computation, and variance application to
 //! `location_inventory`.
 //!
-//! Cycle count CRUD comes from the async Postgres warehouse repository via
-//! `AsyncCommerce::database()` (the `AsyncWarehouse` accessor does not expose
-//! cycle counts yet). The draft → in-progress and cancel transitions have no
-//! public async wrapper (`transition_cycle_count_async` is private), so tests
-//! stamp `in_progress` directly via SQL as setup.
+//! Driven entirely through the public `AsyncWarehouse` cycle count accessors
+//! (`create_cycle_count` / `start_cycle_count` / `record_cycle_counts` /
+//! `complete_cycle_count` / `cancel_cycle_count`).
 //!
 //! Requires a live Postgres instance (`POSTGRES_URL` / `DATABASE_URL`);
 //! skipped otherwise.
@@ -80,15 +78,6 @@ async fn on_hand(commerce: &AsyncCommerce, location_id: i32, sku: &str) -> Decim
         .unwrap_or(Decimal::ZERO)
 }
 
-/// SQL bridge for the draft → in-progress transition (no public async API).
-async fn start_cycle_count(commerce: &AsyncCommerce, id: uuid::Uuid) {
-    sqlx::query("UPDATE cycle_counts SET status = 'in_progress' WHERE id = $1")
-        .bind(id)
-        .execute(commerce.database().pool())
-        .await
-        .expect("start cycle count");
-}
-
 #[tokio::test]
 async fn postgres_cycle_count_flow_applies_variance_to_inventory() {
     let Some(url) = postgres_url() else {
@@ -96,7 +85,7 @@ async fn postgres_cycle_count_flow_applies_variance_to_inventory() {
         return;
     };
     let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
-    let counts = commerce.database().warehouse();
+    let counts = commerce.warehouse();
     let (warehouse_id, location_id) = setup_location(&commerce).await;
     let sku = format!("CC-SKU-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
 
@@ -118,7 +107,7 @@ async fn postgres_cycle_count_flow_applies_variance_to_inventory() {
     assert_eq!(on_hand(&commerce, location_id, &sku).await, dec!(100));
 
     let count = counts
-        .create_cycle_count_async(CreateCycleCount {
+        .create_cycle_count(CreateCycleCount {
             warehouse_id,
             location_id: Some(location_id),
             scheduled_date: None,
@@ -137,7 +126,7 @@ async fn postgres_cycle_count_flow_applies_variance_to_inventory() {
     // Draft counts cannot record lines or complete.
     assert!(
         counts
-            .record_cycle_counts_async(
+            .record_cycle_counts(
                 count.id,
                 vec![RecordCycleCountLine {
                     sku: sku.clone(),
@@ -150,23 +139,23 @@ async fn postgres_cycle_count_flow_applies_variance_to_inventory() {
         "recording against a draft count is rejected"
     );
     assert!(
-        counts.complete_cycle_count_async(count.id).await.is_err(),
+        counts.complete_cycle_count(count.id).await.is_err(),
         "completing a draft count is rejected"
     );
 
-    start_cycle_count(&commerce, count.id).await;
+    counts.start_cycle_count(count.id).await.expect("start cycle count");
     let count = counts
-        .get_cycle_count_async(count.id)
+        .get_cycle_count(count.id)
         .await
         .expect("get cycle count")
         .expect("cycle count exists");
     assert_eq!(count.status, CycleCountStatus::InProgress);
 
     // Completing before all lines are counted is rejected.
-    assert!(counts.complete_cycle_count_async(count.id).await.is_err());
+    assert!(counts.complete_cycle_count(count.id).await.is_err());
 
     let count = counts
-        .record_cycle_counts_async(
+        .record_cycle_counts(
             count.id,
             vec![RecordCycleCountLine {
                 sku: sku.clone(),
@@ -178,7 +167,7 @@ async fn postgres_cycle_count_flow_applies_variance_to_inventory() {
         .expect("record counts");
     assert_eq!(count.lines[0].counted_quantity, Some(dec!(90)));
 
-    let completed = counts.complete_cycle_count_async(count.id).await.expect("complete count");
+    let completed = counts.complete_cycle_count(count.id).await.expect("complete count");
     assert_eq!(completed.status, CycleCountStatus::Completed);
     assert!(completed.completed_at.is_some());
     assert_eq!(completed.lines[0].variance, Some(dec!(-10)), "variance = counted - expected");
@@ -187,11 +176,11 @@ async fn postgres_cycle_count_flow_applies_variance_to_inventory() {
     assert_eq!(on_hand(&commerce, location_id, &sku).await, dec!(90));
 
     // Completed counts are terminal.
-    assert!(counts.complete_cycle_count_async(count.id).await.is_err());
+    assert!(counts.complete_cycle_count(count.id).await.is_err());
 
     // Round-trip + filter.
     let listed = counts
-        .list_cycle_counts_async(CycleCountFilter {
+        .list_cycle_counts(CycleCountFilter {
             warehouse_id: Some(warehouse_id),
             status: Some(CycleCountStatus::Completed),
             ..Default::default()
@@ -208,7 +197,7 @@ async fn postgres_cycle_count_negative_variance_cannot_underflow_inventory() {
         return;
     };
     let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
-    let counts = commerce.database().warehouse();
+    let counts = commerce.warehouse();
     let (warehouse_id, location_id) = setup_location(&commerce).await;
     let sku = format!("CC-SKU-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
 
@@ -230,7 +219,7 @@ async fn postgres_cycle_count_negative_variance_cannot_underflow_inventory() {
         .expect("seed inventory");
 
     let count = counts
-        .create_cycle_count_async(CreateCycleCount {
+        .create_cycle_count(CreateCycleCount {
             warehouse_id,
             location_id: Some(location_id),
             scheduled_date: None,
@@ -243,9 +232,9 @@ async fn postgres_cycle_count_negative_variance_cannot_underflow_inventory() {
         })
         .await
         .expect("create cycle count");
-    start_cycle_count(&commerce, count.id).await;
+    counts.start_cycle_count(count.id).await.expect("start cycle count");
     counts
-        .record_cycle_counts_async(
+        .record_cycle_counts(
             count.id,
             vec![RecordCycleCountLine {
                 sku: sku.clone(),
@@ -256,15 +245,90 @@ async fn postgres_cycle_count_negative_variance_cannot_underflow_inventory() {
         .await
         .expect("record counts");
 
-    let err = counts.complete_cycle_count_async(count.id).await;
+    let err = counts.complete_cycle_count(count.id).await;
     assert!(err.is_err(), "variance that would drive inventory negative is rejected");
 
     // Inventory and count status are untouched by the failed completion.
     assert_eq!(on_hand(&commerce, location_id, &sku).await, dec!(5));
     let fetched = counts
-        .get_cycle_count_async(count.id)
+        .get_cycle_count(count.id)
         .await
         .expect("get cycle count")
         .expect("cycle count exists");
     assert_eq!(fetched.status, CycleCountStatus::InProgress);
+}
+
+#[tokio::test]
+async fn postgres_cycle_count_start_and_cancel_via_async_api() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping cycle count start/cancel test");
+        return;
+    };
+    let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
+    let counts = commerce.warehouse();
+    let (warehouse_id, location_id) = setup_location(&commerce).await;
+    let sku = format!("CC-SKU-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+
+    commerce
+        .warehouse()
+        .adjust_inventory(AdjustLocationInventory {
+            location_id,
+            sku: sku.clone(),
+            lot_id: None,
+            quantity: dec!(50),
+            reason: "seed for start/cancel test".into(),
+            reference_type: None,
+            reference_id: None,
+            performed_by: None,
+        })
+        .await
+        .expect("seed inventory");
+
+    let count = counts
+        .create_cycle_count(CreateCycleCount {
+            warehouse_id,
+            location_id: Some(location_id),
+            scheduled_date: None,
+            counted_by: None,
+            lines: vec![CreateCycleCountLine {
+                sku: sku.clone(),
+                lot_id: None,
+                expected_quantity: dec!(50),
+            }],
+        })
+        .await
+        .expect("create cycle count");
+    assert_eq!(count.status, CycleCountStatus::Draft);
+
+    // draft → in_progress via the public async API.
+    let started = counts.start_cycle_count(count.id).await.expect("start cycle count");
+    assert_eq!(started.status, CycleCountStatus::InProgress);
+
+    // Starting again is an invalid transition.
+    assert!(counts.start_cycle_count(count.id).await.is_err());
+
+    // Record a variance, then cancel: no adjustment may be applied.
+    counts
+        .record_cycle_counts(
+            count.id,
+            vec![RecordCycleCountLine {
+                sku: sku.clone(),
+                lot_id: None,
+                counted_quantity: dec!(10),
+            }],
+        )
+        .await
+        .expect("record counts");
+    let cancelled = counts.cancel_cycle_count(count.id).await.expect("cancel cycle count");
+    assert_eq!(cancelled.status, CycleCountStatus::Cancelled);
+    assert_eq!(on_hand(&commerce, location_id, &sku).await, dec!(50), "cancel applies no variance");
+
+    // Cancelled counts are terminal: no restart, complete, or re-cancel.
+    assert!(counts.start_cycle_count(count.id).await.is_err());
+    assert!(counts.complete_cycle_count(count.id).await.is_err());
+    assert!(counts.cancel_cycle_count(count.id).await.is_err());
+
+    // Unknown IDs are NotFound errors.
+    assert!(counts.start_cycle_count(uuid::Uuid::new_v4()).await.is_err());
+    assert!(counts.cancel_cycle_count(uuid::Uuid::new_v4()).await.is_err());
 }

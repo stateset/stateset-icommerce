@@ -367,6 +367,36 @@ impl PgFixedAssetRepository {
         self.load_asset_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Place a draft asset in service (async).
+    pub async fn place_in_service_async(&self, id: Uuid, date: NaiveDate) -> Result<FixedAsset> {
+        self.transition_async(id, FixedAssetStatus::InService, date, None, None).await
+    }
+
+    /// Dispose of an asset for the given proceeds, recording gain/loss (async).
+    pub async fn dispose_async(
+        &self,
+        id: Uuid,
+        date: NaiveDate,
+        proceeds: Decimal,
+        notes: Option<String>,
+    ) -> Result<FixedAsset> {
+        if proceeds < Decimal::ZERO {
+            return Err(CommerceError::ValidationError("proceeds must be non-negative".into()));
+        }
+        self.transition_async(id, FixedAssetStatus::Disposed, date, Some(proceeds), notes).await
+    }
+
+    /// Write off an asset (disposal with zero proceeds) (async).
+    pub async fn write_off_async(
+        &self,
+        id: Uuid,
+        date: NaiveDate,
+        notes: Option<String>,
+    ) -> Result<FixedAsset> {
+        self.transition_async(id, FixedAssetStatus::WrittenOff, date, Some(Decimal::ZERO), notes)
+            .await
+    }
+
     /// Generate and persist the depreciation schedule (async)
     pub async fn generate_schedule_async(&self, id: Uuid) -> Result<DepreciationSchedule> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -611,7 +641,7 @@ impl FixedAssetRepository for PgFixedAssetRepository {
     }
 
     fn place_in_service(&self, id: Uuid, date: NaiveDate) -> Result<FixedAsset> {
-        super::block_on(self.transition_async(id, FixedAssetStatus::InService, date, None, None))
+        super::block_on(self.place_in_service_async(id, date))
     }
 
     fn dispose(
@@ -621,26 +651,11 @@ impl FixedAssetRepository for PgFixedAssetRepository {
         proceeds: Decimal,
         notes: Option<String>,
     ) -> Result<FixedAsset> {
-        if proceeds < Decimal::ZERO {
-            return Err(CommerceError::ValidationError("proceeds must be non-negative".into()));
-        }
-        super::block_on(self.transition_async(
-            id,
-            FixedAssetStatus::Disposed,
-            date,
-            Some(proceeds),
-            notes,
-        ))
+        super::block_on(self.dispose_async(id, date, proceeds, notes))
     }
 
     fn write_off(&self, id: Uuid, date: NaiveDate, notes: Option<String>) -> Result<FixedAsset> {
-        super::block_on(self.transition_async(
-            id,
-            FixedAssetStatus::WrittenOff,
-            date,
-            Some(Decimal::ZERO),
-            notes,
-        ))
+        super::block_on(self.write_off_async(id, date, notes))
     }
 
     fn generate_schedule(&self, id: Uuid) -> Result<DepreciationSchedule> {

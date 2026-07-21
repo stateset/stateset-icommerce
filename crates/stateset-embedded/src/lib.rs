@@ -308,9 +308,10 @@ pub use vector::Vector;
 #[cfg(feature = "postgres")]
 pub use async_commerce::{
     AsyncAnalytics, AsyncBom, AsyncCarts, AsyncCommerce, AsyncCurrency, AsyncCustomObjects,
-    AsyncCustomers, AsyncGiftCards, AsyncInventory, AsyncInvoices, AsyncLoyalty, AsyncOrders,
-    AsyncPayments, AsyncProducts, AsyncPurchaseOrders, AsyncReturns, AsyncShipments,
-    AsyncStoreCredits, AsyncWarranties, AsyncWorkOrders, AsyncX402,
+    AsyncCustomers, AsyncFixedAssets, AsyncGiftCards, AsyncInventory, AsyncInvoices, AsyncLoyalty,
+    AsyncOrders, AsyncPayments, AsyncProducts, AsyncPurchaseOrders, AsyncReturns,
+    AsyncRevenueRecognition, AsyncShipments, AsyncStoreCredits, AsyncWarranties, AsyncWorkOrders,
+    AsyncX402,
 };
 
 // Re-export Database trait for advanced users who want to bring their own database

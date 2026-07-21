@@ -6,6 +6,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-20
+
+### Added
+- **Async API parity for the new domains**: `AsyncCommerce::fixed_assets()`
+  (create/get/list/update, place-in-service, dispose, write-off,
+  depreciation schedules, post-depreciation), `AsyncCommerce::
+  revenue_recognition()` (contracts, obligations, schedules, recognize),
+  and cycle-count methods on `AsyncWarehouse` — matching the sync
+  accessor surface.
+- Live-Postgres tests now exercise dispose (gain/loss) and cycle-count
+  start/cancel through the public async API instead of SQL setup.
+
 ## [1.9.0] - 2026-07-20
 
 ### Added

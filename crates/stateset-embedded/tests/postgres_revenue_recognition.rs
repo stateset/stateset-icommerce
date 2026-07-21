@@ -23,7 +23,7 @@ fn postgres_url() -> Option<String> {
     std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
 }
 
-fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+const fn date(y: i32, m: u32, d: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
 }
 

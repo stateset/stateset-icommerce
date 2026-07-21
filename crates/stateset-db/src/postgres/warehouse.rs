@@ -1367,6 +1367,16 @@ impl PgWarehouseRepository {
         })
     }
 
+    /// Start a draft cycle count (`draft` → `in_progress`) (async).
+    pub async fn start_cycle_count_async(&self, id: Uuid) -> Result<CycleCount> {
+        self.transition_cycle_count_async(id, CycleCountStatus::InProgress).await
+    }
+
+    /// Cancel a draft or in-progress cycle count (async). No adjustments are applied.
+    pub async fn cancel_cycle_count_async(&self, id: Uuid) -> Result<CycleCount> {
+        self.transition_cycle_count_async(id, CycleCountStatus::Cancelled).await
+    }
+
     pub async fn record_cycle_counts_async(
         &self,
         id: Uuid,
@@ -1690,7 +1700,7 @@ impl WarehouseRepository for PgWarehouseRepository {
     }
 
     fn start_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
-        block_on(self.transition_cycle_count_async(id, CycleCountStatus::InProgress))
+        block_on(self.start_cycle_count_async(id))
     }
 
     fn record_cycle_counts(
@@ -1706,6 +1716,6 @@ impl WarehouseRepository for PgWarehouseRepository {
     }
 
     fn cancel_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
-        block_on(self.transition_cycle_count_async(id, CycleCountStatus::Cancelled))
+        block_on(self.cancel_cycle_count_async(id))
     }
 }

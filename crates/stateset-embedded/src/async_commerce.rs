@@ -441,6 +441,26 @@ use stateset_core::{
     WriteOffFilter,
     Zone,
 };
+use stateset_core::{
+    // Cycle count types
+    CreateCycleCount,
+    // Fixed asset types
+    CreateFixedAsset,
+    // Revenue recognition types
+    CreateRevenueContract,
+    CycleCount,
+    CycleCountFilter,
+    DepreciationSchedule,
+    FixedAsset,
+    FixedAssetFilter,
+    PerformanceObligation,
+    RecordCycleCountLine,
+    RevenueContract,
+    RevenueContractFilter,
+    RevenueSchedule,
+    UpdateFixedAsset,
+    UpdateRevenueContract,
+};
 use stateset_db::PostgresDatabase;
 use stateset_observability::{Metrics, MetricsConfig, MetricsSnapshot, init_metrics};
 use std::sync::Arc;
@@ -740,6 +760,16 @@ impl AsyncCommerce {
     /// Access async general ledger operations.
     pub fn general_ledger(&self) -> AsyncGeneralLedger {
         AsyncGeneralLedger::new(self.db.clone())
+    }
+
+    /// Access async fixed asset register operations.
+    pub fn fixed_assets(&self) -> AsyncFixedAssets {
+        AsyncFixedAssets::new(self.db.clone())
+    }
+
+    /// Access async revenue recognition operations.
+    pub fn revenue_recognition(&self) -> AsyncRevenueRecognition {
+        AsyncRevenueRecognition::new(self.db.clone())
     }
 
     /// Access async x402 and A2A operations.
@@ -3604,6 +3634,46 @@ impl AsyncWarehouse {
     pub async fn get_locations_batch(&self, ids: Vec<i32>) -> Result<Vec<Location>> {
         self.db.warehouse().get_locations_batch_async(ids).await
     }
+
+    /// Create a cycle count (draft) with its expected lines.
+    pub async fn create_cycle_count(&self, input: CreateCycleCount) -> Result<CycleCount> {
+        self.db.warehouse().create_cycle_count_async(input).await
+    }
+
+    /// Get a cycle count (with lines) by ID.
+    pub async fn get_cycle_count(&self, id: Uuid) -> Result<Option<CycleCount>> {
+        self.db.warehouse().get_cycle_count_async(id).await
+    }
+
+    /// List cycle counts matching the filter.
+    pub async fn list_cycle_counts(&self, filter: CycleCountFilter) -> Result<Vec<CycleCount>> {
+        self.db.warehouse().list_cycle_counts_async(filter).await
+    }
+
+    /// Start a draft cycle count (`draft` → `in_progress`).
+    pub async fn start_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        self.db.warehouse().start_cycle_count_async(id).await
+    }
+
+    /// Record physical counts against an in-progress cycle count.
+    pub async fn record_cycle_counts(
+        &self,
+        id: Uuid,
+        counts: Vec<RecordCycleCountLine>,
+    ) -> Result<CycleCount> {
+        self.db.warehouse().record_cycle_counts_async(id, counts).await
+    }
+
+    /// Complete an in-progress cycle count, applying variance adjustments
+    /// to `location_inventory`.
+    pub async fn complete_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        self.db.warehouse().complete_cycle_count_async(id).await
+    }
+
+    /// Cancel a draft or in-progress cycle count. No adjustments are applied.
+    pub async fn cancel_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
+        self.db.warehouse().cancel_cycle_count_async(id).await
+    }
 }
 
 // ============================================================================
@@ -5574,8 +5644,152 @@ impl AsyncLoyalty {
     }
 }
 
+// ============================================================================
+// Async Fixed Assets
+// ============================================================================
+
+/// Async fixed asset register operations.
+pub struct AsyncFixedAssets {
+    db: Arc<PostgresDatabase>,
+}
+
+impl AsyncFixedAssets {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
+        Self { db }
+    }
+
+    /// Create a new fixed asset.
+    pub async fn create(&self, input: CreateFixedAsset) -> Result<FixedAsset> {
+        self.db.fixed_assets().create_async(input).await
+    }
+
+    /// Get a fixed asset by ID.
+    pub async fn get(&self, id: Uuid) -> Result<Option<FixedAsset>> {
+        self.db.fixed_assets().get_async(id).await
+    }
+
+    /// List fixed assets with optional filtering.
+    pub async fn list(&self, filter: FixedAssetFilter) -> Result<Vec<FixedAsset>> {
+        self.db.fixed_assets().list_async(filter).await
+    }
+
+    /// Update a fixed asset (partial).
+    pub async fn update(&self, id: Uuid, input: UpdateFixedAsset) -> Result<FixedAsset> {
+        self.db.fixed_assets().update_async(id, input).await
+    }
+
+    /// Place a draft asset in service.
+    pub async fn place_in_service(&self, id: Uuid, date: NaiveDate) -> Result<FixedAsset> {
+        self.db.fixed_assets().place_in_service_async(id, date).await
+    }
+
+    /// Dispose of an asset for the given proceeds, recording gain/loss.
+    pub async fn dispose(
+        &self,
+        id: Uuid,
+        date: NaiveDate,
+        proceeds: Decimal,
+        notes: Option<String>,
+    ) -> Result<FixedAsset> {
+        self.db.fixed_assets().dispose_async(id, date, proceeds, notes).await
+    }
+
+    /// Write off an asset (disposal with zero proceeds).
+    pub async fn write_off(
+        &self,
+        id: Uuid,
+        date: NaiveDate,
+        notes: Option<String>,
+    ) -> Result<FixedAsset> {
+        self.db.fixed_assets().write_off_async(id, date, notes).await
+    }
+
+    /// Generate and persist the depreciation schedule for an asset.
+    pub async fn generate_schedule(&self, id: Uuid) -> Result<DepreciationSchedule> {
+        self.db.fixed_assets().generate_schedule_async(id).await
+    }
+
+    /// Get the persisted depreciation schedule for an asset, if generated.
+    pub async fn get_schedule(&self, id: Uuid) -> Result<Option<DepreciationSchedule>> {
+        self.db.fixed_assets().get_schedule_async(id).await
+    }
+
+    /// Post the next `periods` scheduled depreciation entries.
+    pub async fn post_depreciation(&self, id: Uuid, periods: u32) -> Result<FixedAsset> {
+        self.db.fixed_assets().post_depreciation_async(id, periods).await
+    }
+}
+
+// ============================================================================
+// Async Revenue Recognition
+// ============================================================================
+
+/// Async revenue recognition (ASC 606 style) operations.
+pub struct AsyncRevenueRecognition {
+    db: Arc<PostgresDatabase>,
+}
+
+impl AsyncRevenueRecognition {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
+        Self { db }
+    }
+
+    /// Create a revenue contract with its performance obligations.
+    pub async fn create_contract(&self, input: CreateRevenueContract) -> Result<RevenueContract> {
+        self.db.revenue_recognition().create_contract_async(input).await
+    }
+
+    /// Get a revenue contract (with obligations) by ID.
+    pub async fn get_contract(&self, id: Uuid) -> Result<Option<RevenueContract>> {
+        self.db.revenue_recognition().get_contract_async(id).await
+    }
+
+    /// List revenue contracts matching the filter.
+    pub async fn list_contracts(
+        &self,
+        filter: RevenueContractFilter,
+    ) -> Result<Vec<RevenueContract>> {
+        self.db.revenue_recognition().list_contracts_async(filter).await
+    }
+
+    /// Update a revenue contract (partial).
+    pub async fn update_contract(
+        &self,
+        id: Uuid,
+        input: UpdateRevenueContract,
+    ) -> Result<RevenueContract> {
+        self.db.revenue_recognition().update_contract_async(id, input).await
+    }
+
+    /// List the performance obligations under a contract.
+    pub async fn list_obligations(&self, contract_id: Uuid) -> Result<Vec<PerformanceObligation>> {
+        self.db.revenue_recognition().list_obligations_async(contract_id).await
+    }
+
+    /// Generate and persist the recognition schedule for an obligation.
+    pub async fn generate_schedule(&self, obligation_id: Uuid) -> Result<RevenueSchedule> {
+        self.db.revenue_recognition().generate_schedule_async(obligation_id).await
+    }
+
+    /// Get the persisted recognition schedule for an obligation, if generated.
+    pub async fn get_schedule(&self, obligation_id: Uuid) -> Result<Option<RevenueSchedule>> {
+        self.db.revenue_recognition().get_schedule_async(obligation_id).await
+    }
+
+    /// Recognize all scheduled revenue through the given date.
+    pub async fn recognize_period(
+        &self,
+        obligation_id: Uuid,
+        through: NaiveDate,
+    ) -> Result<RevenueSchedule> {
+        self.db.revenue_recognition().recognize_period_async(obligation_id, through).await
+    }
+}
+
 impl_opaque_debug!(
     AsyncCommerce,
+    AsyncFixedAssets,
+    AsyncRevenueRecognition,
     AsyncGiftCards,
     AsyncStoreCredits,
     AsyncLoyalty,
