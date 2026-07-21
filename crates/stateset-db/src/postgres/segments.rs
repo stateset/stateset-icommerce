@@ -184,9 +184,7 @@ impl PgSegmentRepository {
 
         query.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            query.push_str(&format!(" LIMIT {limit}"));
-        }
+        query.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
         if let Some(offset) = filter.offset {
             query.push_str(&format!(" OFFSET {offset}"));
         }
@@ -286,9 +284,7 @@ impl PgSegmentRepository {
             "SELECT segment_id, customer_id, joined_at FROM segment_memberships WHERE segment_id = $1 ORDER BY joined_at DESC",
         );
 
-        if let Some(limit) = limit {
-            query.push_str(&format!(" LIMIT {limit}"));
-        }
+        query.push_str(&format!(" LIMIT {}", super::effective_limit(limit)));
         if let Some(offset) = offset {
             query.push_str(&format!(" OFFSET {offset}"));
         }

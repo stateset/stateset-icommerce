@@ -96,6 +96,31 @@ impl PgTransferOrderRepository {
         Ok(rows.into_iter().map(Self::row_to_item).collect())
     }
 
+    async fn load_items_batch(
+        &self,
+        ids: &[TransferOrderId],
+    ) -> Result<std::collections::HashMap<TransferOrderId, Vec<TransferOrderItem>>> {
+        let mut map: std::collections::HashMap<TransferOrderId, Vec<TransferOrderItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let uuids: Vec<sqlx::types::Uuid> =
+            ids.iter().map(|id| sqlx::types::Uuid::from(*id)).collect();
+        let rows = sqlx::query_as::<_, ItemRow>(
+            "SELECT * FROM transfer_order_items WHERE transfer_order_id = ANY($1) ORDER BY sku",
+        )
+        .bind(uuids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.transfer_order_id;
+            map.entry(parent).or_default().push(Self::row_to_item(row));
+        }
+        Ok(map)
+    }
+
     async fn load_full(&self, id: TransferOrderId) -> Result<Option<TransferOrder>> {
         let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM transfer_orders WHERE id = $1")
             .bind(id)
@@ -185,9 +210,7 @@ impl PgTransferOrderRepository {
             builder.push(" AND destination_warehouse_id = ").push_bind(*dest.as_uuid());
         }
         builder.push(" ORDER BY created_at DESC");
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(i64::from(limit));
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(i64::from(offset));
         }
@@ -198,9 +221,14 @@ impl PgTransferOrderRepository {
             .await
             .map_err(map_db_error)?;
         let mut out = Vec::with_capacity(rows.len());
+        let mut heads = Vec::with_capacity(rows.len());
         for row in rows {
-            let mut head = Self::row_to_head(row)?;
-            head.items = self.load_items(head.id).await?;
+            heads.push(Self::row_to_head(row)?);
+        }
+        let ids: Vec<TransferOrderId> = heads.iter().map(|h| h.id).collect();
+        let mut items_by_id = self.load_items_batch(&ids).await?;
+        for mut head in heads {
+            head.items = items_by_id.remove(&head.id).unwrap_or_default();
             out.push(head);
         }
         Ok(out)

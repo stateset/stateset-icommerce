@@ -563,9 +563,7 @@ impl PgPromotionRepository {
 
         sql.push_str(" ORDER BY priority ASC, created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
+        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
         if let Some(offset) = filter.offset {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
@@ -745,9 +743,7 @@ impl PgPromotionRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
+        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
         if let Some(offset) = filter.offset {
             sql.push_str(&format!(" OFFSET {}", offset));
         }

@@ -1144,7 +1144,7 @@ impl PgInventoryRepository {
 
     /// List inventory items (async)
     pub async fn list_async(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
 
         let rows = sqlx::query_as::<_, InventoryItemRow>(

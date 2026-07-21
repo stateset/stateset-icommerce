@@ -1,30 +1,50 @@
 //! Idempotency-Key middleware for REST mutation endpoints.
 //!
-//! Honors an optional `Idempotency-Key` request header on `POST` create
-//! endpoints (orders, payments, refunds, returns, …). The first request for a
-//! `(tenant, key)` pair runs the handler and caches the response (status code,
-//! body bytes, content type, and a hash of the request body). Subsequent
+//! Honors an `Idempotency-Key` request header on `POST` create endpoints
+//! (orders, payments, refunds, returns, …). The first request for a
+//! `(tenant, key)` pair runs the handler and stores the response (status code,
+//! body bytes, content type, and a fingerprint of the request). Subsequent
 //! requests with the same key:
 //!
-//! - **identical request body** → the cached response is replayed verbatim with
-//!   an `Idempotency-Replayed: true` header and **no duplicate resource** is
-//!   created;
-//! - **different request body** → the request is rejected with HTTP 422
-//!   ([`HttpError::ValidationError`]) carrying the standard API error envelope.
+//! - **identical request fingerprint** → the stored response is replayed
+//!   verbatim with an `Idempotency-Replayed: true` header and **no duplicate
+//!   resource** is created;
+//! - **different fingerprint** (method + path + body hash) → the request is
+//!   rejected with HTTP 422 ([`HttpError::ValidationError`]) carrying the
+//!   standard API error envelope.
 //!
 //! Keys are scoped per tenant (`x-tenant-id`), so the same key used by two
-//! tenants resolves to two independent cache entries.
+//! tenants resolves to two independent entries.
 //!
-//! The cache is a bounded, time-to-live (TTL) store that mirrors the
-//! shared-state pattern used by the rate limiter in [`crate::middleware`]: an
-//! `Arc<Mutex<…>>` held for the lifetime of the router. Entries older than the
-//! configured TTL are lazily evicted, and the store is capped at a maximum
-//! entry count with FIFO eviction of the oldest keys to bound memory use.
+//! # Durability
+//!
+//! Entries are persisted to the commerce database (`http_idempotency_keys`
+//! table) when the layer is built with [`IdempotencyLayer::with_durable_store`]
+//! — the [`crate::server::ServerBuilder`] wires this automatically — so
+//! replays survive process restarts and work across replicas sharing a
+//! database. The in-process map acts as a bounded read-through cache in front
+//! of the durable store: lookups consult memory first, fall back to the
+//! database, and populate memory on a durable hit. Durable-store failures
+//! degrade gracefully to memory-only behavior (logged, never request-fatal).
+//!
+//! TTL cleanup is enforced lazily on read (expired rows are deleted when
+//! touched) plus an opportunistic bulk sweep every
+//! [`SWEEP_EVERY_N_WRITES`] durable writes.
+//!
+//! # Required keys (HTTP 428)
+//!
+//! When [`IdempotencyLayer::with_required_keys`] is enabled (the
+//! `ServerBuilder` default, opt-out via `require_idempotency_keys(false)` or
+//! `STATESET_HTTP_REQUIRE_IDEMPOTENCY_KEYS=false`), money-moving create
+//! endpoints — `POST /orders`, `/payments`, `/payments/{id}/refund`, and
+//! `/ap/payments` — reject requests without an `Idempotency-Key` header with
+//! HTTP 428 (Precondition Required).
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::{
     body::{Body, to_bytes},
@@ -33,7 +53,9 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use chrono::{DateTime, Utc};
 use http_body_util::BodyExt as _;
+use stateset_embedded::{Commerce, HttpIdempotencyRecord};
 
 use crate::error::HttpError;
 
@@ -47,22 +69,26 @@ static X_TENANT_ID: HeaderName = HeaderName::from_static("x-tenant-id");
 
 /// Default time-to-live for cached idempotent responses (24 hours).
 const DEFAULT_TTL: Duration = Duration::from_secs(24 * 60 * 60);
-/// Default maximum number of cached idempotency entries.
+/// Default maximum number of in-memory cached idempotency entries.
 const DEFAULT_MAX_ENTRIES: usize = 10_000;
 /// Maximum request body size buffered for idempotency hashing (1 `MiB`).
 const MAX_BODY_BYTES: usize = 1024 * 1024;
+/// Run a bulk expiry sweep of the durable store every N durable writes.
+const SWEEP_EVERY_N_WRITES: u64 = 512;
 
-/// A cached idempotent response plus the hash of the originating request body.
+/// A cached idempotent response plus the fingerprint of the originating request.
 #[derive(Clone, Debug)]
 struct CachedResponse {
     status: StatusCode,
     content_type: Option<HeaderValue>,
     body: Vec<u8>,
-    request_body_hash: [u8; 32],
-    stored_at: Instant,
+    /// Hex SHA-256 of method + path + request body.
+    request_fingerprint: String,
+    created_at: DateTime<Utc>,
 }
 
-/// Bounded, TTL-scoped store of idempotent responses keyed by `(tenant, key)`.
+/// Bounded, TTL-scoped in-memory cache of idempotent responses keyed by
+/// `(tenant, key)`. Acts as a read-through cache in front of the durable store.
 #[derive(Debug)]
 struct IdempotencyStore {
     entries: HashMap<(String, String), CachedResponse>,
@@ -82,12 +108,14 @@ impl IdempotencyStore {
         }
     }
 
+    fn is_expired(&self, entry: &CachedResponse, now: DateTime<Utc>) -> bool {
+        let age = now.signed_duration_since(entry.created_at);
+        age >= chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::MAX)
+    }
+
     /// Fetch a non-expired entry, evicting it if it has expired.
-    fn get(&mut self, key: &(String, String), now: Instant) -> Option<CachedResponse> {
-        let expired = self
-            .entries
-            .get(key)
-            .is_some_and(|entry| now.duration_since(entry.stored_at) >= self.ttl);
+    fn get(&mut self, key: &(String, String), now: DateTime<Utc>) -> Option<CachedResponse> {
+        let expired = self.entries.get(key).is_some_and(|entry| self.is_expired(entry, now));
         if expired {
             self.entries.remove(key);
             return None;
@@ -110,21 +138,73 @@ impl IdempotencyStore {
     }
 }
 
-/// Shared idempotency cache wrapped for use as axum middleware state.
-#[derive(Clone, Debug)]
-pub(crate) struct IdempotencyLayer {
+/// Shared idempotency state wrapped for use as axum middleware state.
+#[derive(Clone)]
+pub struct IdempotencyLayer {
     store: Arc<Mutex<IdempotencyStore>>,
+    /// Commerce handle whose database backs the durable store, if any.
+    durable: Option<Arc<Commerce>>,
+    /// Counts durable writes to schedule opportunistic bulk expiry sweeps.
+    write_count: Arc<AtomicU64>,
+    /// Reject guarded money-moving creates that omit `Idempotency-Key` (428).
+    require_keys: bool,
+    ttl: Duration,
+}
+
+impl std::fmt::Debug for IdempotencyLayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdempotencyLayer")
+            .field("durable", &self.durable.is_some())
+            .field("require_keys", &self.require_keys)
+            .field("ttl", &self.ttl)
+            .finish_non_exhaustive()
+    }
 }
 
 impl IdempotencyLayer {
-    /// Create a layer with the default TTL and capacity.
-    pub(crate) fn new() -> Self {
+    /// Create a memory-only layer with the default TTL and capacity.
+    ///
+    /// Used by the bare routers; [`crate::server::ServerBuilder`] upgrades this
+    /// with a durable store and the required-key gate.
+    #[must_use]
+    pub fn new() -> Self {
         Self::with_config(DEFAULT_TTL, DEFAULT_MAX_ENTRIES)
     }
 
-    /// Create a layer with explicit TTL and capacity (used in tests).
+    /// Create a layer with explicit TTL and in-memory capacity.
     fn with_config(ttl: Duration, max_entries: usize) -> Self {
-        Self { store: Arc::new(Mutex::new(IdempotencyStore::new(ttl, max_entries))) }
+        Self {
+            store: Arc::new(Mutex::new(IdempotencyStore::new(ttl, max_entries))),
+            durable: None,
+            write_count: Arc::new(AtomicU64::new(0)),
+            require_keys: false,
+            ttl,
+        }
+    }
+
+    /// Back the layer with the durable `http_idempotency_keys` store of the
+    /// given commerce instance's database. The in-memory map becomes a
+    /// read-through cache in front of it.
+    #[must_use]
+    pub fn with_durable_store(mut self, commerce: Arc<Commerce>) -> Self {
+        self.durable = Some(commerce);
+        self
+    }
+
+    /// Require `Idempotency-Key` on guarded money-moving create endpoints,
+    /// rejecting bare requests with HTTP 428 (Precondition Required).
+    #[must_use]
+    pub const fn with_required_keys(mut self, require: bool) -> Self {
+        self.require_keys = require;
+        self
+    }
+
+    /// Earliest `created_at` still considered live at `now`.
+    fn expiry_cutoff(&self, now: DateTime<Utc>) -> DateTime<Utc> {
+        chrono::Duration::from_std(self.ttl)
+            .ok()
+            .and_then(|ttl| now.checked_sub_signed(ttl))
+            .unwrap_or(DateTime::<Utc>::MIN_UTC)
     }
 }
 
@@ -134,19 +214,30 @@ impl Default for IdempotencyLayer {
     }
 }
 
-/// Collision-resistant SHA-256 digest of the request body, used to detect when
-/// an `Idempotency-Key` is replayed with a *different* body (a client conflict).
+/// Collision-resistant fingerprint of the request: hex SHA-256 over
+/// method, path, and body, used to detect when an `Idempotency-Key` is replayed
+/// with a *different* request (a client conflict).
 ///
 /// A non-cryptographic hash (e.g. FNV-1a) is unsuitable here: an attacker who
 /// reuses a victim's key could grind a body that collides with the original and
-/// thereby slip a different request past the "same key, different body" guard
-/// (or have a cached response replayed for a body it never matched). SHA-256
-/// makes such a collision computationally infeasible.
-fn hash_body(bytes: &[u8]) -> [u8; 32] {
+/// thereby slip a different request past the "same key, different request"
+/// guard (or have a cached response replayed for a request it never matched).
+/// SHA-256 makes such a collision computationally infeasible.
+fn request_fingerprint(method: &Method, path: &str, body: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hasher.finalize().into()
+    hasher.update(method.as_str().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(path.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(body);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// Whether a path is a `POST` create endpoint that participates in idempotency.
@@ -167,10 +258,122 @@ fn is_idempotent_post_path(path: &str) -> bool {
         | ["invoices"]
         | ["shipments"]
         | ["customers"]
-        | ["products"] => true,
+        | ["products"]
+        // AP payment creates a new financial record.
+        | ["ap", "payments"] => true,
         // Payment refund creates a new refund record.
         ["payments", _id, "refund"] => true,
         _ => false,
+    }
+}
+
+/// Whether a `POST` path is a money-moving create that *requires* an
+/// `Idempotency-Key` when the required-key gate is enabled.
+fn requires_idempotency_key(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/api/v1/") else {
+        return false;
+    };
+    let segments = rest.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>();
+    matches!(
+        segments.as_slice(),
+        ["orders"] | ["payments"] | ["payments", _, "refund"] | ["ap", "payments"]
+    )
+}
+
+/// HTTP 428 (Precondition Required) response in the standard error envelope.
+fn precondition_required_response(path: &str) -> Response {
+    let body = serde_json::json!({
+        "error": {
+            "code": "precondition_required",
+            "message": format!(
+                "Idempotency-Key header is required for POST {path}: supply a unique key per \
+                 logical operation so safe retries can be replayed without duplicate side effects \
+                 (server opt-out: require_idempotency_keys(false) / \
+                 STATESET_HTTP_REQUIRE_IDEMPOTENCY_KEYS=false)"
+            ),
+        }
+    });
+    (StatusCode::PRECONDITION_REQUIRED, axum::Json(body)).into_response()
+}
+
+fn conflict_response() -> Response {
+    HttpError::ValidationError(
+        "idempotency-key already used with a different request body".to_string(),
+    )
+    .into_response()
+}
+
+/// Load a durable entry (off the async runtime); errors degrade to `None`.
+async fn durable_get(
+    commerce: Arc<Commerce>,
+    tenant: String,
+    key: String,
+    cutoff: DateTime<Utc>,
+) -> Option<HttpIdempotencyRecord> {
+    let result = tokio::task::spawn_blocking(move || {
+        commerce
+            .database()
+            .http_idempotency()
+            .map(|repo| repo.get(&tenant, &key, cutoff))
+            .transpose()
+            .map(Option::flatten)
+    })
+    .await;
+    match result {
+        Ok(Ok(record)) => record,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "durable idempotency lookup failed; falling back to memory");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(%error, "durable idempotency lookup task failed");
+            None
+        }
+    }
+}
+
+/// Persist a durable entry and run an opportunistic expiry sweep.
+async fn durable_put(layer: &IdempotencyLayer, record: HttpIdempotencyRecord) {
+    let Some(commerce) = layer.durable.clone() else {
+        return;
+    };
+    let sweep_cutoff =
+        ((layer.write_count.fetch_add(1, Ordering::Relaxed) + 1) % SWEEP_EVERY_N_WRITES == 0)
+            .then(|| layer.expiry_cutoff(Utc::now()));
+    let result = tokio::task::spawn_blocking(move || {
+        let db = commerce.database();
+        let Some(repo) = db.http_idempotency() else {
+            return Ok(());
+        };
+        repo.put(&record)?;
+        if let Some(cutoff) = sweep_cutoff {
+            repo.purge_expired(cutoff)?;
+        }
+        Ok::<_, stateset_core::CommerceError>(())
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "durable idempotency write failed; entry is memory-only");
+        }
+        Err(error) => {
+            tracing::warn!(%error, "durable idempotency write task failed");
+        }
+    }
+}
+
+fn record_to_cached(record: HttpIdempotencyRecord) -> CachedResponse {
+    CachedResponse {
+        status: StatusCode::from_u16(record.response_status)
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        content_type: record
+            .content_type
+            .as_deref()
+            .and_then(|value| HeaderValue::from_str(value).ok()),
+        body: record.response_body,
+        request_fingerprint: record.request_fingerprint,
+        created_at: record.created_at,
     }
 }
 
@@ -184,8 +387,10 @@ pub(crate) async fn idempotency(
     if request.method() != Method::POST || !is_idempotent_post_path(request.uri().path()) {
         return next.run(request).await;
     }
+    let path = request.uri().path().to_owned();
 
-    // Extract the idempotency key; absent key disables caching for this request.
+    // Extract the idempotency key; absent key disables caching for this request
+    // unless the endpoint is money-moving and required keys are enabled.
     let key = request
         .headers()
         .get(&IDEMPOTENCY_KEY)
@@ -194,6 +399,9 @@ pub(crate) async fn idempotency(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
     let Some(key) = key else {
+        if layer.require_keys && requires_idempotency_key(&path) {
+            return precondition_required_response(&path);
+        }
         return next.run(request).await;
     };
     if key.len() > 255 {
@@ -210,7 +418,7 @@ pub(crate) async fn idempotency(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_default();
-    let cache_key = (tenant, key);
+    let cache_key = (tenant.clone(), key.clone());
 
     // Buffer the request body so we can hash it and replay the handler with it.
     let (parts, body) = request.into_parts();
@@ -221,24 +429,34 @@ pub(crate) async fn idempotency(
                 .into_response();
         }
     };
-    let request_hash = hash_body(&body_bytes);
-    let now = Instant::now();
+    let fingerprint = request_fingerprint(&parts.method, &path, &body_bytes);
+    let now = Utc::now();
 
-    // Cache lookup: replay on identical body, reject on conflicting body.
-    {
+    // Read-through lookup: memory first, then the durable store.
+    let mut cached = {
         let mut store = layer.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(cached) = store.get(&cache_key, now) {
-            if cached.request_body_hash == request_hash {
-                return replay_response(&cached);
-            }
-            return HttpError::ValidationError(
-                "idempotency-key already used with a different request body".to_string(),
-            )
-            .into_response();
+        store.get(&cache_key, now)
+    };
+    if cached.is_none()
+        && let Some(commerce) = layer.durable.clone()
+    {
+        let record =
+            durable_get(commerce, tenant.clone(), key.clone(), layer.expiry_cutoff(now)).await;
+        if let Some(record) = record {
+            let entry = record_to_cached(record);
+            let mut store = layer.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            store.insert(cache_key.clone(), entry.clone());
+            cached = Some(entry);
         }
     }
+    if let Some(cached) = cached {
+        if cached.request_fingerprint == fingerprint {
+            return replay_response(&cached);
+        }
+        return conflict_response();
+    }
 
-    // Cache miss: run the inner handler with the buffered body restored.
+    // Miss: run the inner handler with the buffered body restored.
     let request = Request::from_parts(parts, Body::from(body_bytes));
     let response = next.run(request).await;
 
@@ -268,13 +486,30 @@ pub(crate) async fn idempotency(
         status: resp_parts.status,
         content_type,
         body: resp_bytes.to_vec(),
-        request_body_hash: request_hash,
-        stored_at: now,
+        request_fingerprint: fingerprint.clone(),
+        created_at: now,
     };
     {
         let mut store = layer.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        store.insert(cache_key, cached);
+        store.insert(cache_key, cached.clone());
     }
+    durable_put(
+        &layer,
+        HttpIdempotencyRecord {
+            tenant,
+            idempotency_key: key,
+            request_fingerprint: fingerprint,
+            response_status: cached.status.as_u16(),
+            content_type: cached
+                .content_type
+                .as_ref()
+                .and_then(|value| value.to_str().ok())
+                .map(ToOwned::to_owned),
+            response_body: cached.body,
+            created_at: now,
+        },
+    )
+    .await;
 
     // Annotate the freshly-stored response so callers can observe first-write.
     resp_parts.headers.insert(IDEMPOTENCY_REPLAYED.clone(), HeaderValue::from_static("false"));
@@ -302,9 +537,13 @@ mod tests {
     use tower::ServiceExt as _;
 
     fn app(layer: IdempotencyLayer, counter: Arc<AtomicU64>) -> Router {
+        app_at("/api/v1/orders", layer, counter)
+    }
+
+    fn app_at(path: &str, layer: IdempotencyLayer, counter: Arc<AtomicU64>) -> Router {
         Router::new()
             .route(
-                "/api/v1/orders",
+                path,
                 post(move || {
                     let counter = counter.clone();
                     async move {
@@ -320,12 +559,17 @@ mod tests {
             .layer(axum::middleware::from_fn_with_state(layer, idempotency))
     }
 
+    fn durable_layer(commerce: &Arc<Commerce>) -> IdempotencyLayer {
+        IdempotencyLayer::new().with_durable_store(commerce.clone())
+    }
+
     #[test]
     fn is_idempotent_post_path_matches_create_endpoints() {
         assert!(is_idempotent_post_path("/api/v1/orders"));
         assert!(is_idempotent_post_path("/api/v1/payments"));
         assert!(is_idempotent_post_path("/api/v1/returns"));
         assert!(is_idempotent_post_path("/api/v1/payments/abc/refund"));
+        assert!(is_idempotent_post_path("/api/v1/ap/payments"));
         // Action routes that mutate existing resources are excluded.
         assert!(!is_idempotent_post_path("/api/v1/payments/abc/complete"));
         assert!(!is_idempotent_post_path("/api/v1/orders/abc/cancel"));
@@ -334,15 +578,27 @@ mod tests {
     }
 
     #[test]
+    fn requires_idempotency_key_matches_money_moving_creates() {
+        assert!(requires_idempotency_key("/api/v1/orders"));
+        assert!(requires_idempotency_key("/api/v1/payments"));
+        assert!(requires_idempotency_key("/api/v1/payments/abc/refund"));
+        assert!(requires_idempotency_key("/api/v1/ap/payments"));
+        // Non-money creates stay optional.
+        assert!(!requires_idempotency_key("/api/v1/customers"));
+        assert!(!requires_idempotency_key("/api/v1/products"));
+        assert!(!requires_idempotency_key("/api/v1/returns"));
+    }
+
+    #[test]
     fn store_evicts_oldest_when_over_capacity() {
         let mut store = IdempotencyStore::new(DEFAULT_TTL, 2);
-        let now = Instant::now();
+        let now = Utc::now();
         let make = |seed: u8| CachedResponse {
             status: StatusCode::CREATED,
             content_type: None,
             body: Vec::new(),
-            request_body_hash: [seed; 32],
-            stored_at: now,
+            request_fingerprint: format!("{seed:064}"),
+            created_at: now,
         };
         store.insert(("t".into(), "a".into()), make(1));
         store.insert(("t".into(), "b".into()), make(2));
@@ -356,19 +612,28 @@ mod tests {
     #[test]
     fn store_expires_entries_after_ttl() {
         let mut store = IdempotencyStore::new(Duration::from_secs(10), 100);
-        let stored_at = Instant::now();
+        let created_at = Utc::now();
         store.insert(
             ("t".into(), "a".into()),
             CachedResponse {
                 status: StatusCode::CREATED,
                 content_type: None,
                 body: Vec::new(),
-                request_body_hash: [1u8; 32],
-                stored_at,
+                request_fingerprint: "f".repeat(64),
+                created_at,
             },
         );
-        let later = stored_at + Duration::from_secs(11);
+        let later = created_at + chrono::Duration::seconds(11);
         assert!(store.get(&("t".into(), "a".into()), later).is_none());
+    }
+
+    #[test]
+    fn fingerprint_covers_method_path_and_body() {
+        let base = request_fingerprint(&Method::POST, "/api/v1/orders", b"{}");
+        assert_ne!(base, request_fingerprint(&Method::PUT, "/api/v1/orders", b"{}"));
+        assert_ne!(base, request_fingerprint(&Method::POST, "/api/v1/payments", b"{}"));
+        assert_ne!(base, request_fingerprint(&Method::POST, "/api/v1/orders", b"{ }"));
+        assert_eq!(base, request_fingerprint(&Method::POST, "/api/v1/orders", b"{}"));
     }
 
     #[tokio::test]
@@ -500,6 +765,175 @@ mod tests {
             assert!(resp.headers().get("idempotency-replayed").is_none());
         }
         // No key → handler runs every time.
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn missing_key_on_guarded_route_returns_428_when_required() {
+        for path in [
+            "/api/v1/orders",
+            "/api/v1/payments",
+            "/api/v1/payments/abc/refund",
+            "/api/v1/ap/payments",
+        ] {
+            let counter = Arc::new(AtomicU64::new(0));
+            let layer = IdempotencyLayer::new().with_required_keys(true);
+            let app = app_at(path, layer, counter.clone());
+
+            let resp = app
+                .clone()
+                .oneshot(Request::post(path).body(Body::from("{}")).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::PRECONDITION_REQUIRED, "path {path}");
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(json["error"]["code"], "precondition_required");
+            // The handler never ran.
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            // With a key the request proceeds normally.
+            let ok = app
+                .oneshot(
+                    Request::post(path)
+                        .header("idempotency-key", "k1")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(ok.status(), StatusCode::CREATED, "path {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_key_allowed_on_guarded_route_when_requirement_disabled() {
+        let counter = Arc::new(AtomicU64::new(0));
+        let layer = IdempotencyLayer::new().with_required_keys(false);
+        let app = app_at("/api/v1/payments", layer, counter.clone());
+
+        let resp = app
+            .oneshot(Request::post("/api/v1/payments").body(Body::from("{}")).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_key_on_unguarded_create_never_428s() {
+        let counter = Arc::new(AtomicU64::new(0));
+        let layer = IdempotencyLayer::new().with_required_keys(true);
+        let app = app_at("/api/v1/customers", layer, counter.clone());
+
+        let resp = app
+            .oneshot(Request::post("/api/v1/customers").body(Body::from("{}")).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn durable_replay_survives_restart_with_same_database() {
+        // Two layers over the same database file simulate a process restart
+        // (fresh in-memory cache, same durable store).
+        let db_path =
+            std::env::temp_dir().join(format!("stateset-idem-restart-{}.db", uuid::Uuid::new_v4()));
+        let db_path_str = db_path.to_str().unwrap().to_owned();
+
+        let body = "{\"customer\":\"c1\"}";
+        let first_body_bytes;
+        {
+            let commerce = Arc::new(Commerce::new(&db_path_str).unwrap());
+            let counter = Arc::new(AtomicU64::new(0));
+            let app = app(durable_layer(&commerce), counter.clone());
+            let first = app
+                .oneshot(
+                    Request::post("/api/v1/orders")
+                        .header("idempotency-key", "restart-key")
+                        .header("x-tenant-id", "tenant-a")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(first.status(), StatusCode::CREATED);
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
+            first_body_bytes = axum::body::to_bytes(first.into_body(), usize::MAX).await.unwrap();
+        }
+
+        // "Restart": a brand-new Commerce + layer over the same file.
+        let commerce = Arc::new(Commerce::new(&db_path_str).unwrap());
+        let counter = Arc::new(AtomicU64::new(0));
+        let app = app(durable_layer(&commerce), counter.clone());
+
+        let replay = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/orders")
+                    .header("idempotency-key", "restart-key")
+                    .header("x-tenant-id", "tenant-a")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::CREATED);
+        assert_eq!(
+            replay.headers().get("idempotency-replayed").and_then(|v| v.to_str().ok()),
+            Some("true"),
+            "replay after restart must come from the durable store"
+        );
+        let replay_body = axum::body::to_bytes(replay.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(first_body_bytes, replay_body);
+        // The handler never ran in the "restarted" process.
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+        // Same key, different body after restart → 422 from the durable record.
+        let conflict = app
+            .oneshot(
+                Request::post("/api/v1/orders")
+                    .header("idempotency-key", "restart-key")
+                    .header("x-tenant-id", "tenant-a")
+                    .body(Body::from("{\"customer\":\"DIFFERENT\"}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(conflict.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn durable_entries_expire_after_ttl() {
+        let commerce = Arc::new(Commerce::in_memory().unwrap());
+        // Zero TTL: every stored entry is immediately expired, so both memory
+        // and durable lookups must treat it as absent and rerun the handler.
+        let layer = IdempotencyLayer::with_config(Duration::ZERO, DEFAULT_MAX_ENTRIES)
+            .with_durable_store(commerce.clone());
+        let counter = Arc::new(AtomicU64::new(0));
+        let app = app(layer, counter.clone());
+
+        for _ in 0..2 {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::post("/api/v1/orders")
+                        .header("idempotency-key", "ttl-key")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::CREATED);
+            assert_eq!(
+                resp.headers().get("idempotency-replayed").and_then(|v| v.to_str().ok()),
+                Some("false"),
+                "expired entries must never replay"
+            );
+        }
         assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 }

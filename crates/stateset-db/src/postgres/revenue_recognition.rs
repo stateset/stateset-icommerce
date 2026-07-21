@@ -234,7 +234,7 @@ impl PgRevenueRecognitionRepository {
         filter: RevenueContractFilter,
     ) -> Result<Vec<RevenueContract>> {
         let after_cursor = super::parse_after_cursor(filter.after_cursor.as_ref())?;
-        let limit = i64::from(filter.limit.unwrap_or(100));
+        let limit = super::effective_limit(filter.limit);
         // Offset pagination applies only in non-cursor mode.
         let offset = if after_cursor.is_none() { i64::from(filter.offset.unwrap_or(0)) } else { 0 };
         let mut query = String::from("SELECT * FROM revenue_contracts WHERE 1=1");

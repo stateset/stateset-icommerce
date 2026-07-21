@@ -1139,7 +1139,98 @@ fn prometheus_metrics(state: &AppState) -> String {
         );
     }
 
+    // Global engine RED latency histogram (Prometheus histogram exposition).
+    if !engine.red_global.latency_buckets.is_empty() {
+        out.push_str(
+            "# HELP stateset_engine_red_duration_seconds Request duration histogram (global RED).\n",
+        );
+        out.push_str("# TYPE stateset_engine_red_duration_seconds histogram\n");
+        for (bound, cumulative) in &engine.red_global.latency_buckets {
+            let _ = writeln!(
+                out,
+                "stateset_engine_red_duration_seconds_bucket{{le=\"{}\"}} {cumulative}",
+                format_prometheus_le(*bound)
+            );
+        }
+        let _ = writeln!(
+            out,
+            "stateset_engine_red_duration_seconds_sum {}",
+            sanitize_prometheus_f64(engine.red_global.duration_total_ms / 1_000.0)
+        );
+        let _ = writeln!(
+            out,
+            "stateset_engine_red_duration_seconds_count {}",
+            engine.red_global.requests
+        );
+    }
+
+    // HTTP RED metrics recorded by the track_http_metrics middleware, keyed
+    // by (method, matched route pattern).
+    let http = crate::middleware::http_metrics().snapshot();
+
+    out.push_str("# HELP stateset_http_requests_total HTTP requests by method and route.\n");
+    out.push_str("# TYPE stateset_http_requests_total counter\n");
+    for ((method, route), red) in &http.http_by_route {
+        let _ = writeln!(
+            out,
+            "stateset_http_requests_total{{method=\"{}\",route=\"{}\"}} {}",
+            escape_prometheus_label_value(method),
+            escape_prometheus_label_value(route),
+            red.requests
+        );
+    }
+
+    out.push_str(
+        "# HELP stateset_http_request_errors_total HTTP error responses by method, route, and class.\n",
+    );
+    out.push_str("# TYPE stateset_http_request_errors_total counter\n");
+    for ((method, route), red) in &http.http_by_route {
+        let method = escape_prometheus_label_value(method);
+        let route = escape_prometheus_label_value(route);
+        let _ = writeln!(
+            out,
+            "stateset_http_request_errors_total{{method=\"{method}\",route=\"{route}\",class=\"4xx\"}} {}",
+            red.errors_4xx
+        );
+        let _ = writeln!(
+            out,
+            "stateset_http_request_errors_total{{method=\"{method}\",route=\"{route}\",class=\"5xx\"}} {}",
+            red.errors_5xx
+        );
+    }
+
+    out.push_str(
+        "# HELP stateset_http_request_duration_seconds HTTP request duration histogram by method and route.\n",
+    );
+    out.push_str("# TYPE stateset_http_request_duration_seconds histogram\n");
+    for ((method, route), red) in &http.http_by_route {
+        let method = escape_prometheus_label_value(method);
+        let route = escape_prometheus_label_value(route);
+        for (bound, cumulative) in &red.latency_buckets {
+            let _ = writeln!(
+                out,
+                "stateset_http_request_duration_seconds_bucket{{method=\"{method}\",route=\"{route}\",le=\"{}\"}} {cumulative}",
+                format_prometheus_le(*bound)
+            );
+        }
+        let _ = writeln!(
+            out,
+            "stateset_http_request_duration_seconds_sum{{method=\"{method}\",route=\"{route}\"}} {}",
+            sanitize_prometheus_f64(red.duration_total_ms / 1_000.0)
+        );
+        let _ = writeln!(
+            out,
+            "stateset_http_request_duration_seconds_count{{method=\"{method}\",route=\"{route}\"}} {}",
+            red.requests
+        );
+    }
+
     out
+}
+
+/// Format a histogram bucket bound for the `le` label (`+Inf` for infinity).
+fn format_prometheus_le(bound: f64) -> String {
+    if bound.is_infinite() { "+Inf".to_owned() } else { format!("{bound}") }
 }
 
 fn write_prometheus_counter(output: &mut String, name: &str, help: &str, value: f64) {

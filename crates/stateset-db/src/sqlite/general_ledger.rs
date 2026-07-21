@@ -752,7 +752,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             ));
         }
 
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         tx.execute(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id,

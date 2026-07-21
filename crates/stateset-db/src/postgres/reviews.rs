@@ -199,9 +199,7 @@ impl PgReviewRepository {
 
         query.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            query.push_str(&format!(" LIMIT {limit}"));
-        }
+        query.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
         if let Some(offset) = filter.offset {
             query.push_str(&format!(" OFFSET {offset}"));
         }

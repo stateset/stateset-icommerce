@@ -378,7 +378,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         }
 
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let now = Utc::now();
         let mut rate_ids: Vec<(Currency, Currency)> = Vec::with_capacity(rates.len());
@@ -468,7 +468,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         }
 
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let in_clause = build_in_clause(ids.len());
         let query = format!("DELETE FROM exchange_rates WHERE id IN ({in_clause})");

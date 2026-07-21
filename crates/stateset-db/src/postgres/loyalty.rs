@@ -287,10 +287,8 @@ impl PgLoyaltyProgramRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if filter.limit.is_some() {
-            sql.push_str(&format!(" LIMIT ${param_idx}"));
-            param_idx += 1;
-        }
+        sql.push_str(&format!(" LIMIT ${param_idx}"));
+        param_idx += 1;
         if filter.offset.is_some() {
             sql.push_str(&format!(" OFFSET ${param_idx}"));
             let _ = param_idx;
@@ -307,9 +305,7 @@ impl PgLoyaltyProgramRepository {
         if let Some(ref tier) = filter.tier {
             query = query.bind(tier.clone());
         }
-        if let Some(limit) = filter.limit {
-            query = query.bind(limit as i64);
-        }
+        query = query.bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             query = query.bind(offset as i64);
         }
@@ -408,16 +404,11 @@ impl PgLoyaltyProgramRepository {
              FROM loyalty_transactions WHERE account_id = $1 ORDER BY created_at DESC",
         );
 
-        if limit.is_some() {
-            sql.push_str(" LIMIT $2");
-        }
+        sql.push_str(" LIMIT $2");
 
-        let mut query =
-            sqlx::query_as::<_, LoyaltyTransactionRow>(&sql).bind(account_id.into_uuid());
-
-        if let Some(limit) = limit {
-            query = query.bind(limit as i64);
-        }
+        let query = sqlx::query_as::<_, LoyaltyTransactionRow>(&sql)
+            .bind(account_id.into_uuid())
+            .bind(super::effective_limit(limit));
 
         let rows = query.fetch_all(&self.pool).await.map_err(map_db_error)?;
         rows.into_iter().map(Self::row_to_transaction).collect()

@@ -215,5 +215,7 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("062_cycle_counts", include_str!("../migrations/062_cycle_counts.sql")),
         // FX gain/loss account for GL revaluation.
         ("063_gl_fx_revaluation", include_str!("../migrations/063_gl_fx_revaluation.sql")),
+        // Durable HTTP idempotency response store.
+        ("064_http_idempotency", include_str!("../migrations/064_http_idempotency.sql")),
     ]
 }

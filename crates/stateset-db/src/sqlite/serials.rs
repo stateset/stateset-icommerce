@@ -361,7 +361,7 @@ impl SerialRepository for SqliteSerialRepository {
         input: CreateSerialNumbersBulk,
     ) -> stateset_core::Result<Vec<SerialNumber>> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let mut serials = Vec::with_capacity(input.quantity as usize);
         let now = Utc::now().to_rfc3339();
@@ -601,7 +601,7 @@ impl SerialRepository for SqliteSerialRepository {
         {
             let mut conn =
                 self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let tx = conn.transaction().map_err(map_db_error)?;
+            let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
             let now = Utc::now().to_rfc3339();
 
             // Get current serial
@@ -669,7 +669,7 @@ impl SerialRepository for SqliteSerialRepository {
 
     fn reserve(&self, input: ReserveSerialNumber) -> stateset_core::Result<SerialReservation> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
         let now_str = now.to_rfc3339();
 
@@ -772,7 +772,7 @@ impl SerialRepository for SqliteSerialRepository {
 
     fn release_reservation(&self, reservation_id: Uuid) -> stateset_core::Result<()> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
         // Get reservation
@@ -864,7 +864,7 @@ impl SerialRepository for SqliteSerialRepository {
         {
             let mut conn =
                 self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let tx = conn.transaction().map_err(map_db_error)?;
+            let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
             let now = Utc::now().to_rfc3339();
 
             // Get current serial
@@ -919,7 +919,7 @@ impl SerialRepository for SqliteSerialRepository {
         {
             let mut conn =
                 self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let tx = conn.transaction().map_err(map_db_error)?;
+            let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
             let now = Utc::now().to_rfc3339();
 
             // Get current serial
@@ -986,7 +986,7 @@ impl SerialRepository for SqliteSerialRepository {
         {
             let mut conn =
                 self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let tx = conn.transaction().map_err(map_db_error)?;
+            let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
             let now = Utc::now();
             let now_str = now.to_rfc3339();
 
@@ -1046,7 +1046,7 @@ impl SerialRepository for SqliteSerialRepository {
 
     fn mark_shipped(&self, id: Uuid, shipment_id: Uuid) -> stateset_core::Result<SerialNumber> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
         // Get current serial
@@ -1091,7 +1091,7 @@ impl SerialRepository for SqliteSerialRepository {
 
     fn mark_returned(&self, id: Uuid, return_id: Uuid) -> stateset_core::Result<SerialNumber> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
         // Get current serial
@@ -1173,7 +1173,7 @@ impl SerialRepository for SqliteSerialRepository {
 
     fn quarantine(&self, id: Uuid, reason: &str) -> stateset_core::Result<SerialNumber> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
         // Get current serial
@@ -1216,7 +1216,7 @@ impl SerialRepository for SqliteSerialRepository {
 
     fn release_quarantine(&self, id: Uuid) -> stateset_core::Result<SerialNumber> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
         // Get current serial
@@ -1262,7 +1262,7 @@ impl SerialRepository for SqliteSerialRepository {
 
     fn scrap(&self, id: Uuid, reason: &str) -> stateset_core::Result<SerialNumber> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
         // Get current serial

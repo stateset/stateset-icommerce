@@ -349,6 +349,29 @@ impl PgReturnRepository {
         Ok(items)
     }
 
+    async fn get_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<ReturnItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<ReturnItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, ReturnItemRow>(
+            "SELECT * FROM return_items WHERE return_id = ANY($1)",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.return_id;
+            map.entry(parent).or_default().push(Self::row_to_item(row)?);
+        }
+        Ok(map)
+    }
+
     /// Update a return (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
         let now = Utc::now();
@@ -421,9 +444,7 @@ impl PgReturnRepository {
 
         builder.push(" ORDER BY created_at DESC");
 
-        if let Some(limit) = limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(limit));
         if let Some(offset) = offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -434,9 +455,11 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.get_items_batch_async(&ids).await?;
         let mut returns = Vec::new();
         for row in rows {
-            let items = self.get_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             returns.push(Self::row_to_return(row, items)?);
         }
 
@@ -854,9 +877,11 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.get_items_batch_async(&ids).await?;
         let mut returns = Vec::new();
         for row in rows {
-            let items = self.get_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             returns.push(Self::row_to_return(row, items)?);
         }
 

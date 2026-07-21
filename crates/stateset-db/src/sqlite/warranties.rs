@@ -1049,7 +1049,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
 
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -1158,7 +1158,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
 
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -1232,7 +1232,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
 
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let placeholders = build_in_clause(ids.len());
         let now = chrono::Utc::now();

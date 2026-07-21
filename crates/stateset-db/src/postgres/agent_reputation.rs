@@ -146,9 +146,9 @@ impl PgAgentReputationRepository {
             builder.push(" AND is_revoked = false");
         }
 
-        let limit = filter.limit.unwrap_or(100).min(1000);
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0);
-        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit as i64);
+        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
         let rows: Vec<FeedbackRow> =

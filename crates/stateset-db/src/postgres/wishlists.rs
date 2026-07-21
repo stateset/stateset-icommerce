@@ -81,6 +81,30 @@ impl PgWishlistRepository {
         Ok(rows.into_iter().map(Self::row_to_item).collect())
     }
 
+    async fn load_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<WishlistItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<WishlistItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, WishlistItemRow>(
+            "SELECT id, wishlist_id, product_id, variant_id, priority, quantity, notes, added_at
+             FROM wishlist_items WHERE wishlist_id = ANY($1) ORDER BY added_at",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.wishlist_id;
+            map.entry(parent).or_default().push(Self::row_to_item(row));
+        }
+        Ok(map)
+    }
+
     // ---- async helpers ----
 
     async fn create_async(&self, input: CreateWishlist) -> Result<Wishlist> {
@@ -182,9 +206,7 @@ impl PgWishlistRepository {
 
         query.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            query.push_str(&format!(" LIMIT {limit}"));
-        }
+        query.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
         if let Some(offset) = filter.offset {
             query.push_str(&format!(" OFFSET {offset}"));
         }
@@ -199,9 +221,11 @@ impl PgWishlistRepository {
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.load_items_batch_async(&ids).await?;
         let mut result = Vec::with_capacity(rows.len());
         for row in rows {
-            let items = self.load_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             result.push(Self::row_to_wishlist(row, items));
         }
         Ok(result)

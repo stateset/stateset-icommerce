@@ -411,9 +411,7 @@ impl PgCustomerRepository {
 
         builder.push(" ORDER BY created_at DESC");
 
-        if let Some(limit) = limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(limit));
         if let Some(offset) = offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }

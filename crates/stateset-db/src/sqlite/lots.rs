@@ -247,7 +247,7 @@ impl SqliteLotRepository {
 impl LotRepository for SqliteLotRepository {
     fn create(&self, input: CreateLot) -> Result<Lot> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let id = Uuid::new_v4();
         let lot_number = input.lot_number.unwrap_or_else(|| Self::generate_lot_number(&input.sku));
@@ -504,7 +504,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn adjust(&self, input: AdjustLot) -> Result<LotTransaction> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get current lot
         let lot: Lot = tx
@@ -559,7 +559,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn consume(&self, input: ConsumeLot) -> Result<LotTransaction> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get current lot
         let lot: Lot = tx
@@ -622,7 +622,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn reserve(&self, input: ReserveLot) -> Result<Uuid> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get current lot
         let lot: Lot = tx
@@ -700,7 +700,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get reservation
         let (lot_id, quantity, reference_type, reference_id): (String, String, String, String) = tx
@@ -756,7 +756,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<LotTransaction> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get reservation
         let (lot_id, quantity, reference_type, reference_id): (String, String, String, String) = tx
@@ -826,7 +826,7 @@ impl LotRepository for SqliteLotRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         // The source location must exist and cover the transfer — a blind
@@ -917,7 +917,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn split(&self, input: SplitLot) -> Result<Lot> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get original lot
         let original: Lot = tx
@@ -1020,7 +1020,7 @@ impl LotRepository for SqliteLotRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         // Get all source lots
@@ -1140,7 +1140,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         // Get lot
@@ -1186,7 +1186,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn release_quarantine(&self, id: Uuid) -> Result<Lot> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         // Get current quarantined quantity

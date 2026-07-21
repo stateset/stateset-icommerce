@@ -8,7 +8,7 @@ use std::time::Instant;
 use axum::{
     Router,
     body::Body,
-    extract::State,
+    extract::{MatchedPath, State},
     http::{
         HeaderName, HeaderValue, Method, Request, StatusCode,
         header::{AUTHORIZATION, CONTENT_TYPE},
@@ -25,6 +25,50 @@ use tower_http::{
 };
 
 use crate::error::HttpError;
+
+/// Process-wide RED metrics registry for the HTTP surface.
+///
+/// Populated by [`track_http_metrics`] and rendered by the `/metrics`
+/// exposition endpoint. A single registry per process mirrors the standard
+/// Prometheus default-registry model.
+static HTTP_METRICS: std::sync::LazyLock<stateset_observability::Metrics> =
+    std::sync::LazyLock::new(|| {
+        stateset_observability::init_metrics(stateset_observability::MetricsConfig::default())
+    });
+
+/// Access the process-wide HTTP RED metrics registry.
+pub(crate) fn http_metrics() -> &'static stateset_observability::Metrics {
+    &HTTP_METRICS
+}
+
+/// Route label used when a request does not match any registered route.
+///
+/// Keeps label cardinality bounded: raw (potentially attacker-controlled)
+/// paths are never used as metric labels.
+const UNMATCHED_ROUTE_LABEL: &str = "unmatched";
+
+/// RED-metrics middleware: records request count, 4xx/5xx error counts, and a
+/// latency histogram per `(method, route-pattern)`.
+///
+/// The route label comes from axum's [`MatchedPath`] (e.g.
+/// `/api/v1/orders/{id}`), never the raw request path, so path parameters do
+/// not explode label cardinality.
+pub(crate) async fn track_http_metrics(request: Request<Body>, next: Next) -> Response {
+    let method = request.method().as_str().to_owned();
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or_else(|| UNMATCHED_ROUTE_LABEL.to_owned(), |path| path.as_str().to_owned());
+    let start = Instant::now();
+    let response = next.run(request).await;
+    http_metrics().record_http_request(
+        &method,
+        &route,
+        response.status().as_u16(),
+        start.elapsed(),
+    );
+    response
+}
 
 /// Header name for request IDs.
 pub(crate) static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -1620,5 +1664,117 @@ mod tests {
             response.headers().get("etag").is_none(),
             "streaming responses should not have ETags"
         );
+    }
+
+    // ── RED metrics middleware ─────────────────────────────────────────
+
+    fn red_test_router(route: &str) -> Router {
+        Router::new()
+            .route(route, get(|| async { (StatusCode::OK, "ok") }))
+            .layer(from_fn(track_http_metrics))
+    }
+
+    async fn red_test_request(router: Router, path: &str) -> StatusCode {
+        router
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn red_middleware_records_success_error_classes() {
+        let router = Router::new()
+            .route("/red-classes/ok/{id}", get(|| async { (StatusCode::OK, "ok") }))
+            .route(
+                "/red-classes/missing/{id}",
+                get(|| async { (StatusCode::NOT_FOUND, "missing") }),
+            )
+            .route(
+                "/red-classes/broken/{id}",
+                get(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
+            )
+            .layer(from_fn(track_http_metrics));
+
+        assert_eq!(red_test_request(router.clone(), "/red-classes/ok/1").await, StatusCode::OK);
+        assert_eq!(
+            red_test_request(router.clone(), "/red-classes/missing/2").await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            red_test_request(router, "/red-classes/broken/3").await,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+
+        let snap = http_metrics().snapshot();
+
+        let ok = snap
+            .http_by_route
+            .get(&("GET".to_owned(), "/red-classes/ok/{id}".to_owned()))
+            .expect("200 route recorded");
+        assert_eq!(ok.requests, 1);
+        assert_eq!(ok.errors_4xx, 0);
+        assert_eq!(ok.errors_5xx, 0);
+        let (last_bound, last_count) = ok.latency_buckets[ok.latency_buckets.len() - 1];
+        assert!(last_bound.is_infinite());
+        assert_eq!(last_count, 1);
+
+        let missing = snap
+            .http_by_route
+            .get(&("GET".to_owned(), "/red-classes/missing/{id}".to_owned()))
+            .expect("404 route recorded");
+        assert_eq!(missing.requests, 1);
+        assert_eq!(missing.errors_4xx, 1);
+        assert_eq!(missing.errors_5xx, 0);
+
+        let broken = snap
+            .http_by_route
+            .get(&("GET".to_owned(), "/red-classes/broken/{id}".to_owned()))
+            .expect("500 route recorded");
+        assert_eq!(broken.requests, 1);
+        assert_eq!(broken.errors_4xx, 0);
+        assert_eq!(broken.errors_5xx, 1);
+    }
+
+    #[tokio::test]
+    async fn red_middleware_uses_matched_path_not_raw_path() {
+        let router = red_test_router("/red-cardinality/{id}");
+        for id in ["1", "2", "abc-def"] {
+            let status = red_test_request(router.clone(), &format!("/red-cardinality/{id}")).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        let snap = http_metrics().snapshot();
+        let pattern = snap
+            .http_by_route
+            .get(&("GET".to_owned(), "/red-cardinality/{id}".to_owned()))
+            .expect("route pattern key present");
+        assert_eq!(pattern.requests, 3, "all raw paths collapse onto the route pattern");
+        for raw in ["/red-cardinality/1", "/red-cardinality/2", "/red-cardinality/abc-def"] {
+            assert!(
+                !snap.http_by_route.contains_key(&("GET".to_owned(), raw.to_owned())),
+                "raw path {raw} must not appear as a metric label"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn red_middleware_labels_unmatched_routes_safely() {
+        let router = red_test_router("/red-unmatched-known");
+        let status =
+            red_test_request(router, "/red-unmatched-nonexistent/secret-cardinality-bomb").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let snap = http_metrics().snapshot();
+        let unmatched = snap
+            .http_by_route
+            .get(&("GET".to_owned(), UNMATCHED_ROUTE_LABEL.to_owned()))
+            .expect("unmatched requests recorded under the fixed label");
+        assert!(unmatched.requests >= 1);
+        assert!(unmatched.errors_4xx >= 1);
+        assert!(!snap.http_by_route.contains_key(&(
+            "GET".to_owned(),
+            "/red-unmatched-nonexistent/secret-cardinality-bomb".to_owned()
+        )));
     }
 }

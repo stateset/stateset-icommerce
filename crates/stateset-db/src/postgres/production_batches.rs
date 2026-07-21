@@ -141,7 +141,7 @@ impl PgProductionBatchRepository {
 
     /// List production batches (async)
     pub async fn list_async(&self, filter: ProductionBatchFilter) -> Result<Vec<ProductionBatch>> {
-        let limit = i64::from(filter.limit.unwrap_or(100));
+        let limit = super::effective_limit(filter.limit);
         let offset = i64::from(filter.offset.unwrap_or(0));
 
         let mut query = String::from("SELECT * FROM production_batches WHERE 1=1");

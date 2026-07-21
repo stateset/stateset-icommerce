@@ -166,7 +166,7 @@ export default function CloseClient() {
           </h2>
           {periods.length === 0 ? (
             <p className="py-4 text-sm text-ds-muted-foreground">
-              No accounting periods available from the engine yet.
+              No accounting periods yet — create one with generalLedger.createPeriod().
             </p>
           ) : (
             <div className="overflow-x-auto">

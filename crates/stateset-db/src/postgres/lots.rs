@@ -419,7 +419,7 @@ impl PgLotRepository {
 
         builder.push(" ORDER BY created_at DESC");
 
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
         builder.push(" LIMIT ").push_bind(limit);
         builder.push(" OFFSET ").push_bind(offset);

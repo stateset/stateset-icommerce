@@ -1805,6 +1805,16 @@ export interface GlPeriodOutput {
   status: string
   closedBy?: string
 }
+export interface GlPeriodFilterInput {
+  /** Filter by fiscal year */
+  fiscalYear?: number
+  /** Filter by status: one of `future`, `open`, `closed`, `locked` */
+  status?: string
+  /** Maximum results */
+  limit?: number
+  /** Offset for pagination */
+  offset?: number
+}
 export interface CloseMonthOptionsInput {
   /** Compute per-step counts/amounts without writing anything */
   dryRun?: boolean
@@ -2861,6 +2871,67 @@ export interface CycleCountOutput {
   updatedAt: string
   completedAt?: string
 }
+export interface EdiDocumentOutput {
+  id: string
+  /** EDI document type (e.g. `850`, `855`, `856`, `810`) */
+  documentType: string
+  /** One of `inbound`, `outbound` */
+  direction: string
+  /** One of `pending`, `sent`, `acknowledged`, `processed`, `error` */
+  status: string
+  /** Trading partner name / id */
+  partner?: string
+  /** Related business reference (PO number, order number, etc.) */
+  reference?: string
+  /** Raw EDI payload */
+  payload?: string
+  /** Error detail when `status = error` */
+  errorMessage?: string
+  /** RFC 3339 timestamp */
+  createdAt: string
+  /** RFC 3339 timestamp */
+  updatedAt: string
+}
+export interface CreateEdiDocumentInput {
+  /** EDI document type (e.g. `850`, `855`, `856`, `810`) */
+  documentType: string
+  /** One of `inbound`, `outbound` (defaults to `inbound`) */
+  direction?: string
+  /** Trading partner name / id */
+  partner?: string
+  /** Related business reference (PO number, order number, etc.) */
+  reference?: string
+  /** Raw EDI payload */
+  payload?: string
+}
+export interface EdiDocumentFilterInput {
+  /** Filter by document type (e.g. `850`) */
+  documentType?: string
+  /** Filter by direction: `inbound` or `outbound` */
+  direction?: string
+  /** Filter by status: `pending`, `sent`, `acknowledged`, `processed`, `error` */
+  status?: string
+  /** Filter by trading partner */
+  partner?: string
+  /** Maximum results */
+  limit?: number
+  /** Offset for pagination */
+  offset?: number
+}
+export interface EdiCountOutput {
+  /** The group key (status or document type) */
+  key: string
+  /** Number of documents in the group */
+  count: number
+}
+export interface EdiSummaryOutput {
+  /** Total document count */
+  total: number
+  /** Counts grouped by status */
+  byStatus: Array<EdiCountOutput>
+  /** Counts grouped by document type */
+  byType: Array<EdiCountOutput>
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -2952,6 +3023,8 @@ export declare class Commerce {
   get revenueRecognition(): RevenueRecognition
   /** Get the cycle counts API */
   get cycleCounts(): CycleCounts
+  /** Get the EDI documents API (trading-partner document tracking) */
+  get ediDocuments(): EdiDocuments
   /** Get the events API (pub/sub and webhook management) */
   get events(): Events
   /**
@@ -3654,6 +3727,8 @@ export declare class GeneralLedger {
   createPeriod(input: CreateGlPeriodInput): Promise<GlPeriodOutput>
   /** Open a period (transition from future to open). */
   openPeriod(id: string): Promise<GlPeriodOutput>
+  /** List accounting periods with optional filtering. */
+  listPeriods(filter?: GlPeriodFilterInput | undefined | null): Promise<Array<GlPeriodOutput>>
   /**
    * Close the month: post scheduled depreciation, recognize revenue
    * through period end, revalue foreign-currency balances, then run the
@@ -3856,4 +3931,21 @@ export declare class CycleCounts {
   complete(id: string): Promise<CycleCountOutput>
   /** Cancel a draft or in-progress cycle count. No adjustments are applied. */
   cancel(id: string): Promise<CycleCountOutput>
+}
+export declare class EdiDocuments {
+  /** Create / ingest an EDI document. */
+  create(input: CreateEdiDocumentInput): Promise<EdiDocumentOutput>
+  /** Get an EDI document by ID. */
+  get(id: string): Promise<EdiDocumentOutput | null>
+  /** List EDI documents with optional filtering. */
+  list(filter?: EdiDocumentFilterInput | undefined | null): Promise<Array<EdiDocumentOutput>>
+  /**
+   * Update an EDI document's status.
+   *
+   * `status` is one of `pending`, `sent`, `acknowledged`, `processed`, `error`;
+   * `error_message` records failure detail when the status is `error`.
+   */
+  setStatus(id: string, status: string, errorMessage?: string | undefined | null): Promise<EdiDocumentOutput>
+  /** Aggregate summary across all EDI documents (counts by status and type). */
+  summary(): Promise<EdiSummaryOutput>
 }

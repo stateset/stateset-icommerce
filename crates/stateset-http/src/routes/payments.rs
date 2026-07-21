@@ -193,6 +193,7 @@ pub(crate) async fn list_payments(
         (status = 201, description = "Payment created", body = PaymentResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
         (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
+        (status = 428, description = "Idempotency-Key header required on this endpoint (configurable)", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]
@@ -278,6 +279,7 @@ pub(crate) async fn complete_payment(
         (status = 404, description = "Payment not found", body = ErrorBody),
         (status = 400, description = "Invalid request", body = ErrorBody),
         (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
+        (status = 428, description = "Idempotency-Key header required on this endpoint (configurable)", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]

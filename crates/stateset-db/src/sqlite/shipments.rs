@@ -153,7 +153,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
         {
             let mut conn =
                 self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let tx = conn.transaction().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = super::begin_immediate(&mut conn)
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             tx.execute(
                 "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
@@ -758,7 +759,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
         }
 
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -898,7 +899,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
         }
 
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut updated_ids = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -1041,7 +1042,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
         }
 
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
         let placeholders = build_in_clause(ids.len());

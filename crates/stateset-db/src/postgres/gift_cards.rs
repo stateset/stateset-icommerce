@@ -261,10 +261,8 @@ impl PgGiftCardRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if filter.limit.is_some() {
-            sql.push_str(&format!(" LIMIT ${param_idx}"));
-            param_idx += 1;
-        }
+        sql.push_str(&format!(" LIMIT ${param_idx}"));
+        param_idx += 1;
         if filter.offset.is_some() {
             sql.push_str(&format!(" OFFSET ${param_idx}"));
             let _ = param_idx;
@@ -278,9 +276,7 @@ impl PgGiftCardRepository {
         if let Some(ref code) = filter.code {
             query = query.bind(code.clone());
         }
-        if let Some(limit) = filter.limit {
-            query = query.bind(limit as i64);
-        }
+        query = query.bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             query = query.bind(offset as i64);
         }

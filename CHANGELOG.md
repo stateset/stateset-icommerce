@@ -6,6 +6,33 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-20
+
+### Added
+- **Durable idempotency**: `Idempotency-Key` replays now survive
+  restarts and work across replicas (DB-backed store on both backends,
+  first-write-wins, TTL sweep); keys are required by default on
+  `POST /orders`, `/payments`, `/payments/{id}/refund`, `/ap/payments`
+  (428 when missing; builder/env opt-out); 422 on fingerprint conflicts
+  — all documented in OpenAPI.
+- **Per-route RED metrics**: request/error counts and a real
+  fixed-bucket Prometheus latency histogram per (method, route) via
+  middleware on `MatchedPath`; `/metrics` exposition extended
+  (`stateset_http_requests_total`, `_errors_total{class}`,
+  `_duration_seconds` histogram).
+- **EDI operator surface**: `commerce.ediDocuments` in the Node binding
+  and a read-only `/operations/edi` admin page (850/855/856/810
+  summaries, status tracking); `generalLedger.listPeriods` binding
+  added and wired into the admin close page.
+
+### Changed
+- **Transaction discipline**: all 99 SQLite write-transaction sites now
+  use `BEGIN IMMEDIATE` (24 files), eliminating deferred-upgrade
+  deadlock/lost-update risk.
+- **Query hygiene**: N+1 item loading batched across ~25 list paths on
+  both backends; server-side LIMIT policy (default 500, max 1000) on
+  every list query — unbounded scans are no longer possible.
+
 ## [1.13.0] - 2026-07-20
 
 ### Added

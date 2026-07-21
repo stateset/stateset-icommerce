@@ -424,7 +424,7 @@ impl PgPaymentRepository {
 
     /// List payments (async)
     pub async fn list_async(&self, filter: PaymentFilter) -> Result<Vec<Payment>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
 
         let mut query = String::from(

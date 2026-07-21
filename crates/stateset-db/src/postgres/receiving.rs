@@ -395,9 +395,7 @@ impl PgReceivingRepository {
 
         builder.push(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -678,9 +676,7 @@ impl PgReceivingRepository {
 
         builder.push(" ORDER BY created_at");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }

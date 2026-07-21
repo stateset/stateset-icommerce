@@ -98,6 +98,29 @@ impl PgVendorReturnRepository {
         rows.into_iter().map(Self::row_to_item).collect()
     }
 
+    async fn load_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<VendorReturnItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<VendorReturnItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, VendorReturnItemRow>(
+            "SELECT * FROM vendor_return_items WHERE vendor_return_id = ANY($1) ORDER BY sku",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.vendor_return_id;
+            map.entry(parent).or_default().push(Self::row_to_item(row)?);
+        }
+        Ok(map)
+    }
+
     async fn load_full_async(&self, id: Uuid) -> Result<Option<VendorReturn>> {
         let row =
             sqlx::query_as::<_, VendorReturnRow>("SELECT * FROM vendor_returns WHERE id = $1")
@@ -186,7 +209,7 @@ impl PgVendorReturnRepository {
 
     /// List vendor returns (async)
     pub async fn list_async(&self, filter: VendorReturnFilter) -> Result<Vec<VendorReturn>> {
-        let limit = i64::from(filter.limit.unwrap_or(100));
+        let limit = super::effective_limit(filter.limit);
         let offset = i64::from(filter.offset.unwrap_or(0));
 
         let mut query = String::from("SELECT * FROM vendor_returns WHERE 1=1");
@@ -214,11 +237,15 @@ impl PgVendorReturnRepository {
         }
         let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
 
-        let mut out = Vec::with_capacity(rows.len());
+        let mut heads = Vec::with_capacity(rows.len());
         for row in rows {
-            let id = row.id;
-            let mut head = Self::row_to_head(row)?;
-            head.items = self.load_items_async(id).await?;
+            heads.push(Self::row_to_head(row)?);
+        }
+        let ids: Vec<Uuid> = heads.iter().map(|h| Uuid::from(h.id)).collect();
+        let mut items_by_id = self.load_items_batch_async(&ids).await?;
+        let mut out = Vec::with_capacity(heads.len());
+        for mut head in heads {
+            head.items = items_by_id.remove(&Uuid::from(head.id)).unwrap_or_default();
             out.push(head);
         }
         Ok(out)

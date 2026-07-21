@@ -240,6 +240,35 @@ impl SqliteInvoiceRepository {
         Ok(items)
     }
 
+    fn get_invoice_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[InvoiceId],
+    ) -> Result<std::collections::HashMap<String, Vec<InvoiceItem>>> {
+        let mut map: std::collections::HashMap<String, Vec<InvoiceItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        let id_strs: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        for chunk in id_strs.chunks(500) {
+            let placeholders = build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT * FROM invoice_items WHERE invoice_id IN ({placeholders}) ORDER BY sort_order"
+            );
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let parent: String = row.get("invoice_id")?;
+                    Ok((parent, Self::row_to_invoice_item(row)?))
+                })
+                .map_err(map_db_error)?;
+            for row in rows {
+                let (parent, item) = row.map_err(map_db_error)?;
+                map.entry(parent).or_default().push(item);
+            }
+        }
+        Ok(map)
+    }
+
     fn get_invoice_with_conn(
         conn: &rusqlite::Connection,
         id: InvoiceId,
@@ -313,7 +342,7 @@ impl SqliteInvoiceRepository {
 impl InvoiceRepository for SqliteInvoiceRepository {
     fn create(&self, input: CreateInvoice) -> Result<Invoice> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let id = InvoiceId::new();
         let now = chrono::Utc::now();
         let invoice_number = generate_invoice_number();
@@ -438,7 +467,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
     fn update(&self, id: InvoiceId, input: UpdateInvoice) -> Result<Invoice> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = chrono::Utc::now();
         let invoice = tx
             .query_row(
@@ -571,9 +600,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             page.truncate(limit as usize);
         }
 
-        // Load items only for the rows actually returned.
+        // Load items only for the rows actually returned, in one batched query.
+        let ids: Vec<InvoiceId> = page.iter().map(|i| i.id).collect();
+        let mut items_by_id = Self::get_invoice_items_batch(&conn, &ids)?;
         for invoice in &mut page {
-            invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
+            invoice.items = items_by_id.remove(&invoice.id.to_string()).unwrap_or_default();
         }
         Ok(page)
     }
@@ -588,7 +619,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
     fn delete(&self, id: InvoiceId) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let status: String = tx
             .query_row("SELECT status FROM invoices WHERE id = ?", [id.to_string()], |row| {
@@ -829,7 +860,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
     fn recalculate(&self, id: InvoiceId) -> Result<Invoice> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         Self::recalculate_with_conn(&tx, id)?;
         tx.commit().map_err(map_db_error)?;
@@ -889,7 +920,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -1085,7 +1116,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -1143,10 +1174,12 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         tx.commit().map_err(map_db_error)?;
 
-        // Load items for each invoice
+        // Load items for all invoices in one batched query
         let conn = self.conn()?;
+        let ids: Vec<InvoiceId> = results.iter().map(|i| i.id).collect();
+        let mut items_by_id = Self::get_invoice_items_batch(&conn, &ids)?;
         for invoice in &mut results {
-            invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
+            invoice.items = items_by_id.remove(&invoice.id.to_string()).unwrap_or_default();
         }
 
         Ok(results)
@@ -1173,7 +1206,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Check that all invoices are in Draft status before deleting
         let placeholders = build_in_clause(ids.len());
@@ -1235,10 +1268,12 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
-        // Load items for each invoice
+        // Load items for all invoices in one batched query
+        let ids: Vec<InvoiceId> = invoices.iter().map(|i| i.id).collect();
+        let mut items_by_id = Self::get_invoice_items_batch(&conn, &ids)?;
         let mut result = vec![];
         for mut invoice in invoices {
-            invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
+            invoice.items = items_by_id.remove(&invoice.id.to_string()).unwrap_or_default();
             result.push(invoice);
         }
 

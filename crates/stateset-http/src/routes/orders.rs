@@ -44,6 +44,7 @@ pub fn router() -> Router<AppState> {
         (status = 201, description = "Order created", body = OrderResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
         (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
+        (status = 428, description = "Idempotency-Key header required on this endpoint (configurable)", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, req))]

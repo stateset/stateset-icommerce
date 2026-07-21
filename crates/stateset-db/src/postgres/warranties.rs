@@ -556,7 +556,7 @@ impl PgWarrantyRepository {
 
     /// List warranties (async)
     pub async fn list_async(&self, filter: WarrantyFilter) -> Result<Vec<Warranty>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
 
         let mut query = String::from(
@@ -917,7 +917,7 @@ impl PgWarrantyRepository {
         &self,
         filter: WarrantyClaimFilter,
     ) -> Result<Vec<WarrantyClaim>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
 
         let mut query = String::from(

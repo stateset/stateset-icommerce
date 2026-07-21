@@ -80,6 +80,32 @@ impl SqliteWishlistRepository {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(items)
     }
+
+    fn load_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[String],
+    ) -> rusqlite::Result<std::collections::HashMap<String, Vec<WishlistItem>>> {
+        let mut map: std::collections::HashMap<String, Vec<WishlistItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(500) {
+            let placeholders = super::build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT * FROM wishlist_items WHERE wishlist_id IN ({placeholders}) ORDER BY added_at"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+            let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                let parent: String = row.get("wishlist_id")?;
+                Ok((parent, Self::row_to_item(row)?))
+            })?;
+            for row in rows {
+                let (parent, item) = row?;
+                map.entry(parent).or_default().push(item);
+            }
+        }
+        Ok(map)
+    }
 }
 
 impl WishlistRepository for SqliteWishlistRepository {
@@ -185,11 +211,12 @@ impl WishlistRepository for SqliteWishlistRepository {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(map_db_error)?;
 
-        // Load items for each wishlist
+        // Load items for all wishlists in one batched query
+        let ids: Vec<String> = wishlists.iter().map(|w| w.id.to_string()).collect();
+        let mut items_by_id = Self::load_items_batch(&conn, &ids).map_err(map_db_error)?;
         let mut result = Vec::with_capacity(wishlists.len());
         for mut wl in wishlists {
-            let id_str = wl.id.to_string();
-            wl.items = Self::load_items(&conn, &id_str).map_err(map_db_error)?;
+            wl.items = items_by_id.remove(&wl.id.to_string()).unwrap_or_default();
             result.push(wl);
         }
         Ok(result)

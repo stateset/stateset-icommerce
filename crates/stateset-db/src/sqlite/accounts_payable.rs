@@ -698,7 +698,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         // Immediate (write-locked) transaction so concurrent payments against the
         // same bill serialize: each re-reads amount_due under the lock, so a
         // second payment cannot over-pay a supplier past the bill balance. Was a
-        // deferred `conn.transaction()` with no BUSY retry.
+        // deferred `super::begin_immediate(&mut conn)` with no BUSY retry.
         with_immediate_transaction(&self.pool, |tx| {
             let to_rusqlite =
                 |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));

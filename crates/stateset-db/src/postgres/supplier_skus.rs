@@ -135,7 +135,7 @@ impl PgSupplierSkuRepository {
 
     /// List supplier SKUs (async)
     pub async fn list_async(&self, filter: SupplierSkuFilter) -> Result<Vec<SupplierSku>> {
-        let limit = i64::from(filter.limit.unwrap_or(100));
+        let limit = super::effective_limit(filter.limit);
         let offset = i64::from(filter.offset.unwrap_or(0));
 
         let mut query = String::from("SELECT * FROM supplier_skus WHERE 1=1");

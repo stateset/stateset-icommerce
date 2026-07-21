@@ -3432,6 +3432,9 @@ async fn e2e_tenant_isolation_orders() {
                 .header("authorization", format!("Bearer {tenant_x_token}"))
                 .header("content-type", "application/json")
                 .header("x-tenant-id", "tenant-x")
+                // ServerBuilder-built routers require idempotency keys on
+                // money-moving creates by default.
+                .header("idempotency-key", "tenant-x-order-1")
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )

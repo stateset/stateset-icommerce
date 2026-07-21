@@ -201,80 +201,107 @@ impl SqliteCartRepository {
             .map_err(map_db_error)?;
 
         let items = stmt
-            .query_map([cart_id.to_string()], |row| {
-                let metadata: Option<String> = row.get("metadata")?;
-                Ok(CartItem {
-                    id: parse_uuid_row(&row.get::<_, String>("id")?, "cart_item", "id")?,
-                    cart_id: CartId::from(parse_uuid_row(
-                        &row.get::<_, String>("cart_id")?,
-                        "cart_item",
-                        "cart_id",
-                    )?),
-                    product_id: parse_uuid_opt_row(
-                        row.get::<_, Option<String>>("product_id")?,
-                        "cart_item",
-                        "product_id",
-                    )?
-                    .map(ProductId::from),
-                    variant_id: parse_uuid_opt_row(
-                        row.get::<_, Option<String>>("variant_id")?,
-                        "cart_item",
-                        "variant_id",
-                    )?,
-                    sku: row.get("sku")?,
-                    name: row.get("name")?,
-                    description: row.get("description")?,
-                    image_url: row.get("image_url")?,
-                    quantity: row.get("quantity")?,
-                    unit_price: parse_decimal_row(
-                        &row.get::<_, String>("unit_price")?,
-                        "cart_item",
-                        "unit_price",
-                    )?,
-                    original_price: parse_decimal_opt_row(
-                        row.get::<_, Option<String>>("original_price")?,
-                        "cart_item",
-                        "original_price",
-                    )?,
-                    discount_amount: parse_decimal_row(
-                        &row.get::<_, String>("discount_amount")?,
-                        "cart_item",
-                        "discount_amount",
-                    )?,
-                    tax_amount: parse_decimal_row(
-                        &row.get::<_, String>("tax_amount")?,
-                        "cart_item",
-                        "tax_amount",
-                    )?,
-                    total: parse_decimal_row(
-                        &row.get::<_, String>("total")?,
-                        "cart_item",
-                        "total",
-                    )?,
-                    weight: parse_decimal_opt_row(
-                        row.get::<_, Option<String>>("weight")?,
-                        "cart_item",
-                        "weight",
-                    )?,
-                    requires_shipping: row.get::<_, i32>("requires_shipping")? == 1,
-                    metadata: parse_json_opt_row(metadata, "cart_item", "metadata")?,
-                    created_at: parse_datetime_row(
-                        &row.get::<_, String>("created_at")?,
-                        "cart_item",
-                        "created_at",
-                    )?,
-                    updated_at: parse_datetime_row(
-                        &row.get::<_, String>("updated_at")?,
-                        "cart_item",
-                        "updated_at",
-                    )?,
-                })
-            })
+            .query_map([cart_id.to_string()], Self::row_to_cart_item)
             .map_err(map_db_error)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
         Ok(items)
+    }
+
+    fn row_to_cart_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<CartItem> {
+        let metadata: Option<String> = row.get("metadata")?;
+        Ok(CartItem {
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "cart_item", "id")?,
+            cart_id: CartId::from(parse_uuid_row(
+                &row.get::<_, String>("cart_id")?,
+                "cart_item",
+                "cart_id",
+            )?),
+            product_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("product_id")?,
+                "cart_item",
+                "product_id",
+            )?
+            .map(ProductId::from),
+            variant_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("variant_id")?,
+                "cart_item",
+                "variant_id",
+            )?,
+            sku: row.get("sku")?,
+            name: row.get("name")?,
+            description: row.get("description")?,
+            image_url: row.get("image_url")?,
+            quantity: row.get("quantity")?,
+            unit_price: parse_decimal_row(
+                &row.get::<_, String>("unit_price")?,
+                "cart_item",
+                "unit_price",
+            )?,
+            original_price: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("original_price")?,
+                "cart_item",
+                "original_price",
+            )?,
+            discount_amount: parse_decimal_row(
+                &row.get::<_, String>("discount_amount")?,
+                "cart_item",
+                "discount_amount",
+            )?,
+            tax_amount: parse_decimal_row(
+                &row.get::<_, String>("tax_amount")?,
+                "cart_item",
+                "tax_amount",
+            )?,
+            total: parse_decimal_row(&row.get::<_, String>("total")?, "cart_item", "total")?,
+            weight: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("weight")?,
+                "cart_item",
+                "weight",
+            )?,
+            requires_shipping: row.get::<_, i32>("requires_shipping")? == 1,
+            metadata: parse_json_opt_row(metadata, "cart_item", "metadata")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "cart_item",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "cart_item",
+                "updated_at",
+            )?,
+        })
+    }
+
+    fn load_cart_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[CartId],
+    ) -> Result<std::collections::HashMap<CartId, Vec<CartItem>>> {
+        let mut map: std::collections::HashMap<CartId, Vec<CartItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(500) {
+            let placeholders = build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT id, cart_id, product_id, variant_id, sku, name, description, image_url,
+                        quantity, unit_price, original_price, discount_amount, tax_amount, total,
+                        weight, requires_shipping, metadata, created_at, updated_at
+                 FROM cart_items WHERE cart_id IN ({placeholders})"
+            );
+            let id_strs: Vec<String> = chunk.iter().map(ToString::to_string).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                id_strs.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(param_refs.as_slice(), Self::row_to_cart_item)
+                .map_err(map_db_error)?;
+            for row in rows {
+                let item = row.map_err(map_db_error)?;
+                map.entry(item.cart_id).or_default().push(item);
+            }
+        }
+        Ok(map)
     }
 
     fn load_cart_with_conn(conn: &rusqlite::Connection, id: CartId) -> Result<Option<Cart>> {
@@ -371,7 +398,7 @@ impl CartRepository for SqliteCartRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let id = CartId::new();
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
@@ -627,9 +654,11 @@ impl CartRepository for SqliteCartRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
+        let ids: Vec<CartId> = carts.iter().map(|c| c.id).collect();
+        let mut items_by_id = Self::load_cart_items_batch(&conn, &ids)?;
         let mut result = vec![];
         for mut cart in carts {
-            cart.items = Self::load_cart_items_with_conn(&conn, cart.id)?;
+            cart.items = items_by_id.remove(&cart.id).unwrap_or_default();
             result.push(cart);
         }
 
@@ -642,7 +671,7 @@ impl CartRepository for SqliteCartRepository {
 
     fn delete(&self, id: CartId) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         tx.execute("DELETE FROM cart_items WHERE cart_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
         tx.execute("DELETE FROM carts WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
@@ -666,7 +695,7 @@ impl CartRepository for SqliteCartRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let result = self.add_item_internal(&tx, cart_id, item)?;
         self.update_cart_totals(&tx, cart_id)?;
         tx.commit().map_err(map_db_error)?;
@@ -675,7 +704,7 @@ impl CartRepository for SqliteCartRepository {
 
     fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         // Get cart_id for this item
@@ -820,7 +849,7 @@ impl CartRepository for SqliteCartRepository {
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get cart_id before deleting
         let cart_id: String = tx
@@ -848,7 +877,7 @@ impl CartRepository for SqliteCartRepository {
 
     fn clear_items(&self, cart_id: CartId) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         tx.execute("DELETE FROM cart_items WHERE cart_id = ?", [cart_id.to_string()])
             .map_err(map_db_error)?;
         self.update_cart_totals(&tx, cart_id)?;
@@ -1392,7 +1421,7 @@ impl CartRepository for SqliteCartRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -1523,7 +1552,7 @@ impl CartRepository for SqliteCartRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -1606,10 +1635,12 @@ impl CartRepository for SqliteCartRepository {
 
         tx.commit().map_err(map_db_error)?;
 
-        // Load items for each cart
+        // Load items for all carts in one batched query
         let conn = self.conn()?;
+        let ids: Vec<CartId> = results.iter().map(|c| c.id).collect();
+        let mut items_by_id = Self::load_cart_items_batch(&conn, &ids)?;
         for cart in &mut results {
-            cart.items = Self::load_cart_items_with_conn(&conn, cart.id)?;
+            cart.items = items_by_id.remove(&cart.id).unwrap_or_default();
         }
 
         Ok(results)
@@ -1636,7 +1667,7 @@ impl CartRepository for SqliteCartRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let placeholders = build_in_clause(ids.len());
@@ -1676,10 +1707,12 @@ impl CartRepository for SqliteCartRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
-        // Load items for each cart
+        // Load items for all carts in one batched query
+        let cart_ids: Vec<CartId> = carts.iter().map(|c| c.id).collect();
+        let mut items_by_id = Self::load_cart_items_batch(&conn, &cart_ids)?;
         let mut result = vec![];
         for mut cart in carts {
-            cart.items = Self::load_cart_items_with_conn(&conn, cart.id)?;
+            cart.items = items_by_id.remove(&cart.id).unwrap_or_default();
             result.push(cart);
         }
 

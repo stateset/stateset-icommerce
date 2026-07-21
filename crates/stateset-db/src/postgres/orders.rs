@@ -638,6 +638,28 @@ impl PgOrderRepository {
         Ok(rows.into_iter().map(Self::row_to_item).collect())
     }
 
+    async fn get_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<OrderItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<OrderItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows =
+            sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = ANY($1)")
+                .bind(ids.to_vec())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.order_id;
+            map.entry(parent).or_default().push(Self::row_to_item(row));
+        }
+        Ok(map)
+    }
+
     /// Update an order (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
         if let Some(address) = &input.shipping_address {
@@ -876,9 +898,7 @@ impl PgOrderRepository {
 
         builder.push(" ORDER BY order_date DESC");
 
-        if let Some(limit) = limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(limit));
         if let Some(offset) = offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -889,9 +909,11 @@ impl PgOrderRepository {
             .await
             .map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.get_items_batch_async(&ids).await?;
         let mut orders = Vec::new();
         for row in rows {
-            let items = self.get_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             orders.push(Self::row_to_order(row, items)?);
         }
 
@@ -1418,9 +1440,11 @@ impl PgOrderRepository {
             .await
             .map_err(map_db_error)?;
 
+        let row_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.get_items_batch_async(&row_ids).await?;
         let mut orders = Vec::with_capacity(rows.len());
         for row in rows {
-            let items = self.get_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             orders.push(Self::row_to_order(row, items)?);
         }
 

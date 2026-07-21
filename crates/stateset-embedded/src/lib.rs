@@ -316,6 +316,8 @@ pub use async_commerce::{
 
 // Re-export Database trait for advanced users who want to bring their own database
 pub use stateset_db::Database;
+// Re-export the durable HTTP idempotency store types for the HTTP layer
+pub use stateset_db::{HttpIdempotencyRecord, HttpIdempotencyRepository};
 // Re-export observability primitives used by Commerce diagnostics/metrics APIs
 pub use stateset_observability::{Metrics, MetricsConfig, MetricsSnapshot};
 

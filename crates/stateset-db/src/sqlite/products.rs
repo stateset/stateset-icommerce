@@ -112,7 +112,7 @@ impl SqliteProductRepository {
 impl ProductRepository for SqliteProductRepository {
     fn create(&self, input: CreateProduct) -> Result<Product> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let id = ProductId::new();
         let now = Utc::now();
         let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
@@ -785,7 +785,7 @@ impl ProductRepository for SqliteProductRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -923,7 +923,7 @@ impl ProductRepository for SqliteProductRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -1032,7 +1032,7 @@ impl ProductRepository for SqliteProductRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let placeholders = build_in_clause(ids.len());
 

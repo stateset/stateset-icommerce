@@ -25,6 +25,7 @@ mod fraud;
 mod fulfillment;
 mod general_ledger;
 mod gift_cards;
+mod http_idempotency;
 mod inbound_shipments;
 mod integration_field_mappings;
 mod integration_mappings;
@@ -103,6 +104,7 @@ pub use fraud::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
 pub use gift_cards::*;
+pub use http_idempotency::*;
 pub use inbound_shipments::*;
 pub use integration_field_mappings::*;
 pub use integration_mappings::*;
@@ -721,6 +723,12 @@ impl SqliteDatabase {
         SqlitePriceScheduleRepository::new(self.pool.clone())
     }
 
+    /// Get the durable HTTP idempotency repository
+    #[must_use]
+    pub fn http_idempotency(&self) -> SqliteHttpIdempotencyRepository {
+        SqliteHttpIdempotencyRepository::new(self.pool.clone())
+    }
+
     /// Get activity log repository
     #[must_use]
     pub fn activity_logs(&self) -> SqliteActivityLogRepository {
@@ -915,22 +923,37 @@ pub(crate) fn build_in_clause(count: usize) -> String {
     std::iter::repeat_n("?", count).collect::<Vec<_>>().join(", ")
 }
 
+/// Default page size applied when a list filter does not specify a limit.
+pub(crate) const DEFAULT_LIST_LIMIT: u32 = 500;
+
+/// Hard server-side ceiling on requested page sizes.
+pub(crate) const MAX_LIST_LIMIT: u32 = 1000;
+
+/// Clamp a requested page size to the server-side pagination policy:
+/// `None` becomes [`DEFAULT_LIST_LIMIT`], and anything above
+/// [`MAX_LIST_LIMIT`] is capped to it.
+pub(crate) const fn effective_limit(limit: Option<u32>) -> u32 {
+    match limit {
+        Some(limit) if limit > MAX_LIST_LIMIT => MAX_LIST_LIMIT,
+        Some(limit) => limit,
+        None => DEFAULT_LIST_LIMIT,
+    }
+}
+
 /// Append a `LIMIT`/`OFFSET` pagination clause to a query string.
 ///
-/// SQLite rejects a bare `OFFSET` that is not preceded by a `LIMIT` (unlike
-/// Postgres, which allows it), so when only an offset is supplied this emits
-/// `LIMIT -1 OFFSET <n>` — `LIMIT -1` means "unbounded" — instead of a bare
-/// `OFFSET` that would fail at runtime with a syntax error.
-pub(crate) fn append_limit_offset<L: std::fmt::Display, O: std::fmt::Display>(
+/// A `LIMIT` is always emitted: when the filter supplies no limit the
+/// server-side default ([`DEFAULT_LIST_LIMIT`]) applies, and requested limits
+/// are capped at [`MAX_LIST_LIMIT`] — unbounded scans are never produced.
+pub(crate) fn append_limit_offset<O: std::fmt::Display>(
     sql: &mut String,
-    limit: Option<L>,
+    limit: Option<u32>,
     offset: Option<O>,
 ) {
-    match (limit, offset) {
-        (Some(limit), Some(offset)) => sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}")),
-        (Some(limit), None) => sql.push_str(&format!(" LIMIT {limit}")),
-        (None, Some(offset)) => sql.push_str(&format!(" LIMIT -1 OFFSET {offset}")),
-        (None, None) => {}
+    let limit = effective_limit(limit);
+    match offset {
+        Some(offset) => sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}")),
+        None => sql.push_str(&format!(" LIMIT {limit}")),
     }
 }
 
@@ -1069,6 +1092,18 @@ where
 /// Threshold above which transactions are logged as slow (milliseconds).
 const SLOW_QUERY_THRESHOLD_MS: u128 = 500;
 
+/// Begin an IMMEDIATE-mode write transaction on an existing pooled connection.
+///
+/// Thin wrapper used by store write paths whose control flow does not fit the
+/// closure shape of [`with_immediate_transaction`]. IMMEDIATE mode acquires the
+/// write lock up front, avoiding `SQLITE_BUSY` lock-upgrade failures and lost
+/// updates that DEFERRED transactions risk under write concurrency.
+pub(crate) fn begin_immediate(
+    conn: &mut rusqlite::Connection,
+) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+    conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+}
+
 /// Execute a transactional database operation with IMMEDIATE transaction mode
 /// and retry logic. IMMEDIATE transactions acquire write locks immediately,
 /// avoiding deadlocks caused by lock upgrade failures in DEFERRED mode.
@@ -1187,10 +1222,13 @@ mod tests {
         };
         assert_eq!(case(Some(10), Some(5)), "SELECT * FROM t LIMIT 10 OFFSET 5");
         assert_eq!(case(Some(10), None), "SELECT * FROM t LIMIT 10");
-        assert_eq!(case(None, None), "SELECT * FROM t");
-        // The bug this guards against: a bare `OFFSET` is invalid on SQLite, so an
-        // offset with no limit must emit `LIMIT -1` (unbounded) first.
-        assert_eq!(case(None, Some(5)), "SELECT * FROM t LIMIT -1 OFFSET 5");
+        // No limit → server-side default applies (never an unbounded scan).
+        assert_eq!(case(None, None), "SELECT * FROM t LIMIT 500");
+        // A bare `OFFSET` is invalid on SQLite, so a LIMIT (the default) must
+        // always precede it.
+        assert_eq!(case(None, Some(5)), "SELECT * FROM t LIMIT 500 OFFSET 5");
+        // Requested limits are capped at the server-side maximum.
+        assert_eq!(case(Some(5000), None), "SELECT * FROM t LIMIT 1000");
     }
 
     fn retryable_error() -> rusqlite::Error {

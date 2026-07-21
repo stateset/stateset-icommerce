@@ -496,9 +496,7 @@ impl PgGeneralLedgerRepository {
 
         builder.push(" ORDER BY account_number");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -637,9 +635,7 @@ impl PgGeneralLedgerRepository {
         // a later start date.
         builder.push(" ORDER BY fiscal_year DESC, period_number DESC");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -905,9 +901,7 @@ impl PgGeneralLedgerRepository {
         // SQLite.
         builder.push(" ORDER BY je.entry_date DESC, je.entry_number DESC");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -1668,9 +1662,7 @@ impl PgGeneralLedgerRepository {
 
         builder.push(" ORDER BY je.entry_date DESC, l.line_number");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
 
         let rows = builder
             .build_query_as::<JournalEntryLineRow>()

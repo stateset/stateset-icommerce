@@ -379,9 +379,7 @@ impl PgBackorderRepository {
 
         sql.push_str(" ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at ASC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
+        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
 
         let mut q = sqlx::query_as::<_, BackorderRow>(&sql);
 

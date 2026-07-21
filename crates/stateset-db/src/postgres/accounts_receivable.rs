@@ -644,9 +644,7 @@ impl PgAccountsReceivableRepository {
         // duplicate rows (matches the SQLite backend's sort).
         builder.push(" ORDER BY total_outstanding DESC, i.customer_id ASC");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -753,9 +751,7 @@ impl PgAccountsReceivableRepository {
 
         builder.push(" ORDER BY activity_date DESC");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -951,9 +947,7 @@ impl PgAccountsReceivableRepository {
 
         builder.push(" ORDER BY write_off_date DESC");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -1118,9 +1112,7 @@ impl PgAccountsReceivableRepository {
 
         builder.push(" ORDER BY issue_date DESC");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }

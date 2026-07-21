@@ -748,11 +748,11 @@ impl PgX402PaymentIntentRepository {
             qb.push_bind(to);
         }
 
-        let limit = filter.limit.unwrap_or(100).min(1000);
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0);
 
         qb.push(" ORDER BY created_at DESC LIMIT ");
-        qb.push_bind(limit as i64);
+        qb.push_bind(limit);
         qb.push(" OFFSET ");
         qb.push_bind(offset as i64);
 

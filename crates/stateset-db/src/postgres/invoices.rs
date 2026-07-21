@@ -169,6 +169,29 @@ impl PgInvoiceRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
+    async fn get_invoice_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<InvoiceItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<InvoiceItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows: Vec<InvoiceItemRow> = sqlx::query_as(
+            "SELECT * FROM invoice_items WHERE invoice_id = ANY($1) ORDER BY sort_order",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.invoice_id;
+            map.entry(parent).or_default().push(row.into());
+        }
+        Ok(map)
+    }
+
     async fn get_invoice_with_items(&self, id: Uuid) -> Result<Option<Invoice>> {
         let row: Option<InvoiceRow> = sqlx::query_as("SELECT * FROM invoices WHERE id = $1")
             .bind(id)
@@ -471,10 +494,8 @@ impl PgInvoiceRepository {
 
         sql.push_str(" ORDER BY invoice_date DESC");
 
-        if filter.limit.is_some() {
-            param_count += 1;
-            sql.push_str(&format!(" LIMIT ${}", param_count));
-        }
+        param_count += 1;
+        sql.push_str(&format!(" LIMIT ${}", param_count));
         if filter.offset.is_some() {
             param_count += 1;
             sql.push_str(&format!(" OFFSET ${}", param_count));
@@ -518,18 +539,18 @@ impl PgInvoiceRepository {
         if let Some(invoice_number) = filter.invoice_number {
             query = query.bind(format!("%{}%", invoice_number));
         }
-        if let Some(limit) = filter.limit {
-            query = query.bind(limit as i64);
-        }
+        query = query.bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             query = query.bind(offset as i64);
         }
 
         let rows: Vec<InvoiceRow> = query.fetch_all(&self.pool).await.map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.get_invoice_items_batch_async(&ids).await?;
         let mut invoices = Vec::new();
         for row in rows {
-            let items = self.get_invoice_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             invoices.push(row.into_invoice(items)?);
         }
 
@@ -1288,9 +1309,11 @@ impl PgInvoiceRepository {
             .await
             .map_err(map_db_error)?;
 
+        let row_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.get_invoice_items_batch_async(&row_ids).await?;
         let mut invoices = Vec::with_capacity(rows.len());
         for row in rows {
-            let items = self.get_invoice_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             invoices.push(row.into_invoice(items)?);
         }
 

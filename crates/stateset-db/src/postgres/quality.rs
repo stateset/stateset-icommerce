@@ -372,6 +372,31 @@ impl PgQualityRepository {
         rows.into_iter().map(Self::row_to_inspection_item).collect::<Result<Vec<_>>>()
     }
 
+    async fn load_inspection_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<InspectionItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<InspectionItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, InspectionItemRow>(
+            "SELECT id, inspection_id, sku, lot_number, serial_number, quantity_inspected, quantity_passed,
+                    quantity_failed, defect_codes, measurements, result, notes, created_at
+             FROM inspection_items WHERE inspection_id = ANY($1)",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.inspection_id;
+            map.entry(parent).or_default().push(Self::row_to_inspection_item(row)?);
+        }
+        Ok(map)
+    }
+
     pub async fn get_inspection_items_async(
         &self,
         inspection_id: Uuid,
@@ -578,9 +603,7 @@ impl PgQualityRepository {
 
         sql.push_str(" ORDER BY created_at DESC, id DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
+        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
         // Offset pagination applies only in non-cursor mode.
         let offset = if after_cursor.is_none() { filter.offset } else { Some(0) };
         if let Some(offset) = offset {
@@ -615,9 +638,11 @@ impl PgQualityRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.load_inspection_items_batch_async(&ids).await?;
         let mut inspections = Vec::new();
         for row in rows {
-            let items = self.load_inspection_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             inspections.push(Self::row_to_inspection(row, items)?);
         }
 
@@ -901,9 +926,7 @@ impl PgQualityRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
+        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
         if let Some(offset) = filter.offset {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
@@ -1062,9 +1085,7 @@ impl PgQualityRepository {
 
         sql.push_str(" ORDER BY placed_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
+        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
         if let Some(offset) = filter.offset {
             sql.push_str(&format!(" OFFSET {}", offset));
         }

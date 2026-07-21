@@ -132,6 +132,62 @@ impl SqliteReturnRepository {
         })
     }
 
+    /// Load items for many returns in one batched `IN (...)` query, keyed by
+    /// the return id's string form.
+    fn load_return_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[ReturnId],
+    ) -> Result<std::collections::HashMap<String, Vec<ReturnItem>>> {
+        let mut items_by_id: std::collections::HashMap<String, Vec<ReturnItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(items_by_id);
+        }
+        let placeholders = vec!["?"; ids.len()].join(", ");
+        let sql = format!(
+            "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+             FROM return_items WHERE return_id IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let params = ids.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let items = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                Ok(ReturnItem {
+                    id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                    return_id: ReturnId::from(parse_uuid_row(
+                        &row.get::<_, String>("return_id")?,
+                        "return_item",
+                        "return_id",
+                    )?),
+                    order_item_id: OrderItemId::from(parse_uuid_row(
+                        &row.get::<_, String>("order_item_id")?,
+                        "return_item",
+                        "order_item_id",
+                    )?),
+                    sku: row.get("sku")?,
+                    name: row.get("name")?,
+                    quantity: row.get("quantity")?,
+                    condition: parse_enum_row(
+                        &row.get::<_, String>("condition")?,
+                        "return_item",
+                        "condition",
+                    )?,
+                    refund_amount: parse_decimal_row(
+                        &row.get::<_, String>("refund_amount")?,
+                        "return_item",
+                        "refund_amount",
+                    )?,
+                })
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+        for item in items {
+            items_by_id.entry(item.return_id.to_string()).or_default().push(item);
+        }
+        Ok(items_by_id)
+    }
+
     #[allow(dead_code)]
     fn load_return_items(&self, return_id: Uuid) -> Result<Vec<ReturnItem>> {
         let conn = self.conn()?;
@@ -181,7 +237,7 @@ impl SqliteReturnRepository {
     /// Delete a return and its items
     fn delete(&self, id: Uuid) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         tx.execute("DELETE FROM return_items WHERE return_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
@@ -274,7 +330,7 @@ impl ReturnRepository for SqliteReturnRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -615,48 +671,11 @@ impl ReturnRepository for SqliteReturnRepository {
             .map_err(map_db_error)?;
 
         // Load items for each return using same connection
+        let ids: Vec<ReturnId> = returns.iter().map(|r| r.id).collect();
+        let mut items_by_id = Self::load_return_items_batch(&conn, &ids)?;
         let mut result = vec![];
         for mut ret in returns {
-            let mut item_stmt = conn
-                .prepare(
-                    "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
-                     FROM return_items WHERE return_id = ?",
-                )
-                .map_err(map_db_error)?;
-
-            ret.items = item_stmt
-                .query_map([ret.id.to_string()], |row| {
-                    Ok(ReturnItem {
-                        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                        return_id: ReturnId::from(parse_uuid_row(
-                            &row.get::<_, String>("return_id")?,
-                            "return_item",
-                            "return_id",
-                        )?),
-                        order_item_id: OrderItemId::from(parse_uuid_row(
-                            &row.get::<_, String>("order_item_id")?,
-                            "return_item",
-                            "order_item_id",
-                        )?),
-                        sku: row.get("sku")?,
-                        name: row.get("name")?,
-                        quantity: row.get("quantity")?,
-                        condition: parse_enum_row(
-                            &row.get::<_, String>("condition")?,
-                            "return_item",
-                            "condition",
-                        )?,
-                        refund_amount: parse_decimal_row(
-                            &row.get::<_, String>("refund_amount")?,
-                            "return_item",
-                            "refund_amount",
-                        )?,
-                    })
-                })
-                .map_err(map_db_error)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(map_db_error)?;
-
+            ret.items = items_by_id.remove(&ret.id.to_string()).unwrap_or_default();
             result.push(ret);
         }
 
@@ -754,7 +773,7 @@ impl ReturnRepository for SqliteReturnRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -894,7 +913,7 @@ impl ReturnRepository for SqliteReturnRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -949,48 +968,12 @@ impl ReturnRepository for SqliteReturnRepository {
 
         tx.commit().map_err(map_db_error)?;
 
-        // Load items for each return
+        // Load items for all returns in one batched query
         let conn = self.conn()?;
+        let ids: Vec<ReturnId> = results.iter().map(|r| r.id).collect();
+        let mut items_by_id = Self::load_return_items_batch(&conn, &ids)?;
         for ret in &mut results {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
-                     FROM return_items WHERE return_id = ?",
-                )
-                .map_err(map_db_error)?;
-
-            ret.items = stmt
-                .query_map([ret.id.to_string()], |row| {
-                    Ok(ReturnItem {
-                        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                        return_id: ReturnId::from(parse_uuid_row(
-                            &row.get::<_, String>("return_id")?,
-                            "return_item",
-                            "return_id",
-                        )?),
-                        order_item_id: OrderItemId::from(parse_uuid_row(
-                            &row.get::<_, String>("order_item_id")?,
-                            "return_item",
-                            "order_item_id",
-                        )?),
-                        sku: row.get("sku")?,
-                        name: row.get("name")?,
-                        quantity: row.get("quantity")?,
-                        condition: parse_enum_row(
-                            &row.get::<_, String>("condition")?,
-                            "return_item",
-                            "condition",
-                        )?,
-                        refund_amount: parse_decimal_row(
-                            &row.get::<_, String>("refund_amount")?,
-                            "return_item",
-                            "refund_amount",
-                        )?,
-                    })
-                })
-                .map_err(map_db_error)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(map_db_error)?;
+            ret.items = items_by_id.remove(&ret.id.to_string()).unwrap_or_default();
         }
 
         Ok(results)
@@ -1018,7 +1001,7 @@ impl ReturnRepository for SqliteReturnRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
         let placeholders = build_in_clause(ids.len());
@@ -1058,49 +1041,12 @@ impl ReturnRepository for SqliteReturnRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
-        // Load items for each return
+        // Load items for all returns in one batched query
+        let ids: Vec<ReturnId> = returns.iter().map(|r| r.id).collect();
+        let mut items_by_id = Self::load_return_items_batch(&conn, &ids)?;
         let mut result = vec![];
         for mut ret in returns {
-            let mut item_stmt = conn
-                .prepare(
-                    "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
-                     FROM return_items WHERE return_id = ?",
-                )
-                .map_err(map_db_error)?;
-
-            ret.items = item_stmt
-                .query_map([ret.id.to_string()], |row| {
-                    Ok(ReturnItem {
-                        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                        return_id: ReturnId::from(parse_uuid_row(
-                            &row.get::<_, String>("return_id")?,
-                            "return_item",
-                            "return_id",
-                        )?),
-                        order_item_id: OrderItemId::from(parse_uuid_row(
-                            &row.get::<_, String>("order_item_id")?,
-                            "return_item",
-                            "order_item_id",
-                        )?),
-                        sku: row.get("sku")?,
-                        name: row.get("name")?,
-                        quantity: row.get("quantity")?,
-                        condition: parse_enum_row(
-                            &row.get::<_, String>("condition")?,
-                            "return_item",
-                            "condition",
-                        )?,
-                        refund_amount: parse_decimal_row(
-                            &row.get::<_, String>("refund_amount")?,
-                            "return_item",
-                            "refund_amount",
-                        )?,
-                    })
-                })
-                .map_err(map_db_error)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(map_db_error)?;
-
+            ret.items = items_by_id.remove(&ret.id.to_string()).unwrap_or_default();
             result.push(ret);
         }
 

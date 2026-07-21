@@ -273,6 +273,29 @@ impl PgPurchaseOrderRepository {
         Ok(rows.into_iter().map(Self::row_to_item).collect())
     }
 
+    async fn load_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<PurchaseOrderItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<PurchaseOrderItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, PurchaseOrderItemRow>(
+            "SELECT * FROM purchase_order_items WHERE purchase_order_id = ANY($1)",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.purchase_order_id;
+            map.entry(parent).or_default().push(Self::row_to_item(row));
+        }
+        Ok(map)
+    }
+
     async fn recalculate_totals_async(&self, po_id: Uuid) -> Result<()> {
         let subtotal: Option<Decimal> = sqlx::query_scalar(
             "SELECT COALESCE(SUM(line_total), 0) FROM purchase_order_items WHERE purchase_order_id = $1"
@@ -406,7 +429,7 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn list_suppliers_async(&self, filter: SupplierFilter) -> Result<Vec<Supplier>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
         let mut query = String::from("SELECT * FROM suppliers WHERE 1=1");
         let mut param_idx = 1;
@@ -613,7 +636,7 @@ impl PgPurchaseOrderRepository {
 
     pub async fn list_async(&self, filter: PurchaseOrderFilter) -> Result<Vec<PurchaseOrder>> {
         let after_cursor = super::parse_after_cursor(filter.after_cursor.as_ref())?;
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         // Offset pagination applies only in non-cursor mode.
         let offset = if after_cursor.is_none() { filter.offset.unwrap_or(0) as i64 } else { 0 };
 
@@ -660,9 +683,11 @@ impl PgPurchaseOrderRepository {
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.load_items_batch_async(&ids).await?;
         let mut orders = Vec::new();
         for row in rows {
-            let items = self.load_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             orders.push(Self::row_to_po(row, items)?);
         }
         Ok(orders)
@@ -1395,9 +1420,11 @@ impl PgPurchaseOrderRepository {
         .await
         .map_err(map_db_error)?;
 
+        let batch_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.load_items_batch_async(&batch_ids).await?;
         let mut orders = Vec::with_capacity(rows.len());
         for row in rows {
-            let items = self.load_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             orders.push(Self::row_to_po(row, items)?);
         }
 

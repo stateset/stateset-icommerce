@@ -360,6 +360,28 @@ impl PgCartRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
+    async fn get_cart_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<CartItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<CartItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows: Vec<CartItemRow> =
+            sqlx::query_as("SELECT * FROM cart_items WHERE cart_id = ANY($1) ORDER BY created_at")
+                .bind(ids.to_vec())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.cart_id;
+            map.entry(parent).or_default().push(row.into());
+        }
+        Ok(map)
+    }
+
     async fn get_cart_with_items(&self, id: Uuid) -> Result<Option<Cart>> {
         let row: Option<CartRow> = sqlx::query_as("SELECT * FROM carts WHERE id = $1")
             .bind(id)
@@ -759,10 +781,8 @@ impl PgCartRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if filter.limit.is_some() {
-            param_count += 1;
-            sql.push_str(&format!(" LIMIT ${}", param_count));
-        }
+        param_count += 1;
+        sql.push_str(&format!(" LIMIT ${}", param_count));
         if filter.offset.is_some() {
             param_count += 1;
             sql.push_str(&format!(" OFFSET ${}", param_count));
@@ -785,18 +805,18 @@ impl PgCartRepository {
         if let Some(to) = filter.created_before {
             query = query.bind(to);
         }
-        if let Some(limit) = filter.limit {
-            query = query.bind(limit as i64);
-        }
+        query = query.bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             query = query.bind(offset as i64);
         }
 
         let rows: Vec<CartRow> = query.fetch_all(&self.pool).await.map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.get_cart_items_batch_async(&ids).await?;
         let mut carts = Vec::new();
         for row in rows {
-            let items = self.get_cart_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             carts.push(row.into_cart(items)?);
         }
 
@@ -2037,9 +2057,11 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
+        let row_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut items_by_id = self.get_cart_items_batch_async(&row_ids).await?;
         let mut carts = Vec::with_capacity(rows.len());
         for row in rows {
-            let items = self.get_cart_items_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
             carts.push(row.into_cart(items)?);
         }
 

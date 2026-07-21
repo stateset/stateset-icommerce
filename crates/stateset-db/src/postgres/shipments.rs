@@ -211,6 +211,54 @@ impl PgShipmentRepository {
         Ok(rows.into_iter().map(Self::row_to_event).collect())
     }
 
+    async fn load_items_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<ShipmentItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<ShipmentItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, ShipmentItemRow>(
+            "SELECT id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at
+             FROM shipment_items WHERE shipment_id = ANY($1)"
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.shipment_id;
+            map.entry(parent).or_default().push(Self::row_to_item(row));
+        }
+        Ok(map)
+    }
+
+    async fn load_events_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<ShipmentEvent>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<ShipmentEvent>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, ShipmentEventRow>(
+            "SELECT id, shipment_id, event_type, location, description, event_time, created_at
+             FROM shipment_events WHERE shipment_id = ANY($1) ORDER BY event_time DESC",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.shipment_id;
+            map.entry(parent).or_default().push(Self::row_to_event(row));
+        }
+        Ok(map)
+    }
+
     async fn update_status_async(&self, id: Uuid, status: ShipmentStatus) -> Result<Shipment> {
         let now = Utc::now();
 
@@ -439,7 +487,7 @@ impl PgShipmentRepository {
 
     /// List shipments (async)
     pub async fn list_async(&self, filter: ShipmentFilter) -> Result<Vec<Shipment>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
 
         let mut query = String::from("SELECT id FROM shipments WHERE 1=1");
@@ -486,11 +534,37 @@ impl PgShipmentRepository {
         q = q.bind(limit).bind(offset);
 
         let ids = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
+        let id_list: Vec<Uuid> = ids.into_iter().map(|(id,)| id).collect();
+        if id_list.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let mut shipments = Vec::new();
-        for (id,) in ids {
-            if let Some(shipment) = self.get_async(id).await? {
-                shipments.push(shipment);
+        // Fetch heads, items, and events in three batched queries, then
+        // reassemble preserving the ordered id list from the filter query.
+        let rows = sqlx::query_as::<_, ShipmentRow>(
+            "SELECT id, shipment_number, order_id, status, carrier, shipping_method,
+                    tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
+                    shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
+                    signature_required, shipped_at, estimated_delivery, delivered_at, notes,
+                    version, created_at, updated_at
+             FROM shipments WHERE id = ANY($1)",
+        )
+        .bind(&id_list)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let mut rows_by_id: std::collections::HashMap<Uuid, ShipmentRow> =
+            rows.into_iter().map(|r| (r.id, r)).collect();
+        let mut items_by_id = self.load_items_batch_async(&id_list).await?;
+        let mut events_by_id = self.load_events_batch_async(&id_list).await?;
+
+        let mut shipments = Vec::with_capacity(id_list.len());
+        for id in id_list {
+            if let Some(row) = rows_by_id.remove(&id) {
+                let items = items_by_id.remove(&id).unwrap_or_default();
+                let events = events_by_id.remove(&id).unwrap_or_default();
+                shipments.push(Self::row_to_shipment(row, items, events)?);
             }
         }
 
@@ -1082,10 +1156,12 @@ impl PgShipmentRepository {
         .await
         .map_err(map_db_error)?;
 
+        let mut items_by_id = self.load_items_batch_async(&raw_ids).await?;
+        let mut events_by_id = self.load_events_batch_async(&raw_ids).await?;
         let mut shipments = Vec::with_capacity(rows.len());
         for row in rows {
-            let items = self.load_items_async(row.id).await?;
-            let events = self.load_events_async(row.id).await?;
+            let items = items_by_id.remove(&row.id).unwrap_or_default();
+            let events = events_by_id.remove(&row.id).unwrap_or_default();
             shipments.push(Self::row_to_shipment(row, items, events)?);
         }
 

@@ -184,7 +184,7 @@ impl PgVendorCreditRepository {
 
     /// List vendor credits (async)
     pub async fn list_async(&self, filter: VendorCreditFilter) -> Result<Vec<VendorCredit>> {
-        let limit = i64::from(filter.limit.unwrap_or(100));
+        let limit = super::effective_limit(filter.limit);
         let offset = i64::from(filter.offset.unwrap_or(0));
 
         let mut query = String::from("SELECT * FROM vendor_credits WHERE 1=1");

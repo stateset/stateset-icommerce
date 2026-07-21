@@ -95,6 +95,13 @@ export interface CommerceEngine {
   revenueRecognition: {
     listContracts: (filter?: RevenueContractFilter) => Promise<RevenueContract[]>;
   };
+  /** Optional: not every engine build exposes EDI documents yet. */
+  ediDocuments?: {
+    list: (filter?: EdiDocumentFilter) => Promise<EdiDocument[]>;
+    get: (id: string) => Promise<EdiDocument | null>;
+    /** Optional even on EDI-capable builds; the API layer computes a fallback. */
+    summary?: () => Promise<EdiSummary>;
+  };
   analytics: {
     getDashboardMetrics: () => Promise<DashboardMetrics>;
     getHourlyActivity: (date?: string) => Promise<HourlyActivity[]>;
@@ -1143,6 +1150,29 @@ function createMockCommerceEngine(): CommerceEngine {
         return contracts;
       },
     },
+    ediDocuments: {
+      list: async (filter?: EdiDocumentFilter) => {
+        let documents = getMockFinanceData().ediDocuments;
+        if (filter?.documentType) {
+          documents = documents.filter((doc) => doc.documentType === filter.documentType);
+        }
+        if (filter?.direction) {
+          documents = documents.filter((doc) => doc.direction === filter.direction);
+        }
+        if (filter?.status) {
+          documents = documents.filter((doc) => doc.status === filter.status);
+        }
+        if (filter?.partner) {
+          documents = documents.filter((doc) => doc.partner === filter.partner);
+        }
+        const offset = filter?.offset || 0;
+        const limit = filter?.limit;
+        return documents.slice(offset, limit !== undefined ? offset + limit : undefined);
+      },
+      get: async (id: string) =>
+        getMockFinanceData().ediDocuments.find((doc) => doc.id === id) || null,
+      summary: async () => summarizeEdiDocuments(getMockFinanceData().ediDocuments),
+    },
     analytics: {
       getDashboardMetrics: async () => getMockData().dashboardMetrics,
       getHourlyActivity: async () => getMockData().hourlyActivity,
@@ -1978,6 +2008,72 @@ export interface RevenueContract {
   updatedAt: string;
 }
 
+// ============================================================================
+// EDI documents (trading-partner document tracking)
+// ============================================================================
+
+/** An EDI document exchanged with a trading partner (850/855/856/810, …). */
+export interface EdiDocument {
+  id: string;
+  /** EDI document type, e.g. `850`, `855`, `856`, `810` */
+  documentType: string;
+  /** One of `inbound`, `outbound` */
+  direction: string;
+  /** One of `pending`, `sent`, `acknowledged`, `processed`, `error` */
+  status: string;
+  /** Trading partner name / id */
+  partner?: string;
+  /** Related business reference (PO number, order number, etc.) */
+  reference?: string;
+  /** Raw EDI payload */
+  payload?: string;
+  /** Error detail when `status = error` */
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EdiDocumentFilter {
+  documentType?: string;
+  direction?: string;
+  status?: string;
+  partner?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** A keyed count used in the EDI aggregate summary. */
+export interface EdiCount {
+  key: string;
+  count: number;
+}
+
+/** Aggregate EDI counts by status and document type. */
+export interface EdiSummary {
+  total: number;
+  byStatus: EdiCount[];
+  byType: EdiCount[];
+}
+
+/** Compute an aggregate summary from a document list (fallback for engine builds without `summary`). */
+export function summarizeEdiDocuments(documents: EdiDocument[]): EdiSummary {
+  const tally = (key: (doc: EdiDocument) => string): EdiCount[] => {
+    const counts = new Map<string, number>();
+    for (const doc of documents) {
+      const k = key(doc);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([k, count]) => ({ key: k, count }))
+      .sort((left, right) => left.key.localeCompare(right.key));
+  };
+  return {
+    total: documents.length,
+    byStatus: tally((doc) => doc.status),
+    byType: tally((doc) => doc.documentType),
+  };
+}
+
 type MockFinanceData = {
   glAccounts: GlAccount[];
   journalEntries: JournalEntry[];
@@ -1990,6 +2086,7 @@ type MockFinanceData = {
   fixedAssets: FixedAsset[];
   depreciationSchedules: Record<string, DepreciationSchedule>;
   revenueContracts: RevenueContract[];
+  ediDocuments: EdiDocument[];
 };
 
 let mockFinanceCache: MockFinanceData | null = null;
@@ -2259,6 +2356,28 @@ function buildMockFinanceData(): MockFinanceData {
     } satisfies RevenueContract;
   });
 
+  const ediTypes = ['850', '855', '856', '810'];
+  const ediStatusPool = ['processed', 'processed', 'acknowledged', 'sent', 'pending', 'error'];
+  const ediPartners = ['ACME-RETAIL', 'NORTHWIND', 'GLOBEX', 'INITECH'];
+  const ediDocuments: EdiDocument[] = Array.from({ length: 16 }, (_, index) => {
+    const documentType = ediTypes[index % ediTypes.length];
+    const status = ediStatusPool[index % ediStatusPool.length];
+    // Inbound purchase orders (850); outbound acks/ASNs/invoices.
+    const direction = documentType === '850' ? 'inbound' : 'outbound';
+    const createdAt = formatMockDate(-(index * 2) - 1, index % 10);
+    return {
+      id: `edi_${4000 + index}`,
+      documentType,
+      direction,
+      status,
+      partner: ediPartners[index % ediPartners.length],
+      reference: `PO-${7000 + Math.floor(index / ediTypes.length)}`,
+      errorMessage: status === 'error' ? 'Missing mandatory segment: BEG' : undefined,
+      createdAt,
+      updatedAt: createdAt,
+    } satisfies EdiDocument;
+  });
+
   return {
     glAccounts,
     journalEntries,
@@ -2276,6 +2395,7 @@ function buildMockFinanceData(): MockFinanceData {
     fixedAssets,
     depreciationSchedules,
     revenueContracts,
+    ediDocuments,
   };
 }
 
@@ -2407,5 +2527,43 @@ export const revenueRecognitionApi = {
   async listContracts(filter?: RevenueContractFilter): Promise<RevenueContract[]> {
     const commerce = await getCommerceEngine();
     return commerce.revenueRecognition.listContracts(filter);
+  },
+};
+
+export const ediDocumentsApi = {
+  /**
+   * List EDI documents. Older engine builds do not expose the EDI surface;
+   * degrade to an empty list so the operations page can explain rather
+   * than crash.
+   */
+  async list(filter?: EdiDocumentFilter): Promise<EdiDocument[]> {
+    const commerce = await getCommerceEngine();
+    if (!commerce.ediDocuments || typeof commerce.ediDocuments.list !== 'function') {
+      return [];
+    }
+    return commerce.ediDocuments.list(filter);
+  },
+
+  async get(id: string): Promise<EdiDocument | null> {
+    const commerce = await getCommerceEngine();
+    if (!commerce.ediDocuments || typeof commerce.ediDocuments.get !== 'function') {
+      return null;
+    }
+    return commerce.ediDocuments.get(id);
+  },
+
+  /**
+   * Aggregate counts by status and document type. Uses the engine's summary
+   * accessor when present, otherwise computes from the document list.
+   */
+  async summary(): Promise<EdiSummary> {
+    const commerce = await getCommerceEngine();
+    if (!commerce.ediDocuments) {
+      return summarizeEdiDocuments([]);
+    }
+    if (typeof commerce.ediDocuments.summary === 'function') {
+      return commerce.ediDocuments.summary();
+    }
+    return summarizeEdiDocuments(await commerce.ediDocuments.list());
   },
 };

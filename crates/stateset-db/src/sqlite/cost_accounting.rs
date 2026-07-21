@@ -645,7 +645,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
     fn issue_fifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
 
@@ -718,7 +718,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
     fn issue_lifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
 

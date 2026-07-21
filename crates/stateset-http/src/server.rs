@@ -30,6 +30,7 @@ const METRICS_AUTHORIZATION_HEADER_MAX_BYTES_ENV: &str =
     "STATESET_HTTP_METRICS_AUTHORIZATION_MAX_BYTES";
 const REQUEST_BODY_MAX_BYTES_ENV: &str = "STATESET_HTTP_MAX_BODY_BYTES";
 const ALLOW_UNAUTHENTICATED_ENV: &str = "STATESET_HTTP_ALLOW_UNAUTHENTICATED";
+const REQUIRE_IDEMPOTENCY_KEYS_ENV: &str = "STATESET_HTTP_REQUIRE_IDEMPOTENCY_KEYS";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct AdditionalApiBearerBinding {
@@ -140,6 +141,7 @@ pub struct ServerBuilder {
     authz_strict: bool,
     allow_unauthenticated: bool,
     rate_limit: Option<RateLimitConfig>,
+    require_idempotency_keys: bool,
 }
 
 impl fmt::Debug for ServerBuilder {
@@ -164,6 +166,7 @@ impl fmt::Debug for ServerBuilder {
             .field("authz_strict", &self.authz_strict)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("rate_limit", &self.rate_limit)
+            .field("require_idempotency_keys", &self.require_idempotency_keys)
             .finish()
     }
 }
@@ -265,6 +268,9 @@ impl ServerBuilder {
             authz_strict: false,
             allow_unauthenticated: false,
             rate_limit: None,
+            // Secure-by-default: money-moving create endpoints require an
+            // Idempotency-Key header (HTTP 428 when missing).
+            require_idempotency_keys: true,
         }
     }
 
@@ -284,7 +290,8 @@ impl ServerBuilder {
             .with_metrics_network_policy_from_env()?
             .with_metrics_header_limits_from_env()?
             .with_request_body_limit_from_env()?
-            .with_allow_unauthenticated_from_env()
+            .with_allow_unauthenticated_from_env()?
+            .with_require_idempotency_keys_from_env()
     }
 
     /// Apply the unauthenticated opt-out from `STATESET_HTTP_ALLOW_UNAUTHENTICATED`.
@@ -294,6 +301,38 @@ impl ServerBuilder {
     pub fn with_allow_unauthenticated_from_env(mut self) -> Result<Self, HttpError> {
         if let Ok(raw) = std::env::var(ALLOW_UNAUTHENTICATED_ENV) {
             self.allow_unauthenticated = parse_bool_env(ALLOW_UNAUTHENTICATED_ENV, &raw)?;
+        }
+        Ok(self)
+    }
+
+    /// Require an `Idempotency-Key` header on money-moving create endpoints
+    /// (`POST /orders`, `/payments`, `/payments/{id}/refund`, `/ap/payments`),
+    /// returning HTTP 428 (Precondition Required) when it is missing.
+    ///
+    /// Defaults to `true`; pass `false` to let existing deployments opt out.
+    #[must_use]
+    pub const fn require_idempotency_keys(mut self, require: bool) -> Self {
+        self.require_idempotency_keys = require;
+        self
+    }
+
+    /// Apply the required-idempotency-key opt-out from
+    /// `STATESET_HTTP_REQUIRE_IDEMPOTENCY_KEYS`.
+    ///
+    /// Accepts `true`/`false` (also `1`/`0`, `yes`/`no`). Unset or empty leaves
+    /// the secure default (`true`) in place.
+    pub fn with_require_idempotency_keys_from_env(self) -> Result<Self, HttpError> {
+        let raw = std::env::var(REQUIRE_IDEMPOTENCY_KEYS_ENV).ok();
+        self.with_require_idempotency_keys_from_value(raw.as_deref())
+    }
+
+    /// Apply the required-idempotency-key setting from an optional raw value.
+    fn with_require_idempotency_keys_from_value(
+        mut self,
+        raw: Option<&str>,
+    ) -> Result<Self, HttpError> {
+        if let Some(raw) = raw {
+            self.require_idempotency_keys = parse_bool_env(REQUIRE_IDEMPOTENCY_KEYS_ENV, raw)?;
         }
         Ok(self)
     }
@@ -793,8 +832,17 @@ impl ServerBuilder {
             };
             if authz_strict { config.with_strict_path_mapping() } else { config }
         });
+        // Durable, database-backed idempotency store (with the in-memory map as
+        // a read-through cache) plus the required-key gate for money-moving
+        // create endpoints.
+        let mut idempotency_layer = crate::idempotency::IdempotencyLayer::new()
+            .with_required_keys(self.require_idempotency_keys);
+        if let Ok(commerce) = self.state.commerce_for_tenant(None) {
+            idempotency_layer = idempotency_layer.with_durable_store(commerce);
+        }
         let router =
-            routes::api_router_with_body_limit(self.max_request_body_bytes).with_state(self.state);
+            routes::api_router_with_idempotency(self.max_request_body_bytes, idempotency_layer)
+                .with_state(self.state);
         middleware::apply_middleware(
             router,
             self.enable_cors,
@@ -1227,6 +1275,73 @@ mod tests {
         assert!(!builder.allow_unauthenticated, "secure default must be false");
         let builder = builder.allow_unauthenticated();
         assert!(builder.allow_unauthenticated);
+    }
+
+    #[test]
+    fn builder_require_idempotency_keys_flag() {
+        let builder = ServerBuilder::new(test_commerce());
+        assert!(builder.require_idempotency_keys, "secure default must require keys");
+        let builder = builder.require_idempotency_keys(false);
+        assert!(!builder.require_idempotency_keys);
+    }
+
+    #[test]
+    fn builder_require_idempotency_keys_from_value() {
+        let builder = ServerBuilder::new(test_commerce())
+            .with_require_idempotency_keys_from_value(Some("false"))
+            .expect("false should parse");
+        assert!(!builder.require_idempotency_keys);
+
+        let builder = ServerBuilder::new(test_commerce())
+            .with_require_idempotency_keys_from_value(None)
+            .expect("unset keeps default");
+        assert!(builder.require_idempotency_keys, "unset must keep the secure default");
+
+        assert!(
+            ServerBuilder::new(test_commerce())
+                .with_require_idempotency_keys_from_value(Some("banana"))
+                .is_err(),
+            "invalid values must be rejected"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn built_server_returns_428_on_keyless_payment_create_by_default() {
+        use tower::ServiceExt as _;
+        let app = ServerBuilder::new(test_commerce()).without_auth().build();
+        let response = app
+            .oneshot(
+                axum::http::Request::post("/api/v1/payments")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::PRECONDITION_REQUIRED);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn built_server_allows_keyless_payment_create_when_opted_out() {
+        use tower::ServiceExt as _;
+        let app = ServerBuilder::new(test_commerce())
+            .without_auth()
+            .require_idempotency_keys(false)
+            .build();
+        let response = app
+            .oneshot(
+                axum::http::Request::post("/api/v1/payments")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            response.status(),
+            axum::http::StatusCode::PRECONDITION_REQUIRED,
+            "opt-out must disable the 428 gate"
+        );
     }
 
     #[test]

@@ -454,7 +454,7 @@ impl SqliteSubscriptionRepository {
             let mut conn = self.pool.get().map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
-            let tx = conn.transaction().map_err(|e| {
+            let tx = super::begin_immediate(&mut conn).map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Transaction error: {e}"))
             })?;
 

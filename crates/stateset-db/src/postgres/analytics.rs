@@ -246,7 +246,7 @@ impl PgAnalyticsRepository {
 
     pub async fn get_top_products_async(&self, query: AnalyticsQuery) -> Result<Vec<TopProduct>> {
         let (start, end) = self.get_date_range(&query);
-        let limit = query.limit.unwrap_or(10) as i64;
+        let limit = i64::from(query.limit.unwrap_or(10).min(super::MAX_LIST_LIMIT));
 
         type TopProductRow = (Option<Uuid>, String, String, i64, Decimal, i64, Decimal);
         let rows: Vec<TopProductRow> = sqlx::query_as(
@@ -384,7 +384,7 @@ impl PgAnalyticsRepository {
 
     pub async fn get_top_customers_async(&self, query: AnalyticsQuery) -> Result<Vec<TopCustomer>> {
         let (start, end) = self.get_date_range(&query);
-        let limit = query.limit.unwrap_or(10) as i64;
+        let limit = i64::from(query.limit.unwrap_or(10).min(super::MAX_LIST_LIMIT));
 
         type TopCustomerRow = (
             Uuid,

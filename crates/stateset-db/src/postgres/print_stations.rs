@@ -270,9 +270,7 @@ impl PgPrintStationRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         builder.push(" ORDER BY created_at DESC");
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(i64::from(limit));
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(i64::from(offset));
         }

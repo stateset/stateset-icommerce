@@ -88,15 +88,29 @@ pub fn api_router() -> Router<AppState> {
 /// Build the full API router with a custom extractor body-size limit.
 #[allow(deprecated)]
 pub fn api_router_with_body_limit(max_body_bytes: usize) -> Router<AppState> {
+    api_router_with_idempotency(max_body_bytes, IdempotencyLayer::new())
+}
+
+/// Build the full API router with an explicit [`IdempotencyLayer`].
+///
+/// Used by [`crate::server::ServerBuilder`] to wire a durable, database-backed
+/// idempotency store and the required-key (HTTP 428) gate; the plain
+/// [`api_router`] variants use an in-memory, optional-key layer.
+#[allow(deprecated)]
+pub fn api_router_with_idempotency(
+    max_body_bytes: usize,
+    idempotency_layer: IdempotencyLayer,
+) -> Router<AppState> {
     Router::new()
         .merge(health::router())
         .nest("/api/v1", v1_router())
         // Idempotency-Key handling for POST create endpoints. Applied before the
         // body limit so oversized bodies are still rejected by `DefaultBodyLimit`.
-        .layer(from_fn_with_state(IdempotencyLayer::new(), idempotency))
+        .layer(from_fn_with_state(idempotency_layer, idempotency))
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .layer(CompressionLayer::new())
         .layer(TimeoutLayer::new(REQUEST_TIMEOUT))
+        .layer(axum::middleware::from_fn(crate::middleware::track_http_metrics))
 }
 
 /// Build the v1 API sub-router.

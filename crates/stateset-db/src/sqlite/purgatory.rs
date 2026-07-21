@@ -92,6 +92,32 @@ impl SqlitePurgatoryRepository {
         stmt.query_map([id], Self::row_to_line)?.collect()
     }
 
+    fn load_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[String],
+    ) -> rusqlite::Result<std::collections::HashMap<String, Vec<PurgatoryLineItem>>> {
+        let mut map: std::collections::HashMap<String, Vec<PurgatoryLineItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(500) {
+            let placeholders = super::build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT * FROM purgatory_line_items WHERE purgatory_order_id IN ({placeholders}) ORDER BY external_sku"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+            let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                let parent: String = row.get("purgatory_order_id")?;
+                Ok((parent, Self::row_to_line(row)?))
+            })?;
+            for row in rows {
+                let (parent, item) = row?;
+                map.entry(parent).or_default().push(item);
+            }
+        }
+        Ok(map)
+    }
+
     fn load_full(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<PurgatoryOrder> {
         let mut head =
             conn.query_row("SELECT * FROM purgatory_orders WHERE id = ?", [id], Self::row_to_head)?;
@@ -174,9 +200,11 @@ impl PurgatoryRepository for SqlitePurgatoryRepository {
             .map_err(map_db_error)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(map_db_error)?;
+        let ids: Vec<String> = heads.iter().map(|h| h.id.to_string()).collect();
+        let mut items_by_id = Self::load_items_batch(&conn, &ids).map_err(map_db_error)?;
         let mut out = Vec::with_capacity(heads.len());
         for mut head in heads {
-            head.items = Self::load_items(&conn, &head.id.to_string()).map_err(map_db_error)?;
+            head.items = items_by_id.remove(&head.id.to_string()).unwrap_or_default();
             out.push(head);
         }
         Ok(out)

@@ -284,12 +284,40 @@ impl SqliteQualityRepository {
 
         Ok(items)
     }
+
+    fn load_inspection_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<String, Vec<InspectionItem>>> {
+        let mut map: std::collections::HashMap<String, Vec<InspectionItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        let id_strs: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        for chunk in id_strs.chunks(500) {
+            let placeholders = super::build_in_clause(chunk.len());
+            let sql =
+                format!("SELECT * FROM inspection_items WHERE inspection_id IN ({placeholders})");
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+            let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let parent: String = row.get("inspection_id")?;
+                    Ok((parent, Self::row_to_inspection_item(row)?))
+                })
+                .map_err(map_db_error)?;
+            for row in rows {
+                let (parent, item) = row.map_err(map_db_error)?;
+                map.entry(parent).or_default().push(item);
+            }
+        }
+        Ok(map)
+    }
 }
 
 impl QualityRepository for SqliteQualityRepository {
     fn create_inspection(&self, input: CreateInspection) -> Result<Inspection> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let id = Uuid::new_v4();
         let inspection_number = Self::generate_inspection_number();
@@ -502,10 +530,12 @@ impl QualityRepository for SqliteQualityRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
-        // Load items for each inspection
+        // Load items for all inspections in one batched query
+        let ids: Vec<Uuid> = inspections.iter().map(|i| i.id).collect();
+        let mut items_by_id = Self::load_inspection_items_batch(&conn, &ids)?;
         let mut result = Vec::with_capacity(inspections.len());
         for mut inspection in inspections {
-            inspection.items = self.load_inspection_items(&conn, inspection.id)?;
+            inspection.items = items_by_id.remove(&inspection.id.to_string()).unwrap_or_default();
             result.push(inspection);
         }
 

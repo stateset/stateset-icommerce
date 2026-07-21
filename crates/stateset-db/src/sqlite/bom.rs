@@ -517,7 +517,8 @@ impl BomRepository for SqliteBomRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn)
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -630,7 +631,8 @@ impl BomRepository for SqliteBomRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn)
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -747,7 +749,8 @@ impl BomRepository for SqliteBomRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn)
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let placeholders = build_in_clause(ids.len());
 

@@ -40,6 +40,8 @@
 //! in the `error_helpers` module for converting backend-specific errors.
 
 pub mod error_helpers;
+pub mod http_idempotency;
+pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository};
 
 #[cfg(feature = "sqlite")]
 pub mod audit;
@@ -427,6 +429,12 @@ pub trait Database: Send + Sync {
     fn fixed_assets(&self) -> Box<dyn FixedAssetRepository + '_>;
     /// Get the revenue recognition repository
     fn revenue_recognition(&self) -> Box<dyn RevenueRecognitionRepository + '_>;
+    /// Get the durable HTTP idempotency repository, if the backend provides
+    /// one. Backends without durable idempotency support return `None`, in
+    /// which case callers fall back to in-memory behavior.
+    fn http_idempotency(&self) -> Option<Box<dyn HttpIdempotencyRepository + '_>> {
+        None
+    }
 }
 
 /// Extension trait for database transaction support.
@@ -1146,6 +1154,10 @@ macro_rules! impl_database_accessors {
 
             fn revenue_recognition(&self) -> Box<dyn RevenueRecognitionRepository + '_> {
                 crate::NewDomainRepositoryFactory::revenue_recognition_repo(self)
+            }
+
+            fn http_idempotency(&self) -> Option<Box<dyn HttpIdempotencyRepository + '_>> {
+                Some(Box::new(<$db_type>::http_idempotency(self)))
             }
         }
     };

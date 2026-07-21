@@ -476,7 +476,11 @@ pub(crate) async fn three_way_match_bill(
 
 #[utoipa::path(post, operation_id = "ap_create_payment", path = "/api/v1/ap/payments", tag = "accounts_payable",
     request_body = CreateApPaymentRequest,
-    responses((status = 201, body = ApPaymentResponse), (status = 400, body = ErrorBody)))]
+    params(("Idempotency-Key" = Option<String>, Header,
+        description = "Client-generated key; replaying it with an identical body returns the original response. Required by default on this endpoint.")),
+    responses((status = 201, body = ApPaymentResponse), (status = 400, body = ErrorBody),
+        (status = 422, description = "Idempotency-Key reused with a different body", body = ErrorBody),
+        (status = 428, description = "Idempotency-Key header required on this endpoint (configurable)", body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
 pub(crate) async fn create_payment(
     State(state): State<AppState>,

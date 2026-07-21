@@ -407,7 +407,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         let address_type = input.address_type.unwrap_or_default();
         let is_default = input.is_default.unwrap_or(false);
 
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         tx.execute(
             "INSERT INTO customer_addresses (id, customer_id, address_type, first_name, last_name,
@@ -568,7 +568,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
     fn delete_address(&self, address_id: Uuid) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         let row: Option<(String, String, i32)> = tx
@@ -626,7 +626,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         address_type: AddressType,
     ) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         let owner: Option<String> = tx
@@ -761,7 +761,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -863,7 +863,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -986,7 +986,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let placeholders = build_in_clause(ids.len());
 

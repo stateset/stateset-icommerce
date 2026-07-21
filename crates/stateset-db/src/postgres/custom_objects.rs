@@ -287,7 +287,7 @@ impl PgCustomObjectRepository {
         }
 
         qb.push(" ORDER BY handle ASC");
-        let limit = filter.limit.unwrap_or(100).min(1000) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
         qb.push(" LIMIT ");
         qb.push_bind(limit);
@@ -601,7 +601,7 @@ impl PgCustomObjectRepository {
         }
 
         qb.push(" ORDER BY r.created_at DESC");
-        let limit = filter.limit.unwrap_or(100).min(1000) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
         qb.push(" LIMIT ");
         qb.push_bind(limit);

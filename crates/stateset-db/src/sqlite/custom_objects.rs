@@ -117,7 +117,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         validate_custom_object_type_input(&input)?;
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let exists: i32 = tx
             .query_row(
@@ -192,7 +192,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
 
     fn update_type(&self, id: Uuid, input: UpdateCustomObjectType) -> Result<CustomObjectType> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let existing: Option<(i32, String, String, String, String)> = tx
             .query_row(
@@ -324,7 +324,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         Self::validate_owner_pair(&input.owner_type, &input.owner_id)?;
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let ty: CustomObjectType = tx
             .query_row(
@@ -444,7 +444,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         type ExistingObjectRow =
             (String, String, Option<String>, Option<String>, Option<String>, String, i32);

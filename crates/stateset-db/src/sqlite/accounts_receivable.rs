@@ -1416,7 +1416,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         // same invoice serialize: each application re-reads the invoice balance
         // under the lock, so a second payment sees the balance the first already
         // reduced and cannot over-apply. `with_immediate_transaction` also retries
-        // on SQLITE_BUSY, which a raw deferred `conn.transaction()` did not.
+        // on SQLITE_BUSY, which a raw deferred `super::begin_immediate(&mut conn)` did not.
         let applications = with_immediate_transaction(&self.pool, |tx| {
             let to_rusqlite = |e: stateset_core::CommerceError| {
                 rusqlite::Error::ToSqlConversionFailure(Box::new(e))

@@ -23,6 +23,7 @@ mod fraud;
 mod fulfillment;
 mod general_ledger;
 mod gift_cards;
+mod http_idempotency;
 mod inbound_shipments;
 mod inventory;
 mod invoices;
@@ -84,6 +85,7 @@ pub use fraud::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
 pub use gift_cards::*;
+pub use http_idempotency::*;
 pub use inbound_shipments::*;
 pub use inventory::*;
 pub use invoices::*;
@@ -127,6 +129,24 @@ pub use zone_shipping_methods::*;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
 use stateset_core::CommerceError;
+
+/// Default page size applied when a list filter does not specify a limit.
+pub(crate) const DEFAULT_LIST_LIMIT: u32 = 500;
+
+/// Hard server-side ceiling on requested page sizes.
+pub(crate) const MAX_LIST_LIMIT: u32 = 1000;
+
+/// Clamp a requested page size to the server-side pagination policy:
+/// `None` becomes [`DEFAULT_LIST_LIMIT`], and anything above
+/// [`MAX_LIST_LIMIT`] is capped to it. Returned as `i64` for sqlx binding.
+pub(crate) const fn effective_limit(limit: Option<u32>) -> i64 {
+    let limit = match limit {
+        Some(limit) if limit > MAX_LIST_LIMIT => MAX_LIST_LIMIT,
+        Some(limit) => limit,
+        None => DEFAULT_LIST_LIMIT,
+    };
+    limit as i64
+}
 
 /// Parse a keyset `(sort_key, id)` cursor into typed Postgres bind values.
 ///
@@ -327,6 +347,8 @@ impl PostgresDatabase {
         migrations.push(("057_cycle_counts", include_str!("migrations/057_cycle_counts.sql")));
         migrations
             .push(("058_gl_fx_revaluation", include_str!("migrations/058_gl_fx_revaluation.sql")));
+        migrations
+            .push(("059_http_idempotency", include_str!("migrations/059_http_idempotency.sql")));
 
         for (name, sql) in migrations {
             let mut tx =
@@ -398,6 +420,12 @@ impl PostgresDatabase {
     /// Get product repository
     pub fn products(&self) -> PgProductRepository {
         PgProductRepository::new(self.pool.clone())
+    }
+
+    /// Get the durable HTTP idempotency repository
+    #[must_use]
+    pub fn http_idempotency(&self) -> PgHttpIdempotencyRepository {
+        PgHttpIdempotencyRepository::new(self.pool.clone())
     }
 
     /// Get custom objects repository (custom states / metaobjects)

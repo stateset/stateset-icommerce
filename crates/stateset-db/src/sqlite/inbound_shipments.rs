@@ -120,6 +120,32 @@ impl SqliteInboundShipmentRepository {
         stmt.query_map([id], Self::row_to_item)?.collect()
     }
 
+    fn load_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[String],
+    ) -> rusqlite::Result<std::collections::HashMap<String, Vec<InboundShipmentItem>>> {
+        let mut map: std::collections::HashMap<String, Vec<InboundShipmentItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(500) {
+            let placeholders = super::build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT * FROM inbound_shipment_items WHERE inbound_shipment_id IN ({placeholders}) ORDER BY sku"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+            let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                let parent: String = row.get("inbound_shipment_id")?;
+                Ok((parent, Self::row_to_item(row)?))
+            })?;
+            for row in rows {
+                let (parent, item) = row?;
+                map.entry(parent).or_default().push(item);
+            }
+        }
+        Ok(map)
+    }
+
     fn load_full(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<InboundShipment> {
         let mut head = conn.query_row(
             "SELECT * FROM inbound_shipments WHERE id = ?",
@@ -228,9 +254,11 @@ impl stateset_core::InboundShipmentRepository for SqliteInboundShipmentRepositor
             .map_err(map_db_error)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(map_db_error)?;
+        let ids: Vec<String> = heads.iter().map(|h| h.id.to_string()).collect();
+        let mut items_by_id = Self::load_items_batch(&conn, &ids).map_err(map_db_error)?;
         let mut out = Vec::with_capacity(heads.len());
         for mut head in heads {
-            head.items = Self::load_items(&conn, &head.id.to_string()).map_err(map_db_error)?;
+            head.items = items_by_id.remove(&head.id.to_string()).unwrap_or_default();
             out.push(head);
         }
         Ok(out)

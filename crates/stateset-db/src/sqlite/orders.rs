@@ -206,56 +206,80 @@ impl SqliteOrderRepository {
             .map_err(map_db_error)?;
 
         let items = stmt
-            .query_map([order_id.to_string()], |row| {
-                Ok(OrderItem {
-                    id: OrderItemId::from(parse_uuid_row(
-                        &row.get::<_, String>("id")?,
-                        "order_item",
-                        "id",
-                    )?),
-                    order_id: OrderId::from(parse_uuid_row(
-                        &row.get::<_, String>("order_id")?,
-                        "order_item",
-                        "order_id",
-                    )?),
-                    product_id: ProductId::from(parse_uuid_row(
-                        &row.get::<_, String>("product_id")?,
-                        "order_item",
-                        "product_id",
-                    )?),
-                    variant_id: row
-                        .get::<_, Option<String>>("variant_id")?
-                        .and_then(|s| s.parse().ok()),
-                    sku: row.get("sku")?,
-                    name: row.get("name")?,
-                    quantity: row.get("quantity")?,
-                    unit_price: parse_decimal_row(
-                        &row.get::<_, String>("unit_price")?,
-                        "order_item",
-                        "unit_price",
-                    )?,
-                    discount: parse_decimal_row(
-                        &row.get::<_, String>("discount")?,
-                        "order_item",
-                        "discount",
-                    )?,
-                    tax_amount: parse_decimal_row(
-                        &row.get::<_, String>("tax_amount")?,
-                        "order_item",
-                        "tax_amount",
-                    )?,
-                    total: parse_decimal_row(
-                        &row.get::<_, String>("total")?,
-                        "order_item",
-                        "total",
-                    )?,
-                })
-            })
+            .query_map([order_id.to_string()], Self::row_to_order_item)
             .map_err(map_db_error)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
         Ok(items)
+    }
+
+    fn row_to_order_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrderItem> {
+        Ok(OrderItem {
+            id: OrderItemId::from(parse_uuid_row(
+                &row.get::<_, String>("id")?,
+                "order_item",
+                "id",
+            )?),
+            order_id: OrderId::from(parse_uuid_row(
+                &row.get::<_, String>("order_id")?,
+                "order_item",
+                "order_id",
+            )?),
+            product_id: ProductId::from(parse_uuid_row(
+                &row.get::<_, String>("product_id")?,
+                "order_item",
+                "product_id",
+            )?),
+            variant_id: row.get::<_, Option<String>>("variant_id")?.and_then(|s| s.parse().ok()),
+            sku: row.get("sku")?,
+            name: row.get("name")?,
+            quantity: row.get("quantity")?,
+            unit_price: parse_decimal_row(
+                &row.get::<_, String>("unit_price")?,
+                "order_item",
+                "unit_price",
+            )?,
+            discount: parse_decimal_row(
+                &row.get::<_, String>("discount")?,
+                "order_item",
+                "discount",
+            )?,
+            tax_amount: parse_decimal_row(
+                &row.get::<_, String>("tax_amount")?,
+                "order_item",
+                "tax_amount",
+            )?,
+            total: parse_decimal_row(&row.get::<_, String>("total")?, "order_item", "total")?,
+        })
+    }
+
+    fn load_order_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[OrderId],
+    ) -> Result<std::collections::HashMap<OrderId, Vec<OrderItem>>> {
+        let mut map: std::collections::HashMap<OrderId, Vec<OrderItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(500) {
+            let placeholders = build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT id, order_id, product_id, variant_id, sku, name, quantity,
+                        unit_price, discount, tax_amount, total
+                 FROM order_items WHERE order_id IN ({placeholders})"
+            );
+            let id_strs: Vec<String> = chunk.iter().map(ToString::to_string).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                id_strs.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(param_refs.as_slice(), Self::row_to_order_item)
+                .map_err(map_db_error)?;
+            for row in rows {
+                let item = row.map_err(map_db_error)?;
+                map.entry(item.order_id).or_default().push(item);
+            }
+        }
+        Ok(map)
     }
 
     fn get_by_cart_id_in_conn(
@@ -971,10 +995,12 @@ impl OrderRepository for SqliteOrderRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
-        // Load items for each order using the same connection
+        // Load items for all orders in one batched query on the same connection
+        let ids: Vec<OrderId> = orders.iter().map(|o| o.id).collect();
+        let mut items_by_id = Self::load_order_items_batch(&conn, &ids)?;
         let mut result = vec![];
         for mut order in orders {
-            order.items = Self::load_order_items_with_conn(&conn, order.id)?;
+            order.items = items_by_id.remove(&order.id).unwrap_or_default();
             result.push(order);
         }
 
@@ -1137,7 +1163,7 @@ impl OrderRepository for SqliteOrderRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -1305,7 +1331,7 @@ impl OrderRepository for SqliteOrderRepository {
 
         // For atomic updates, we use a transaction and fail on any error
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -1437,10 +1463,12 @@ impl OrderRepository for SqliteOrderRepository {
 
         tx.commit().map_err(map_db_error)?;
 
-        // Load items for each order
+        // Load items for all orders in one batched query
         let conn = self.conn()?;
+        let ids: Vec<OrderId> = results.iter().map(|o| o.id).collect();
+        let mut items_by_id = Self::load_order_items_batch(&conn, &ids)?;
         for order in &mut results {
-            order.items = Self::load_order_items_with_conn(&conn, order.id)?;
+            order.items = items_by_id.remove(&order.id).unwrap_or_default();
         }
 
         Ok(results)
@@ -1467,7 +1495,7 @@ impl OrderRepository for SqliteOrderRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let placeholders = build_in_clause(ids.len());
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
@@ -1507,10 +1535,12 @@ impl OrderRepository for SqliteOrderRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
-        // Load items for each order
+        // Load items for all orders in one batched query
+        let order_ids: Vec<OrderId> = orders.iter().map(|o| o.id).collect();
+        let mut items_by_id = Self::load_order_items_batch(&conn, &order_ids)?;
         let mut result = vec![];
         for mut order in orders {
-            order.items = Self::load_order_items_with_conn(&conn, order.id)?;
+            order.items = items_by_id.remove(&order.id).unwrap_or_default();
             result.push(order);
         }
 

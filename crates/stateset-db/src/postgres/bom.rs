@@ -115,6 +115,29 @@ impl PgBomRepository {
         Ok(rows.into_iter().map(Self::row_to_component).collect())
     }
 
+    async fn get_components_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<BomComponent>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<BomComponent>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, BomComponentRow>(
+            "SELECT * FROM manufacturing_bom_components WHERE bom_id = ANY($1) ORDER BY position, created_at",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.bom_id;
+            map.entry(parent).or_default().push(Self::row_to_component(row));
+        }
+        Ok(map)
+    }
+
     /// Create a BOM (async)
     pub async fn create_async(&self, input: CreateBom) -> Result<BillOfMaterials> {
         let id = Uuid::new_v4();
@@ -230,7 +253,7 @@ impl PgBomRepository {
 
     /// List BOMs (async)
     pub async fn list_async(&self, filter: BomFilter) -> Result<Vec<BillOfMaterials>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
+        let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
 
         // Build the WHERE clause cumulatively so product_id/status/search compose
@@ -270,9 +293,11 @@ impl PgBomRepository {
         }
         let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut components_by_id = self.get_components_batch_async(&ids).await?;
         let mut boms = Vec::new();
         for row in rows {
-            let components = self.get_components_async(row.id).await?;
+            let components = components_by_id.remove(&row.id).unwrap_or_default();
             boms.push(Self::row_to_bom(row, components)?);
         }
 
@@ -702,9 +727,11 @@ impl PgBomRepository {
                 .await
                 .map_err(map_db_error)?;
 
+        let row_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut components_by_id = self.get_components_batch_async(&row_ids).await?;
         let mut boms = Vec::with_capacity(rows.len());
         for row in rows {
-            let components = self.get_components_async(row.id).await?;
+            let components = components_by_id.remove(&row.id).unwrap_or_default();
             boms.push(Self::row_to_bom(row, components)?);
         }
 

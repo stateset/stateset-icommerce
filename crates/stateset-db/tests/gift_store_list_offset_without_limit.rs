@@ -4,7 +4,8 @@
 //! `OFFSET <n>` independently of `LIMIT`. SQLite rejects `OFFSET` without a
 //! preceding `LIMIT` with a syntax error, so listing with an offset but no limit
 //! crashed at runtime — while Postgres (which allows bare `OFFSET`) worked. Both
-//! now emit `LIMIT -1 OFFSET <n>` (unbounded) in that case, matching Postgres.
+//! now always emit a `LIMIT` (the server-side default page size when the filter
+//! supplies none) before any `OFFSET`.
 
 use rust_decimal_macros::dec;
 use stateset_core::{

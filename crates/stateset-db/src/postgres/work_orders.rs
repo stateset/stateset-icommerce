@@ -224,6 +224,52 @@ impl PgWorkOrderRepository {
         Ok(rows.into_iter().map(Self::row_to_material).collect())
     }
 
+    async fn get_tasks_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<WorkOrderTask>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<WorkOrderTask>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, WorkOrderTaskRow>(
+            "SELECT * FROM manufacturing_work_order_tasks WHERE work_order_id = ANY($1) ORDER BY sequence",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.work_order_id;
+            map.entry(parent).or_default().push(Self::row_to_task(row)?);
+        }
+        Ok(map)
+    }
+
+    async fn get_materials_batch_async(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<WorkOrderMaterial>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<WorkOrderMaterial>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(map);
+        }
+        let rows = sqlx::query_as::<_, WorkOrderMaterialRow>(
+            "SELECT * FROM manufacturing_work_order_materials WHERE work_order_id = ANY($1)",
+        )
+        .bind(ids.to_vec())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        for row in rows {
+            let parent = row.work_order_id;
+            map.entry(parent).or_default().push(Self::row_to_material(row));
+        }
+        Ok(map)
+    }
+
     async fn get_task_by_id(&self, task_id: Uuid) -> Result<WorkOrderTask> {
         let row = sqlx::query_as::<_, WorkOrderTaskRow>(
             "SELECT * FROM manufacturing_work_order_tasks WHERE id = $1",
@@ -439,9 +485,7 @@ impl PgWorkOrderRepository {
 
         builder.push(" ORDER BY created_at DESC, id DESC");
 
-        if let Some(limit) = limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(limit));
         // Offset pagination applies only in non-cursor mode.
         let offset = if after_cursor.is_none() { offset } else { Some(0) };
         if let Some(offset) = offset {
@@ -454,10 +498,13 @@ impl PgWorkOrderRepository {
             .await
             .map_err(map_db_error)?;
 
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut tasks_by_id = self.get_tasks_batch_async(&ids).await?;
+        let mut materials_by_id = self.get_materials_batch_async(&ids).await?;
         let mut work_orders = Vec::new();
         for row in rows {
-            let tasks = self.get_tasks_async(row.id).await?;
-            let materials = self.get_materials_async_internal(row.id).await?;
+            let tasks = tasks_by_id.remove(&row.id).unwrap_or_default();
+            let materials = materials_by_id.remove(&row.id).unwrap_or_default();
             work_orders.push(Self::row_to_work_order(row, tasks, materials)?);
         }
 
@@ -1108,10 +1155,13 @@ impl PgWorkOrderRepository {
         .await
         .map_err(map_db_error)?;
 
+        let row_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        let mut tasks_by_id = self.get_tasks_batch_async(&row_ids).await?;
+        let mut materials_by_id = self.get_materials_batch_async(&row_ids).await?;
         let mut work_orders = Vec::with_capacity(rows.len());
         for row in rows {
-            let tasks = self.get_tasks_async(row.id).await?;
-            let materials = self.get_materials_async_internal(row.id).await?;
+            let tasks = tasks_by_id.remove(&row.id).unwrap_or_default();
+            let materials = materials_by_id.remove(&row.id).unwrap_or_default();
             work_orders.push(Self::row_to_work_order(row, tasks, materials)?);
         }
 

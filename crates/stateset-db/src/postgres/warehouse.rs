@@ -397,9 +397,7 @@ impl PgWarehouseRepository {
 
         builder.push(" ORDER BY name");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -685,9 +683,7 @@ impl PgWarehouseRepository {
 
         builder.push(" ORDER BY code");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -1060,9 +1056,7 @@ impl PgWarehouseRepository {
             builder.push(" AND li.quantity_on_hand > 0");
         }
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -1119,9 +1113,7 @@ impl PgWarehouseRepository {
 
         builder.push(" ORDER BY m.created_at DESC");
 
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -1338,7 +1330,9 @@ impl PgWarehouseRepository {
                 .push("))");
         }
         builder.push(" ORDER BY created_at DESC, id DESC");
-        builder.push(" LIMIT ").push_bind(i64::from(filter.limit.unwrap_or(50)));
+        builder
+            .push(" LIMIT ")
+            .push_bind(i64::from(filter.limit.unwrap_or(50).min(super::MAX_LIST_LIMIT)));
         // Offset pagination applies only in non-cursor mode.
         let offset = if after_cursor.is_none() { i64::from(filter.offset.unwrap_or(0)) } else { 0 };
         builder.push(" OFFSET ").push_bind(offset);

@@ -165,9 +165,7 @@ impl PgStockSnapshotRepository {
         let mut builder = QueryBuilder::<Postgres>::new(
             "SELECT * FROM stock_snapshots ORDER BY captured_at DESC",
         );
-        if let Some(limit) = filter.limit {
-            builder.push(" LIMIT ").push_bind(i64::from(limit));
-        }
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
             builder.push(" OFFSET ").push_bind(i64::from(offset));
         }

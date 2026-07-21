@@ -488,7 +488,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut ids = Vec::with_capacity(inputs.len());
 
         for input in inputs {

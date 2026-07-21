@@ -440,7 +440,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn update_supplier(&self, id: Uuid, input: UpdateSupplier) -> Result<Supplier> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = chrono::Utc::now();
         let supplier = tx
             .query_row(
@@ -539,7 +539,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn create(&self, input: CreatePurchaseOrder) -> Result<PurchaseOrder> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get supplier for defaults
         let supplier =
@@ -651,7 +651,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn update(&self, id: PurchaseOrderId, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = chrono::Utc::now();
         let po = tx
             .query_row(
@@ -748,7 +748,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn delete(&self, id: PurchaseOrderId) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let status: String = tx
             .query_row("SELECT status FROM purchase_orders WHERE id = ?", [id.to_string()], |row| {
@@ -1013,7 +1013,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         item: CreatePurchaseOrderItem,
     ) -> Result<PurchaseOrderItem> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default()
@@ -1067,7 +1067,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         item: CreatePurchaseOrderItem,
     ) -> Result<PurchaseOrderItem> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = chrono::Utc::now();
         let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default()
             + item.tax_amount.unwrap_or_default();
@@ -1122,7 +1122,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let po_id: String = tx
             .query_row(
@@ -1205,7 +1205,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -1326,7 +1326,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -1398,7 +1398,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
 
         // Verify all POs are in draft status before deleting

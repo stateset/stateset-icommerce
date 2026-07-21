@@ -68,6 +68,10 @@ pub struct RedSnapshot {
     pub p95_ms: f64,
     /// p99 latency in milliseconds (0.0 if no histogram data).
     pub p99_ms: f64,
+    /// Cumulative latency buckets as `(upper_bound_seconds, cumulative_count)`
+    /// pairs (Prometheus exposition style, final bound is `+Inf`). Empty if no
+    /// histogram data.
+    pub latency_buckets: Vec<(f64, u64)>,
 }
 
 impl RedSnapshot {
@@ -85,6 +89,7 @@ impl RedSnapshot {
             p50_ms: 0.0,
             p95_ms: 0.0,
             p99_ms: 0.0,
+            latency_buckets: Vec::new(),
         }
     }
 
@@ -226,6 +231,11 @@ pub struct MetricsSnapshot {
     pub red_global: RedSnapshot,
     /// Operation-level RED aggregates keyed by normalized operation label.
     pub red_by_operation: BTreeMap<String, RedSnapshot>,
+    /// HTTP RED aggregates keyed by `(method, route_pattern)`.
+    ///
+    /// Route patterns are matched-path templates (e.g. `/api/v1/orders/{id}`)
+    /// to keep label cardinality bounded.
+    pub http_by_route: BTreeMap<(String, String), HttpRouteSnapshot>,
 }
 
 impl MetricsSnapshot {
@@ -249,14 +259,36 @@ impl MetricsSnapshot {
     }
 }
 
-/// Simple sorted-insert histogram for latency percentiles.
+/// Upper bounds (inclusive) of the fixed latency buckets, in microseconds.
 ///
-/// Provides p50/p95/p99 latency tracking for individual operations.
-const MAX_HISTOGRAM_SAMPLES: usize = 4_096;
+/// Prometheus-style bounds covering 1ms through 10s; an implicit `+Inf`
+/// overflow bucket captures anything slower.
+const LATENCY_BUCKET_BOUNDS_MICROS: [u64; 13] = [
+    1_000,      // 1ms
+    2_500,      // 2.5ms
+    5_000,      // 5ms
+    10_000,     // 10ms
+    25_000,     // 25ms
+    50_000,     // 50ms
+    100_000,    // 100ms
+    250_000,    // 250ms
+    500_000,    // 500ms
+    1_000_000,  // 1s
+    2_500_000,  // 2.5s
+    5_000_000,  // 5s
+    10_000_000, // 10s
+];
 
-/// Simple sorted-insert histogram for latency percentiles.
+/// Number of buckets including the `+Inf` overflow bucket.
+const LATENCY_BUCKET_COUNT: usize = LATENCY_BUCKET_BOUNDS_MICROS.len() + 1;
+
+/// Fixed-bucket latency histogram (Prometheus-style).
 ///
-/// Samples are bounded to keep memory usage stable under sustained traffic.
+/// Values are recorded into a fixed set of cumulative-style buckets spanning
+/// 1ms to 10s plus a `+Inf` overflow bucket, giving O(1) recording and
+/// constant, bounded memory regardless of traffic volume. Percentiles are
+/// estimated by linear interpolation within the containing bucket (the same
+/// approach as Prometheus's `histogram_quantile`).
 ///
 /// # Example
 ///
@@ -272,7 +304,12 @@ const MAX_HISTOGRAM_SAMPLES: usize = 4_096;
 /// ```
 #[derive(Debug, Clone)]
 pub struct LatencyHistogram {
-    values: Vec<u64>,
+    /// Per-bucket (non-cumulative) counts; last slot is the `+Inf` bucket.
+    bucket_counts: [u64; LATENCY_BUCKET_COUNT],
+    /// Total number of recorded values.
+    count: u64,
+    /// Sum of all recorded values in microseconds.
+    sum_micros: u64,
 }
 
 impl Default for LatencyHistogram {
@@ -285,38 +322,85 @@ impl LatencyHistogram {
     /// Create a new empty histogram.
     #[must_use]
     pub const fn new() -> Self {
-        Self { values: Vec::new() }
+        Self { bucket_counts: [0; LATENCY_BUCKET_COUNT], count: 0, sum_micros: 0 }
     }
 
-    /// Record a latency value in microseconds.
+    /// Record a latency value in microseconds. O(1) with bounded memory.
     pub fn record(&mut self, duration_micros: u64) {
-        if self.values.len() >= MAX_HISTOGRAM_SAMPLES {
-            self.compact();
-        }
-        let pos = self.values.binary_search(&duration_micros).unwrap_or_else(|e| e);
-        self.values.insert(pos, duration_micros);
+        let idx = LATENCY_BUCKET_BOUNDS_MICROS
+            .iter()
+            .position(|&bound| duration_micros <= bound)
+            .unwrap_or(LATENCY_BUCKET_BOUNDS_MICROS.len());
+        self.bucket_counts[idx] = self.bucket_counts[idx].saturating_add(1);
+        self.count = self.count.saturating_add(1);
+        self.sum_micros = self.sum_micros.saturating_add(duration_micros);
     }
 
-    /// Get a percentile (0.0 to 1.0) in milliseconds. Returns 0.0 if empty.
+    /// Estimate a percentile (0.0 to 1.0) in milliseconds. Returns 0.0 if empty.
+    ///
+    /// Uses linear interpolation within the containing bucket. Values in the
+    /// `+Inf` overflow bucket are reported as the largest finite bound (10s).
     #[must_use]
     pub fn percentile(&self, p: f64) -> f64 {
-        if self.values.is_empty() {
+        if self.count == 0 {
             return 0.0;
         }
         let p = p.clamp(0.0, 1.0);
-        let idx = ((self.values.len() as f64 * p) - 1.0).max(0.0) as usize;
-        let idx = idx.min(self.values.len() - 1);
-        self.values[idx] as f64 / 1_000.0
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        let rank = ((p * self.count as f64).ceil() as u64).max(1);
+
+        let mut cumulative = 0u64;
+        for (idx, &bucket_count) in self.bucket_counts.iter().enumerate() {
+            let next = cumulative.saturating_add(bucket_count);
+            if bucket_count > 0 && rank <= next {
+                if idx >= LATENCY_BUCKET_BOUNDS_MICROS.len() {
+                    // +Inf overflow bucket: clamp to the largest finite bound.
+                    return LATENCY_BUCKET_BOUNDS_MICROS[LATENCY_BUCKET_BOUNDS_MICROS.len() - 1]
+                        as f64
+                        / 1_000.0;
+                }
+                let lower_ms = if idx == 0 {
+                    0.0
+                } else {
+                    LATENCY_BUCKET_BOUNDS_MICROS[idx - 1] as f64 / 1_000.0
+                };
+                let upper_ms = LATENCY_BUCKET_BOUNDS_MICROS[idx] as f64 / 1_000.0;
+                let fraction = (rank - cumulative) as f64 / bucket_count as f64;
+                return lower_ms + (upper_ms - lower_ms) * fraction;
+            }
+            cumulative = next;
+        }
+        LATENCY_BUCKET_BOUNDS_MICROS[LATENCY_BUCKET_BOUNDS_MICROS.len() - 1] as f64 / 1_000.0
     }
 
     /// Number of recorded values.
     #[must_use]
-    pub fn count(&self) -> usize {
-        self.values.len()
+    #[allow(clippy::cast_possible_truncation)]
+    pub const fn count(&self) -> usize {
+        self.count as usize
     }
 
-    fn compact(&mut self) {
-        self.values = self.values.iter().step_by(2).copied().collect();
+    /// Sum of all recorded values in microseconds.
+    #[must_use]
+    pub const fn sum_micros(&self) -> u64 {
+        self.sum_micros
+    }
+
+    /// Cumulative bucket counts as `(upper_bound_seconds, cumulative_count)`
+    /// pairs, Prometheus exposition style. The final entry's bound is
+    /// [`f64::INFINITY`] and its count equals [`Self::count`].
+    #[must_use]
+    pub fn cumulative_buckets(&self) -> Vec<(f64, u64)> {
+        let mut cumulative = 0u64;
+        let mut out = Vec::with_capacity(LATENCY_BUCKET_COUNT);
+        for (idx, &bucket_count) in self.bucket_counts.iter().enumerate() {
+            cumulative = cumulative.saturating_add(bucket_count);
+            let bound = LATENCY_BUCKET_BOUNDS_MICROS
+                .get(idx)
+                .map_or(f64::INFINITY, |&micros| micros as f64 / 1_000_000.0);
+            out.push((bound, cumulative));
+        }
+        out
     }
 }
 
@@ -344,8 +428,35 @@ impl RedAccumulator {
         snap.p50_ms = self.histogram.percentile(0.50);
         snap.p95_ms = self.histogram.percentile(0.95);
         snap.p99_ms = self.histogram.percentile(0.99);
+        snap.latency_buckets = self.histogram.cumulative_buckets();
         snap
     }
+}
+
+/// Per-route HTTP RED accumulator (requests, 4xx/5xx errors, latency).
+#[derive(Debug, Clone, Default)]
+struct HttpRouteAccumulator {
+    requests: u64,
+    errors_4xx: u64,
+    errors_5xx: u64,
+    duration_micros_total: u64,
+    histogram: LatencyHistogram,
+}
+
+/// Snapshot of HTTP RED metrics for a single `(method, route)` pair.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HttpRouteSnapshot {
+    /// Total requests observed.
+    pub requests: u64,
+    /// Responses with a 4xx status.
+    pub errors_4xx: u64,
+    /// Responses with a 5xx status.
+    pub errors_5xx: u64,
+    /// Total request duration in milliseconds.
+    pub duration_total_ms: f64,
+    /// Cumulative latency buckets as `(upper_bound_seconds, cumulative_count)`
+    /// pairs (Prometheus exposition style, final bound is `+Inf`).
+    pub latency_buckets: Vec<(f64, u64)>,
 }
 
 #[derive(Debug, Default)]
@@ -354,6 +465,7 @@ struct MetricTotals {
     // lock-free AtomicU64 fields on MetricsInner for contention-free hot paths.
     red_global: RedAccumulator,
     red_by_operation: HashMap<String, RedAccumulator>,
+    http_by_route: HashMap<(String, String), HttpRouteAccumulator>,
 }
 
 #[derive(Debug)]
@@ -457,6 +569,23 @@ impl Metrics {
 
         let red_global = totals.red_global.snapshot();
 
+        let http_by_route: BTreeMap<(String, String), HttpRouteSnapshot> = totals
+            .http_by_route
+            .iter()
+            .map(|(key, acc)| {
+                (
+                    key.clone(),
+                    HttpRouteSnapshot {
+                        requests: acc.requests,
+                        errors_4xx: acc.errors_4xx,
+                        errors_5xx: acc.errors_5xx,
+                        duration_total_ms: acc.duration_micros_total as f64 / 1_000.0,
+                        latency_buckets: acc.histogram.cumulative_buckets(),
+                    },
+                )
+            })
+            .collect();
+
         MetricsSnapshot {
             enabled: self.is_enabled(),
             orders_created: self.inner.orders_created.load(Ordering::Relaxed),
@@ -496,6 +625,7 @@ impl Metrics {
             ),
             red_global,
             red_by_operation,
+            http_by_route,
         }
     }
 
@@ -711,6 +841,45 @@ impl Metrics {
         };
         totals.red_global.record(duration_micros, is_error);
         totals.red_by_operation.entry(op).or_default().record(duration_micros, is_error);
+    }
+
+    /// Record an HTTP request in per-route RED metrics.
+    ///
+    /// `route` should be a low-cardinality route pattern (e.g. axum's
+    /// `MatchedPath` such as `/api/v1/orders/{id}`), never a raw request path.
+    /// 4xx and 5xx responses are counted separately; only 5xx responses are
+    /// treated as errors for the global RED aggregate.
+    pub fn record_http_request(&self, method: &str, route: &str, status: u16, duration: Duration) {
+        if !self.is_enabled() {
+            return;
+        }
+
+        let is_5xx = (500..600).contains(&status);
+        let is_4xx = (400..500).contains(&status);
+        let duration_micros = duration.as_micros().min(u128::from(u64::MAX)) as u64;
+
+        self.inner.requests_total.fetch_add(1, Ordering::Relaxed);
+        if is_5xx {
+            self.inner.request_errors_total.fetch_add(1, Ordering::Relaxed);
+        }
+        self.inner.request_duration_micros_total.fetch_add(duration_micros, Ordering::Relaxed);
+
+        let mut totals = match self.inner.totals.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        totals.red_global.record(duration_micros, is_5xx);
+
+        let acc = totals.http_by_route.entry((method.to_owned(), route.to_owned())).or_default();
+        acc.requests = acc.requests.saturating_add(1);
+        if is_4xx {
+            acc.errors_4xx = acc.errors_4xx.saturating_add(1);
+        }
+        if is_5xx {
+            acc.errors_5xx = acc.errors_5xx.saturating_add(1);
+        }
+        acc.duration_micros_total = acc.duration_micros_total.saturating_add(duration_micros);
+        acc.histogram.record(duration_micros);
     }
 
     /// Record a successful request in RED metrics.
@@ -1014,12 +1183,50 @@ mod tests {
     }
 
     #[test]
-    fn histogram_caps_retained_samples() {
+    fn histogram_memory_is_bounded_and_count_exact() {
         let mut h = LatencyHistogram::new();
-        for i in 0..10_000 {
+        for i in 0..100_000u64 {
             h.record(i);
         }
-        assert!(h.count() <= MAX_HISTOGRAM_SAMPLES);
+        // Fixed buckets: count stays exact regardless of volume.
+        assert_eq!(h.count(), 100_000);
+        assert_eq!(h.cumulative_buckets().len(), LATENCY_BUCKET_COUNT);
+    }
+
+    #[test]
+    fn histogram_bucket_math_known_values() {
+        let mut h = LatencyHistogram::new();
+        h.record(500); // 0.5ms  -> le 0.001
+        h.record(1_000); // 1ms   -> le 0.001 (inclusive upper bound)
+        h.record(3_000); // 3ms   -> le 0.005
+        h.record(70_000); // 70ms -> le 0.1
+        h.record(20_000_000); // 20s -> +Inf
+
+        assert_eq!(h.count(), 5);
+        assert_eq!(h.sum_micros(), 500 + 1_000 + 3_000 + 70_000 + 20_000_000);
+
+        let buckets = h.cumulative_buckets();
+        let get = |bound: f64| {
+            buckets
+                .iter()
+                .find(|(b, _)| (*b - bound).abs() < 1e-12)
+                .map(|(_, c)| *c)
+                .expect("bucket bound present")
+        };
+        assert_eq!(get(0.001), 2);
+        assert_eq!(get(0.0025), 2);
+        assert_eq!(get(0.005), 3);
+        assert_eq!(get(0.05), 3);
+        assert_eq!(get(0.1), 4);
+        assert_eq!(get(10.0), 4);
+        // +Inf bucket is last and equals total count.
+        let (last_bound, last_count) = buckets[buckets.len() - 1];
+        assert!(last_bound.is_infinite());
+        assert_eq!(last_count, 5);
+        // Cumulative counts are monotonically non-decreasing.
+        for pair in buckets.windows(2) {
+            assert!(pair[1].1 >= pair[0].1);
+        }
     }
 
     #[test]
@@ -1949,8 +2156,12 @@ mod tests {
             h.record(5_000);
         }
         assert_eq!(h.count(), 100);
-        assert_close(h.percentile(0.5), 5.0);
-        assert_close(h.percentile(0.99), 5.0);
+        // Bucketed estimate: values fall in the (2.5ms, 5ms] bucket.
+        let p50 = h.percentile(0.5);
+        let p99 = h.percentile(0.99);
+        assert!((2.5..=5.0).contains(&p50), "p50={p50}");
+        assert!((2.5..=5.0).contains(&p99), "p99={p99}");
+        assert!(p99 >= p50);
     }
 
     #[test]
@@ -1960,7 +2171,9 @@ mod tests {
             h.record(0);
         }
         assert_eq!(h.count(), 10);
-        assert_close(h.percentile(0.5), 0.0);
+        // Zero values land in the first bucket (0, 1ms]; the estimate is
+        // bounded by the first bucket's upper edge.
+        assert!(h.percentile(0.5) <= 1.0);
     }
 
     #[test]
@@ -1987,19 +2200,24 @@ mod tests {
         h.record(10_000);
         h.record(20_000);
         let p100 = h.percentile(1.0);
-        assert_close(p100, 20.0);
+        // 20ms falls in the (10ms, 25ms] bucket; the estimate is bounded by
+        // that bucket's edges.
+        assert!((10.0..=25.0).contains(&p100), "p100={p100}");
     }
 
     #[test]
-    fn histogram_sorted_order() {
-        let mut h = LatencyHistogram::new();
-        h.record(30_000);
-        h.record(10_000);
-        h.record(20_000);
-        assert_eq!(h.count(), 3);
-        // p50 should be the middle value
-        let p50 = h.percentile(0.5);
-        assert_close(p50, 10.0); // index (3*0.5 - 1).max(0) = 0.5 -> 0 -> 10ms
+    fn histogram_insertion_order_irrelevant() {
+        let mut a = LatencyHistogram::new();
+        a.record(30_000);
+        a.record(10_000);
+        a.record(20_000);
+        let mut b = LatencyHistogram::new();
+        b.record(10_000);
+        b.record(20_000);
+        b.record(30_000);
+        assert_eq!(a.count(), 3);
+        assert_close(a.percentile(0.5), b.percentile(0.5));
+        assert_eq!(a.cumulative_buckets(), b.cumulative_buckets());
     }
 
     #[test]
@@ -2019,15 +2237,13 @@ mod tests {
     }
 
     #[test]
-    fn histogram_compaction_preserves_order() {
+    fn histogram_percentiles_monotonic_under_volume() {
         let mut h = LatencyHistogram::new();
-        // Fill with ascending values beyond MAX_HISTOGRAM_SAMPLES
-        for i in 0..=(MAX_HISTOGRAM_SAMPLES as u64 + 100) {
+        for i in 0..=5_000u64 {
             h.record(i * 1000);
         }
-        // After compaction, count should be <= MAX_HISTOGRAM_SAMPLES
-        assert!(h.count() <= MAX_HISTOGRAM_SAMPLES + 1);
-        // Percentiles should still be monotonically non-decreasing
+        assert_eq!(h.count(), 5_001);
+        // Percentiles should be monotonically non-decreasing
         assert!(h.percentile(0.95) >= h.percentile(0.50));
         assert!(h.percentile(0.99) >= h.percentile(0.95));
     }
@@ -2474,5 +2690,56 @@ mod tests {
         assert_eq!(snap.red_global.requests, 3);
         assert_eq!(snap.red_global.errors, 1);
         assert_eq!(snap.red_by_operation.len(), 2);
+    }
+
+    // ── HTTP per-route RED metrics ─────────────────────────────────────
+
+    #[test]
+    fn http_request_records_by_method_and_route() {
+        let m = init_metrics(MetricsConfig::default());
+        m.record_http_request("GET", "/api/v1/orders/{id}", 200, Duration::from_millis(20));
+        m.record_http_request("GET", "/api/v1/orders/{id}", 404, Duration::from_millis(5));
+        m.record_http_request("GET", "/api/v1/orders/{id}", 500, Duration::from_millis(80));
+        m.record_http_request("POST", "/api/v1/orders", 201, Duration::from_millis(40));
+
+        let snap = m.snapshot();
+        assert_eq!(snap.http_by_route.len(), 2);
+
+        let get =
+            snap.http_by_route.get(&("GET".to_owned(), "/api/v1/orders/{id}".to_owned())).unwrap();
+        assert_eq!(get.requests, 3);
+        assert_eq!(get.errors_4xx, 1);
+        assert_eq!(get.errors_5xx, 1);
+        assert_close(get.duration_total_ms, 105.0);
+        let (last_bound, last_count) = get.latency_buckets[get.latency_buckets.len() - 1];
+        assert!(last_bound.is_infinite());
+        assert_eq!(last_count, 3);
+
+        let post =
+            snap.http_by_route.get(&("POST".to_owned(), "/api/v1/orders".to_owned())).unwrap();
+        assert_eq!(post.requests, 1);
+        assert_eq!(post.errors_4xx, 0);
+        assert_eq!(post.errors_5xx, 0);
+    }
+
+    #[test]
+    fn http_request_feeds_global_red_with_5xx_errors_only() {
+        let m = init_metrics(MetricsConfig::default());
+        m.record_http_request("GET", "/a", 200, Duration::from_millis(10));
+        m.record_http_request("GET", "/a", 404, Duration::from_millis(10));
+        m.record_http_request("GET", "/a", 503, Duration::from_millis(10));
+
+        let snap = m.snapshot();
+        assert_eq!(snap.red_global.requests, 3);
+        assert_eq!(snap.red_global.errors, 1); // only the 5xx
+    }
+
+    #[test]
+    fn http_request_disabled_is_noop() {
+        let m = init_metrics(MetricsConfig { enabled: false });
+        m.record_http_request("GET", "/a", 500, Duration::from_millis(10));
+        let snap = m.snapshot();
+        assert!(snap.http_by_route.is_empty());
+        assert_eq!(snap.red_global.requests, 0);
     }
 }

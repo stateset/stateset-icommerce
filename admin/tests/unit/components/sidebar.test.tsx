@@ -51,6 +51,7 @@ vi.mock('@heroicons/react/24/outline', () => {
     ServerStackIcon: makeIcon('server-stack'),
     ShieldCheckIcon: makeIcon('shield-check'),
     BanknotesIcon: makeIcon('banknotes'),
+    ArrowsRightLeftIcon: makeIcon('arrows-right-left'),
   };
 });
 
@@ -78,6 +79,7 @@ describe('Sidebar', () => {
     'Customers',
     'Subscriptions',
     'Finance',
+    'EDI',
     'Analytics',
     'Gateway',
     'Settings',
@@ -150,6 +152,7 @@ describe('Sidebar', () => {
       Customers: '/customers',
       Subscriptions: '/subscriptions',
       Finance: '/finance',
+      EDI: '/operations/edi',
       Analytics: '/analytics',
       Gateway: '/gateway',
       Settings: '/settings',
@@ -163,7 +166,7 @@ describe('Sidebar', () => {
   it('renders an icon for each navigation item plus logo', () => {
     render(React.createElement(Sidebar));
     const svgs = screen.getAllByTestId(/^icon-/);
-    // 13 nav items + 1 logo sparkles icon = 14
-    expect(svgs.length).toBe(14);
+    // 14 nav items + 1 logo sparkles icon = 15
+    expect(svgs.length).toBe(15);
   });
 });
