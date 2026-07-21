@@ -404,6 +404,7 @@ use crate::state::AppState;
         crate::routes::general_ledger::lock_period,
         crate::routes::general_ledger::reopen_period,
         crate::routes::general_ledger::revalue,
+        crate::routes::general_ledger::close_month,
         // fixed_assets
         crate::routes::fixed_assets::create,
         crate::routes::fixed_assets::list,

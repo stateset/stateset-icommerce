@@ -27,15 +27,18 @@
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 
-use chrono::NaiveDate;
+use chrono::{Months, NaiveDate};
 use rust_decimal::Decimal;
 use stateset_core::{
-    AutoPostingConfig, BalanceSheet, BatchResult, CreateAutoPostingConfig, CreateGlAccount,
-    CreateGlPeriod, CreateJournalEntry, Currency, GlAccount, GlAccountFilter, GlPeriod,
-    GlPeriodFilter, IncomeStatement, JournalEntry, JournalEntryFilter, JournalEntryLine, Result,
-    RevaluationResult, TrialBalance, UpdateGlAccount,
+    AccountStatus, AutoPostingConfig, BalanceSheet, BatchResult, CloseMonthOptions,
+    CloseMonthReport, CloseMonthStepReport, CloseMonthStepStatus, CommerceError,
+    CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod, CreateJournalEntry, Currency,
+    CurrencyCode, DepreciationEntryStatus, FixedAssetFilter, FixedAssetStatus, GlAccount,
+    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, JournalEntry, JournalEntryFilter,
+    JournalEntryLine, Result, RevaluationResult, RevenueContractFilter, RevenueContractStatus,
+    RevenueEntryStatus, TrialBalance, UpdateGlAccount,
 };
-use stateset_db::Database;
+use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -479,6 +482,287 @@ impl GeneralLedger {
     /// 4. Close the period
     pub fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
         self.db.general_ledger().run_period_close(period_id, closed_by)
+    }
+
+    /// Close the month: orchestrate every period-end step in order.
+    ///
+    /// Runs, composing existing operations:
+    /// 1. Post scheduled depreciation due through period end for all
+    ///    in-service assets.
+    /// 2. Recognize deferred revenue through period end for active contracts.
+    /// 3. FX revaluation as of period end — skipped silently when there are
+    ///    no foreign-currency accounts or no FX gain/loss account is
+    ///    configured (the close never fails on this step).
+    /// 4. [`run_period_close`](Self::run_period_close) (closing entries +
+    ///    close period).
+    ///
+    /// With `options.dry_run` the candidates for each step are computed via
+    /// read APIs and reported without writing anything. Per-asset and
+    /// per-obligation failures are collected as warnings on the step report
+    /// and do not abort the close.
+    pub fn close_month(
+        &self,
+        period_id: Uuid,
+        options: CloseMonthOptions,
+    ) -> Result<CloseMonthReport> {
+        let period = self.get_period(period_id)?.ok_or(CommerceError::NotFound)?;
+        let closed_by = options.closed_by.clone().unwrap_or_else(|| "system".to_string());
+
+        let depreciation = if options.skip_depreciation {
+            CloseMonthStepReport::skipped(None)
+        } else {
+            self.close_month_depreciation(&period, options.dry_run)?
+        };
+
+        let revenue_recognition = if options.skip_revenue_recognition {
+            CloseMonthStepReport::skipped(None)
+        } else {
+            self.close_month_revenue_recognition(&period, options.dry_run)?
+        };
+
+        let fx_revaluation = if options.skip_fx_revaluation {
+            CloseMonthStepReport::skipped(None)
+        } else {
+            self.close_month_fx_revaluation(&period, options.dry_run)?
+        };
+
+        let mut closing_entry = None;
+        let period_close = if options.skip_period_close {
+            CloseMonthStepReport::skipped(None)
+        } else if options.dry_run {
+            let statement = self.get_income_statement(period.start_date, period.end_date)?;
+            let has_activity =
+                !statement.total_revenue.is_zero() || !statement.total_expenses.is_zero();
+            CloseMonthStepReport {
+                status: CloseMonthStepStatus::DryRun,
+                entry_count: u64::from(has_activity),
+                total_amount: statement.total_revenue + statement.total_expenses,
+                warnings: Vec::new(),
+            }
+        } else {
+            let entry = self.run_period_close(period_id, &closed_by)?;
+            let total = entry.total_debits;
+            closing_entry = Some(entry);
+            CloseMonthStepReport {
+                status: CloseMonthStepStatus::Executed,
+                entry_count: 1,
+                total_amount: total,
+                warnings: Vec::new(),
+            }
+        };
+
+        let period_status = if options.dry_run || options.skip_period_close {
+            period.status
+        } else {
+            self.get_period(period_id)?.map_or(period.status, |p| p.status)
+        };
+
+        Ok(CloseMonthReport {
+            period_id,
+            period_name: period.period_name,
+            dry_run: options.dry_run,
+            depreciation,
+            revenue_recognition,
+            fx_revaluation,
+            period_close,
+            closing_entry,
+            period_status,
+        })
+    }
+
+    /// Step 1: post scheduled depreciation due through period end.
+    ///
+    /// A schedule entry `n` (1-based) is due once `period.end_date` reaches
+    /// `in_service_date + (n - 1) months` — i.e. closing the month the asset
+    /// went into service posts its first depreciation period.
+    fn close_month_depreciation(
+        &self,
+        period: &GlPeriod,
+        dry_run: bool,
+    ) -> Result<CloseMonthStepReport> {
+        if !self.db.supports_capability(DatabaseCapability::FixedAssets) {
+            return Ok(CloseMonthStepReport::skipped(Some(
+                "fixed assets are not supported by the active backend".to_string(),
+            )));
+        }
+        let assets = self.db.fixed_assets().list(FixedAssetFilter {
+            status: Some(FixedAssetStatus::InService),
+            ..Default::default()
+        })?;
+        let mut entry_count = 0u64;
+        let mut total_amount = Decimal::ZERO;
+        let mut warnings = Vec::new();
+        for asset in assets {
+            let Some(in_service) = asset.in_service_date else { continue };
+            let Some(schedule) = self.db.fixed_assets().get_schedule(asset.id)? else {
+                warnings.push(format!(
+                    "asset {}: no depreciation schedule generated",
+                    asset.asset_number
+                ));
+                continue;
+            };
+            let due: Vec<_> = schedule
+                .entries
+                .iter()
+                .filter(|e| {
+                    e.status == DepreciationEntryStatus::Scheduled
+                        && e.period >= 1
+                        && in_service
+                            .checked_add_months(Months::new(e.period - 1))
+                            .is_some_and(|d| d <= period.end_date)
+                })
+                .collect();
+            if due.is_empty() {
+                continue;
+            }
+            let amount: Decimal = due.iter().map(|e| e.amount).sum();
+            if dry_run {
+                entry_count += due.len() as u64;
+                total_amount += amount;
+                continue;
+            }
+            match self.db.fixed_assets().post_depreciation(asset.id, due.len() as u32) {
+                Ok(_) => {
+                    entry_count += due.len() as u64;
+                    total_amount += amount;
+                }
+                Err(e) => warnings.push(format!("asset {}: {e}", asset.asset_number)),
+            }
+        }
+        Ok(CloseMonthStepReport {
+            status: if dry_run {
+                CloseMonthStepStatus::DryRun
+            } else {
+                CloseMonthStepStatus::Executed
+            },
+            entry_count,
+            total_amount,
+            warnings,
+        })
+    }
+
+    /// Step 2: recognize deferred revenue through period end for active
+    /// contracts with generated schedules.
+    fn close_month_revenue_recognition(
+        &self,
+        period: &GlPeriod,
+        dry_run: bool,
+    ) -> Result<CloseMonthStepReport> {
+        if !self.db.supports_capability(DatabaseCapability::RevenueRecognition) {
+            return Ok(CloseMonthStepReport::skipped(Some(
+                "revenue recognition is not supported by the active backend".to_string(),
+            )));
+        }
+        let contracts = self.db.revenue_recognition().list_contracts(RevenueContractFilter {
+            status: Some(RevenueContractStatus::Active),
+            ..Default::default()
+        })?;
+        let mut entry_count = 0u64;
+        let mut total_amount = Decimal::ZERO;
+        let mut warnings = Vec::new();
+        for contract in contracts {
+            for obligation in &contract.obligations {
+                let Some(schedule) = self.db.revenue_recognition().get_schedule(obligation.id)?
+                else {
+                    continue;
+                };
+                let due: Vec<_> = schedule
+                    .entries
+                    .iter()
+                    .filter(|e| {
+                        e.status == RevenueEntryStatus::Deferred
+                            && e.period_start <= period.end_date
+                    })
+                    .collect();
+                if due.is_empty() {
+                    continue;
+                }
+                let amount: Decimal = due.iter().map(|e| e.amount).sum();
+                if dry_run {
+                    entry_count += due.len() as u64;
+                    total_amount += amount;
+                    continue;
+                }
+                match self.db.revenue_recognition().recognize_period(obligation.id, period.end_date)
+                {
+                    Ok(_) => {
+                        entry_count += due.len() as u64;
+                        total_amount += amount;
+                    }
+                    Err(e) => warnings.push(format!(
+                        "contract {} obligation {}: {e}",
+                        contract.contract_number, obligation.id
+                    )),
+                }
+            }
+        }
+        Ok(CloseMonthStepReport {
+            status: if dry_run {
+                CloseMonthStepStatus::DryRun
+            } else {
+                CloseMonthStepStatus::Executed
+            },
+            entry_count,
+            total_amount,
+            warnings,
+        })
+    }
+
+    /// Step 3: FX revaluation as of period end.
+    ///
+    /// Skipped silently when no active posting account is held in a foreign
+    /// currency. Validation failures inside the revaluation (no FX gain/loss
+    /// account configured, missing exchange rate) also downgrade to a skipped
+    /// step with a warning so the close never fails here.
+    fn close_month_fx_revaluation(
+        &self,
+        period: &GlPeriod,
+        dry_run: bool,
+    ) -> Result<CloseMonthStepReport> {
+        let base: CurrencyCode = {
+            let settings = self.db.currency().get_settings()?;
+            match settings.base_currency.code().parse() {
+                Ok(code) => code,
+                Err(_) => {
+                    return Ok(CloseMonthStepReport::skipped(Some(format!(
+                        "store base currency {} is not a valid ISO code",
+                        settings.base_currency.code()
+                    ))));
+                }
+            }
+        };
+        let foreign_accounts: Vec<GlAccount> = self
+            .list_accounts(GlAccountFilter {
+                status: Some(AccountStatus::Active),
+                is_posting: Some(true),
+                ..Default::default()
+            })?
+            .into_iter()
+            .filter(|a| a.currency != base)
+            .collect();
+        if foreign_accounts.is_empty() {
+            return Ok(CloseMonthStepReport::skipped(None));
+        }
+        if dry_run {
+            return Ok(CloseMonthStepReport {
+                status: CloseMonthStepStatus::DryRun,
+                entry_count: foreign_accounts.len() as u64,
+                total_amount: Decimal::ZERO,
+                warnings: Vec::new(),
+            });
+        }
+        match self.revalue(period.end_date, None) {
+            Ok(result) => Ok(CloseMonthStepReport {
+                status: CloseMonthStepStatus::Executed,
+                entry_count: u64::from(result.journal_entry.is_some()),
+                total_amount: result.total_unrealized_gain_loss,
+                warnings: Vec::new(),
+            }),
+            Err(CommerceError::ValidationError(message)) => Ok(CloseMonthStepReport::skipped(
+                Some(format!("fx revaluation skipped: {message}")),
+            )),
+            Err(e) => Err(e),
+        }
     }
 
     // ========================================================================

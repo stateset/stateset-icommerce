@@ -1587,6 +1587,36 @@ export interface ApAgingSummaryOutput {
   daysOver90: number
   total: number
 }
+export interface ThreeWayMatchLineOutput {
+  poLineId?: string
+  billItemId: string
+  description: string
+  /** Exact decimal string */
+  orderedQuantity?: string
+  /** Exact decimal string */
+  orderedUnitCost?: string
+  /** Exact decimal string */
+  receivedQuantity: string
+  /** Exact decimal string */
+  billedQuantity: string
+  /** Exact decimal string */
+  billedUnitCost: string
+  /** Exact decimal string: billed_quantity - received_quantity */
+  quantityVariance: string
+  /** Exact decimal string: billed_unit_cost - ordered_unit_cost */
+  priceVariance: string
+  matched: boolean
+  issues: Array<string>
+}
+export interface ThreeWayMatchOutput {
+  /** Overall status: not_required, pending, matched, variance */
+  matchStatus: string
+  /** Number of variance lines (set when match_status is "variance") */
+  varianceLineCount?: number
+  /** Tolerance applied, as an exact decimal string percentage (e.g. "5") */
+  tolerancePercent: string
+  lines: Array<ThreeWayMatchLineOutput>
+}
 export interface ArAgingSummaryOutput {
   current: number
   days130: number
@@ -1720,6 +1750,101 @@ export interface IncomeStatementOutput {
   totalRevenue: number
   totalExpenses: number
   netIncome: number
+}
+export interface RevaluationLineOutput {
+  accountId: string
+  accountNumber: string
+  accountName: string
+  currency: string
+  /** Side that increases this account: debit or credit */
+  normalBalance: string
+  /** Exact decimal string */
+  foreignBalance: string
+  /** Exact decimal string */
+  carryingValue: string
+  /** Exact decimal string */
+  rate: string
+  /** Exact decimal string */
+  revaluedValue: string
+  /** Exact decimal string */
+  adjustment: string
+  /** Exact decimal string */
+  unrealizedGainLoss: string
+}
+export interface RevaluationOutput {
+  /** ISO date (YYYY-MM-DD) */
+  asOfDate: string
+  baseCurrency: string
+  /** Exact decimal string */
+  totalUnrealizedGainLoss: string
+  lines: Array<RevaluationLineOutput>
+  /** Balanced adjusting entry; None when no adjustment was required. */
+  journalEntry?: JournalEntryOutput
+}
+export interface CreateGlPeriodInput {
+  /** Display name, typically `YYYY-MM` */
+  periodName: string
+  fiscalYear: number
+  /** Sequential number within the fiscal year (1-12 for monthly) */
+  periodNumber: number
+  /** First date of the period (inclusive), ISO date (YYYY-MM-DD) */
+  startDate: string
+  /** Last date of the period (inclusive), ISO date (YYYY-MM-DD) */
+  endDate: string
+}
+export interface GlPeriodOutput {
+  id: string
+  periodName: string
+  fiscalYear: number
+  periodNumber: number
+  /** ISO date (YYYY-MM-DD) */
+  startDate: string
+  /** ISO date (YYYY-MM-DD) */
+  endDate: string
+  /** One of `future`, `open`, `closed`, `locked` */
+  status: string
+  closedBy?: string
+}
+export interface CloseMonthOptionsInput {
+  /** Compute per-step counts/amounts without writing anything */
+  dryRun?: boolean
+  /** Skip posting scheduled fixed-asset depreciation */
+  skipDepreciation?: boolean
+  /** Skip recognizing deferred revenue through period end */
+  skipRevenueRecognition?: boolean
+  /** Skip FX revaluation of foreign-currency accounts */
+  skipFxRevaluation?: boolean
+  /** Skip the final period close (closing entries + close period) */
+  skipPeriodClose?: boolean
+  /** Actor recorded as the closer; defaults to `system` */
+  closedBy?: string
+}
+export interface CloseMonthStepOutput {
+  /** One of `executed`, `skipped`, `dry_run` */
+  status: string
+  /** Entries posted (or that would be posted in a dry run) */
+  entryCount: number
+  /** Exact decimal string */
+  totalAmount: string
+  /** Per-item failures that did not abort the close */
+  warnings: Array<string>
+}
+export interface CloseMonthReportOutput {
+  periodId: string
+  periodName: string
+  dryRun: boolean
+  /** Step 1: scheduled depreciation due through period end */
+  depreciation: CloseMonthStepOutput
+  /** Step 2: deferred revenue recognized through period end */
+  revenueRecognition: CloseMonthStepOutput
+  /** Step 3: FX revaluation as of period end */
+  fxRevaluation: CloseMonthStepOutput
+  /** Step 4: closing entries + close period */
+  periodClose: CloseMonthStepOutput
+  /** Posted closing entry; None for dry runs or skipped closes */
+  closingEntry?: JournalEntryOutput
+  /** Period status after the run (`closed` after a real close) */
+  periodStatus: string
 }
 export interface X402CreateIntentInput {
   payerAddress: string
@@ -2439,6 +2564,303 @@ export interface RewardFilterInput {
   limit?: number
   offset?: number
 }
+export interface CreateFixedAssetInput {
+  /** Optional asset number; auto-generated when omitted (FA-...) */
+  assetNumber?: string
+  name: string
+  description?: string
+  /**
+   * Category: land, building, machinery, equipment, vehicle,
+   * furniture_and_fixtures, computer_hardware, software,
+   * leasehold_improvement, other
+   */
+  category: string
+  /** ISO date (YYYY-MM-DD) */
+  acquisitionDate: string
+  /** Exact decimal string, e.g. "10000.00" */
+  acquisitionCost: string
+  /** Exact decimal string */
+  salvageValue: string
+  usefulLifeMonths: number
+  /** straight_line, declining_balance, units_of_production */
+  depreciationMethod: string
+  /**
+   * Required for declining_balance: periodic rate as exact decimal string
+   * strictly between 0 and 1 (e.g. "0.2" for 20%)
+   */
+  decliningBalanceRate?: string
+  /** ISO date (YYYY-MM-DD) */
+  inServiceDate?: string
+  locationId?: string
+  assetAccountId?: string
+  accumulatedDepreciationAccountId?: string
+  depreciationExpenseAccountId?: string
+  /** Currency code, e.g. "USD" */
+  currency?: string
+}
+export interface UpdateFixedAssetInput {
+  name?: string
+  description?: string
+  category?: string
+  /** Exact decimal string */
+  salvageValue?: string
+  usefulLifeMonths?: number
+  /** ISO date (YYYY-MM-DD) */
+  inServiceDate?: string
+  locationId?: string
+  assetAccountId?: string
+  accumulatedDepreciationAccountId?: string
+  depreciationExpenseAccountId?: string
+}
+export interface FixedAssetFilterInput {
+  category?: string
+  /** draft, in_service, fully_depreciated, disposed, written_off */
+  status?: string
+  locationId?: string
+  /** ISO date (YYYY-MM-DD) */
+  acquiredFrom?: string
+  /** ISO date (YYYY-MM-DD) */
+  acquiredTo?: string
+  search?: string
+  limit?: number
+  offset?: number
+}
+export interface AssetDisposalOutput {
+  /** ISO date (YYYY-MM-DD) */
+  disposalDate: string
+  /** Exact decimal string */
+  proceeds: string
+  /** Exact decimal string */
+  bookValueAtDisposal: string
+  /** Exact decimal string: proceeds - book value */
+  gainLoss: string
+  notes?: string
+}
+export interface FixedAssetOutput {
+  id: string
+  assetNumber: string
+  name: string
+  description?: string
+  category: string
+  /** ISO date (YYYY-MM-DD) */
+  acquisitionDate: string
+  /** Exact decimal string */
+  acquisitionCost: string
+  /** Exact decimal string */
+  salvageValue: string
+  usefulLifeMonths: number
+  /** straight_line, declining_balance, units_of_production */
+  depreciationMethod: string
+  /** Set when depreciation_method is declining_balance */
+  decliningBalanceRate?: string
+  /** draft, in_service, fully_depreciated, disposed, written_off */
+  status: string
+  /** ISO date (YYYY-MM-DD) */
+  inServiceDate?: string
+  locationId?: string
+  assetAccountId?: string
+  accumulatedDepreciationAccountId?: string
+  depreciationExpenseAccountId?: string
+  /** Exact decimal string */
+  accumulatedDepreciation: string
+  /** Exact decimal string: acquisition_cost - accumulated_depreciation */
+  bookValue: string
+  currency: string
+  disposal?: AssetDisposalOutput
+  createdAt: string
+  updatedAt: string
+}
+export interface DepreciationEntryOutput {
+  period: number
+  /** Exact decimal string */
+  amount: string
+  /** Exact decimal string */
+  accumulated: string
+  /** Exact decimal string */
+  bookValue: string
+  /** scheduled or posted */
+  status: string
+}
+export interface DepreciationScheduleOutput {
+  assetId: string
+  /** straight_line, declining_balance, units_of_production */
+  method: string
+  /** Set when method is declining_balance */
+  decliningBalanceRate?: string
+  entries: Array<DepreciationEntryOutput>
+  /** Exact decimal string */
+  totalDepreciation: string
+}
+export interface CreatePerformanceObligationInput {
+  description: string
+  /** Exact decimal string */
+  standaloneSellingPrice?: string
+  /** Exact decimal string; obligations must sum to the transaction price */
+  allocatedAmount: string
+  /** point_in_time, ratable_over_time, milestone */
+  recognitionMethod: string
+  /** ISO date (YYYY-MM-DD); required for ratable_over_time */
+  recognitionStart?: string
+  /** ISO date (YYYY-MM-DD); required for ratable_over_time */
+  recognitionEnd?: string
+}
+export interface CreateRevenueContractInput {
+  /** Optional contract number; auto-generated when omitted (RC-...) */
+  contractNumber?: string
+  customerId: string
+  orderId?: string
+  invoiceId?: string
+  /** Exact decimal string */
+  transactionPrice: string
+  /** Currency code, e.g. "USD" */
+  currency?: string
+  /** ISO date (YYYY-MM-DD) */
+  effectiveDate: string
+  obligations: Array<CreatePerformanceObligationInput>
+}
+export interface UpdateRevenueContractInput {
+  orderId?: string
+  invoiceId?: string
+  /** draft, active, completed, cancelled (transition-guarded) */
+  status?: string
+  /** ISO date (YYYY-MM-DD) */
+  effectiveDate?: string
+}
+export interface RevenueContractFilterInput {
+  customerId?: string
+  orderId?: string
+  invoiceId?: string
+  /** draft, active, completed, cancelled */
+  status?: string
+  /** ISO date (YYYY-MM-DD) */
+  effectiveFrom?: string
+  /** ISO date (YYYY-MM-DD) */
+  effectiveTo?: string
+  search?: string
+  limit?: number
+  offset?: number
+}
+export interface PerformanceObligationOutput {
+  id: string
+  contractId: string
+  description: string
+  /** Exact decimal string */
+  standaloneSellingPrice?: string
+  /** Exact decimal string */
+  allocatedAmount: string
+  /** point_in_time, ratable_over_time, milestone */
+  recognitionMethod: string
+  /** ISO date (YYYY-MM-DD); set for ratable_over_time */
+  recognitionStart?: string
+  /** ISO date (YYYY-MM-DD); set for ratable_over_time */
+  recognitionEnd?: string
+  /** Exact decimal string */
+  recognizedAmount: string
+  /** Exact decimal string: allocated_amount - recognized_amount */
+  deferredAmount: string
+  createdAt: string
+  updatedAt: string
+}
+export interface RevenueContractOutput {
+  id: string
+  contractNumber: string
+  customerId: string
+  orderId?: string
+  invoiceId?: string
+  /** Exact decimal string */
+  transactionPrice: string
+  currency: string
+  /** draft, active, completed, cancelled */
+  status: string
+  /** ISO date (YYYY-MM-DD) */
+  effectiveDate: string
+  obligations: Array<PerformanceObligationOutput>
+  /** Exact decimal string: total recognized across obligations */
+  totalRecognized: string
+  /** Exact decimal string: transaction_price - total_recognized */
+  deferredBalance: string
+  createdAt: string
+  updatedAt: string
+}
+export interface RevenueScheduleEntryOutput {
+  period: number
+  /** ISO date (YYYY-MM-DD): first day of the entry's month */
+  periodStart: string
+  /** Exact decimal string */
+  amount: string
+  /** deferred or recognized */
+  status: string
+}
+export interface RevenueScheduleOutput {
+  obligationId: string
+  /** point_in_time, ratable_over_time, milestone */
+  method: string
+  /** ISO date (YYYY-MM-DD); set for ratable_over_time */
+  recognitionStart?: string
+  /** ISO date (YYYY-MM-DD); set for ratable_over_time */
+  recognitionEnd?: string
+  entries: Array<RevenueScheduleEntryOutput>
+  /** Exact decimal string */
+  totalAmount: string
+  /** Exact decimal string: sum of recognized entries */
+  recognizedTotal: string
+  /** Exact decimal string: sum of deferred entries */
+  deferredTotal: string
+}
+export interface CreateCycleCountLineInput {
+  sku: string
+  lotId?: string
+  /** Exact decimal string */
+  expectedQuantity: string
+}
+export interface CreateCycleCountInput {
+  warehouseId: number
+  /** Optional single location scope; omit to count across the warehouse. */
+  locationId?: number
+  /** RFC 3339 timestamp */
+  scheduledDate?: string
+  countedBy?: string
+  lines: Array<CreateCycleCountLineInput>
+}
+export interface RecordCycleCountLineInput {
+  sku: string
+  lotId?: string
+  /** Exact decimal string */
+  countedQuantity: string
+}
+export interface CycleCountFilterInput {
+  warehouseId?: number
+  locationId?: number
+  /** draft, in_progress, completed, cancelled */
+  status?: string
+  limit?: number
+  offset?: number
+}
+export interface CycleCountLineOutput {
+  id: string
+  cycleCountId: string
+  sku: string
+  lotId?: string
+  /** Exact decimal string */
+  expectedQuantity: string
+  /** Exact decimal string */
+  countedQuantity?: string
+  /** Exact decimal string: counted_quantity - expected_quantity */
+  variance?: string
+}
+export interface CycleCountOutput {
+  id: string
+  warehouseId: number
+  locationId?: number
+  /** draft, in_progress, completed, cancelled */
+  status: string
+  scheduledDate?: string
+  countedBy?: string
+  lines: Array<CycleCountLineOutput>
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -2524,6 +2946,12 @@ export declare class Commerce {
   get backorder(): Backorders
   /** Get the general ledger API */
   get generalLedger(): GeneralLedger
+  /** Get the fixed assets API */
+  get fixedAssets(): FixedAssets
+  /** Get the revenue recognition (ASC 606) API */
+  get revenueRecognition(): RevenueRecognition
+  /** Get the cycle counts API */
+  get cycleCounts(): CycleCounts
   /** Get the events API (pub/sub and webhook management) */
   get events(): Events
   /**
@@ -3108,6 +3536,13 @@ export declare class AccountsPayable {
   getTotalOutstanding(): Promise<number>
   /** Count bills */
   countBills(): Promise<number>
+  /**
+   * Three-way match a bill against its purchase order and receipts.
+   *
+   * `tolerance_percent` is an exact decimal string (e.g. "5" for 5%);
+   * omit it for exact matching.
+   */
+  threeWayMatch(billId: string, tolerancePercent?: string | undefined | null): Promise<ThreeWayMatchOutput>
 }
 export declare class AccountsReceivable {
   /** Get AR aging summary */
@@ -3208,6 +3643,26 @@ export declare class GeneralLedger {
   getIncomeStatement(startDate: string, endDate: string): Promise<IncomeStatementOutput>
   /** Get account balance */
   getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<number>
+  /**
+   * Revalue foreign-currency account balances at the as-of exchange rate.
+   *
+   * `as_of_date` is an ISO date (YYYY-MM-DD); `base_currency` defaults to
+   * the store's configured base currency.
+   */
+  revalue(asOfDate: string, baseCurrency?: string | undefined | null): Promise<RevaluationOutput>
+  /** Create an accounting period. */
+  createPeriod(input: CreateGlPeriodInput): Promise<GlPeriodOutput>
+  /** Open a period (transition from future to open). */
+  openPeriod(id: string): Promise<GlPeriodOutput>
+  /**
+   * Close the month: post scheduled depreciation, recognize revenue
+   * through period end, revalue foreign-currency balances, then run the
+   * period close (closing entries + close period).
+   *
+   * Pass `{ dryRun: true }` to compute per-step counts and amounts without
+   * writing anything.
+   */
+  closeMonth(periodId: string, options?: CloseMonthOptionsInput | undefined | null): Promise<CloseMonthReportOutput>
 }
 export declare class X402 {
   createIntent(input: X402CreateIntentInput): Promise<X402IntentOutput>
@@ -3340,4 +3795,65 @@ export declare class Loyalty {
   getReward(id: string): Promise<RewardOutput | null>
   listRewards(filter?: RewardFilterInput | undefined | null): Promise<Array<RewardOutput>>
   deleteReward(id: string): Promise<void>
+}
+export declare class FixedAssets {
+  /** Whether the fixed-assets backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateFixedAssetInput): Promise<FixedAssetOutput>
+  get(id: string): Promise<FixedAssetOutput | null>
+  list(filter?: FixedAssetFilterInput | undefined | null): Promise<Array<FixedAssetOutput>>
+  update(id: string, input: UpdateFixedAssetInput): Promise<FixedAssetOutput>
+  /** Place a draft asset in service on the given ISO date (YYYY-MM-DD). */
+  placeInService(id: string, date: string): Promise<FixedAssetOutput>
+  /**
+   * Dispose of an asset for the given proceeds (exact decimal string),
+   * recording gain/loss. `date` is an ISO date (YYYY-MM-DD); defaults to today.
+   */
+  dispose(id: string, proceeds: string, date?: string | undefined | null, notes?: string | undefined | null): Promise<FixedAssetOutput>
+  /**
+   * Write off an asset (disposal with zero proceeds). `date` is an ISO date
+   * (YYYY-MM-DD); defaults to today.
+   */
+  writeOff(id: string, date?: string | undefined | null, notes?: string | undefined | null): Promise<FixedAssetOutput>
+  /** Generate and persist the depreciation schedule for an asset. */
+  generateSchedule(id: string): Promise<DepreciationScheduleOutput>
+  /** Get the persisted depreciation schedule for an asset, if generated. */
+  getSchedule(id: string): Promise<DepreciationScheduleOutput | null>
+  /** Post the next `periods` scheduled depreciation entries. */
+  postDepreciation(id: string, periods: number): Promise<FixedAssetOutput>
+}
+export declare class RevenueRecognition {
+  /** Whether the revenue-recognition backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  createContract(input: CreateRevenueContractInput): Promise<RevenueContractOutput>
+  getContract(id: string): Promise<RevenueContractOutput | null>
+  listContracts(filter?: RevenueContractFilterInput | undefined | null): Promise<Array<RevenueContractOutput>>
+  updateContract(id: string, input: UpdateRevenueContractInput): Promise<RevenueContractOutput>
+  /** List the performance obligations under a contract. */
+  listObligations(contractId: string): Promise<Array<PerformanceObligationOutput>>
+  /** Generate and persist the recognition schedule for an obligation. */
+  generateSchedule(obligationId: string): Promise<RevenueScheduleOutput>
+  /** Get the persisted recognition schedule for an obligation, if generated. */
+  getSchedule(obligationId: string): Promise<RevenueScheduleOutput | null>
+  /**
+   * Recognize deferred entries with a period start on or before `through`
+   * (ISO date, YYYY-MM-DD).
+   */
+  recognize(obligationId: string, through: string): Promise<RevenueScheduleOutput>
+}
+export declare class CycleCounts {
+  /** Create a cycle count (draft) with its expected lines. */
+  create(input: CreateCycleCountInput): Promise<CycleCountOutput>
+  /** Get a cycle count (with lines) by ID. */
+  get(id: string): Promise<CycleCountOutput | null>
+  /** List cycle counts matching the filter. */
+  list(filter?: CycleCountFilterInput | undefined | null): Promise<Array<CycleCountOutput>>
+  /** Start a draft cycle count (draft -> in_progress). */
+  start(id: string): Promise<CycleCountOutput>
+  /** Record physical counts against an in-progress cycle count. */
+  recordCounts(id: string, counts: Array<RecordCycleCountLineInput>): Promise<CycleCountOutput>
+  /** Complete an in-progress cycle count, applying variance adjustments. */
+  complete(id: string): Promise<CycleCountOutput>
+  /** Cancel a draft or in-progress cycle count. No adjustments are applied. */
+  cancel(id: string): Promise<CycleCountOutput>
 }

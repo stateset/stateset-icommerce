@@ -141,6 +141,26 @@ export const accountsPayableTools = withPolicyDomain('accounts_payable', [
     },
   },
   {
+    name: 'three_way_match_bill',
+    description: 'Run a three-way match (bill vs purchase order vs receipt) for a bill.',
+    inputSchema: {
+      billId: z.string().min(1).describe('Bill ID'),
+      tolerancePercent: z
+        .number()
+        .min(0)
+        .optional()
+        .describe('Optional variance tolerance percent'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const match = await commerce.accountsPayable.threeWayMatch(
+        params.billId,
+        params.tolerancePercent,
+      );
+      return { success: true, match };
+    },
+  },
+  {
     name: 'count_accounts_payable_bills',
     description: 'Count accounts payable bills.',
     inputSchema: {},

@@ -187,6 +187,63 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
     },
   },
   {
+    name: 'revalue_gl',
+    description: 'Revalue foreign-currency general ledger balances as of a date.',
+    inputSchema: {
+      asOfDate: z.string().min(1).describe('As-of date in ISO 8601'),
+      baseCurrency: z.string().min(1).max(10).optional().describe('Optional base currency code'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Revalue general ledger', params);
+      }
+
+      const revaluation = await commerce.generalLedger.revalue(
+        params.asOfDate,
+        params.baseCurrency,
+      );
+      return { success: true, message: 'General ledger revalued', revaluation };
+    },
+  },
+  {
+    name: 'close_month',
+    description:
+      'Close the month: post scheduled depreciation, recognize revenue through period end, ' +
+      'revalue foreign-currency balances, then run the period close. ' +
+      'Use dryRun to preview per-step counts and amounts without writing.',
+    inputSchema: {
+      periodId: z.string().min(1).describe('Accounting period ID'),
+      dryRun: z.boolean().optional().describe('Preview only; nothing is written'),
+      skipDepreciation: z.boolean().optional().describe('Skip posting scheduled depreciation'),
+      skipRevenueRecognition: z.boolean().optional().describe('Skip revenue recognition'),
+      skipFxRevaluation: z.boolean().optional().describe('Skip FX revaluation'),
+      skipPeriodClose: z.boolean().optional().describe('Skip closing entries and period close'),
+      closedBy: z.string().min(1).optional().describe('Actor recorded as the closer'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      const dryRun = params.dryRun === true;
+      if (!dryRun && !allowApply) {
+        return applyRequired('Close month', params);
+      }
+
+      const report = await commerce.generalLedger.closeMonth(params.periodId, {
+        dryRun,
+        skipDepreciation: params.skipDepreciation,
+        skipRevenueRecognition: params.skipRevenueRecognition,
+        skipFxRevaluation: params.skipFxRevaluation,
+        skipPeriodClose: params.skipPeriodClose,
+        closedBy: params.closedBy,
+      });
+      return {
+        success: true,
+        message: dryRun ? 'Close month dry run computed' : 'Month closed',
+        report,
+      };
+    },
+  },
+  {
     name: 'get_gl_account_balance',
     description: 'Get the balance of a general ledger account.',
     inputSchema: {

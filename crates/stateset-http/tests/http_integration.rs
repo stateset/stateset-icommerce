@@ -4113,3 +4113,123 @@ async fn requests_without_idempotency_key_are_not_deduplicated() {
     let orders = state.commerce().orders().list(Default::default()).unwrap();
     assert_eq!(orders.len(), 2, "without a key, each request creates a new order");
 }
+
+/// POST /gl/close-month runs the month-end close orchestration: dry run first
+/// (nothing written), then a real close that posts the closing entry and
+/// closes the period.
+#[tokio::test]
+async fn gl_close_month_dry_run_then_close() {
+    let (router, state) = app_with_state();
+    let gl = state.commerce().general_ledger();
+    gl.initialize_chart_of_accounts().unwrap();
+
+    // Wide open period covering today so posted entries land inside it.
+    let period = gl
+        .create_period(stateset_core::CreateGlPeriod {
+            period_name: "FY-wide".into(),
+            fiscal_year: 2026,
+            period_number: 1,
+            start_date: chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            end_date: chrono::NaiveDate::from_ymd_opt(2030, 12, 31).unwrap(),
+        })
+        .unwrap();
+    gl.open_period(period.id).unwrap();
+
+    // Seed P&L activity: debit cash, credit sales revenue.
+    let cash = gl.get_account_by_number("1010").unwrap().unwrap();
+    let revenue = gl.get_account_by_number("4010").unwrap().unwrap();
+    gl.create_journal_entry(stateset_core::CreateJournalEntry {
+        entry_date: chrono::Utc::now().date_naive(),
+        entry_type: None,
+        description: "Cash sale".into(),
+        lines: vec![
+            stateset_core::CreateJournalEntryLine::debit(cash.id, dec!(500), None),
+            stateset_core::CreateJournalEntryLine::credit(revenue.id, dec!(500), None),
+        ],
+        source_document_type: None,
+        source_document_id: None,
+        auto_post: Some(true),
+    })
+    .unwrap();
+
+    // Dry run: 200, per-step dry_run statuses, period stays open.
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/gl/close-month")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "period_id": period.id.to_string(), "dry_run": true })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["period_close"]["status"], "dry_run");
+    assert_eq!(json["fx_revaluation"]["status"], "skipped");
+    assert_eq!(json["period_status"], "open");
+    assert!(json["closing_entry"].is_null());
+
+    // Real close: closing entry posted, period closed.
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/gl/close-month")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "period_id": period.id.to_string(),
+                        "closed_by": "integration-test"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["period_close"]["status"], "executed");
+    assert_eq!(json["period_close"]["entry_count"], 1);
+    assert_eq!(json["period_status"], "closed");
+    assert_eq!(json["closing_entry"]["entry_type"], "closing");
+    assert_eq!(json["closing_entry"]["is_balanced"], true);
+    let closed = state.commerce().general_ledger().get_period(period.id).unwrap().unwrap();
+    assert_eq!(closed.status, stateset_core::PeriodStatus::Closed);
+    assert_eq!(closed.closed_by.as_deref(), Some("integration-test"));
+}
+
+/// POST /gl/close-month with an invalid period id is a 400; unknown period is 404.
+#[tokio::test]
+async fn gl_close_month_bad_period_ids() {
+    let (router, _state) = app_with_state();
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/gl/close-month")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({ "period_id": "not-a-uuid" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/gl/close-month")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "period_id": Uuid::new_v4().to_string() }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

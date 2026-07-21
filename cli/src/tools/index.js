@@ -80,6 +80,9 @@ const TOOL_MODULES = {
   'a2a-platform': namedLoader('./a2a-platform.js', 'a2aPlatformTools'),
   'a2a-intelligence': namedLoader('./a2a-intelligence.js', 'a2aIntelligenceTools'),
   'agent-receipt': namedLoader('./agent-receipt.js', 'agentReceiptTools'),
+  'fixed-assets': namedLoader('./fixed-assets.js', 'fixedAssetTools'),
+  'revenue-recognition': namedLoader('./revenue-recognition.js', 'revenueRecognitionTools'),
+  'cycle-counts': namedLoader('./cycle-counts.js', 'cycleCountTools'),
   'agentic-runtime': () => import('../mcp-server.js').then((m) => m.getStaticAgenticRuntimeTools()),
 };
 

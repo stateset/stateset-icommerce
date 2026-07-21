@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Commerce, Events, CommerceEventSubscription, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, vesX402ComputeSigningHash, X402, VectorSearch, jcsCanonicalize, domainHash, ed25519Sign, ed25519Verify, vesHybridGenerateSigningKeypair, vesHybridSignEventHash, vesHybridVerifyEventSignature, vesTestVectorMlDsaPublicKey, vesHybridGenerateRecipientKeypair, vesTestVectorMlKemPublicKey, vesHybridEncryptPayload, vesHybridDecryptPayload, vesStrictGenerateSigningKeypair, vesStrictSignEventHash, vesStrictVerifyEventSignature, vesStrictGenerateRecipientKeypair, vesStrictEncryptPayload, vesStrictDecryptPayload, vesHybridGenerateSigningPop, vesHybridVerifySigningPop, vesStrictGenerateSigningPop, vesStrictVerifySigningPop, aesGcmEncrypt, aesGcmDecrypt, merkleRoot, GiftCards, StoreCredits, Reviews, Wishlists, Segments, Loyalty } = nativeBinding
+const { Commerce, Events, CommerceEventSubscription, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, vesX402ComputeSigningHash, X402, VectorSearch, jcsCanonicalize, domainHash, ed25519Sign, ed25519Verify, vesHybridGenerateSigningKeypair, vesHybridSignEventHash, vesHybridVerifyEventSignature, vesTestVectorMlDsaPublicKey, vesHybridGenerateRecipientKeypair, vesTestVectorMlKemPublicKey, vesHybridEncryptPayload, vesHybridDecryptPayload, vesStrictGenerateSigningKeypair, vesStrictSignEventHash, vesStrictVerifyEventSignature, vesStrictGenerateRecipientKeypair, vesStrictEncryptPayload, vesStrictDecryptPayload, vesHybridGenerateSigningPop, vesHybridVerifySigningPop, vesStrictGenerateSigningPop, vesStrictVerifySigningPop, aesGcmEncrypt, aesGcmDecrypt, merkleRoot, GiftCards, StoreCredits, Reviews, Wishlists, Segments, Loyalty, FixedAssets, RevenueRecognition, CycleCounts } = nativeBinding
 
 module.exports.Commerce = Commerce
 module.exports.Events = Events
@@ -380,3 +380,6 @@ module.exports.Reviews = Reviews
 module.exports.Wishlists = Wishlists
 module.exports.Segments = Segments
 module.exports.Loyalty = Loyalty
+module.exports.FixedAssets = FixedAssets
+module.exports.RevenueRecognition = RevenueRecognition
+module.exports.CycleCounts = CycleCounts

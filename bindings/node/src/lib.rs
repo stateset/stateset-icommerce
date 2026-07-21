@@ -324,6 +324,24 @@ impl Commerce {
         GeneralLedger { commerce: self.inner.clone() }
     }
 
+    /// Get the fixed assets API
+    #[napi(getter)]
+    pub fn fixed_assets(&self) -> FixedAssets {
+        FixedAssets { commerce: self.inner.clone() }
+    }
+
+    /// Get the revenue recognition (ASC 606) API
+    #[napi(getter)]
+    pub fn revenue_recognition(&self) -> RevenueRecognition {
+        RevenueRecognition { commerce: self.inner.clone() }
+    }
+
+    /// Get the cycle counts API
+    #[napi(getter)]
+    pub fn cycle_counts(&self) -> CycleCounts {
+        CycleCounts { commerce: self.inner.clone() }
+    }
+
     /// Get the events API (pub/sub and webhook management)
     #[napi(getter)]
     pub fn events(&self) -> Events {
@@ -9774,6 +9792,81 @@ impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummaryOutput {
     }
 }
 
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ThreeWayMatchLineOutput {
+    pub po_line_id: Option<String>,
+    pub bill_item_id: String,
+    pub description: String,
+    /// Exact decimal string
+    pub ordered_quantity: Option<String>,
+    /// Exact decimal string
+    pub ordered_unit_cost: Option<String>,
+    /// Exact decimal string
+    pub received_quantity: String,
+    /// Exact decimal string
+    pub billed_quantity: String,
+    /// Exact decimal string
+    pub billed_unit_cost: String,
+    /// Exact decimal string: billed_quantity - received_quantity
+    pub quantity_variance: String,
+    /// Exact decimal string: billed_unit_cost - ordered_unit_cost
+    pub price_variance: String,
+    pub matched: bool,
+    pub issues: Vec<String>,
+}
+
+impl From<stateset_core::ThreeWayMatchLine> for ThreeWayMatchLineOutput {
+    fn from(l: stateset_core::ThreeWayMatchLine) -> Self {
+        Self {
+            po_line_id: l.po_line_id.map(|id| id.to_string()),
+            bill_item_id: l.bill_item_id.to_string(),
+            description: l.description,
+            ordered_quantity: l.ordered_quantity.map(|d| d.to_string()),
+            ordered_unit_cost: l.ordered_unit_cost.map(|d| d.to_string()),
+            received_quantity: l.received_quantity.to_string(),
+            billed_quantity: l.billed_quantity.to_string(),
+            billed_unit_cost: l.billed_unit_cost.to_string(),
+            quantity_variance: l.quantity_variance.to_string(),
+            price_variance: l.price_variance.to_string(),
+            matched: l.matched,
+            issues: l.issues,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ThreeWayMatchOutput {
+    /// Overall status: not_required, pending, matched, variance
+    pub match_status: String,
+    /// Number of variance lines (set when match_status is "variance")
+    pub variance_line_count: Option<u32>,
+    /// Tolerance applied, as an exact decimal string percentage (e.g. "5")
+    pub tolerance_percent: String,
+    pub lines: Vec<ThreeWayMatchLineOutput>,
+}
+
+impl From<stateset_core::ThreeWayMatchResult> for ThreeWayMatchOutput {
+    fn from(r: stateset_core::ThreeWayMatchResult) -> Self {
+        let (match_status, variance_line_count) = match r.match_status {
+            stateset_core::MatchStatus::NotRequired => ("not_required".to_string(), None),
+            stateset_core::MatchStatus::Pending => ("pending".to_string(), None),
+            stateset_core::MatchStatus::Matched => ("matched".to_string(), None),
+            stateset_core::MatchStatus::Variance { variance_line_count } => {
+                ("variance".to_string(), Some(variance_line_count as u32))
+            }
+            _ => ("unknown".to_string(), None),
+        };
+        Self {
+            match_status,
+            variance_line_count,
+            tolerance_percent: r.tolerance_percent.to_string(),
+            lines: r.lines.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 #[napi]
 pub struct AccountsPayable {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -9919,6 +10012,31 @@ impl AccountsPayable {
             .count_bills(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to count bills: {}", e)))?;
         Ok(count as u32)
+    }
+
+    /// Three-way match a bill against its purchase order and receipts.
+    ///
+    /// `tolerance_percent` is an exact decimal string (e.g. "5" for 5%);
+    /// omit it for exact matching.
+    #[napi]
+    pub async fn three_way_match(
+        &self,
+        bill_id: String,
+        tolerance_percent: Option<String>,
+    ) -> Result<ThreeWayMatchOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = bill_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let tolerance = tolerance_percent
+            .map(|s| {
+                s.parse::<Decimal>()
+                    .map_err(|_| Error::from_reason("Invalid tolerance_percent decimal"))
+            })
+            .transpose()?;
+        let result = commerce
+            .accounts_payable()
+            .three_way_match(uuid, tolerance)
+            .map_err(|e| Error::from_reason(format!("Failed to three-way match bill: {}", e)))?;
+        Ok(result.into())
     }
 }
 
@@ -10844,6 +10962,76 @@ fn parse_account_type(s: &str) -> stateset_core::AccountType {
     }
 }
 
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RevaluationLineOutput {
+    pub account_id: String,
+    pub account_number: String,
+    pub account_name: String,
+    pub currency: String,
+    /// Side that increases this account: debit or credit
+    pub normal_balance: String,
+    /// Exact decimal string
+    pub foreign_balance: String,
+    /// Exact decimal string
+    pub carrying_value: String,
+    /// Exact decimal string
+    pub rate: String,
+    /// Exact decimal string
+    pub revalued_value: String,
+    /// Exact decimal string
+    pub adjustment: String,
+    /// Exact decimal string
+    pub unrealized_gain_loss: String,
+}
+
+impl From<stateset_core::RevaluationLine> for RevaluationLineOutput {
+    fn from(l: stateset_core::RevaluationLine) -> Self {
+        Self {
+            account_id: l.account_id.to_string(),
+            account_number: l.account_number,
+            account_name: l.account_name,
+            currency: l.currency.to_string(),
+            normal_balance: match l.normal_balance {
+                stateset_core::BalanceSide::Debit => "debit".to_string(),
+                stateset_core::BalanceSide::Credit => "credit".to_string(),
+                _ => "unknown".to_string(),
+            },
+            foreign_balance: l.foreign_balance.to_string(),
+            carrying_value: l.carrying_value.to_string(),
+            rate: l.rate.to_string(),
+            revalued_value: l.revalued_value.to_string(),
+            adjustment: l.adjustment.to_string(),
+            unrealized_gain_loss: l.unrealized_gain_loss.to_string(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RevaluationOutput {
+    /// ISO date (YYYY-MM-DD)
+    pub as_of_date: String,
+    pub base_currency: String,
+    /// Exact decimal string
+    pub total_unrealized_gain_loss: String,
+    pub lines: Vec<RevaluationLineOutput>,
+    /// Balanced adjusting entry; None when no adjustment was required.
+    pub journal_entry: Option<JournalEntryOutput>,
+}
+
+impl From<stateset_core::RevaluationResult> for RevaluationOutput {
+    fn from(r: stateset_core::RevaluationResult) -> Self {
+        Self {
+            as_of_date: r.as_of_date.to_string(),
+            base_currency: r.base_currency.to_string(),
+            total_unrealized_gain_loss: r.total_unrealized_gain_loss.to_string(),
+            lines: r.lines.into_iter().map(Into::into).collect(),
+            journal_entry: r.journal_entry.map(Into::into),
+        }
+    }
+}
+
 #[napi]
 pub struct GeneralLedger {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -11032,6 +11220,217 @@ impl GeneralLedger {
             .map_err(|e| Error::from_reason(format!("Failed to get balance: {}", e)))?;
         optional_to_f64_result(balance, "account balance")?
             .ok_or_else(|| Error::from_reason("Account balance unavailable"))
+    }
+
+    /// Revalue foreign-currency account balances at the as-of exchange rate.
+    ///
+    /// `as_of_date` is an ISO date (YYYY-MM-DD); `base_currency` defaults to
+    /// the store's configured base currency.
+    #[napi]
+    pub async fn revalue(
+        &self,
+        as_of_date: String,
+        base_currency: Option<String>,
+    ) -> Result<RevaluationOutput> {
+        let commerce = self.commerce.lock().await;
+        let date = chrono::NaiveDate::parse_from_str(&as_of_date, "%Y-%m-%d")
+            .map_err(|_| Error::from_reason("Invalid date format"))?;
+        let base = base_currency
+            .map(|s| {
+                s.parse::<stateset_core::Currency>()
+                    .map_err(|_| Error::from_reason("Invalid base currency code"))
+            })
+            .transpose()?;
+        let result = commerce
+            .general_ledger()
+            .revalue(date, base)
+            .map_err(|e| Error::from_reason(format!("Failed to revalue: {}", e)))?;
+        Ok(result.into())
+    }
+
+    /// Create an accounting period.
+    #[napi]
+    pub async fn create_period(&self, input: CreateGlPeriodInput) -> Result<GlPeriodOutput> {
+        let commerce = self.commerce.lock().await;
+        let period = commerce
+            .general_ledger()
+            .create_period(stateset_core::CreateGlPeriod {
+                period_name: input.period_name,
+                fiscal_year: input.fiscal_year,
+                period_number: input.period_number,
+                start_date: chrono::NaiveDate::parse_from_str(&input.start_date, "%Y-%m-%d")
+                    .map_err(|_| Error::from_reason("Invalid start date format"))?,
+                end_date: chrono::NaiveDate::parse_from_str(&input.end_date, "%Y-%m-%d")
+                    .map_err(|_| Error::from_reason("Invalid end date format"))?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create period: {}", e)))?;
+        Ok(period.into())
+    }
+
+    /// Open a period (transition from future to open).
+    #[napi]
+    pub async fn open_period(&self, id: String) -> Result<GlPeriodOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let period = commerce
+            .general_ledger()
+            .open_period(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to open period: {}", e)))?;
+        Ok(period.into())
+    }
+
+    /// Close the month: post scheduled depreciation, recognize revenue
+    /// through period end, revalue foreign-currency balances, then run the
+    /// period close (closing entries + close period).
+    ///
+    /// Pass `{ dryRun: true }` to compute per-step counts and amounts without
+    /// writing anything.
+    #[napi]
+    pub async fn close_month(
+        &self,
+        period_id: String,
+        options: Option<CloseMonthOptionsInput>,
+    ) -> Result<CloseMonthReportOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = period_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let options = options.unwrap_or_default();
+        let report = commerce
+            .general_ledger()
+            .close_month(
+                uuid,
+                stateset_core::CloseMonthOptions {
+                    dry_run: options.dry_run.unwrap_or(false),
+                    skip_depreciation: options.skip_depreciation.unwrap_or(false),
+                    skip_revenue_recognition: options.skip_revenue_recognition.unwrap_or(false),
+                    skip_fx_revaluation: options.skip_fx_revaluation.unwrap_or(false),
+                    skip_period_close: options.skip_period_close.unwrap_or(false),
+                    closed_by: options.closed_by,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to close month: {}", e)))?;
+        Ok(report.into())
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateGlPeriodInput {
+    /// Display name, typically `YYYY-MM`
+    pub period_name: String,
+    pub fiscal_year: i32,
+    /// Sequential number within the fiscal year (1-12 for monthly)
+    pub period_number: i32,
+    /// First date of the period (inclusive), ISO date (YYYY-MM-DD)
+    pub start_date: String,
+    /// Last date of the period (inclusive), ISO date (YYYY-MM-DD)
+    pub end_date: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GlPeriodOutput {
+    pub id: String,
+    pub period_name: String,
+    pub fiscal_year: i32,
+    pub period_number: i32,
+    /// ISO date (YYYY-MM-DD)
+    pub start_date: String,
+    /// ISO date (YYYY-MM-DD)
+    pub end_date: String,
+    /// One of `future`, `open`, `closed`, `locked`
+    pub status: String,
+    pub closed_by: Option<String>,
+}
+
+impl From<stateset_core::GlPeriod> for GlPeriodOutput {
+    fn from(p: stateset_core::GlPeriod) -> Self {
+        Self {
+            id: p.id.to_string(),
+            period_name: p.period_name,
+            fiscal_year: p.fiscal_year,
+            period_number: p.period_number,
+            start_date: p.start_date.to_string(),
+            end_date: p.end_date.to_string(),
+            status: p.status.to_string(),
+            closed_by: p.closed_by,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct CloseMonthOptionsInput {
+    /// Compute per-step counts/amounts without writing anything
+    pub dry_run: Option<bool>,
+    /// Skip posting scheduled fixed-asset depreciation
+    pub skip_depreciation: Option<bool>,
+    /// Skip recognizing deferred revenue through period end
+    pub skip_revenue_recognition: Option<bool>,
+    /// Skip FX revaluation of foreign-currency accounts
+    pub skip_fx_revaluation: Option<bool>,
+    /// Skip the final period close (closing entries + close period)
+    pub skip_period_close: Option<bool>,
+    /// Actor recorded as the closer; defaults to `system`
+    pub closed_by: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CloseMonthStepOutput {
+    /// One of `executed`, `skipped`, `dry_run`
+    pub status: String,
+    /// Entries posted (or that would be posted in a dry run)
+    pub entry_count: i64,
+    /// Exact decimal string
+    pub total_amount: String,
+    /// Per-item failures that did not abort the close
+    pub warnings: Vec<String>,
+}
+
+impl From<stateset_core::CloseMonthStepReport> for CloseMonthStepOutput {
+    fn from(step: stateset_core::CloseMonthStepReport) -> Self {
+        Self {
+            status: step.status.to_string(),
+            entry_count: i64::try_from(step.entry_count).unwrap_or(i64::MAX),
+            total_amount: step.total_amount.to_string(),
+            warnings: step.warnings,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CloseMonthReportOutput {
+    pub period_id: String,
+    pub period_name: String,
+    pub dry_run: bool,
+    /// Step 1: scheduled depreciation due through period end
+    pub depreciation: CloseMonthStepOutput,
+    /// Step 2: deferred revenue recognized through period end
+    pub revenue_recognition: CloseMonthStepOutput,
+    /// Step 3: FX revaluation as of period end
+    pub fx_revaluation: CloseMonthStepOutput,
+    /// Step 4: closing entries + close period
+    pub period_close: CloseMonthStepOutput,
+    /// Posted closing entry; None for dry runs or skipped closes
+    pub closing_entry: Option<JournalEntryOutput>,
+    /// Period status after the run (`closed` after a real close)
+    pub period_status: String,
+}
+
+impl From<stateset_core::CloseMonthReport> for CloseMonthReportOutput {
+    fn from(r: stateset_core::CloseMonthReport) -> Self {
+        Self {
+            period_id: r.period_id.to_string(),
+            period_name: r.period_name,
+            dry_run: r.dry_run,
+            depreciation: r.depreciation.into(),
+            revenue_recognition: r.revenue_recognition.into(),
+            fx_revaluation: r.fx_revaluation.into(),
+            period_close: r.period_close.into(),
+            closing_entry: r.closing_entry.map(Into::into),
+            period_status: r.period_status.to_string(),
+        }
     }
 }
 
@@ -15060,5 +15459,1287 @@ impl Loyalty {
             .delete_reward(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to delete reward: {}", e)))?;
         Ok(())
+    }
+}
+
+// ============================================================================
+// Fixed Assets  (all monetary values cross as exact decimal strings)
+// ============================================================================
+
+fn parse_iso_date(s: &str, field: &str) -> Result<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|_| Error::from_reason(format!("Invalid {field} date (expected YYYY-MM-DD)")))
+}
+
+fn parse_decimal_str(s: &str, field: &str) -> Result<Decimal> {
+    s.parse::<Decimal>().map_err(|_| Error::from_reason(format!("Invalid {field} decimal")))
+}
+
+fn parse_optional_uuid(s: Option<String>, field: &str) -> Result<Option<uuid::Uuid>> {
+    s.map(|s| {
+        s.parse::<uuid::Uuid>().map_err(|_| Error::from_reason(format!("Invalid {field} UUID")))
+    })
+    .transpose()
+}
+
+fn parse_depreciation_method(
+    method: &str,
+    rate: Option<&str>,
+) -> Result<stateset_core::DepreciationMethod> {
+    match method {
+        "straight_line" => Ok(stateset_core::DepreciationMethod::StraightLine),
+        "declining_balance" => {
+            let rate = rate.ok_or_else(|| {
+                Error::from_reason("declining_balance requires declining_balance_rate")
+            })?;
+            Ok(stateset_core::DepreciationMethod::DecliningBalance {
+                rate: parse_decimal_str(rate, "declining_balance_rate")?,
+            })
+        }
+        "units_of_production" => Ok(stateset_core::DepreciationMethod::UnitsOfProduction),
+        _ => Err(Error::from_reason(
+            "Invalid depreciation method (expected straight_line, declining_balance, or units_of_production)",
+        )),
+    }
+}
+
+fn depreciation_method_parts(
+    method: stateset_core::DepreciationMethod,
+) -> (String, Option<String>) {
+    match method {
+        stateset_core::DepreciationMethod::StraightLine => ("straight_line".to_string(), None),
+        stateset_core::DepreciationMethod::DecliningBalance { rate } => {
+            ("declining_balance".to_string(), Some(rate.to_string()))
+        }
+        stateset_core::DepreciationMethod::UnitsOfProduction => {
+            ("units_of_production".to_string(), None)
+        }
+        _ => ("unknown".to_string(), None),
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateFixedAssetInput {
+    /// Optional asset number; auto-generated when omitted (FA-...)
+    pub asset_number: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    /// Category: land, building, machinery, equipment, vehicle,
+    /// furniture_and_fixtures, computer_hardware, software,
+    /// leasehold_improvement, other
+    pub category: String,
+    /// ISO date (YYYY-MM-DD)
+    pub acquisition_date: String,
+    /// Exact decimal string, e.g. "10000.00"
+    pub acquisition_cost: String,
+    /// Exact decimal string
+    pub salvage_value: String,
+    pub useful_life_months: u32,
+    /// straight_line, declining_balance, units_of_production
+    pub depreciation_method: String,
+    /// Required for declining_balance: periodic rate as exact decimal string
+    /// strictly between 0 and 1 (e.g. "0.2" for 20%)
+    pub declining_balance_rate: Option<String>,
+    /// ISO date (YYYY-MM-DD)
+    pub in_service_date: Option<String>,
+    pub location_id: Option<String>,
+    pub asset_account_id: Option<String>,
+    pub accumulated_depreciation_account_id: Option<String>,
+    pub depreciation_expense_account_id: Option<String>,
+    /// Currency code, e.g. "USD"
+    pub currency: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateFixedAssetInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    /// Exact decimal string
+    pub salvage_value: Option<String>,
+    pub useful_life_months: Option<u32>,
+    /// ISO date (YYYY-MM-DD)
+    pub in_service_date: Option<String>,
+    pub location_id: Option<String>,
+    pub asset_account_id: Option<String>,
+    pub accumulated_depreciation_account_id: Option<String>,
+    pub depreciation_expense_account_id: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FixedAssetFilterInput {
+    pub category: Option<String>,
+    /// draft, in_service, fully_depreciated, disposed, written_off
+    pub status: Option<String>,
+    pub location_id: Option<String>,
+    /// ISO date (YYYY-MM-DD)
+    pub acquired_from: Option<String>,
+    /// ISO date (YYYY-MM-DD)
+    pub acquired_to: Option<String>,
+    pub search: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AssetDisposalOutput {
+    /// ISO date (YYYY-MM-DD)
+    pub disposal_date: String,
+    /// Exact decimal string
+    pub proceeds: String,
+    /// Exact decimal string
+    pub book_value_at_disposal: String,
+    /// Exact decimal string: proceeds - book value
+    pub gain_loss: String,
+    pub notes: Option<String>,
+}
+
+impl From<stateset_core::AssetDisposal> for AssetDisposalOutput {
+    fn from(d: stateset_core::AssetDisposal) -> Self {
+        Self {
+            disposal_date: d.disposal_date.to_string(),
+            proceeds: d.proceeds.to_string(),
+            book_value_at_disposal: d.book_value_at_disposal.to_string(),
+            gain_loss: d.gain_loss.to_string(),
+            notes: d.notes,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FixedAssetOutput {
+    pub id: String,
+    pub asset_number: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub category: String,
+    /// ISO date (YYYY-MM-DD)
+    pub acquisition_date: String,
+    /// Exact decimal string
+    pub acquisition_cost: String,
+    /// Exact decimal string
+    pub salvage_value: String,
+    pub useful_life_months: u32,
+    /// straight_line, declining_balance, units_of_production
+    pub depreciation_method: String,
+    /// Set when depreciation_method is declining_balance
+    pub declining_balance_rate: Option<String>,
+    /// draft, in_service, fully_depreciated, disposed, written_off
+    pub status: String,
+    /// ISO date (YYYY-MM-DD)
+    pub in_service_date: Option<String>,
+    pub location_id: Option<String>,
+    pub asset_account_id: Option<String>,
+    pub accumulated_depreciation_account_id: Option<String>,
+    pub depreciation_expense_account_id: Option<String>,
+    /// Exact decimal string
+    pub accumulated_depreciation: String,
+    /// Exact decimal string: acquisition_cost - accumulated_depreciation
+    pub book_value: String,
+    pub currency: String,
+    pub disposal: Option<AssetDisposalOutput>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::FixedAsset> for FixedAssetOutput {
+    fn from(a: stateset_core::FixedAsset) -> Self {
+        let book_value = a.book_value();
+        let (method, rate) = depreciation_method_parts(a.depreciation_method);
+        Self {
+            id: a.id.to_string(),
+            asset_number: a.asset_number,
+            name: a.name,
+            description: a.description,
+            category: format!("{}", a.category),
+            acquisition_date: a.acquisition_date.to_string(),
+            acquisition_cost: a.acquisition_cost.to_string(),
+            salvage_value: a.salvage_value.to_string(),
+            useful_life_months: a.useful_life_months,
+            depreciation_method: method,
+            declining_balance_rate: rate,
+            status: format!("{}", a.status),
+            in_service_date: a.in_service_date.map(|d| d.to_string()),
+            location_id: a.location_id.map(|id| id.to_string()),
+            asset_account_id: a.asset_account_id.map(|id| id.to_string()),
+            accumulated_depreciation_account_id: a
+                .accumulated_depreciation_account_id
+                .map(|id| id.to_string()),
+            depreciation_expense_account_id: a
+                .depreciation_expense_account_id
+                .map(|id| id.to_string()),
+            accumulated_depreciation: a.accumulated_depreciation.to_string(),
+            book_value: book_value.to_string(),
+            currency: a.currency.to_string(),
+            disposal: a.disposal.map(Into::into),
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DepreciationEntryOutput {
+    pub period: u32,
+    /// Exact decimal string
+    pub amount: String,
+    /// Exact decimal string
+    pub accumulated: String,
+    /// Exact decimal string
+    pub book_value: String,
+    /// scheduled or posted
+    pub status: String,
+}
+
+impl From<stateset_core::DepreciationEntry> for DepreciationEntryOutput {
+    fn from(e: stateset_core::DepreciationEntry) -> Self {
+        Self {
+            period: e.period,
+            amount: e.amount.to_string(),
+            accumulated: e.accumulated.to_string(),
+            book_value: e.book_value.to_string(),
+            status: format!("{}", e.status),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DepreciationScheduleOutput {
+    pub asset_id: String,
+    /// straight_line, declining_balance, units_of_production
+    pub method: String,
+    /// Set when method is declining_balance
+    pub declining_balance_rate: Option<String>,
+    pub entries: Vec<DepreciationEntryOutput>,
+    /// Exact decimal string
+    pub total_depreciation: String,
+}
+
+impl From<stateset_core::DepreciationSchedule> for DepreciationScheduleOutput {
+    fn from(s: stateset_core::DepreciationSchedule) -> Self {
+        let (method, rate) = depreciation_method_parts(s.method);
+        Self {
+            asset_id: s.asset_id.to_string(),
+            method,
+            declining_balance_rate: rate,
+            entries: s.entries.into_iter().map(Into::into).collect(),
+            total_depreciation: s.total_depreciation.to_string(),
+        }
+    }
+}
+
+#[napi]
+pub struct FixedAssets {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl FixedAssets {
+    /// Whether the fixed-assets backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.fixed_assets().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateFixedAssetInput) -> Result<FixedAssetOutput> {
+        let commerce = self.commerce.lock().await;
+        let category = input
+            .category
+            .parse::<stateset_core::FixedAssetCategory>()
+            .map_err(|_| Error::from_reason("Invalid fixed asset category"))?;
+        let depreciation_method = parse_depreciation_method(
+            &input.depreciation_method,
+            input.declining_balance_rate.as_deref(),
+        )?;
+        let currency = input
+            .currency
+            .map(|s| {
+                s.parse::<CurrencyCode>().map_err(|_| Error::from_reason("Invalid currency code"))
+            })
+            .transpose()?;
+        let asset = commerce
+            .fixed_assets()
+            .create(stateset_core::CreateFixedAsset {
+                asset_number: input.asset_number,
+                name: input.name,
+                description: input.description,
+                category,
+                acquisition_date: parse_iso_date(&input.acquisition_date, "acquisition_date")?,
+                acquisition_cost: parse_decimal_str(&input.acquisition_cost, "acquisition_cost")?,
+                salvage_value: parse_decimal_str(&input.salvage_value, "salvage_value")?,
+                useful_life_months: input.useful_life_months,
+                depreciation_method,
+                in_service_date: input
+                    .in_service_date
+                    .as_deref()
+                    .map(|s| parse_iso_date(s, "in_service_date"))
+                    .transpose()?,
+                location_id: parse_optional_uuid(input.location_id, "location_id")?,
+                asset_account_id: parse_optional_uuid(input.asset_account_id, "asset_account_id")?,
+                accumulated_depreciation_account_id: parse_optional_uuid(
+                    input.accumulated_depreciation_account_id,
+                    "accumulated_depreciation_account_id",
+                )?,
+                depreciation_expense_account_id: parse_optional_uuid(
+                    input.depreciation_expense_account_id,
+                    "depreciation_expense_account_id",
+                )?,
+                currency,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create fixed asset: {}", e)))?;
+        Ok(asset.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<FixedAssetOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let asset = commerce
+            .fixed_assets()
+            .get(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get fixed asset: {}", e)))?;
+        Ok(asset.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<FixedAssetFilterInput>,
+    ) -> Result<Vec<FixedAssetOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::FixedAssetFilter::default()),
+            |f| -> Result<stateset_core::FixedAssetFilter> {
+                Ok(stateset_core::FixedAssetFilter {
+                    category: f
+                        .category
+                        .map(|s| {
+                            s.parse::<stateset_core::FixedAssetCategory>()
+                                .map_err(|_| Error::from_reason("Invalid fixed asset category"))
+                        })
+                        .transpose()?,
+                    status: f
+                        .status
+                        .map(|s| {
+                            s.parse::<stateset_core::FixedAssetStatus>()
+                                .map_err(|_| Error::from_reason("Invalid fixed asset status"))
+                        })
+                        .transpose()?,
+                    location_id: parse_optional_uuid(f.location_id, "location_id")?,
+                    acquired_from: f
+                        .acquired_from
+                        .as_deref()
+                        .map(|s| parse_iso_date(s, "acquired_from"))
+                        .transpose()?,
+                    acquired_to: f
+                        .acquired_to
+                        .as_deref()
+                        .map(|s| parse_iso_date(s, "acquired_to"))
+                        .transpose()?,
+                    search: f.search,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let assets = commerce
+            .fixed_assets()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list fixed assets: {}", e)))?;
+        Ok(assets.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdateFixedAssetInput,
+    ) -> Result<FixedAssetOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let category = input
+            .category
+            .map(|s| {
+                s.parse::<stateset_core::FixedAssetCategory>()
+                    .map_err(|_| Error::from_reason("Invalid fixed asset category"))
+            })
+            .transpose()?;
+        let asset = commerce
+            .fixed_assets()
+            .update(
+                uuid,
+                stateset_core::UpdateFixedAsset {
+                    name: input.name,
+                    description: input.description,
+                    category,
+                    salvage_value: input
+                        .salvage_value
+                        .as_deref()
+                        .map(|s| parse_decimal_str(s, "salvage_value"))
+                        .transpose()?,
+                    useful_life_months: input.useful_life_months,
+                    in_service_date: input
+                        .in_service_date
+                        .as_deref()
+                        .map(|s| parse_iso_date(s, "in_service_date"))
+                        .transpose()?,
+                    location_id: parse_optional_uuid(input.location_id, "location_id")?,
+                    asset_account_id: parse_optional_uuid(
+                        input.asset_account_id,
+                        "asset_account_id",
+                    )?,
+                    accumulated_depreciation_account_id: parse_optional_uuid(
+                        input.accumulated_depreciation_account_id,
+                        "accumulated_depreciation_account_id",
+                    )?,
+                    depreciation_expense_account_id: parse_optional_uuid(
+                        input.depreciation_expense_account_id,
+                        "depreciation_expense_account_id",
+                    )?,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update fixed asset: {}", e)))?;
+        Ok(asset.into())
+    }
+
+    /// Place a draft asset in service on the given ISO date (YYYY-MM-DD).
+    #[napi]
+    pub async fn place_in_service(&self, id: String, date: String) -> Result<FixedAssetOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let date = parse_iso_date(&date, "date")?;
+        let asset = commerce
+            .fixed_assets()
+            .place_in_service(uuid, date)
+            .map_err(|e| Error::from_reason(format!("Failed to place asset in service: {}", e)))?;
+        Ok(asset.into())
+    }
+
+    /// Dispose of an asset for the given proceeds (exact decimal string),
+    /// recording gain/loss. `date` is an ISO date (YYYY-MM-DD); defaults to today.
+    #[napi]
+    pub async fn dispose(
+        &self,
+        id: String,
+        proceeds: String,
+        date: Option<String>,
+        notes: Option<String>,
+    ) -> Result<FixedAssetOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let proceeds = parse_decimal_str(&proceeds, "proceeds")?;
+        let date = date
+            .as_deref()
+            .map(|s| parse_iso_date(s, "date"))
+            .transpose()?
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let asset = commerce
+            .fixed_assets()
+            .dispose(uuid, date, proceeds, notes)
+            .map_err(|e| Error::from_reason(format!("Failed to dispose fixed asset: {}", e)))?;
+        Ok(asset.into())
+    }
+
+    /// Write off an asset (disposal with zero proceeds). `date` is an ISO date
+    /// (YYYY-MM-DD); defaults to today.
+    #[napi]
+    pub async fn write_off(
+        &self,
+        id: String,
+        date: Option<String>,
+        notes: Option<String>,
+    ) -> Result<FixedAssetOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let date = date
+            .as_deref()
+            .map(|s| parse_iso_date(s, "date"))
+            .transpose()?
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let asset = commerce
+            .fixed_assets()
+            .write_off(uuid, date, notes)
+            .map_err(|e| Error::from_reason(format!("Failed to write off fixed asset: {}", e)))?;
+        Ok(asset.into())
+    }
+
+    /// Generate and persist the depreciation schedule for an asset.
+    #[napi]
+    pub async fn generate_schedule(&self, id: String) -> Result<DepreciationScheduleOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let schedule = commerce
+            .fixed_assets()
+            .generate_schedule(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to generate schedule: {}", e)))?;
+        Ok(schedule.into())
+    }
+
+    /// Get the persisted depreciation schedule for an asset, if generated.
+    #[napi]
+    pub async fn get_schedule(&self, id: String) -> Result<Option<DepreciationScheduleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let schedule = commerce
+            .fixed_assets()
+            .get_schedule(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get schedule: {}", e)))?;
+        Ok(schedule.map(Into::into))
+    }
+
+    /// Post the next `periods` scheduled depreciation entries.
+    #[napi]
+    pub async fn post_depreciation(&self, id: String, periods: u32) -> Result<FixedAssetOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let asset = commerce
+            .fixed_assets()
+            .post_depreciation(uuid, periods)
+            .map_err(|e| Error::from_reason(format!("Failed to post depreciation: {}", e)))?;
+        Ok(asset.into())
+    }
+}
+
+// ============================================================================
+// Revenue Recognition  (all monetary values cross as exact decimal strings)
+// ============================================================================
+
+fn parse_recognition_method(
+    method: &str,
+    start: Option<&str>,
+    end: Option<&str>,
+) -> Result<stateset_core::RecognitionMethod> {
+    match method {
+        "point_in_time" => Ok(stateset_core::RecognitionMethod::PointInTime),
+        "ratable_over_time" => {
+            let start = start.ok_or_else(|| {
+                Error::from_reason("ratable_over_time requires recognition_start")
+            })?;
+            let end = end
+                .ok_or_else(|| Error::from_reason("ratable_over_time requires recognition_end"))?;
+            Ok(stateset_core::RecognitionMethod::RatableOverTime {
+                start: parse_iso_date(start, "recognition_start")?,
+                end: parse_iso_date(end, "recognition_end")?,
+            })
+        }
+        "milestone" => Ok(stateset_core::RecognitionMethod::Milestone),
+        _ => Err(Error::from_reason(
+            "Invalid recognition method (expected point_in_time, ratable_over_time, or milestone)",
+        )),
+    }
+}
+
+fn recognition_method_parts(
+    method: stateset_core::RecognitionMethod,
+) -> (String, Option<String>, Option<String>) {
+    match method {
+        stateset_core::RecognitionMethod::PointInTime => ("point_in_time".to_string(), None, None),
+        stateset_core::RecognitionMethod::RatableOverTime { start, end } => {
+            ("ratable_over_time".to_string(), Some(start.to_string()), Some(end.to_string()))
+        }
+        stateset_core::RecognitionMethod::Milestone => ("milestone".to_string(), None, None),
+        _ => ("unknown".to_string(), None, None),
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatePerformanceObligationInput {
+    pub description: String,
+    /// Exact decimal string
+    pub standalone_selling_price: Option<String>,
+    /// Exact decimal string; obligations must sum to the transaction price
+    pub allocated_amount: String,
+    /// point_in_time, ratable_over_time, milestone
+    pub recognition_method: String,
+    /// ISO date (YYYY-MM-DD); required for ratable_over_time
+    pub recognition_start: Option<String>,
+    /// ISO date (YYYY-MM-DD); required for ratable_over_time
+    pub recognition_end: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateRevenueContractInput {
+    /// Optional contract number; auto-generated when omitted (RC-...)
+    pub contract_number: Option<String>,
+    pub customer_id: String,
+    pub order_id: Option<String>,
+    pub invoice_id: Option<String>,
+    /// Exact decimal string
+    pub transaction_price: String,
+    /// Currency code, e.g. "USD"
+    pub currency: Option<String>,
+    /// ISO date (YYYY-MM-DD)
+    pub effective_date: String,
+    pub obligations: Vec<CreatePerformanceObligationInput>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateRevenueContractInput {
+    pub order_id: Option<String>,
+    pub invoice_id: Option<String>,
+    /// draft, active, completed, cancelled (transition-guarded)
+    pub status: Option<String>,
+    /// ISO date (YYYY-MM-DD)
+    pub effective_date: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RevenueContractFilterInput {
+    pub customer_id: Option<String>,
+    pub order_id: Option<String>,
+    pub invoice_id: Option<String>,
+    /// draft, active, completed, cancelled
+    pub status: Option<String>,
+    /// ISO date (YYYY-MM-DD)
+    pub effective_from: Option<String>,
+    /// ISO date (YYYY-MM-DD)
+    pub effective_to: Option<String>,
+    pub search: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PerformanceObligationOutput {
+    pub id: String,
+    pub contract_id: String,
+    pub description: String,
+    /// Exact decimal string
+    pub standalone_selling_price: Option<String>,
+    /// Exact decimal string
+    pub allocated_amount: String,
+    /// point_in_time, ratable_over_time, milestone
+    pub recognition_method: String,
+    /// ISO date (YYYY-MM-DD); set for ratable_over_time
+    pub recognition_start: Option<String>,
+    /// ISO date (YYYY-MM-DD); set for ratable_over_time
+    pub recognition_end: Option<String>,
+    /// Exact decimal string
+    pub recognized_amount: String,
+    /// Exact decimal string: allocated_amount - recognized_amount
+    pub deferred_amount: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::PerformanceObligation> for PerformanceObligationOutput {
+    fn from(o: stateset_core::PerformanceObligation) -> Self {
+        let deferred = o.deferred_amount();
+        let (method, start, end) = recognition_method_parts(o.recognition_method);
+        Self {
+            id: o.id.to_string(),
+            contract_id: o.contract_id.to_string(),
+            description: o.description,
+            standalone_selling_price: o.standalone_selling_price.map(|d| d.to_string()),
+            allocated_amount: o.allocated_amount.to_string(),
+            recognition_method: method,
+            recognition_start: start,
+            recognition_end: end,
+            recognized_amount: o.recognized_amount.to_string(),
+            deferred_amount: deferred.to_string(),
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RevenueContractOutput {
+    pub id: String,
+    pub contract_number: String,
+    pub customer_id: String,
+    pub order_id: Option<String>,
+    pub invoice_id: Option<String>,
+    /// Exact decimal string
+    pub transaction_price: String,
+    pub currency: String,
+    /// draft, active, completed, cancelled
+    pub status: String,
+    /// ISO date (YYYY-MM-DD)
+    pub effective_date: String,
+    pub obligations: Vec<PerformanceObligationOutput>,
+    /// Exact decimal string: total recognized across obligations
+    pub total_recognized: String,
+    /// Exact decimal string: transaction_price - total_recognized
+    pub deferred_balance: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::RevenueContract> for RevenueContractOutput {
+    fn from(c: stateset_core::RevenueContract) -> Self {
+        let total_recognized = c.total_recognized();
+        let deferred_balance = c.deferred_balance();
+        Self {
+            id: c.id.to_string(),
+            contract_number: c.contract_number,
+            customer_id: c.customer_id.to_string(),
+            order_id: c.order_id.map(|id| id.to_string()),
+            invoice_id: c.invoice_id.map(|id| id.to_string()),
+            transaction_price: c.transaction_price.to_string(),
+            currency: c.currency.to_string(),
+            status: format!("{}", c.status),
+            effective_date: c.effective_date.to_string(),
+            obligations: c.obligations.into_iter().map(Into::into).collect(),
+            total_recognized: total_recognized.to_string(),
+            deferred_balance: deferred_balance.to_string(),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RevenueScheduleEntryOutput {
+    pub period: u32,
+    /// ISO date (YYYY-MM-DD): first day of the entry's month
+    pub period_start: String,
+    /// Exact decimal string
+    pub amount: String,
+    /// deferred or recognized
+    pub status: String,
+}
+
+impl From<stateset_core::RevenueScheduleEntry> for RevenueScheduleEntryOutput {
+    fn from(e: stateset_core::RevenueScheduleEntry) -> Self {
+        Self {
+            period: e.period,
+            period_start: e.period_start.to_string(),
+            amount: e.amount.to_string(),
+            status: format!("{}", e.status),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RevenueScheduleOutput {
+    pub obligation_id: String,
+    /// point_in_time, ratable_over_time, milestone
+    pub method: String,
+    /// ISO date (YYYY-MM-DD); set for ratable_over_time
+    pub recognition_start: Option<String>,
+    /// ISO date (YYYY-MM-DD); set for ratable_over_time
+    pub recognition_end: Option<String>,
+    pub entries: Vec<RevenueScheduleEntryOutput>,
+    /// Exact decimal string
+    pub total_amount: String,
+    /// Exact decimal string: sum of recognized entries
+    pub recognized_total: String,
+    /// Exact decimal string: sum of deferred entries
+    pub deferred_total: String,
+}
+
+impl From<stateset_core::RevenueSchedule> for RevenueScheduleOutput {
+    fn from(s: stateset_core::RevenueSchedule) -> Self {
+        let recognized_total = s.recognized_total();
+        let deferred_total = s.deferred_total();
+        let (method, start, end) = recognition_method_parts(s.method);
+        Self {
+            obligation_id: s.obligation_id.to_string(),
+            method,
+            recognition_start: start,
+            recognition_end: end,
+            entries: s.entries.into_iter().map(Into::into).collect(),
+            total_amount: s.total_amount.to_string(),
+            recognized_total: recognized_total.to_string(),
+            deferred_total: deferred_total.to_string(),
+        }
+    }
+}
+
+#[napi]
+pub struct RevenueRecognition {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl RevenueRecognition {
+    /// Whether the revenue-recognition backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.revenue_recognition().is_supported())
+    }
+
+    #[napi]
+    pub async fn create_contract(
+        &self,
+        input: CreateRevenueContractInput,
+    ) -> Result<RevenueContractOutput> {
+        let commerce = self.commerce.lock().await;
+        let customer_id: uuid::Uuid =
+            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let currency = input
+            .currency
+            .map(|s| {
+                s.parse::<CurrencyCode>().map_err(|_| Error::from_reason("Invalid currency code"))
+            })
+            .transpose()?;
+        let obligations = input
+            .obligations
+            .into_iter()
+            .map(|o| -> Result<stateset_core::CreatePerformanceObligation> {
+                Ok(stateset_core::CreatePerformanceObligation {
+                    description: o.description,
+                    standalone_selling_price: o
+                        .standalone_selling_price
+                        .as_deref()
+                        .map(|s| parse_decimal_str(s, "standalone_selling_price"))
+                        .transpose()?,
+                    allocated_amount: parse_decimal_str(&o.allocated_amount, "allocated_amount")?,
+                    recognition_method: parse_recognition_method(
+                        &o.recognition_method,
+                        o.recognition_start.as_deref(),
+                        o.recognition_end.as_deref(),
+                    )?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let contract = commerce
+            .revenue_recognition()
+            .create_contract(stateset_core::CreateRevenueContract {
+                contract_number: input.contract_number,
+                customer_id,
+                order_id: parse_optional_uuid(input.order_id, "order_id")?,
+                invoice_id: parse_optional_uuid(input.invoice_id, "invoice_id")?,
+                transaction_price: parse_decimal_str(
+                    &input.transaction_price,
+                    "transaction_price",
+                )?,
+                currency,
+                effective_date: parse_iso_date(&input.effective_date, "effective_date")?,
+                obligations,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create revenue contract: {}", e)))?;
+        Ok(contract.into())
+    }
+
+    #[napi]
+    pub async fn get_contract(&self, id: String) -> Result<Option<RevenueContractOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let contract = commerce
+            .revenue_recognition()
+            .get_contract(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get revenue contract: {}", e)))?;
+        Ok(contract.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list_contracts(
+        &self,
+        filter: Option<RevenueContractFilterInput>,
+    ) -> Result<Vec<RevenueContractOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::RevenueContractFilter::default()),
+            |f| -> Result<stateset_core::RevenueContractFilter> {
+                Ok(stateset_core::RevenueContractFilter {
+                    customer_id: parse_optional_uuid(f.customer_id, "customer_id")?,
+                    order_id: parse_optional_uuid(f.order_id, "order_id")?,
+                    invoice_id: parse_optional_uuid(f.invoice_id, "invoice_id")?,
+                    status: f
+                        .status
+                        .map(|s| {
+                            s.parse::<stateset_core::RevenueContractStatus>()
+                                .map_err(|_| Error::from_reason("Invalid revenue contract status"))
+                        })
+                        .transpose()?,
+                    effective_from: f
+                        .effective_from
+                        .as_deref()
+                        .map(|s| parse_iso_date(s, "effective_from"))
+                        .transpose()?,
+                    effective_to: f
+                        .effective_to
+                        .as_deref()
+                        .map(|s| parse_iso_date(s, "effective_to"))
+                        .transpose()?,
+                    search: f.search,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let contracts = commerce
+            .revenue_recognition()
+            .list_contracts(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list revenue contracts: {}", e)))?;
+        Ok(contracts.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn update_contract(
+        &self,
+        id: String,
+        input: UpdateRevenueContractInput,
+    ) -> Result<RevenueContractOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let status = input
+            .status
+            .map(|s| {
+                s.parse::<stateset_core::RevenueContractStatus>()
+                    .map_err(|_| Error::from_reason("Invalid revenue contract status"))
+            })
+            .transpose()?;
+        let contract = commerce
+            .revenue_recognition()
+            .update_contract(
+                uuid,
+                stateset_core::UpdateRevenueContract {
+                    order_id: parse_optional_uuid(input.order_id, "order_id")?,
+                    invoice_id: parse_optional_uuid(input.invoice_id, "invoice_id")?,
+                    status,
+                    effective_date: input
+                        .effective_date
+                        .as_deref()
+                        .map(|s| parse_iso_date(s, "effective_date"))
+                        .transpose()?,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update revenue contract: {}", e)))?;
+        Ok(contract.into())
+    }
+
+    /// List the performance obligations under a contract.
+    #[napi]
+    pub async fn list_obligations(
+        &self,
+        contract_id: String,
+    ) -> Result<Vec<PerformanceObligationOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            contract_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let obligations = commerce
+            .revenue_recognition()
+            .list_obligations(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to list obligations: {}", e)))?;
+        Ok(obligations.into_iter().map(Into::into).collect())
+    }
+
+    /// Generate and persist the recognition schedule for an obligation.
+    #[napi]
+    pub async fn generate_schedule(&self, obligation_id: String) -> Result<RevenueScheduleOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            obligation_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let schedule = commerce
+            .revenue_recognition()
+            .generate_schedule(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to generate schedule: {}", e)))?;
+        Ok(schedule.into())
+    }
+
+    /// Get the persisted recognition schedule for an obligation, if generated.
+    #[napi]
+    pub async fn get_schedule(
+        &self,
+        obligation_id: String,
+    ) -> Result<Option<RevenueScheduleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            obligation_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let schedule = commerce
+            .revenue_recognition()
+            .get_schedule(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get schedule: {}", e)))?;
+        Ok(schedule.map(Into::into))
+    }
+
+    /// Recognize deferred entries with a period start on or before `through`
+    /// (ISO date, YYYY-MM-DD).
+    #[napi]
+    pub async fn recognize(
+        &self,
+        obligation_id: String,
+        through: String,
+    ) -> Result<RevenueScheduleOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            obligation_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let through = parse_iso_date(&through, "through")?;
+        let schedule = commerce
+            .revenue_recognition()
+            .recognize_period(uuid, through)
+            .map_err(|e| Error::from_reason(format!("Failed to recognize revenue: {}", e)))?;
+        Ok(schedule.into())
+    }
+}
+
+// ============================================================================
+// Cycle Counts  (quantities cross as exact decimal strings)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateCycleCountLineInput {
+    pub sku: String,
+    pub lot_id: Option<String>,
+    /// Exact decimal string
+    pub expected_quantity: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateCycleCountInput {
+    pub warehouse_id: i32,
+    /// Optional single location scope; omit to count across the warehouse.
+    pub location_id: Option<i32>,
+    /// RFC 3339 timestamp
+    pub scheduled_date: Option<String>,
+    pub counted_by: Option<String>,
+    pub lines: Vec<CreateCycleCountLineInput>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RecordCycleCountLineInput {
+    pub sku: String,
+    pub lot_id: Option<String>,
+    /// Exact decimal string
+    pub counted_quantity: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CycleCountFilterInput {
+    pub warehouse_id: Option<i32>,
+    pub location_id: Option<i32>,
+    /// draft, in_progress, completed, cancelled
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CycleCountLineOutput {
+    pub id: String,
+    pub cycle_count_id: String,
+    pub sku: String,
+    pub lot_id: Option<String>,
+    /// Exact decimal string
+    pub expected_quantity: String,
+    /// Exact decimal string
+    pub counted_quantity: Option<String>,
+    /// Exact decimal string: counted_quantity - expected_quantity
+    pub variance: Option<String>,
+}
+
+impl From<stateset_core::CycleCountLine> for CycleCountLineOutput {
+    fn from(l: stateset_core::CycleCountLine) -> Self {
+        Self {
+            id: l.id.to_string(),
+            cycle_count_id: l.cycle_count_id.to_string(),
+            sku: l.sku,
+            lot_id: l.lot_id.map(|id| id.to_string()),
+            expected_quantity: l.expected_quantity.to_string(),
+            counted_quantity: l.counted_quantity.map(|d| d.to_string()),
+            variance: l.variance.map(|d| d.to_string()),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CycleCountOutput {
+    pub id: String,
+    pub warehouse_id: i32,
+    pub location_id: Option<i32>,
+    /// draft, in_progress, completed, cancelled
+    pub status: String,
+    pub scheduled_date: Option<String>,
+    pub counted_by: Option<String>,
+    pub lines: Vec<CycleCountLineOutput>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub completed_at: Option<String>,
+}
+
+impl From<stateset_core::CycleCount> for CycleCountOutput {
+    fn from(c: stateset_core::CycleCount) -> Self {
+        Self {
+            id: c.id.to_string(),
+            warehouse_id: c.warehouse_id,
+            location_id: c.location_id,
+            status: format!("{}", c.status),
+            scheduled_date: c.scheduled_date.map(|d| d.to_rfc3339()),
+            counted_by: c.counted_by,
+            lines: c.lines.into_iter().map(Into::into).collect(),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+            completed_at: c.completed_at.map(|d| d.to_rfc3339()),
+        }
+    }
+}
+
+#[napi]
+pub struct CycleCounts {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl CycleCounts {
+    /// Create a cycle count (draft) with its expected lines.
+    #[napi]
+    pub async fn create(&self, input: CreateCycleCountInput) -> Result<CycleCountOutput> {
+        let commerce = self.commerce.lock().await;
+        let scheduled_date = match input.scheduled_date.as_deref() {
+            Some(s) => Some(
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(|_| Error::from_reason("Invalid scheduled_date RFC 3339 timestamp"))?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+        let lines = input
+            .lines
+            .into_iter()
+            .map(|l| -> Result<stateset_core::CreateCycleCountLine> {
+                Ok(stateset_core::CreateCycleCountLine {
+                    sku: l.sku,
+                    lot_id: parse_optional_uuid(l.lot_id, "lot_id")?,
+                    expected_quantity: parse_decimal_str(
+                        &l.expected_quantity,
+                        "expected_quantity",
+                    )?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let count = commerce
+            .warehouse()
+            .create_cycle_count(stateset_core::CreateCycleCount {
+                warehouse_id: input.warehouse_id,
+                location_id: input.location_id,
+                scheduled_date,
+                counted_by: input.counted_by,
+                lines,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create cycle count: {}", e)))?;
+        Ok(count.into())
+    }
+
+    /// Get a cycle count (with lines) by ID.
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<CycleCountOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let count = commerce
+            .warehouse()
+            .get_cycle_count(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get cycle count: {}", e)))?;
+        Ok(count.map(Into::into))
+    }
+
+    /// List cycle counts matching the filter.
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<CycleCountFilterInput>,
+    ) -> Result<Vec<CycleCountOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::CycleCountFilter::default()),
+            |f| -> Result<stateset_core::CycleCountFilter> {
+                Ok(stateset_core::CycleCountFilter {
+                    warehouse_id: f.warehouse_id,
+                    location_id: f.location_id,
+                    status: f
+                        .status
+                        .map(|s| {
+                            s.parse::<stateset_core::CycleCountStatus>()
+                                .map_err(|_| Error::from_reason("Invalid cycle count status"))
+                        })
+                        .transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let counts = commerce
+            .warehouse()
+            .list_cycle_counts(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list cycle counts: {}", e)))?;
+        Ok(counts.into_iter().map(Into::into).collect())
+    }
+
+    /// Start a draft cycle count (draft -> in_progress).
+    #[napi]
+    pub async fn start(&self, id: String) -> Result<CycleCountOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let count = commerce
+            .warehouse()
+            .start_cycle_count(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to start cycle count: {}", e)))?;
+        Ok(count.into())
+    }
+
+    /// Record physical counts against an in-progress cycle count.
+    #[napi]
+    pub async fn record_counts(
+        &self,
+        id: String,
+        counts: Vec<RecordCycleCountLineInput>,
+    ) -> Result<CycleCountOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let counts = counts
+            .into_iter()
+            .map(|c| -> Result<stateset_core::RecordCycleCountLine> {
+                Ok(stateset_core::RecordCycleCountLine {
+                    sku: c.sku,
+                    lot_id: parse_optional_uuid(c.lot_id, "lot_id")?,
+                    counted_quantity: parse_decimal_str(&c.counted_quantity, "counted_quantity")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let count = commerce
+            .warehouse()
+            .record_cycle_counts(uuid, counts)
+            .map_err(|e| Error::from_reason(format!("Failed to record cycle counts: {}", e)))?;
+        Ok(count.into())
+    }
+
+    /// Complete an in-progress cycle count, applying variance adjustments.
+    #[napi]
+    pub async fn complete(&self, id: String) -> Result<CycleCountOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let count = commerce
+            .warehouse()
+            .complete_cycle_count(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to complete cycle count: {}", e)))?;
+        Ok(count.into())
+    }
+
+    /// Cancel a draft or in-progress cycle count. No adjustments are applied.
+    #[napi]
+    pub async fn cancel(&self, id: String) -> Result<CycleCountOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let count = commerce
+            .warehouse()
+            .cancel_cycle_count(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to cancel cycle count: {}", e)))?;
+        Ok(count.into())
     }
 }

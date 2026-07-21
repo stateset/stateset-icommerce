@@ -151,6 +151,55 @@ pub(crate) struct RevaluationResponse {
     pub journal_entry: Option<JournalEntryResponse>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct CloseMonthRequest {
+    /// Accounting period to close.
+    pub period_id: String,
+    /// Compute counts/amounts per step without writing anything.
+    pub dry_run: Option<bool>,
+    /// Skip posting scheduled fixed-asset depreciation.
+    pub skip_depreciation: Option<bool>,
+    /// Skip recognizing deferred revenue through period end.
+    pub skip_revenue_recognition: Option<bool>,
+    /// Skip FX revaluation of foreign-currency accounts.
+    pub skip_fx_revaluation: Option<bool>,
+    /// Skip the final period close (closing entries + close period).
+    pub skip_period_close: Option<bool>,
+    /// Actor recorded as the closer. Defaults to `api`.
+    pub closed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct CloseMonthStepResponse {
+    /// One of `executed`, `skipped`, `dry_run`.
+    pub status: String,
+    /// Entries posted (or that would be posted in a dry run).
+    pub entry_count: u64,
+    /// Decimal total amount for the step as a string.
+    pub total_amount: String,
+    /// Per-item failures that did not abort the close.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct CloseMonthResponse {
+    pub period_id: String,
+    pub period_name: String,
+    pub dry_run: bool,
+    /// Step 1: scheduled depreciation due through period end.
+    pub depreciation: CloseMonthStepResponse,
+    /// Step 2: deferred revenue recognized through period end.
+    pub revenue_recognition: CloseMonthStepResponse,
+    /// Step 3: FX revaluation as of period end.
+    pub fx_revaluation: CloseMonthStepResponse,
+    /// Step 4: closing entries + close period.
+    pub period_close: CloseMonthStepResponse,
+    /// Posted closing entry; absent for dry runs or skipped closes.
+    pub closing_entry: Option<JournalEntryResponse>,
+    /// Period status after the run (`closed` after a real close).
+    pub period_status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct JournalEntryLineResponse {
     pub id: String,
@@ -463,6 +512,7 @@ pub fn router() -> Router<AppState> {
         .route("/gl/journal-entries/{id}/void", post(void_journal_entry))
         .route("/gl/journal-entries/{id}/reverse", post(reverse_journal_entry))
         .route("/gl/revalue", post(revalue))
+        .route("/gl/close-month", post(close_month))
         .route("/gl/trial-balance", get(trial_balance))
         .route("/gl/balance-sheet", get(balance_sheet))
         .route("/gl/income-statement", get(income_statement))
@@ -798,6 +848,49 @@ pub(crate) async fn revalue(
             })
             .collect(),
         journal_entry: result.journal_entry.as_ref().map(to_entry_resp),
+    }))
+}
+
+fn to_close_month_step_resp(step: &stateset_core::CloseMonthStepReport) -> CloseMonthStepResponse {
+    CloseMonthStepResponse {
+        status: step.status.to_string(),
+        entry_count: step.entry_count,
+        total_amount: step.total_amount.to_string(),
+        warnings: step.warnings.clone(),
+    }
+}
+
+#[utoipa::path(post, operation_id = "general_ledger_close_month", path = "/api/v1/gl/close-month", tag = "general_ledger",
+    request_body = CloseMonthRequest,
+    responses((status = 200, body = CloseMonthResponse), (status = 400, body = ErrorBody), (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn close_month(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CloseMonthRequest>,
+) -> Result<Json<CloseMonthResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let period_id: Uuid = parse_id(&req.period_id, "period_id")?;
+    let options = stateset_core::CloseMonthOptions {
+        dry_run: req.dry_run.unwrap_or(false),
+        skip_depreciation: req.skip_depreciation.unwrap_or(false),
+        skip_revenue_recognition: req.skip_revenue_recognition.unwrap_or(false),
+        skip_fx_revaluation: req.skip_fx_revaluation.unwrap_or(false),
+        skip_period_close: req.skip_period_close.unwrap_or(false),
+        closed_by: Some(actor_or_default(req.closed_by)),
+    };
+    let report = c.general_ledger().close_month(period_id, options)?;
+    Ok(Json(CloseMonthResponse {
+        period_id: report.period_id.to_string(),
+        period_name: report.period_name.clone(),
+        dry_run: report.dry_run,
+        depreciation: to_close_month_step_resp(&report.depreciation),
+        revenue_recognition: to_close_month_step_resp(&report.revenue_recognition),
+        fx_revaluation: to_close_month_step_resp(&report.fx_revaluation),
+        period_close: to_close_month_step_resp(&report.period_close),
+        closing_entry: report.closing_entry.as_ref().map(to_entry_resp),
+        period_status: report.period_status.to_string(),
     }))
 }
 

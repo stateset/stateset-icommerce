@@ -436,6 +436,11 @@ pub use stateset_core::{
     // Warranty types
     ClaimResolution,
     ClaimStatus,
+    // Month-end close orchestration types
+    CloseMonthOptions,
+    CloseMonthReport,
+    CloseMonthStepReport,
+    CloseMonthStepStatus,
     CollectionActivity,
     CollectionActivityFilter,
     CollectionActivityType,

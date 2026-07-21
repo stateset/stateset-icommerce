@@ -6,6 +6,23 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-20
+
+### Added
+- **Month-end close orchestration** (`POST /gl/close-month`,
+  `general_ledger().close_month(period_id, options)`): one operation
+  running depreciation posting → revenue recognition → FX revaluation →
+  period close, with dry-run mode, per-step skip flags, and a structured
+  per-step report (entry counts, totals, warnings; per-item failures
+  never abort the close). Exposed via HTTP, Node binding
+  (`generalLedger.closeMonth`), and CLI tool (`close_month`).
+- **Agent tooling for the new engine surface**: `@stateset/embedded` now
+  exposes `fixedAssets`, `revenueRecognition`, `cycleCounts`,
+  `accountsPayable.threeWayMatch`, and `generalLedger.revalue` (exact
+  decimal strings); 23 new CLI/MCP tools across fixed-assets,
+  revenue-recognition, and cycle-counts modules plus 3-way match and GL
+  revaluation on existing modules (743 tools total).
+
 ## [1.10.0] - 2026-07-20
 
 ### Added
