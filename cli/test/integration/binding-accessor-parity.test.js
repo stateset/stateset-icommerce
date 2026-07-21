@@ -41,6 +41,14 @@ test('every embedded accessor domain has a binding getter or a documented except
   );
 });
 
+test('no accessor domains are exempt from the parity gate', () => {
+  assert.deepEqual(
+    [...KNOWN_UNBOUND_ACCESSORS],
+    [],
+    'every embedded accessor is bound — do not re-add exceptions without a justification',
+  );
+});
+
 test('exception list fails closed against synthetic drift', () => {
   // A new embedded accessor without a getter must be reported.
   const drift = checkBindingAccessorParity({
@@ -48,9 +56,16 @@ test('exception list fails closed against synthetic drift', () => {
   });
   assert.deepEqual(drift.missing, ['brand_new_domain']);
 
-  // An exception whose getter now exists must be reported as stale.
+  // An exception whose getter now exists must be reported as stale. The live
+  // exception list is empty, so inject a synthetic one covering a real module.
+  const [firstModule] = parseEmbeddedAccessorModules();
   const bound = checkBindingAccessorParity({
-    bindingGetters: [...parseBindingGetters(), moduleToGetter(KNOWN_UNBOUND_ACCESSORS[0])],
+    knownUnbound: [firstModule],
+    bindingGetters: [...parseBindingGetters(), moduleToGetter(firstModule)],
   });
-  assert.deepEqual(bound.staleExceptions, [KNOWN_UNBOUND_ACCESSORS[0]]);
+  assert.deepEqual(bound.staleExceptions, [firstModule]);
+
+  // An exception that is no longer an embedded accessor module is also stale.
+  const orphaned = checkBindingAccessorParity({ knownUnbound: ['removed_domain'] });
+  assert.deepEqual(orphaned.staleExceptions, ['removed_domain']);
 });

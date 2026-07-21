@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**802 tools** across **73 domains**.
+**893 tools** across **86 domains**.
 
 ## Domains
 
@@ -44,6 +44,15 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [store-credits](#store-credits) | 5 |
 | [segments](#segments) | 6 |
 | [shipping-zones](#shipping-zones) | 7 |
+| [units-of-measure](#units-of-measure) | 10 |
+| [stock-snapshots](#stock-snapshots) | 5 |
+| [print-stations](#print-stations) | 8 |
+| [integration-mappings](#integration-mappings) | 7 |
+| [integration-field-mappings](#integration-field-mappings) | 8 |
+| [payment-obligations](#payment-obligations) | 7 |
+| [purgatory](#purgatory) | 6 |
+| [topology-snapshots](#topology-snapshots) | 5 |
+| [vendor-returns](#vendor-returns) | 6 |
 | [reviews](#reviews) | 7 |
 | [wishlists](#wishlists) | 6 |
 | [loyalty](#loyalty) | 8 |
@@ -61,6 +70,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [a2a-intelligence](#a2a-intelligence) | 17 |
 | [quality](#quality) | 15 |
 | [lots](#lots) | 11 |
+| [search-config](#search-config) | 7 |
 | [serials](#serials) | 8 |
 | [warehouse](#warehouse) | 9 |
 | [receiving](#receiving) | 8 |
@@ -77,6 +87,9 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [cycle-counts](#cycle-counts) | 7 |
 | [edi-documents](#edi-documents) | 5 |
 | [prepayments](#prepayments) | 8 |
+| [activity-logs](#activity-logs) | 5 |
+| [channels](#channels) | 8 |
+| [companies](#companies) | 9 |
 | [vendor-credits](#vendor-credits) | 8 |
 | [price-schedules](#price-schedules) | 10 |
 | [price-levels](#price-levels) | 9 |
@@ -669,6 +682,113 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `calculate_shipping_rate` | read | Calculate shipping rate for a destination address and cart items. |
 | `list_shipping_methods` | read | List shipping methods for a specific zone. |
 
+## units-of-measure
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_unit_classes` | read | List unit classes (e.g. weight, volume). |
+| `create_unit_class` | write | Create a unit class. |
+| `delete_unit_class` | write | Delete a unit class. |
+| `list_units_of_measure` | read | List units of measure, optionally scoped to a unit class. |
+| `create_unit_of_measure` | write | Create a unit of measure within a unit class. |
+| `set_base_unit_of_measure` | write | Mark a unit of measure as the base unit for its class. |
+| `delete_unit_of_measure` | write | Delete a unit of measure. |
+| `list_unit_conversion_rules` | read | List unit conversion rules. |
+| `create_unit_conversion_rule` | write | Create a unit conversion rule (system-wide or SKU-specific). |
+| `delete_unit_conversion_rule` | write | Delete a unit conversion rule. |
+
+## stock-snapshots
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_stock_snapshots` | read | List stock snapshots (header level). |
+| `get_stock_snapshot` | read | Get a stock snapshot by ID. |
+| `get_latest_stock_snapshot` | read | Get the most recent stock snapshot. |
+| `capture_stock_snapshot` | write | Capture a stock snapshot; totals are computed from the supplied lines. |
+| `delete_stock_snapshot` | write | Delete a stock snapshot. |
+
+## print-stations
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_print_stations` | read | List paired print stations. |
+| `get_print_station` | read | Get a print station by ID. |
+| `pair_print_station` | write | Pair a new print station. Returns a one-time pairing token. |
+| `revoke_print_station` | write | Revoke a paired print station. |
+| `list_print_jobs` | read | List print jobs for a station. |
+| `enqueue_print_job` | write | Enqueue a print job to a station. |
+| `pick_up_next_print_job` | write | Pick up the next queued print job for a station. |
+| `complete_print_job` | write | Mark a print job printed or failed. |
+
+## integration-mappings
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_integration_mappings` | read | List integration value mappings. |
+| `get_integration_mapping` | read | Get an integration mapping by ID. |
+| `resolve_integration_mapping` | read | Resolve the internal value for an external value. |
+| `create_integration_mapping` | write | Create an integration value mapping. |
+| `update_integration_mapping` | write | Update an integration mapping. |
+| `bulk_upsert_integration_mappings` | write | Bulk upsert integration mappings. |
+| `delete_integration_mapping` | write | Delete an integration mapping. |
+
+## integration-field-mappings
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_integration_field_mappings` | read | List integration field mappings. |
+| `get_integration_field_mapping` | read | Get an integration field mapping by ID. |
+| `list_integration_mapping_groups` | read | List the distinct mapping groups for an integration account. |
+| `create_integration_field_mapping` | write | Create an integration field mapping. |
+| `update_integration_field_mapping` | write | Update an integration field mapping. |
+| `bulk_create_integration_field_mappings` | write | Bulk create integration field mappings. |
+| `bulk_delete_integration_field_mappings` | write | Bulk delete integration field mappings by ID. |
+| `delete_integration_field_mapping` | write | Delete an integration field mapping. |
+
+## payment-obligations
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_payment_obligations` | read | List payment obligations. |
+| `get_payment_obligation` | read | Get a payment obligation by ID. |
+| `get_payment_obligation_dashboard` | read | Aggregate payment obligation dashboard as of a date. |
+| `create_payment_obligation` | write | Create a payment obligation. |
+| `record_payment_obligation_payment` | write | Record a payment against an obligation. |
+| `set_payment_obligation_status` | write | Set the status of a payment obligation. |
+| `link_payment_obligation_bill` | write | Link an accounts-payable bill to a payment obligation. |
+
+## purgatory
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_purgatory_orders` | read | List staged purgatory orders. |
+| `get_purgatory_order` | read | Get a purgatory order by ID. |
+| `ingest_purgatory_order` | write | Ingest an external order into purgatory. |
+| `map_purgatory_line` | write | Map a staged line to a product and/or toggle its flags. |
+| `post_purgatory_order` | write | Post a fully-resolved order out of purgatory. |
+| `delete_purgatory_order` | write | Delete a purgatory order. |
+
+## topology-snapshots
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_topology_snapshots` | read | List operational topology snapshots. |
+| `get_topology_snapshot` | read | Get a topology snapshot by ID. |
+| `get_latest_topology_snapshot` | read | Get the most recent topology snapshot. |
+| `capture_topology_snapshot` | write | Capture a topology snapshot; health is derived from the supplied metrics. |
+| `delete_topology_snapshot` | write | Delete a topology snapshot. |
+
+## vendor-returns
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_vendor_returns` | read | List vendor returns. |
+| `get_vendor_return` | read | Get a vendor return by ID. |
+| `create_vendor_return` | write | Create a draft vendor return. |
+| `submit_vendor_return` | write | Submit a draft vendor return to the supplier. |
+| `process_vendor_return` | write | Process a vendor return, optionally generating a vendor credit. |
+| `cancel_vendor_return` | write | Cancel a vendor return. |
+
 ## reviews
 
 | Tool | Permission | Description |
@@ -937,6 +1057,18 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `list_quarantined_lots` | read | List quarantined lots. |
 | `count_lots` | read | Count lots. |
 
+## search-config
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `list_search_configs` | read | List search configurations. |
+| `get_search_config` | read | Get a search configuration by ID. |
+| `get_active_search_config` | read | Get the currently active search configuration. |
+| `create_search_config` | write | Create a search configuration. |
+| `update_search_config` | write | Update a search configuration. Collection fields replace the existing values. |
+| `set_active_search_config` | write | Make a search configuration active, deactivating the current one. |
+| `delete_search_config` | write | Delete a search configuration. |
+
 ## serials
 
 | Tool | Permission | Description |
@@ -1159,6 +1291,43 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `list_prepayment_applications` | read | List applications for a prepayment. |
 | `reverse_prepayment_application` | write | Reverse a previously-recorded prepayment application. |
 | `refund_prepayment` | write | Refund the remaining balance of a prepayment, closing it. |
+
+## activity-logs
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_activity_logs_supported` | read | Check whether the activity-logs backend is available on this engine build. |
+| `list_activity_logs` | read | List activity log entries with optional filtering. |
+| `get_activity_log` | read | Get an activity log entry by ID. |
+| `get_activity_history_for_subject` | read | Get the activity history for a subject (e.g. an order or product). |
+| `record_activity` | write | Record an activity log entry for a subject. |
+
+## channels
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_channels_supported` | read | Check whether the channels backend is available on this engine build. |
+| `list_channels` | read | List sales channels with optional filtering. |
+| `get_channel` | read | Get a sales channel by ID. |
+| `create_channel` | write | Create a sales channel. |
+| `update_channel` | write | Update a sales channel. |
+| `set_channel_lock` | write | Lock or unlock a sales channel for API writes. |
+| `list_channel_product_mappings` | read | List product mappings for a sales channel. |
+| `delete_channel` | write | Delete a sales channel. |
+
+## companies
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `check_companies_supported` | read | Check whether the companies backend is available on this engine build. |
+| `list_companies` | read | List B2B companies with optional filtering. |
+| `get_company` | read | Get a company by ID. |
+| `create_company` | write | Create a B2B company. |
+| `update_company` | write | Update a B2B company. |
+| `list_company_addresses` | read | List shipping addresses for a company. |
+| `list_company_contacts` | read | List contacts for a company. |
+| `create_company_contact` | write | Create a contact linked to one or more companies. |
+| `delete_company` | write | Delete a B2B company. |
 
 ## vendor-credits
 

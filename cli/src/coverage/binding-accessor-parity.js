@@ -38,24 +38,7 @@ export const NON_ACCESSOR_MODULES = Object.freeze([
  * lib.rs, must be removed. Adding a NEW embedded accessor without either a
  * binding getter or an entry here fails the gate.
  */
-export const KNOWN_UNBOUND_ACCESSORS = Object.freeze([
-  'activity_logs', // internal audit trail; not yet part of the binding surface
-  'channels', // sales-channel admin; internal-only for now
-  'companies', // B2B company registry; internal-only for now
-  'erc8004', // on-chain agent identity; experimental, Rust-only
-  'fraud', // fraud screening; internal-only for now
-  'integration_field_mappings', // integration plumbing, internal-only
-  'integration_mappings', // integration plumbing, internal-only
-  'payment_obligations', // internal settlement bookkeeping
-  'print_stations', // warehouse hardware config; internal-only
-  'purgatory', // quarantine store; internal-only
-  'search_config', // search tuning; internal-only
-  'shipping_zones', // exposed indirectly via shipping methods; no getter yet
-  'stock_snapshots', // reporting snapshots; internal-only
-  'topology_snapshots', // reporting snapshots; internal-only
-  'units_of_measure', // UoM registry; internal-only for now
-  'vendor_returns', // vendor RMA flow; internal-only for now
-]);
+export const KNOWN_UNBOUND_ACCESSORS = Object.freeze([]);
 
 /** Convert a snake_case module name to the camelCase binding getter name. */
 export function moduleToGetter(moduleName) {
@@ -98,13 +81,14 @@ export function parseBindingGetters(source = readFileSync(BINDING_INDEX_DTS, 'ut
 export function checkBindingAccessorParity({
   embeddedModules = parseEmbeddedAccessorModules(),
   bindingGetters = parseBindingGetters(),
+  knownUnbound = KNOWN_UNBOUND_ACCESSORS,
 } = {}) {
   const getters = new Set(bindingGetters);
   const moduleSet = new Set(embeddedModules);
   const problems = [];
 
   const missing = embeddedModules.filter(
-    (mod) => !KNOWN_UNBOUND_ACCESSORS.includes(mod) && !getters.has(moduleToGetter(mod)),
+    (mod) => !knownUnbound.includes(mod) && !getters.has(moduleToGetter(mod)),
   );
   if (missing.length > 0) {
     problems.push(
@@ -116,7 +100,7 @@ export function checkBindingAccessorParity({
     );
   }
 
-  const staleExceptions = KNOWN_UNBOUND_ACCESSORS.filter(
+  const staleExceptions = knownUnbound.filter(
     (mod) => !moduleSet.has(mod) || getters.has(moduleToGetter(mod)),
   );
   for (const mod of staleExceptions) {

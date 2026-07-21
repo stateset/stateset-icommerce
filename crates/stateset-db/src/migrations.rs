@@ -217,5 +217,8 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("063_gl_fx_revaluation", include_str!("../migrations/063_gl_fx_revaluation.sql")),
         // Durable HTTP idempotency response store.
         ("064_http_idempotency", include_str!("../migrations/064_http_idempotency.sql")),
+        ("065_zone_shipping_methods", include_str!("../migrations/065_zone_shipping_methods.sql")),
+        // Search configuration profiles (fields, facets, synonyms, boosts).
+        ("066_search_configs", include_str!("../migrations/066_search_configs.sql")),
     ]
 }

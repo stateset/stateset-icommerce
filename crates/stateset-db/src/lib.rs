@@ -1181,6 +1181,9 @@ impl_database_accessors!(SqliteDatabase);
 #[cfg(feature = "postgres")]
 impl_database_accessors!(PostgresDatabase);
 
+/// Default PostgreSQL pool size when `STATESET_DB_MAX_CONNECTIONS` is unset.
+pub const DEFAULT_POSTGRES_POOL_SIZE: u32 = 10;
+
 /// Database configuration
 #[derive(Debug, Clone)]
 pub struct DatabaseConfig {
@@ -1223,6 +1226,58 @@ impl DatabaseConfig {
     /// ```
     #[must_use]
     pub fn postgres(connection_string: &str) -> Self {
-        Self { url: connection_string.to_string(), max_connections: 10 }
+        Self {
+            url: connection_string.to_string(),
+            max_connections: Self::pool_size_from_env(DEFAULT_POSTGRES_POOL_SIZE),
+        }
+    }
+
+    /// Resolve a pool size from `STATESET_DB_MAX_CONNECTIONS`, falling back to
+    /// `default` when the variable is unset or unparseable.
+    ///
+    /// The compiled-in defaults suit embedded and single-node use; server
+    /// deployments serving concurrent traffic will usually need a larger pool
+    /// than the default, hence the environment override.
+    fn pool_size_from_env(default: u32) -> u32 {
+        Self::parse_pool_size(std::env::var("STATESET_DB_MAX_CONNECTIONS").ok().as_deref(), default)
+    }
+
+    /// Pure half of [`Self::pool_size_from_env`], split out so the parsing
+    /// rules are testable without mutating process-global environment state.
+    fn parse_pool_size(raw: Option<&str>, default: u32) -> u32 {
+        raw.and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|size| *size > 0)
+            .unwrap_or(default)
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::{DEFAULT_POSTGRES_POOL_SIZE, DatabaseConfig};
+
+    #[test]
+    fn pool_size_falls_back_on_absent_or_invalid_values() {
+        for raw in [None, Some(""), Some("   "), Some("not-a-number"), Some("0"), Some("-4")] {
+            assert_eq!(
+                DatabaseConfig::parse_pool_size(raw, DEFAULT_POSTGRES_POOL_SIZE),
+                DEFAULT_POSTGRES_POOL_SIZE,
+                "{raw:?} must fall back to the default pool size"
+            );
+        }
+    }
+
+    #[test]
+    fn pool_size_honors_valid_override() {
+        assert_eq!(DatabaseConfig::parse_pool_size(Some("64"), DEFAULT_POSTGRES_POOL_SIZE), 64);
+        assert_eq!(DatabaseConfig::parse_pool_size(Some(" 32 "), DEFAULT_POSTGRES_POOL_SIZE), 32);
+    }
+
+    #[test]
+    fn postgres_config_defaults_to_documented_pool_size() {
+        // No override set in the test environment.
+        assert_eq!(
+            DatabaseConfig::postgres("postgres://localhost/x").max_connections,
+            DEFAULT_POSTGRES_POOL_SIZE
+        );
     }
 }

@@ -6,6 +6,31 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-07-21
+
+### Added
+- **Complete Node binding coverage**: the final 16 embedded accessors
+  are now bound — activity logs, channels, companies, units of measure,
+  shipping zones, stock snapshots, print stations, integration mappings
+  and field mappings, payment obligations, purgatory, topology
+  snapshots, vendor returns, fraud, search config, and ERC-8004
+  (identity, reputation, validation). Every one gained MCP tools;
+  `KNOWN_UNBOUND_ACCESSORS` in the binding-parity gate is now empty, so
+  a future unbound accessor fails CI.
+- PostgreSQL pool size is configurable via `STATESET_DB_MAX_CONNECTIONS`
+  (documented default preserved).
+
+### Fixed
+- **Two capability lies**: `shipping_zones` and `search_config` both
+  reported `isSupported() == true` on SQLite while every call failed
+  with `no such table` — their tables existed only in PostgreSQL and in
+  test fixtures. Added migrations 065 and 066.
+- Binding-parity gate mishandled an empty exception list; its
+  synthetic-drift test now injects a fixture instead of reading the
+  live list.
+- Stale whitepaper claims (tool counts, a "365 operations" heading) and
+  two broken README anchors.
+
 ## [1.18.0] - 2026-07-21
 
 ### Added

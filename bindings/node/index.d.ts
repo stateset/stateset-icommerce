@@ -3330,6 +3330,1040 @@ export interface InboundShipmentOutput {
   createdAt: string
   updatedAt: string
 }
+export interface RecordActivityInput {
+  /** Subject record type (e.g. "sales_order") */
+  subjectType: string
+  subjectId: string
+  /** Machine action key (e.g. "status_changed") */
+  action: string
+  summary: string
+  /** user, system, integration, agent */
+  actorKind?: string
+  actor?: string
+  /** Metadata as JSON */
+  metadata?: string
+}
+export interface ActivityLogFilterInput {
+  subjectType?: string
+  subjectId?: string
+  action?: string
+  /** user, system, integration, agent */
+  actorKind?: string
+  limit?: number
+  offset?: number
+}
+export interface ActivityLogEntryOutput {
+  id: string
+  subjectType: string
+  subjectId: string
+  action: string
+  summary: string
+  /** user, system, integration, agent */
+  actorKind: string
+  actor?: string
+  /** Metadata as JSON */
+  metadata: string
+  createdAt: string
+}
+export interface CreateChannelInput {
+  name: string
+  /** sales_channel, fulfillment_channel, end_to_end_channel */
+  channelType: string
+  integration?: string
+  defaultWarehouseId?: string
+  tags?: Array<string>
+  /** Metadata as JSON */
+  metadata?: string
+}
+export interface UpdateChannelInput {
+  name?: string
+  integration?: string
+  /** active, paused, deleted */
+  status?: string
+  defaultWarehouseId?: string
+  tags?: Array<string>
+  /** Metadata as JSON */
+  metadata?: string
+}
+export interface ChannelFilterInput {
+  /** sales_channel, fulfillment_channel, end_to_end_channel */
+  channelType?: string
+  /** active, paused, deleted */
+  status?: string
+  integration?: string
+  apiLocked?: boolean
+  limit?: number
+  offset?: number
+}
+export interface ChannelProductSyncItemInput {
+  channelSku: string
+  productId?: string
+  internalSku?: string
+  /** When true, remove the mapping instead of upserting it */
+  delete?: boolean
+}
+export interface ChannelOutput {
+  id: string
+  name: string
+  /** sales_channel, fulfillment_channel, end_to_end_channel */
+  channelType: string
+  integration?: string
+  /** active, paused, deleted */
+  status: string
+  apiLocked: boolean
+  defaultWarehouseId?: string
+  tags: Array<string>
+  /** Metadata as JSON */
+  metadata: string
+  createdAt: string
+  updatedAt: string
+}
+export interface ChannelProductMappingOutput {
+  channelId: string
+  channelSku: string
+  productId: string
+  internalSku: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateCompanyInput {
+  name: string
+  reference?: string
+  email?: string
+  phone?: string
+  /** ISO 4217 currency code */
+  currency?: string
+  paymentTermsDays?: number
+  tags?: Array<string>
+  /** Metadata as JSON */
+  metadata?: string
+}
+export interface UpdateCompanyInput {
+  name?: string
+  reference?: string
+  email?: string
+  phone?: string
+  /** ISO 4217 currency code */
+  currency?: string
+  paymentTermsDays?: number
+  /** active, inactive */
+  status?: string
+  tags?: Array<string>
+  /** Metadata as JSON */
+  metadata?: string
+}
+export interface CompanyFilterInput {
+  /** active, inactive */
+  status?: string
+  search?: string
+  limit?: number
+  offset?: number
+}
+export interface CreateContactInput {
+  firstName: string
+  lastName?: string
+  email?: string
+  phone?: string
+  title?: string
+  companyIds?: Array<string>
+}
+export interface CompanyOutput {
+  id: string
+  name: string
+  reference?: string
+  email?: string
+  phone?: string
+  currency: string
+  paymentTermsDays?: number
+  /** active, inactive */
+  status: string
+  tags: Array<string>
+  /** Metadata as JSON */
+  metadata: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CompanyShippingAddressOutput {
+  id: string
+  companyId: string
+  label?: string
+  name?: string
+  line1: string
+  line2?: string
+  city: string
+  region?: string
+  postalCode?: string
+  country: string
+  isDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface CompanyPriceOverrideOutput {
+  companyId: string
+  productId: string
+  /** Exact decimal string */
+  price: string
+  currency: string
+  createdAt: string
+  updatedAt: string
+}
+export interface ContactOutput {
+  id: string
+  firstName: string
+  lastName?: string
+  email?: string
+  phone?: string
+  title?: string
+  companyIds: Array<string>
+  portalEnabled: boolean
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateUnitClassInput {
+  name: string
+  description?: string
+}
+export interface CreateUnitOfMeasureInput {
+  unitClassId: string
+  name: string
+  abbreviation: string
+  /** Exact decimal string relative to the class base unit */
+  factor: string
+}
+export interface UnitOfMeasureFilterInput {
+  classId?: string
+  limit?: number
+  offset?: number
+}
+export interface CreateUnitConversionRuleInput {
+  /** SYSTEM or SKU */
+  ruleType: string
+  productId?: string
+  fromUomId: string
+  toUomId: string
+  /** Exact decimal string */
+  factor: string
+}
+export interface UnitClassOutput {
+  id: string
+  name: string
+  description?: string
+  baseUomId?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface UnitOfMeasureOutput {
+  id: string
+  unitClassId: string
+  name: string
+  abbreviation: string
+  /** Exact decimal string */
+  factor: string
+  isBase: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface UnitConversionRuleOutput {
+  id: string
+  /** SYSTEM or SKU */
+  ruleType: string
+  productId?: string
+  fromUomId: string
+  toUomId: string
+  /** Exact decimal string */
+  factor: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateShippingZoneInput {
+  name: string
+  countries?: Array<string>
+  regions?: Array<string>
+  postalCodes?: Array<string>
+  priority?: number
+}
+export interface UpdateShippingZoneInput {
+  name?: string
+  countries?: Array<string>
+  regions?: Array<string>
+  postalCodes?: Array<string>
+  priority?: number
+  isActive?: boolean
+}
+export interface ShippingZoneFilterInput {
+  country?: string
+  isActive?: boolean
+  limit?: number
+  offset?: number
+}
+export interface ShippingConditionInput {
+  /** Exact decimal string */
+  minWeight?: string
+  /** Exact decimal string */
+  maxWeight?: string
+  /** Exact decimal string */
+  minPrice?: string
+  /** Exact decimal string */
+  maxPrice?: string
+  /** Exact decimal string */
+  rate: string
+}
+export interface CreateZoneShippingMethodInput {
+  zoneId: string
+  name: string
+  carrier?: string
+  /** flat, weight_based, price_based, calculated, free */
+  methodType: string
+  /** Exact decimal string */
+  baseRate: string
+  /** ISO 4217 currency code */
+  currency: string
+  minDeliveryDays?: number
+  maxDeliveryDays?: number
+  conditions?: Array<ShippingConditionInput>
+}
+export interface ZoneShippingMethodFilterInput {
+  zoneId?: string
+  carrier?: string
+  /** flat, weight_based, price_based, calculated, free */
+  methodType?: string
+  isActive?: boolean
+  limit?: number
+  offset?: number
+}
+export interface ZoneShippingRateRequestInput {
+  country: string
+  region?: string
+  postalCode?: string
+  /** Exact decimal string */
+  weight?: string
+  /** Exact decimal string */
+  orderTotal?: string
+  /** ISO 4217 currency code */
+  currency: string
+}
+export interface ShippingZoneOutput {
+  id: string
+  name: string
+  countries: Array<string>
+  regions: Array<string>
+  postalCodes: Array<string>
+  priority: number
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface ShippingConditionOutput {
+  /** Exact decimal string */
+  minWeight?: string
+  /** Exact decimal string */
+  maxWeight?: string
+  /** Exact decimal string */
+  minPrice?: string
+  /** Exact decimal string */
+  maxPrice?: string
+  /** Exact decimal string */
+  rate: string
+}
+export interface ZoneShippingMethodOutput {
+  id: string
+  zoneId: string
+  name: string
+  carrier?: string
+  /** flat, weight_based, price_based, calculated, free */
+  methodType: string
+  /** Exact decimal string */
+  baseRate: string
+  currency: string
+  minDeliveryDays?: number
+  maxDeliveryDays?: number
+  conditions: Array<ShippingConditionOutput>
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface ZoneShippingRateOutput {
+  methodId: string
+  methodName: string
+  carrier?: string
+  /** Exact decimal string */
+  rate: string
+  currency: string
+  minDeliveryDays?: number
+  maxDeliveryDays?: number
+}
+export interface CaptureStockLineInput {
+  productId: string
+  sku: string
+  /** Exact decimal string */
+  quantityOnHand: string
+  /** Exact decimal string */
+  quantityAvailable: string
+  location?: string
+}
+export interface CaptureStockSnapshotInput {
+  label?: string
+  lines: Array<CaptureStockLineInput>
+}
+export interface StockSnapshotFilterInput {
+  limit?: number
+  offset?: number
+}
+export interface StockSnapshotLineOutput {
+  id: string
+  stockSnapshotId: string
+  productId: string
+  sku: string
+  /** Exact decimal string */
+  quantityOnHand: string
+  /** Exact decimal string */
+  quantityAvailable: string
+  location?: string
+}
+export interface StockSnapshotOutput {
+  id: string
+  label?: string
+  totalSkus: string
+  /** Exact decimal string */
+  totalUnits: string
+  lines: Array<StockSnapshotLineOutput>
+  capturedAt: string
+}
+export interface CreatePrintStationInput {
+  name: string
+  printers?: Array<string>
+}
+export interface EnqueuePrintJobInput {
+  printerName?: string
+  /** zpl or pdf */
+  payloadKind?: string
+  payload: string
+}
+export interface PrintJobFilterInput {
+  /** queued, picked_up, printed, failed */
+  status?: string
+  limit?: number
+  offset?: number
+}
+export interface PrintStationOutput {
+  id: string
+  name: string
+  printers: Array<string>
+  revoked: boolean
+  lastSeenAt?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface PairStationResultOutput {
+  station: PrintStationOutput
+  /** One-time pairing token; shown only at pairing time */
+  token: string
+}
+export interface PrintJobOutput {
+  id: string
+  stationId: string
+  printerName?: string
+  /** zpl or pdf */
+  payloadKind: string
+  payload: string
+  /** queued, picked_up, printed, failed */
+  status: string
+  createdAt: string
+  pickedUpAt?: string
+}
+export interface CreateIntegrationMappingInput {
+  integration: string
+  mappingGroup: string
+  fieldName: string
+  externalValue: string
+  internalValue: string
+}
+export interface UpdateIntegrationMappingInput {
+  internalValue?: string
+  isActive?: boolean
+}
+export interface IntegrationMappingFilterInput {
+  integration?: string
+  mappingGroup?: string
+  fieldName?: string
+  isActive?: boolean
+  limit?: number
+  offset?: number
+}
+export interface MappingLookupInput {
+  integration: string
+  mappingGroup: string
+  fieldName: string
+  externalValue: string
+}
+export interface IntegrationMappingOutput {
+  id: string
+  integration: string
+  mappingGroup: string
+  fieldName: string
+  externalValue: string
+  internalValue: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateIntegrationFieldMappingInput {
+  integrationAccount: string
+  mappingGroup: string
+  sourceField: string
+  destinationField: string
+  template?: string
+  /** Snake-case transform: `none`, `uppercase`, `lowercase`, `trim` */
+  transform?: string
+  fallback?: string
+}
+export interface UpdateIntegrationFieldMappingInput {
+  destinationField?: string
+  template?: string
+  transform?: string
+  fallback?: string
+  isActive?: boolean
+}
+export interface IntegrationFieldMappingFilterInput {
+  integrationAccount?: string
+  mappingGroup?: string
+  sourceField?: string
+  isActive?: boolean
+  limit?: number
+  offset?: number
+}
+export interface IntegrationFieldMappingOutput {
+  id: string
+  integrationAccount: string
+  mappingGroup: string
+  sourceField: string
+  destinationField: string
+  template?: string
+  /** Snake-case transform */
+  transform: string
+  fallback?: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface CreatePaymentObligationInput {
+  supplierId: string
+  purchaseOrderId?: string
+  /** Exact decimal string */
+  amount: string
+  currency?: string
+  /** Date string (YYYY-MM-DD) */
+  dueDate: string
+  notes?: string
+}
+export interface PaymentObligationFilterInput {
+  supplierId?: string
+  /** Snake-case status */
+  status?: string
+  /** Date string (YYYY-MM-DD) */
+  dueBefore?: string
+  limit?: number
+  offset?: number
+}
+export interface PaymentObligationOutput {
+  id: string
+  number: string
+  supplierId: string
+  purchaseOrderId?: string
+  /** Exact decimal string */
+  amount: string
+  /** Exact decimal string */
+  amountPaid: string
+  /** Exact decimal string */
+  outstanding: string
+  currency: string
+  /** Date string (YYYY-MM-DD) */
+  dueDate: string
+  /** Snake-case status */
+  status: string
+  linkedBillIds: Array<string>
+  notes?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface PaymentObligationDashboardOutput {
+  openCount: string
+  /** Exact decimal string */
+  totalOutstanding: string
+  overdueCount: string
+  /** Exact decimal string */
+  overdueAmount: string
+}
+export interface IngestLineItemInput {
+  externalSku: string
+  /** Exact decimal string */
+  quantity: string
+  productId?: string
+}
+export interface IngestOrderInput {
+  channelId?: string
+  externalOrderId: string
+  externalStatus?: string
+  /** JSON string */
+  metadata?: string
+  items: Array<IngestLineItemInput>
+}
+export interface MapPurgatoryLineInput {
+  productId?: string
+  ignoreItem?: boolean
+  nonPhysical?: boolean
+}
+export interface PurgatoryFilterInput {
+  channelId?: string
+  isPosted?: boolean
+  limit?: number
+  offset?: number
+}
+export interface PurgatoryLineItemOutput {
+  id: string
+  purgatoryOrderId: string
+  externalSku: string
+  productId?: string
+  /** Exact decimal string */
+  quantity: string
+  ignoreItem: boolean
+  nonPhysical: boolean
+  isResolved: boolean
+}
+export interface PurgatoryOrderOutput {
+  id: string
+  channelId?: string
+  externalOrderId: string
+  externalStatus?: string
+  isPosted: boolean
+  holdReason?: string
+  /** JSON string */
+  metadata: string
+  items: Array<PurgatoryLineItemOutput>
+  isReadyToPost: boolean
+  unresolvedCount: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CaptureTopologySnapshotInput {
+  channelsTotal: string
+  channelsActive: string
+  warehousesTotal: string
+  productsTotal: string
+  openOrders: string
+  /** JSON string */
+  signals?: string
+}
+export interface TopologySnapshotFilterInput {
+  /** Snake-case health grade: `unknown`, `healthy`, `degraded`, `critical` */
+  health?: string
+  limit?: number
+  offset?: number
+}
+export interface TopologySnapshotOutput {
+  id: string
+  channelsTotal: string
+  channelsActive: string
+  warehousesTotal: string
+  productsTotal: string
+  openOrders: string
+  /** Snake-case health grade */
+  health: string
+  /** JSON string */
+  signals: string
+  capturedAt: string
+}
+export interface CreateVendorReturnItemInput {
+  productId: string
+  /** Exact decimal string */
+  quantity: string
+  /** Exact decimal string */
+  unitCost: string
+  /** Snake-case reason: `defective`, `overage`, `wrong_item`, `other` */
+  reason?: string
+}
+export interface CreateVendorReturnInput {
+  supplierId: string
+  purchaseOrderId?: string
+  currency?: string
+  items: Array<CreateVendorReturnItemInput>
+  notes?: string
+}
+export interface VendorReturnFilterInput {
+  supplierId?: string
+  /** Snake-case status */
+  status?: string
+  limit?: number
+  offset?: number
+}
+export interface VendorReturnItemOutput {
+  id: string
+  vendorReturnId: string
+  productId: string
+  sku: string
+  /** Exact decimal string */
+  quantity: string
+  /** Exact decimal string */
+  unitCost: string
+  /** Exact decimal string */
+  lineTotal: string
+  /** Snake-case reason */
+  reason: string
+}
+export interface VendorReturnOutput {
+  id: string
+  number: string
+  supplierId: string
+  purchaseOrderId?: string
+  /** Snake-case status */
+  status: string
+  currency: string
+  items: Array<VendorReturnItemOutput>
+  /** Exact decimal string */
+  totalCredit: string
+  creditGenerated: boolean
+  notes?: string
+  processedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateFraudSignalInput {
+  /** Snake-case signal type: `velocity_spike`, `address_mismatch`, ... */
+  signalType: string
+  /** Confidence score (0.0 - 1.0) */
+  score: number
+  details: string
+}
+export interface CreateFraudAssessmentInput {
+  orderId: string
+  signals: Array<CreateFraudSignalInput>
+}
+export interface FraudAssessmentFilterInput {
+  /** Snake-case decision: `accept`, `review`, `reject` */
+  decision?: string
+  minRiskScore?: number
+  unreviewedOnly?: boolean
+  limit?: number
+  offset?: number
+}
+export interface FraudSignalOutput {
+  orderId: string
+  /** Snake-case signal type */
+  signalType: string
+  score: number
+  details: string
+  detectedAt: string
+}
+export interface FraudAssessmentOutput {
+  orderId: string
+  riskScore: number
+  signals: Array<FraudSignalOutput>
+  /** Snake-case decision */
+  decision: string
+  reviewedBy?: string
+  reviewNotes?: string
+  needsReview: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateFraudRuleInput {
+  name: string
+  description?: string
+  /** Snake-case signal type */
+  signalType: string
+  threshold: number
+  /** Snake-case decision to apply when the rule triggers */
+  action: string
+}
+export interface UpdateFraudRuleInput {
+  name?: string
+  description?: string
+  threshold?: number
+  /** Snake-case decision */
+  action?: string
+  enabled?: boolean
+}
+export interface FraudRuleFilterInput {
+  /** Snake-case signal type */
+  signalType?: string
+  /** Snake-case decision */
+  action?: string
+  enabled?: boolean
+  limit?: number
+  offset?: number
+}
+export interface FraudRuleOutput {
+  id: string
+  name: string
+  description?: string
+  /** Snake-case signal type */
+  signalType: string
+  threshold: number
+  /** Snake-case decision */
+  action: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface SearchFieldInput {
+  fieldName: string
+  weight: number
+  /** Snake-case tokenizer: `standard`, `ngram`, `edge`, `keyword` */
+  tokenizer?: string
+  enabled?: boolean
+}
+export interface FacetConfigInput {
+  fieldName: string
+  /** Snake-case facet type: `value`, `range`, `hierarchical` */
+  facetType?: string
+  displayName: string
+  sortOrder?: number
+  maxValues?: number
+}
+export interface SynonymGroupInput {
+  canonical: string
+  synonyms: Array<string>
+}
+export interface BoostRuleInput {
+  field: string
+  valueMatch: string
+  boostFactor: number
+}
+export interface CreateSearchConfigInput {
+  name: string
+  description?: string
+  searchableFields?: Array<SearchFieldInput>
+  facets?: Array<FacetConfigInput>
+  synonyms?: Array<SynonymGroupInput>
+  boostRules?: Array<BoostRuleInput>
+}
+export interface UpdateSearchConfigInput {
+  name?: string
+  description?: string
+  searchableFields?: Array<SearchFieldInput>
+  facets?: Array<FacetConfigInput>
+  synonyms?: Array<SynonymGroupInput>
+  boostRules?: Array<BoostRuleInput>
+  isActive?: boolean
+}
+export interface SearchConfigFilterInput {
+  isActive?: boolean
+  name?: string
+  limit?: number
+  offset?: number
+}
+export interface SearchFieldOutput {
+  fieldName: string
+  weight: number
+  /** Snake-case tokenizer */
+  tokenizer: string
+  enabled: boolean
+}
+export interface FacetConfigOutput {
+  fieldName: string
+  /** Snake-case facet type */
+  facetType: string
+  displayName: string
+  sortOrder: number
+  maxValues?: number
+}
+export interface SynonymGroupOutput {
+  canonical: string
+  synonyms: Array<string>
+}
+export interface BoostRuleOutput {
+  field: string
+  valueMatch: string
+  boostFactor: number
+}
+export interface SearchConfigOutput {
+  id: string
+  name: string
+  description?: string
+  searchableFields: Array<SearchFieldOutput>
+  facets: Array<FacetConfigOutput>
+  synonyms: Array<SynonymGroupOutput>
+  boostRules: Array<BoostRuleOutput>
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateAgentIdentityInput {
+  agentRegistry: string
+  agentId: string
+  agentUri: string
+  agentWallet?: string
+  ownerAddress?: string
+  agentCardId?: string
+  /** JSON-encoded registration document */
+  registration?: string
+  registrationHash?: string
+  /** Snake-case proof type */
+  walletProofType?: string
+  walletProof?: string
+  /** Chain id as a decimal string */
+  walletProofChainId?: string
+  /** RFC3339 timestamp */
+  walletProofDeadline?: string
+  active?: boolean
+}
+export interface UpdateAgentIdentityInput {
+  agentUri?: string
+  agentWallet?: string
+  ownerAddress?: string
+  agentCardId?: string
+  /** JSON-encoded registration document */
+  registration?: string
+  registrationHash?: string
+  /** Snake-case proof type */
+  walletProofType?: string
+  walletProof?: string
+  /** Chain id as a decimal string */
+  walletProofChainId?: string
+  /** RFC3339 timestamp */
+  walletProofDeadline?: string
+  active?: boolean
+}
+/** Optional on-chain proof data accompanying a wallet binding. */
+export interface AgentWalletProofInput {
+  /** Snake-case proof type */
+  proofType?: string
+  proof?: string
+  /** Chain id as a decimal string */
+  proofChainId?: string
+  /** RFC3339 timestamp */
+  proofDeadline?: string
+}
+export interface AgentIdentityFilterInput {
+  agentRegistry?: string
+  agentId?: string
+  agentWallet?: string
+  ownerAddress?: string
+  agentCardId?: string
+  active?: boolean
+  limit?: number
+  offset?: number
+}
+export interface AgentIdentityOutput {
+  id: string
+  agentRegistry: string
+  agentId: string
+  agentUri: string
+  agentWallet?: string
+  ownerAddress?: string
+  agentCardId?: string
+  /** JSON-encoded registration document */
+  registration?: string
+  registrationHash?: string
+  /** Snake-case proof type */
+  walletProofType?: string
+  walletProof?: string
+  /** Chain id as a decimal string */
+  walletProofChainId?: string
+  walletProofDeadline?: string
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateAgentFeedbackInput {
+  agentRegistry: string
+  agentId: string
+  clientAddress: string
+  /** Signed integer value as a decimal string */
+  value: string
+  /** Number of decimal places encoded in `value` */
+  valueDecimals: number
+  tag1?: string
+  tag2?: string
+  endpoint?: string
+  feedbackUri?: string
+  feedbackHash?: string
+}
+export interface AgentFeedbackFilterInput {
+  agentRegistry?: string
+  agentId?: string
+  clientAddresses?: Array<string>
+  tag1?: string
+  tag2?: string
+  includeRevoked?: boolean
+  limit?: number
+  offset?: number
+}
+export interface AgentFeedbackOutput {
+  id: string
+  agentRegistry: string
+  agentId: string
+  clientAddress: string
+  /** Feedback index as a decimal string */
+  feedbackIndex: string
+  /** Signed integer value as a decimal string */
+  value: string
+  valueDecimals: number
+  tag1?: string
+  tag2?: string
+  endpoint?: string
+  feedbackUri?: string
+  feedbackHash?: string
+  isRevoked: boolean
+  createdAt: string
+  revokedAt?: string
+}
+export interface FeedbackSummaryOutput {
+  /** Count as a decimal string */
+  count: string
+  /** Aggregate value as a decimal string */
+  summaryValue: string
+  summaryValueDecimals: number
+}
+export interface CreateAgentValidationRequestInput {
+  requestHash: string
+  agentRegistry: string
+  agentId: string
+  validatorAddress: string
+  requestUri: string
+}
+export interface AgentValidationRequestOutput {
+  requestHash: string
+  agentRegistry: string
+  agentId: string
+  validatorAddress: string
+  requestUri: string
+  createdAt: string
+}
+export interface CreateAgentValidationResponseInput {
+  /** Validation score (0-100) */
+  response: number
+  responseUri?: string
+  responseHash?: string
+  tag?: string
+}
+export interface AgentValidationResponseOutput {
+  id: string
+  requestHash: string
+  agentRegistry: string
+  agentId: string
+  validatorAddress: string
+  response: number
+  responseUri?: string
+  responseHash?: string
+  tag?: string
+  createdAt: string
+}
+export interface AgentValidationStatusOutput {
+  validatorAddress: string
+  agentRegistry: string
+  agentId: string
+  response: number
+  responseHash?: string
+  tag?: string
+  lastUpdate: string
+}
+export interface ValidationSummaryOutput {
+  /** Count as a decimal string */
+  count: string
+  averageResponse: number
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -3423,6 +4457,38 @@ export declare class Commerce {
   get cycleCounts(): CycleCounts
   /** Get the EDI documents API (trading-partner document tracking) */
   get ediDocuments(): EdiDocuments
+  /** Get the activity logs API (append-only subject history) */
+  get activityLogs(): ActivityLogs
+  /** Get the channels API (sales / fulfillment channels) */
+  get channels(): Channels
+  /** Get the companies API (B2B accounts and contacts) */
+  get companies(): Companies
+  /** Get the units of measure API (unit classes, UOMs, conversion rules) */
+  get unitsOfMeasure(): UnitsOfMeasure
+  /** Get the shipping zones API (geographic zones, methods, rates) */
+  get shippingZones(): ShippingZones
+  /** Get the stock snapshots API (point-in-time inventory) */
+  get stockSnapshots(): StockSnapshots
+  /** Get the print stations API (paired agents + print job queue) */
+  get printStations(): PrintStations
+  /** Get the integration mappings API (external↔internal value translation) */
+  get integrationMappings(): IntegrationMappings
+  /** Get the integration field mappings API (field-path mappings) */
+  get integrationFieldMappings(): IntegrationFieldMappings
+  /** Get the payment obligations API (scheduled AP payments) */
+  get paymentObligations(): PaymentObligations
+  /** Get the purgatory API (order ingestion staging) */
+  get purgatory(): Purgatory
+  /** Get the topology snapshots API (operational topology health) */
+  get topologySnapshots(): TopologySnapshots
+  /** Get the fraud API (risk assessments and detection rules) */
+  get fraud(): Fraud
+  /** Get the search configuration API (search tuning profiles) */
+  get searchConfig(): SearchConfigs
+  /** Get the ERC-8004 API (trustless agent identity, reputation, validation) */
+  get erc8004(): Erc8004
+  /** Get the vendor returns API (return-to-supplier) */
+  get vendorReturns(): VendorReturns
   /** Get the prepayments API (advance payments to suppliers) */
   get prepayments(): Prepayments
   /** Get the vendor credits API (supplier-owed credits) */
@@ -4490,4 +5556,245 @@ export declare class InboundShipments {
   receiveLine(id: string, itemId: string, quantity: string): Promise<InboundShipmentOutput>
   /** Cancel an inbound shipment. */
   cancel(id: string): Promise<InboundShipmentOutput>
+}
+export declare class ActivityLogs {
+  /** Whether the activity-logs backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  /** Record an activity log entry. */
+  record(input: RecordActivityInput): Promise<ActivityLogEntryOutput>
+  get(id: string): Promise<ActivityLogEntryOutput | null>
+  list(filter?: ActivityLogFilterInput | undefined | null): Promise<Array<ActivityLogEntryOutput>>
+  /** Full history for a single subject, most recent first. */
+  historyForSubject(subjectType: string, subjectId: string): Promise<Array<ActivityLogEntryOutput>>
+}
+export declare class Channels {
+  /** Whether the channels backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateChannelInput): Promise<ChannelOutput>
+  get(id: string): Promise<ChannelOutput | null>
+  update(id: string, input: UpdateChannelInput): Promise<ChannelOutput>
+  list(filter?: ChannelFilterInput | undefined | null): Promise<Array<ChannelOutput>>
+  /** Soft-delete a channel. */
+  delete(id: string): Promise<void>
+  /** Lock or unlock a channel against external mutations. */
+  setLock(id: string, locked: boolean): Promise<ChannelOutput>
+  /** Bulk upsert/delete channel SKU mappings. Returns the affected count. */
+  syncProducts(id: string, items: Array<ChannelProductSyncItemInput>): Promise<number>
+  /** List a channel's SKU mappings. */
+  listProductMappings(id: string): Promise<Array<ChannelProductMappingOutput>>
+}
+export declare class Companies {
+  /** Whether the companies backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateCompanyInput): Promise<CompanyOutput>
+  get(id: string): Promise<CompanyOutput | null>
+  update(id: string, input: UpdateCompanyInput): Promise<CompanyOutput>
+  list(filter?: CompanyFilterInput | undefined | null): Promise<Array<CompanyOutput>>
+  delete(id: string): Promise<void>
+  /** List a company's shipping addresses. */
+  listAddresses(id: string): Promise<Array<CompanyShippingAddressOutput>>
+  /** List a company's product price overrides. */
+  listPriceOverrides(id: string): Promise<Array<CompanyPriceOverrideOutput>>
+  /** Create a contact linked to one or more companies. */
+  createContact(input: CreateContactInput): Promise<ContactOutput>
+  getContact(id: string): Promise<ContactOutput | null>
+  /** List contacts for a company. */
+  listContacts(companyId: string): Promise<Array<ContactOutput>>
+}
+export declare class UnitsOfMeasure {
+  /** Whether the units-of-measure backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  createClass(input: CreateUnitClassInput): Promise<UnitClassOutput>
+  listClasses(): Promise<Array<UnitClassOutput>>
+  deleteClass(id: string): Promise<void>
+  createUom(input: CreateUnitOfMeasureInput): Promise<UnitOfMeasureOutput>
+  listUoms(filter?: UnitOfMeasureFilterInput | undefined | null): Promise<Array<UnitOfMeasureOutput>>
+  /** Mark a UOM as the base unit for its class. */
+  setBaseUom(id: string): Promise<UnitOfMeasureOutput>
+  deleteUom(id: string): Promise<void>
+  createRule(input: CreateUnitConversionRuleInput): Promise<UnitConversionRuleOutput>
+  listRules(): Promise<Array<UnitConversionRuleOutput>>
+  deleteRule(id: string): Promise<void>
+}
+export declare class ShippingZones {
+  /** Whether the shipping-zones backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateShippingZoneInput): Promise<ShippingZoneOutput>
+  get(id: string): Promise<ShippingZoneOutput | null>
+  update(id: string, input: UpdateShippingZoneInput): Promise<ShippingZoneOutput>
+  list(filter?: ShippingZoneFilterInput | undefined | null): Promise<Array<ShippingZoneOutput>>
+  delete(id: string): Promise<void>
+  /** Find zones whose geographic criteria match a destination. */
+  findMatchingZones(country: string, region?: string | undefined | null, postalCode?: string | undefined | null): Promise<Array<ShippingZoneOutput>>
+  createMethod(input: CreateZoneShippingMethodInput): Promise<ZoneShippingMethodOutput>
+  getMethod(id: string): Promise<ZoneShippingMethodOutput | null>
+  listMethods(filter?: ZoneShippingMethodFilterInput | undefined | null): Promise<Array<ZoneShippingMethodOutput>>
+  deleteMethod(id: string): Promise<void>
+  /** Calculate available shipping rates for a destination. */
+  calculateRates(request: ZoneShippingRateRequestInput): Promise<Array<ZoneShippingRateOutput>>
+}
+export declare class StockSnapshots {
+  /** Whether the stock-snapshots backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  /** Capture a new snapshot; totals are computed from the supplied lines. */
+  capture(input: CaptureStockSnapshotInput): Promise<StockSnapshotOutput>
+  get(id: string): Promise<StockSnapshotOutput | null>
+  /** Most recent snapshot, if any. */
+  latest(): Promise<StockSnapshotOutput | null>
+  list(filter?: StockSnapshotFilterInput | undefined | null): Promise<Array<StockSnapshotOutput>>
+  delete(id: string): Promise<void>
+}
+export declare class PrintStations {
+  /** Whether the print-stations backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  /** Pair a new station, returning the station and its one-time token. */
+  pair(input: CreatePrintStationInput): Promise<PairStationResultOutput>
+  listStations(): Promise<Array<PrintStationOutput>>
+  getStation(id: string): Promise<PrintStationOutput | null>
+  revokeStation(id: string): Promise<PrintStationOutput>
+  enqueueJob(stationId: string, input: EnqueuePrintJobInput): Promise<PrintJobOutput>
+  /** Pick up the next queued job for a station. */
+  nextJob(stationId: string): Promise<PrintJobOutput | null>
+  /** Mark a job printed (success) or failed. */
+  completeJob(jobId: string, success: boolean): Promise<PrintJobOutput>
+  listJobs(stationId: string, filter?: PrintJobFilterInput | undefined | null): Promise<Array<PrintJobOutput>>
+}
+export declare class IntegrationMappings {
+  /** Whether the integration-mappings backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateIntegrationMappingInput): Promise<IntegrationMappingOutput>
+  get(id: string): Promise<IntegrationMappingOutput | null>
+  update(id: string, input: UpdateIntegrationMappingInput): Promise<IntegrationMappingOutput>
+  list(filter?: IntegrationMappingFilterInput | undefined | null): Promise<Array<IntegrationMappingOutput>>
+  delete(id: string): Promise<void>
+  /** Bulk upsert mappings; returns the number of rows affected as a string. */
+  bulkUpsert(items: Array<CreateIntegrationMappingInput>): Promise<string>
+  /** Resolve the internal value for an external value. */
+  resolve(lookup: MappingLookupInput): Promise<string | null>
+}
+export declare class IntegrationFieldMappings {
+  /** Whether the integration field-mappings backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateIntegrationFieldMappingInput): Promise<IntegrationFieldMappingOutput>
+  get(id: string): Promise<IntegrationFieldMappingOutput | null>
+  update(id: string, input: UpdateIntegrationFieldMappingInput): Promise<IntegrationFieldMappingOutput>
+  list(filter?: IntegrationFieldMappingFilterInput | undefined | null): Promise<Array<IntegrationFieldMappingOutput>>
+  delete(id: string): Promise<void>
+  /** Bulk create field mappings; returns the number of rows affected as a string. */
+  bulkCreate(items: Array<CreateIntegrationFieldMappingInput>): Promise<string>
+  /** Bulk delete field mappings by ID; returns the number of rows affected as a string. */
+  bulkDelete(ids: Array<string>): Promise<string>
+  /** Distinct mapping groups for an integration account. */
+  distinctGroups(integrationAccount: string): Promise<Array<string>>
+}
+export declare class PaymentObligations {
+  /** Whether the payment-obligations backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreatePaymentObligationInput): Promise<PaymentObligationOutput>
+  get(id: string): Promise<PaymentObligationOutput | null>
+  list(filter?: PaymentObligationFilterInput | undefined | null): Promise<Array<PaymentObligationOutput>>
+  /** Record a payment against an obligation. */
+  recordPayment(id: string, amount: string): Promise<PaymentObligationOutput>
+  /** Set the obligation status (e.g. `scheduled`, `cancelled`). */
+  setStatus(id: string, status: string): Promise<PaymentObligationOutput>
+  /** Link an AP bill to an obligation. */
+  linkBill(id: string, billId: string): Promise<PaymentObligationOutput>
+  /** Aggregate dashboard summary as of the given date (YYYY-MM-DD). */
+  dashboard(today: string): Promise<PaymentObligationDashboardOutput>
+}
+export declare class Purgatory {
+  /** Whether the purgatory backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  /** Ingest an external order into purgatory. */
+  ingest(input: IngestOrderInput): Promise<PurgatoryOrderOutput>
+  get(id: string): Promise<PurgatoryOrderOutput | null>
+  list(filter?: PurgatoryFilterInput | undefined | null): Promise<Array<PurgatoryOrderOutput>>
+  /** Map a staged line to a product and/or toggle its flags. */
+  mapLine(id: string, lineId: string, input: MapPurgatoryLineInput): Promise<PurgatoryOrderOutput>
+  /** Post the order out of purgatory. */
+  post(id: string): Promise<PurgatoryOrderOutput>
+  delete(id: string): Promise<void>
+}
+export declare class TopologySnapshots {
+  /** Whether the topology-snapshots backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  /** Capture a new snapshot; health is derived from the supplied metrics. */
+  capture(input: CaptureTopologySnapshotInput): Promise<TopologySnapshotOutput>
+  get(id: string): Promise<TopologySnapshotOutput | null>
+  /** Most recent snapshot, if any. */
+  latest(): Promise<TopologySnapshotOutput | null>
+  list(filter?: TopologySnapshotFilterInput | undefined | null): Promise<Array<TopologySnapshotOutput>>
+  delete(id: string): Promise<void>
+}
+export declare class VendorReturns {
+  /** Whether the vendor-returns backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateVendorReturnInput): Promise<VendorReturnOutput>
+  get(id: string): Promise<VendorReturnOutput | null>
+  list(filter?: VendorReturnFilterInput | undefined | null): Promise<Array<VendorReturnOutput>>
+  /** Submit a draft vendor return to the supplier. */
+  submit(id: string): Promise<VendorReturnOutput>
+  /** Process a vendor return, optionally generating a vendor credit. */
+  process(id: string, generateCredit: boolean): Promise<VendorReturnOutput>
+  /** Cancel a vendor return. */
+  cancel(id: string): Promise<VendorReturnOutput>
+}
+export declare class Fraud {
+  /** Whether the fraud backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  /** Create a fraud assessment for an order. */
+  createAssessment(input: CreateFraudAssessmentInput): Promise<FraudAssessmentOutput>
+  getAssessment(orderId: string): Promise<FraudAssessmentOutput | null>
+  listAssessments(filter?: FraudAssessmentFilterInput | undefined | null): Promise<Array<FraudAssessmentOutput>>
+  /** Record a manual review decision on an assessment. */
+  reviewAssessment(orderId: string, decision: string, reviewer: string, notes?: string | undefined | null): Promise<FraudAssessmentOutput>
+  createRule(input: CreateFraudRuleInput): Promise<FraudRuleOutput>
+  getRule(id: string): Promise<FraudRuleOutput | null>
+  updateRule(id: string, input: UpdateFraudRuleInput): Promise<FraudRuleOutput>
+  listRules(filter?: FraudRuleFilterInput | undefined | null): Promise<Array<FraudRuleOutput>>
+  deleteRule(id: string): Promise<void>
+  /** All currently enabled fraud rules. */
+  getActiveRules(): Promise<Array<FraudRuleOutput>>
+}
+export declare class SearchConfigs {
+  /** Whether the search-configuration backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateSearchConfigInput): Promise<SearchConfigOutput>
+  get(id: string): Promise<SearchConfigOutput | null>
+  update(id: string, input: UpdateSearchConfigInput): Promise<SearchConfigOutput>
+  list(filter?: SearchConfigFilterInput | undefined | null): Promise<Array<SearchConfigOutput>>
+  delete(id: string): Promise<void>
+  /** The currently active search configuration, if any. */
+  getActive(): Promise<SearchConfigOutput | null>
+  /** Make a configuration active, deactivating the current one. */
+  setActive(id: string): Promise<SearchConfigOutput>
+}
+export declare class Erc8004 {
+  /** Register a new agent identity. */
+  registerIdentity(input: CreateAgentIdentityInput): Promise<AgentIdentityOutput>
+  getIdentity(agentRegistry: string, agentId: string): Promise<AgentIdentityOutput | null>
+  getIdentityByWallet(agentWallet: string): Promise<AgentIdentityOutput | null>
+  updateIdentity(agentRegistry: string, agentId: string, input: UpdateAgentIdentityInput): Promise<AgentIdentityOutput>
+  /** Bind a wallet to an agent identity, with optional on-chain proof data. */
+  setAgentWallet(agentRegistry: string, agentId: string, agentWallet: string, proof?: AgentWalletProofInput | undefined | null): Promise<AgentIdentityOutput>
+  /** Clear the wallet binding on an agent identity. */
+  clearAgentWallet(agentRegistry: string, agentId: string): Promise<AgentIdentityOutput>
+  listIdentities(filter?: AgentIdentityFilterInput | undefined | null): Promise<Array<AgentIdentityOutput>>
+  /** Count identities matching a filter (returned as a decimal string). */
+  countIdentities(filter?: AgentIdentityFilterInput | undefined | null): Promise<string>
+  /** Give feedback about an agent. */
+  giveFeedback(input: CreateAgentFeedbackInput): Promise<AgentFeedbackOutput>
+  /** Revoke a previously given feedback entry. */
+  revokeFeedback(agentRegistry: string, agentId: string, clientAddress: string, feedbackIndex: string): Promise<AgentFeedbackOutput>
+  readFeedback(agentRegistry: string, agentId: string, clientAddress: string, feedbackIndex: string): Promise<AgentFeedbackOutput | null>
+  readAllFeedback(filter?: AgentFeedbackFilterInput | undefined | null): Promise<Array<AgentFeedbackOutput>>
+  /** Aggregate feedback summary for an agent. */
+  feedbackSummary(agentRegistry: string, agentId: string, clientAddresses?: Array<string> | undefined | null, tag1?: string | undefined | null, tag2?: string | undefined | null): Promise<FeedbackSummaryOutput>
+  /** Submit a validation request for an agent. */
+  requestValidation(input: CreateAgentValidationRequestInput): Promise<AgentValidationRequestOutput>
+  /** Record a validator's response to a validation request. */
+  respondValidation(requestHash: string, input: CreateAgentValidationResponseInput): Promise<AgentValidationResponseOutput>
+  validationStatus(requestHash: string): Promise<AgentValidationStatusOutput | null>
+  /** Aggregate validation summary for an agent. */
+  validationSummary(agentRegistry: string, agentId: string, validatorAddresses?: Array<string> | undefined | null, tag?: string | undefined | null): Promise<ValidationSummaryOutput>
 }

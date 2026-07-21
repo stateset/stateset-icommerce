@@ -348,6 +348,102 @@ impl Commerce {
         EdiDocuments { commerce: self.inner.clone() }
     }
 
+    /// Get the activity logs API (append-only subject history)
+    #[napi(getter)]
+    pub fn activity_logs(&self) -> ActivityLogs {
+        ActivityLogs { commerce: self.inner.clone() }
+    }
+
+    /// Get the channels API (sales / fulfillment channels)
+    #[napi(getter)]
+    pub fn channels(&self) -> Channels {
+        Channels { commerce: self.inner.clone() }
+    }
+
+    /// Get the companies API (B2B accounts and contacts)
+    #[napi(getter)]
+    pub fn companies(&self) -> Companies {
+        Companies { commerce: self.inner.clone() }
+    }
+
+    /// Get the units of measure API (unit classes, UOMs, conversion rules)
+    #[napi(getter)]
+    pub fn units_of_measure(&self) -> UnitsOfMeasure {
+        UnitsOfMeasure { commerce: self.inner.clone() }
+    }
+
+    /// Get the shipping zones API (geographic zones, methods, rates)
+    #[napi(getter)]
+    pub fn shipping_zones(&self) -> ShippingZones {
+        ShippingZones { commerce: self.inner.clone() }
+    }
+
+    /// Get the stock snapshots API (point-in-time inventory)
+    #[napi(getter)]
+    pub fn stock_snapshots(&self) -> StockSnapshots {
+        StockSnapshots { commerce: self.inner.clone() }
+    }
+
+    /// Get the print stations API (paired agents + print job queue)
+    #[napi(getter)]
+    pub fn print_stations(&self) -> PrintStations {
+        PrintStations { commerce: self.inner.clone() }
+    }
+
+    /// Get the integration mappings API (external↔internal value translation)
+    #[napi(getter)]
+    pub fn integration_mappings(&self) -> IntegrationMappings {
+        IntegrationMappings { commerce: self.inner.clone() }
+    }
+
+    /// Get the integration field mappings API (field-path mappings)
+    #[napi(getter)]
+    pub fn integration_field_mappings(&self) -> IntegrationFieldMappings {
+        IntegrationFieldMappings { commerce: self.inner.clone() }
+    }
+
+    /// Get the payment obligations API (scheduled AP payments)
+    #[napi(getter)]
+    pub fn payment_obligations(&self) -> PaymentObligations {
+        PaymentObligations { commerce: self.inner.clone() }
+    }
+
+    /// Get the purgatory API (order ingestion staging)
+    #[napi(getter)]
+    pub fn purgatory(&self) -> Purgatory {
+        Purgatory { commerce: self.inner.clone() }
+    }
+
+    /// Get the topology snapshots API (operational topology health)
+    #[napi(getter)]
+    pub fn topology_snapshots(&self) -> TopologySnapshots {
+        TopologySnapshots { commerce: self.inner.clone() }
+    }
+
+    /// Get the fraud API (risk assessments and detection rules)
+    #[napi(getter)]
+    pub fn fraud(&self) -> Fraud {
+        Fraud { commerce: self.inner.clone() }
+    }
+
+    /// Get the search configuration API (search tuning profiles)
+    #[napi(getter)]
+    pub fn search_config(&self) -> SearchConfigs {
+        SearchConfigs { commerce: self.inner.clone() }
+    }
+
+    /// Get the ERC-8004 API (trustless agent identity, reputation, validation)
+    #[napi(getter)]
+    pub fn erc8004(&self) -> Erc8004 {
+        Erc8004 { commerce: self.inner.clone() }
+    }
+
+    /// Get the vendor returns API (return-to-supplier)
+    #[napi(getter)]
+    pub fn vendor_returns(&self) -> VendorReturns {
+        VendorReturns { commerce: self.inner.clone() }
+    }
+
     /// Get the prepayments API (advance payments to suppliers)
     #[napi(getter)]
     pub fn prepayments(&self) -> Prepayments {
@@ -19061,4 +19157,4782 @@ impl InboundShipments {
             .map_err(|e| Error::from_reason(format!("Failed to cancel inbound shipment: {}", e)))?;
         Ok(shipment.into())
     }
+}
+
+// ============================================================================
+// Activity logs  (append-only subject history)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RecordActivityInput {
+    /// Subject record type (e.g. "sales_order")
+    pub subject_type: String,
+    pub subject_id: String,
+    /// Machine action key (e.g. "status_changed")
+    pub action: String,
+    pub summary: String,
+    /// user, system, integration, agent
+    pub actor_kind: Option<String>,
+    pub actor: Option<String>,
+    /// Metadata as JSON
+    pub metadata: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ActivityLogFilterInput {
+    pub subject_type: Option<String>,
+    pub subject_id: Option<String>,
+    pub action: Option<String>,
+    /// user, system, integration, agent
+    pub actor_kind: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ActivityLogEntryOutput {
+    pub id: String,
+    pub subject_type: String,
+    pub subject_id: String,
+    pub action: String,
+    pub summary: String,
+    /// user, system, integration, agent
+    pub actor_kind: String,
+    pub actor: Option<String>,
+    /// Metadata as JSON
+    pub metadata: String,
+    pub created_at: String,
+}
+
+impl From<stateset_core::ActivityLogEntry> for ActivityLogEntryOutput {
+    fn from(e: stateset_core::ActivityLogEntry) -> Self {
+        Self {
+            id: e.id.to_string(),
+            subject_type: e.subject_type,
+            subject_id: e.subject_id.to_string(),
+            action: e.action,
+            summary: e.summary,
+            actor_kind: e.actor_kind.to_string(),
+            actor: e.actor,
+            metadata: e.metadata.to_string(),
+            created_at: e.created_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_actor_kind(s: &str) -> Result<stateset_core::ActorKind> {
+    s.parse::<stateset_core::ActorKind>()
+        .map_err(|_| Error::from_reason(format!("Invalid actor kind: {}", s)))
+}
+
+fn parse_metadata_json(s: Option<String>) -> Result<serde_json::Value> {
+    match s {
+        Some(s) => serde_json::from_str(&s)
+            .map_err(|e| Error::from_reason(format!("Invalid metadata JSON: {}", e))),
+        None => Ok(serde_json::Value::Null),
+    }
+}
+
+#[napi]
+pub struct ActivityLogs {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl ActivityLogs {
+    /// Whether the activity-logs backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.activity_logs().is_supported())
+    }
+
+    /// Record an activity log entry.
+    #[napi]
+    pub async fn record(&self, input: RecordActivityInput) -> Result<ActivityLogEntryOutput> {
+        let commerce = self.commerce.lock().await;
+        let actor_kind = match input.actor_kind.as_deref() {
+            Some(s) => parse_actor_kind(s)?,
+            None => stateset_core::ActorKind::default(),
+        };
+        let entry = commerce
+            .activity_logs()
+            .record(stateset_core::RecordActivity {
+                subject_type: input.subject_type,
+                subject_id: parse_uuid_str(&input.subject_id, "subject_id")?,
+                action: input.action,
+                summary: input.summary,
+                actor_kind,
+                actor: input.actor,
+                metadata: parse_metadata_json(input.metadata)?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to record activity: {}", e)))?;
+        Ok(entry.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<ActivityLogEntryOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "activity_log")?;
+        let entry = commerce
+            .activity_logs()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get activity log entry: {}", e)))?;
+        Ok(entry.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<ActivityLogFilterInput>,
+    ) -> Result<Vec<ActivityLogEntryOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::ActivityLogFilter::default()),
+            |f| -> Result<stateset_core::ActivityLogFilter> {
+                Ok(stateset_core::ActivityLogFilter {
+                    subject_type: f.subject_type,
+                    subject_id: parse_optional_uuid(f.subject_id, "subject_id")?,
+                    action: f.action,
+                    actor_kind: f.actor_kind.as_deref().map(parse_actor_kind).transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let entries = commerce
+            .activity_logs()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list activity logs: {}", e)))?;
+        Ok(entries.into_iter().map(Into::into).collect())
+    }
+
+    /// Full history for a single subject, most recent first.
+    #[napi]
+    pub async fn history_for_subject(
+        &self,
+        subject_type: String,
+        subject_id: String,
+    ) -> Result<Vec<ActivityLogEntryOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&subject_id, "subject_id")?;
+        let entries = commerce
+            .activity_logs()
+            .history_for_subject(&subject_type, uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get activity history: {}", e)))?;
+        Ok(entries.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Channels  (sales / fulfillment channels)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateChannelInput {
+    pub name: String,
+    /// sales_channel, fulfillment_channel, end_to_end_channel
+    pub channel_type: String,
+    pub integration: Option<String>,
+    pub default_warehouse_id: Option<String>,
+    pub tags: Option<Vec<String>>,
+    /// Metadata as JSON
+    pub metadata: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateChannelInput {
+    pub name: Option<String>,
+    pub integration: Option<String>,
+    /// active, paused, deleted
+    pub status: Option<String>,
+    pub default_warehouse_id: Option<String>,
+    pub tags: Option<Vec<String>>,
+    /// Metadata as JSON
+    pub metadata: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChannelFilterInput {
+    /// sales_channel, fulfillment_channel, end_to_end_channel
+    pub channel_type: Option<String>,
+    /// active, paused, deleted
+    pub status: Option<String>,
+    pub integration: Option<String>,
+    pub api_locked: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChannelProductSyncItemInput {
+    pub channel_sku: String,
+    pub product_id: Option<String>,
+    pub internal_sku: Option<String>,
+    /// When true, remove the mapping instead of upserting it
+    pub delete: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChannelOutput {
+    pub id: String,
+    pub name: String,
+    /// sales_channel, fulfillment_channel, end_to_end_channel
+    pub channel_type: String,
+    pub integration: Option<String>,
+    /// active, paused, deleted
+    pub status: String,
+    pub api_locked: bool,
+    pub default_warehouse_id: Option<String>,
+    pub tags: Vec<String>,
+    /// Metadata as JSON
+    pub metadata: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Channel> for ChannelOutput {
+    fn from(c: stateset_core::Channel) -> Self {
+        Self {
+            id: c.id.to_string(),
+            name: c.name,
+            channel_type: c.channel_type.to_string(),
+            integration: c.integration,
+            status: c.status.to_string(),
+            api_locked: c.api_locked,
+            default_warehouse_id: c.default_warehouse_id.map(|w| w.to_string()),
+            tags: c.tags,
+            metadata: c.metadata.to_string(),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChannelProductMappingOutput {
+    pub channel_id: String,
+    pub channel_sku: String,
+    pub product_id: String,
+    pub internal_sku: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::ChannelProductMapping> for ChannelProductMappingOutput {
+    fn from(m: stateset_core::ChannelProductMapping) -> Self {
+        Self {
+            channel_id: m.channel_id.to_string(),
+            channel_sku: m.channel_sku,
+            product_id: m.product_id.to_string(),
+            internal_sku: m.internal_sku,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_channel_type(s: &str) -> Result<stateset_core::ChannelType> {
+    s.parse::<stateset_core::ChannelType>()
+        .map_err(|_| Error::from_reason(format!("Invalid channel type: {}", s)))
+}
+
+fn parse_channel_status(s: &str) -> Result<stateset_core::ChannelStatus> {
+    s.parse::<stateset_core::ChannelStatus>()
+        .map_err(|_| Error::from_reason(format!("Invalid channel status: {}", s)))
+}
+
+#[napi]
+pub struct Channels {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Channels {
+    /// Whether the channels backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.channels().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateChannelInput) -> Result<ChannelOutput> {
+        let commerce = self.commerce.lock().await;
+        let channel = commerce
+            .channels()
+            .create(stateset_core::CreateChannel {
+                name: input.name,
+                channel_type: parse_channel_type(&input.channel_type)?,
+                integration: input.integration,
+                default_warehouse_id: parse_optional_uuid(
+                    input.default_warehouse_id,
+                    "default_warehouse_id",
+                )?
+                .map(Into::into),
+                tags: input.tags.unwrap_or_default(),
+                metadata: parse_metadata_json(input.metadata)?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create channel: {}", e)))?;
+        Ok(channel.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<ChannelOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "channel")?;
+        let channel = commerce
+            .channels()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get channel: {}", e)))?;
+        Ok(channel.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateChannelInput) -> Result<ChannelOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "channel")?;
+        let channel = commerce
+            .channels()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateChannel {
+                    name: input.name,
+                    integration: input.integration,
+                    status: input.status.as_deref().map(parse_channel_status).transpose()?,
+                    default_warehouse_id: parse_optional_uuid(
+                        input.default_warehouse_id,
+                        "default_warehouse_id",
+                    )?
+                    .map(Into::into),
+                    tags: input.tags,
+                    metadata: input.metadata.map(Some).map(parse_metadata_json).transpose()?,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update channel: {}", e)))?;
+        Ok(channel.into())
+    }
+
+    #[napi]
+    pub async fn list(&self, filter: Option<ChannelFilterInput>) -> Result<Vec<ChannelOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::ChannelFilter::default()),
+            |f| -> Result<stateset_core::ChannelFilter> {
+                Ok(stateset_core::ChannelFilter {
+                    channel_type: f.channel_type.as_deref().map(parse_channel_type).transpose()?,
+                    status: f.status.as_deref().map(parse_channel_status).transpose()?,
+                    integration: f.integration,
+                    api_locked: f.api_locked,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let channels = commerce
+            .channels()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list channels: {}", e)))?;
+        Ok(channels.into_iter().map(Into::into).collect())
+    }
+
+    /// Soft-delete a channel.
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "channel")?;
+        commerce
+            .channels()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete channel: {}", e)))
+    }
+
+    /// Lock or unlock a channel against external mutations.
+    #[napi]
+    pub async fn set_lock(&self, id: String, locked: bool) -> Result<ChannelOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "channel")?;
+        let channel = commerce
+            .channels()
+            .set_lock(uuid.into(), locked)
+            .map_err(|e| Error::from_reason(format!("Failed to set channel lock: {}", e)))?;
+        Ok(channel.into())
+    }
+
+    /// Bulk upsert/delete channel SKU mappings. Returns the affected count.
+    #[napi]
+    pub async fn sync_products(
+        &self,
+        id: String,
+        items: Vec<ChannelProductSyncItemInput>,
+    ) -> Result<u32> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "channel")?;
+        let items = items
+            .into_iter()
+            .map(|i| -> Result<stateset_core::ChannelProductSyncItem> {
+                Ok(stateset_core::ChannelProductSyncItem {
+                    channel_sku: i.channel_sku,
+                    product_id: parse_optional_uuid(i.product_id, "product_id")?.map(Into::into),
+                    internal_sku: i.internal_sku,
+                    delete: i.delete.unwrap_or(false),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let count = commerce
+            .channels()
+            .sync_products(uuid.into(), items)
+            .map_err(|e| Error::from_reason(format!("Failed to sync channel products: {}", e)))?;
+        u32::try_from(count).map_err(|_| Error::from_reason("Sync count overflowed u32"))
+    }
+
+    /// List a channel's SKU mappings.
+    #[napi]
+    pub async fn list_product_mappings(
+        &self,
+        id: String,
+    ) -> Result<Vec<ChannelProductMappingOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "channel")?;
+        let mappings = commerce.channels().list_product_mappings(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to list channel product mappings: {}", e))
+        })?;
+        Ok(mappings.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Companies  (B2B accounts and contacts)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateCompanyInput {
+    pub name: String,
+    pub reference: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    /// ISO 4217 currency code
+    pub currency: Option<String>,
+    pub payment_terms_days: Option<i32>,
+    pub tags: Option<Vec<String>>,
+    /// Metadata as JSON
+    pub metadata: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateCompanyInput {
+    pub name: Option<String>,
+    pub reference: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    /// ISO 4217 currency code
+    pub currency: Option<String>,
+    pub payment_terms_days: Option<i32>,
+    /// active, inactive
+    pub status: Option<String>,
+    pub tags: Option<Vec<String>>,
+    /// Metadata as JSON
+    pub metadata: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CompanyFilterInput {
+    /// active, inactive
+    pub status: Option<String>,
+    pub search: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateContactInput {
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub title: Option<String>,
+    pub company_ids: Option<Vec<String>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CompanyOutput {
+    pub id: String,
+    pub name: String,
+    pub reference: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub currency: String,
+    pub payment_terms_days: Option<i32>,
+    /// active, inactive
+    pub status: String,
+    pub tags: Vec<String>,
+    /// Metadata as JSON
+    pub metadata: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Company> for CompanyOutput {
+    fn from(c: stateset_core::Company) -> Self {
+        Self {
+            id: c.id.to_string(),
+            name: c.name,
+            reference: c.reference,
+            email: c.email,
+            phone: c.phone,
+            currency: c.currency.to_string(),
+            payment_terms_days: c.payment_terms_days,
+            status: c.status.to_string(),
+            tags: c.tags,
+            metadata: c.metadata.to_string(),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CompanyShippingAddressOutput {
+    pub id: String,
+    pub company_id: String,
+    pub label: Option<String>,
+    pub name: Option<String>,
+    pub line1: String,
+    pub line2: Option<String>,
+    pub city: String,
+    pub region: Option<String>,
+    pub postal_code: Option<String>,
+    pub country: String,
+    pub is_default: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::CompanyShippingAddress> for CompanyShippingAddressOutput {
+    fn from(a: stateset_core::CompanyShippingAddress) -> Self {
+        Self {
+            id: a.id.to_string(),
+            company_id: a.company_id.to_string(),
+            label: a.label,
+            name: a.name,
+            line1: a.line1,
+            line2: a.line2,
+            city: a.city,
+            region: a.region,
+            postal_code: a.postal_code,
+            country: a.country,
+            is_default: a.is_default,
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CompanyPriceOverrideOutput {
+    pub company_id: String,
+    pub product_id: String,
+    /// Exact decimal string
+    pub price: String,
+    pub currency: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::CompanyPriceOverride> for CompanyPriceOverrideOutput {
+    fn from(o: stateset_core::CompanyPriceOverride) -> Self {
+        Self {
+            company_id: o.company_id.to_string(),
+            product_id: o.product_id.to_string(),
+            price: o.price.to_string(),
+            currency: o.currency.to_string(),
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ContactOutput {
+    pub id: String,
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub title: Option<String>,
+    pub company_ids: Vec<String>,
+    pub portal_enabled: bool,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Contact> for ContactOutput {
+    fn from(c: stateset_core::Contact) -> Self {
+        Self {
+            id: c.id.to_string(),
+            first_name: c.first_name,
+            last_name: c.last_name,
+            email: c.email,
+            phone: c.phone,
+            title: c.title,
+            company_ids: c.company_ids.iter().map(ToString::to_string).collect(),
+            portal_enabled: c.portal_enabled,
+            is_active: c.is_active,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_company_status(s: &str) -> Result<stateset_core::CompanyStatus> {
+    s.parse::<stateset_core::CompanyStatus>()
+        .map_err(|_| Error::from_reason(format!("Invalid company status: {}", s)))
+}
+
+#[napi]
+pub struct Companies {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Companies {
+    /// Whether the companies backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.companies().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateCompanyInput) -> Result<CompanyOutput> {
+        let commerce = self.commerce.lock().await;
+        let company = commerce
+            .companies()
+            .create(stateset_core::CreateCompany {
+                name: input.name,
+                reference: input.reference,
+                email: input.email,
+                phone: input.phone,
+                currency: parse_currency_opt(input.currency)?,
+                payment_terms_days: input.payment_terms_days,
+                tags: input.tags.unwrap_or_default(),
+                metadata: parse_metadata_json(input.metadata)?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create company: {}", e)))?;
+        Ok(company.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<CompanyOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "company")?;
+        let company = commerce
+            .companies()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get company: {}", e)))?;
+        Ok(company.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateCompanyInput) -> Result<CompanyOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "company")?;
+        let company = commerce
+            .companies()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateCompany {
+                    name: input.name,
+                    reference: input.reference,
+                    email: input.email,
+                    phone: input.phone,
+                    currency: parse_currency_opt(input.currency)?,
+                    payment_terms_days: input.payment_terms_days,
+                    status: input.status.as_deref().map(parse_company_status).transpose()?,
+                    tags: input.tags,
+                    metadata: input.metadata.map(Some).map(parse_metadata_json).transpose()?,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update company: {}", e)))?;
+        Ok(company.into())
+    }
+
+    #[napi]
+    pub async fn list(&self, filter: Option<CompanyFilterInput>) -> Result<Vec<CompanyOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::CompanyFilter::default()),
+            |f| -> Result<stateset_core::CompanyFilter> {
+                Ok(stateset_core::CompanyFilter {
+                    status: f.status.as_deref().map(parse_company_status).transpose()?,
+                    search: f.search,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let companies = commerce
+            .companies()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list companies: {}", e)))?;
+        Ok(companies.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "company")?;
+        commerce
+            .companies()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete company: {}", e)))
+    }
+
+    /// List a company's shipping addresses.
+    #[napi]
+    pub async fn list_addresses(&self, id: String) -> Result<Vec<CompanyShippingAddressOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "company")?;
+        let addresses = commerce
+            .companies()
+            .list_addresses(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to list company addresses: {}", e)))?;
+        Ok(addresses.into_iter().map(Into::into).collect())
+    }
+
+    /// List a company's product price overrides.
+    #[napi]
+    pub async fn list_price_overrides(
+        &self,
+        id: String,
+    ) -> Result<Vec<CompanyPriceOverrideOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "company")?;
+        let overrides = commerce.companies().list_price_overrides(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to list company price overrides: {}", e))
+        })?;
+        Ok(overrides.into_iter().map(Into::into).collect())
+    }
+
+    /// Create a contact linked to one or more companies.
+    #[napi]
+    pub async fn create_contact(&self, input: CreateContactInput) -> Result<ContactOutput> {
+        let commerce = self.commerce.lock().await;
+        let company_ids = input
+            .company_ids
+            .unwrap_or_default()
+            .iter()
+            .map(|id| Ok(parse_uuid_str(id, "company_id")?.into()))
+            .collect::<Result<Vec<_>>>()?;
+        let contact = commerce
+            .companies()
+            .create_contact(stateset_core::CreateContact {
+                first_name: input.first_name,
+                last_name: input.last_name,
+                email: input.email,
+                phone: input.phone,
+                title: input.title,
+                company_ids,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create contact: {}", e)))?;
+        Ok(contact.into())
+    }
+
+    #[napi]
+    pub async fn get_contact(&self, id: String) -> Result<Option<ContactOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "contact")?;
+        let contact = commerce
+            .companies()
+            .get_contact(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get contact: {}", e)))?;
+        Ok(contact.map(Into::into))
+    }
+
+    /// List contacts for a company.
+    #[napi]
+    pub async fn list_contacts(&self, company_id: String) -> Result<Vec<ContactOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&company_id, "company")?;
+        let contacts = commerce
+            .companies()
+            .list_contacts(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to list contacts: {}", e)))?;
+        Ok(contacts.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Units of measure  (unit classes, UOMs, conversion rules)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateUnitClassInput {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateUnitOfMeasureInput {
+    pub unit_class_id: String,
+    pub name: String,
+    pub abbreviation: String,
+    /// Exact decimal string relative to the class base unit
+    pub factor: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UnitOfMeasureFilterInput {
+    pub class_id: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateUnitConversionRuleInput {
+    /// SYSTEM or SKU
+    pub rule_type: String,
+    pub product_id: Option<String>,
+    pub from_uom_id: String,
+    pub to_uom_id: String,
+    /// Exact decimal string
+    pub factor: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UnitClassOutput {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub base_uom_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::UnitClass> for UnitClassOutput {
+    fn from(c: stateset_core::UnitClass) -> Self {
+        Self {
+            id: c.id.to_string(),
+            name: c.name,
+            description: c.description,
+            base_uom_id: c.base_uom_id.map(|id| id.to_string()),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UnitOfMeasureOutput {
+    pub id: String,
+    pub unit_class_id: String,
+    pub name: String,
+    pub abbreviation: String,
+    /// Exact decimal string
+    pub factor: String,
+    pub is_base: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::UnitOfMeasure> for UnitOfMeasureOutput {
+    fn from(u: stateset_core::UnitOfMeasure) -> Self {
+        Self {
+            id: u.id.to_string(),
+            unit_class_id: u.unit_class_id.to_string(),
+            name: u.name,
+            abbreviation: u.abbreviation,
+            factor: u.factor.to_string(),
+            is_base: u.is_base,
+            created_at: u.created_at.to_rfc3339(),
+            updated_at: u.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UnitConversionRuleOutput {
+    pub id: String,
+    /// SYSTEM or SKU
+    pub rule_type: String,
+    pub product_id: Option<String>,
+    pub from_uom_id: String,
+    pub to_uom_id: String,
+    /// Exact decimal string
+    pub factor: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::UnitConversionRule> for UnitConversionRuleOutput {
+    fn from(r: stateset_core::UnitConversionRule) -> Self {
+        Self {
+            id: r.id.to_string(),
+            rule_type: r.rule_type.to_string(),
+            product_id: r.product_id.map(|id| id.to_string()),
+            from_uom_id: r.from_uom_id.to_string(),
+            to_uom_id: r.to_uom_id.to_string(),
+            factor: r.factor.to_string(),
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_conversion_rule_type(s: &str) -> Result<stateset_core::ConversionRuleType> {
+    s.parse::<stateset_core::ConversionRuleType>()
+        .map_err(|_| Error::from_reason(format!("Invalid conversion rule type: {}", s)))
+}
+
+#[napi]
+pub struct UnitsOfMeasure {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl UnitsOfMeasure {
+    /// Whether the units-of-measure backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.units_of_measure().is_supported())
+    }
+
+    #[napi]
+    pub async fn create_class(&self, input: CreateUnitClassInput) -> Result<UnitClassOutput> {
+        let commerce = self.commerce.lock().await;
+        let class = commerce
+            .units_of_measure()
+            .create_class(stateset_core::CreateUnitClass {
+                name: input.name,
+                description: input.description,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create unit class: {}", e)))?;
+        Ok(class.into())
+    }
+
+    #[napi]
+    pub async fn list_classes(&self) -> Result<Vec<UnitClassOutput>> {
+        let commerce = self.commerce.lock().await;
+        let classes = commerce
+            .units_of_measure()
+            .list_classes()
+            .map_err(|e| Error::from_reason(format!("Failed to list unit classes: {}", e)))?;
+        Ok(classes.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete_class(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "unit_class")?;
+        commerce
+            .units_of_measure()
+            .delete_class(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete unit class: {}", e)))
+    }
+
+    #[napi]
+    pub async fn create_uom(&self, input: CreateUnitOfMeasureInput) -> Result<UnitOfMeasureOutput> {
+        let commerce = self.commerce.lock().await;
+        let uom = commerce
+            .units_of_measure()
+            .create_uom(stateset_core::CreateUnitOfMeasure {
+                unit_class_id: parse_uuid_str(&input.unit_class_id, "unit_class_id")?.into(),
+                name: input.name,
+                abbreviation: input.abbreviation,
+                factor: parse_decimal_str(&input.factor, "factor")?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create unit of measure: {}", e)))?;
+        Ok(uom.into())
+    }
+
+    #[napi]
+    pub async fn list_uoms(
+        &self,
+        filter: Option<UnitOfMeasureFilterInput>,
+    ) -> Result<Vec<UnitOfMeasureOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::UnitOfMeasureFilter::default()),
+            |f| -> Result<stateset_core::UnitOfMeasureFilter> {
+                Ok(stateset_core::UnitOfMeasureFilter {
+                    class_id: parse_optional_uuid(f.class_id, "class_id")?.map(Into::into),
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let uoms = commerce
+            .units_of_measure()
+            .list_uoms(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list units of measure: {}", e)))?;
+        Ok(uoms.into_iter().map(Into::into).collect())
+    }
+
+    /// Mark a UOM as the base unit for its class.
+    #[napi]
+    pub async fn set_base_uom(&self, id: String) -> Result<UnitOfMeasureOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "unit_of_measure")?;
+        let uom = commerce.units_of_measure().set_base_uom(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to set base unit of measure: {}", e))
+        })?;
+        Ok(uom.into())
+    }
+
+    #[napi]
+    pub async fn delete_uom(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "unit_of_measure")?;
+        commerce
+            .units_of_measure()
+            .delete_uom(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete unit of measure: {}", e)))
+    }
+
+    #[napi]
+    pub async fn create_rule(
+        &self,
+        input: CreateUnitConversionRuleInput,
+    ) -> Result<UnitConversionRuleOutput> {
+        let commerce = self.commerce.lock().await;
+        let rule = commerce
+            .units_of_measure()
+            .create_rule(stateset_core::CreateUnitConversionRule {
+                rule_type: parse_conversion_rule_type(&input.rule_type)?,
+                product_id: parse_optional_uuid(input.product_id, "product_id")?.map(Into::into),
+                from_uom_id: parse_uuid_str(&input.from_uom_id, "from_uom_id")?.into(),
+                to_uom_id: parse_uuid_str(&input.to_uom_id, "to_uom_id")?.into(),
+                factor: parse_decimal_str(&input.factor, "factor")?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create conversion rule: {}", e)))?;
+        Ok(rule.into())
+    }
+
+    #[napi]
+    pub async fn list_rules(&self) -> Result<Vec<UnitConversionRuleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let rules = commerce
+            .units_of_measure()
+            .list_rules()
+            .map_err(|e| Error::from_reason(format!("Failed to list conversion rules: {}", e)))?;
+        Ok(rules.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete_rule(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "unit_conversion_rule")?;
+        commerce
+            .units_of_measure()
+            .delete_rule(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete conversion rule: {}", e)))
+    }
+}
+
+// ============================================================================
+// Shipping zones  (geographic zones + zone shipping methods and rates)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateShippingZoneInput {
+    pub name: String,
+    pub countries: Option<Vec<String>>,
+    pub regions: Option<Vec<String>>,
+    pub postal_codes: Option<Vec<String>>,
+    pub priority: Option<i32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateShippingZoneInput {
+    pub name: Option<String>,
+    pub countries: Option<Vec<String>>,
+    pub regions: Option<Vec<String>>,
+    pub postal_codes: Option<Vec<String>>,
+    pub priority: Option<i32>,
+    pub is_active: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ShippingZoneFilterInput {
+    pub country: Option<String>,
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ShippingConditionInput {
+    /// Exact decimal string
+    pub min_weight: Option<String>,
+    /// Exact decimal string
+    pub max_weight: Option<String>,
+    /// Exact decimal string
+    pub min_price: Option<String>,
+    /// Exact decimal string
+    pub max_price: Option<String>,
+    /// Exact decimal string
+    pub rate: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateZoneShippingMethodInput {
+    pub zone_id: String,
+    pub name: String,
+    pub carrier: Option<String>,
+    /// flat, weight_based, price_based, calculated, free
+    pub method_type: String,
+    /// Exact decimal string
+    pub base_rate: String,
+    /// ISO 4217 currency code
+    pub currency: String,
+    pub min_delivery_days: Option<i32>,
+    pub max_delivery_days: Option<i32>,
+    pub conditions: Option<Vec<ShippingConditionInput>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ZoneShippingMethodFilterInput {
+    pub zone_id: Option<String>,
+    pub carrier: Option<String>,
+    /// flat, weight_based, price_based, calculated, free
+    pub method_type: Option<String>,
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ZoneShippingRateRequestInput {
+    pub country: String,
+    pub region: Option<String>,
+    pub postal_code: Option<String>,
+    /// Exact decimal string
+    pub weight: Option<String>,
+    /// Exact decimal string
+    pub order_total: Option<String>,
+    /// ISO 4217 currency code
+    pub currency: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ShippingZoneOutput {
+    pub id: String,
+    pub name: String,
+    pub countries: Vec<String>,
+    pub regions: Vec<String>,
+    pub postal_codes: Vec<String>,
+    pub priority: i32,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::ShippingZone> for ShippingZoneOutput {
+    fn from(z: stateset_core::ShippingZone) -> Self {
+        Self {
+            id: z.id.to_string(),
+            name: z.name,
+            countries: z.countries,
+            regions: z.regions,
+            postal_codes: z.postal_codes,
+            priority: z.priority,
+            is_active: z.is_active,
+            created_at: z.created_at.to_rfc3339(),
+            updated_at: z.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ShippingConditionOutput {
+    /// Exact decimal string
+    pub min_weight: Option<String>,
+    /// Exact decimal string
+    pub max_weight: Option<String>,
+    /// Exact decimal string
+    pub min_price: Option<String>,
+    /// Exact decimal string
+    pub max_price: Option<String>,
+    /// Exact decimal string
+    pub rate: String,
+}
+
+impl From<stateset_core::ShippingCondition> for ShippingConditionOutput {
+    fn from(c: stateset_core::ShippingCondition) -> Self {
+        Self {
+            min_weight: c.min_weight.map(|d| d.to_string()),
+            max_weight: c.max_weight.map(|d| d.to_string()),
+            min_price: c.min_price.map(|d| d.to_string()),
+            max_price: c.max_price.map(|d| d.to_string()),
+            rate: c.rate.to_string(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ZoneShippingMethodOutput {
+    pub id: String,
+    pub zone_id: String,
+    pub name: String,
+    pub carrier: Option<String>,
+    /// flat, weight_based, price_based, calculated, free
+    pub method_type: String,
+    /// Exact decimal string
+    pub base_rate: String,
+    pub currency: String,
+    pub min_delivery_days: Option<i32>,
+    pub max_delivery_days: Option<i32>,
+    pub conditions: Vec<ShippingConditionOutput>,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::ZoneShippingMethod> for ZoneShippingMethodOutput {
+    fn from(m: stateset_core::ZoneShippingMethod) -> Self {
+        Self {
+            id: m.id.to_string(),
+            zone_id: m.zone_id.to_string(),
+            name: m.name,
+            carrier: m.carrier,
+            method_type: m.method_type.to_string(),
+            base_rate: m.base_rate.to_string(),
+            currency: m.currency.to_string(),
+            min_delivery_days: m.min_delivery_days,
+            max_delivery_days: m.max_delivery_days,
+            conditions: m.conditions.into_iter().map(Into::into).collect(),
+            is_active: m.is_active,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ZoneShippingRateOutput {
+    pub method_id: String,
+    pub method_name: String,
+    pub carrier: Option<String>,
+    /// Exact decimal string
+    pub rate: String,
+    pub currency: String,
+    pub min_delivery_days: Option<i32>,
+    pub max_delivery_days: Option<i32>,
+}
+
+impl From<stateset_core::ZoneShippingRate> for ZoneShippingRateOutput {
+    fn from(r: stateset_core::ZoneShippingRate) -> Self {
+        Self {
+            method_id: r.method_id.to_string(),
+            method_name: r.method_name,
+            carrier: r.carrier,
+            rate: r.rate.to_string(),
+            currency: r.currency.to_string(),
+            min_delivery_days: r.min_delivery_days,
+            max_delivery_days: r.max_delivery_days,
+        }
+    }
+}
+
+fn parse_shipping_method_type(s: &str) -> Result<stateset_core::ShippingMethodType> {
+    s.parse::<stateset_core::ShippingMethodType>()
+        .map_err(|_| Error::from_reason(format!("Invalid shipping method type: {}", s)))
+}
+
+fn parse_currency_required(s: &str) -> Result<CurrencyCode> {
+    s.parse::<CurrencyCode>()
+        .map_err(|_| Error::from_reason(format!("Invalid currency code: {}", s)))
+}
+
+fn build_shipping_conditions(
+    conditions: Option<Vec<ShippingConditionInput>>,
+) -> Result<Vec<stateset_core::ShippingCondition>> {
+    conditions
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| -> Result<stateset_core::ShippingCondition> {
+            Ok(stateset_core::ShippingCondition {
+                min_weight: parse_optional_decimal_str(c.min_weight, "min_weight")?,
+                max_weight: parse_optional_decimal_str(c.max_weight, "max_weight")?,
+                min_price: parse_optional_decimal_str(c.min_price, "min_price")?,
+                max_price: parse_optional_decimal_str(c.max_price, "max_price")?,
+                rate: parse_decimal_str(&c.rate, "rate")?,
+            })
+        })
+        .collect()
+}
+
+#[napi]
+pub struct ShippingZones {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl ShippingZones {
+    /// Whether the shipping-zones backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.shipping_zones().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateShippingZoneInput) -> Result<ShippingZoneOutput> {
+        let commerce = self.commerce.lock().await;
+        let zone = commerce
+            .shipping_zones()
+            .create(stateset_core::CreateShippingZone {
+                name: input.name,
+                countries: input.countries.unwrap_or_default(),
+                regions: input.regions.unwrap_or_default(),
+                postal_codes: input.postal_codes.unwrap_or_default(),
+                priority: input.priority,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create shipping zone: {}", e)))?;
+        Ok(zone.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<ShippingZoneOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "shipping_zone")?;
+        let zone = commerce
+            .shipping_zones()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get shipping zone: {}", e)))?;
+        Ok(zone.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdateShippingZoneInput,
+    ) -> Result<ShippingZoneOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "shipping_zone")?;
+        let zone = commerce
+            .shipping_zones()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateShippingZone {
+                    name: input.name,
+                    countries: input.countries,
+                    regions: input.regions,
+                    postal_codes: input.postal_codes,
+                    priority: input.priority,
+                    is_active: input.is_active,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update shipping zone: {}", e)))?;
+        Ok(zone.into())
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<ShippingZoneFilterInput>,
+    ) -> Result<Vec<ShippingZoneOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(stateset_core::ShippingZoneFilter::default, |f| {
+            stateset_core::ShippingZoneFilter {
+                country: f.country,
+                is_active: f.is_active,
+                limit: f.limit,
+                offset: f.offset,
+            }
+        });
+        let zones = commerce
+            .shipping_zones()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list shipping zones: {}", e)))?;
+        Ok(zones.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "shipping_zone")?;
+        commerce
+            .shipping_zones()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete shipping zone: {}", e)))
+    }
+
+    /// Find zones whose geographic criteria match a destination.
+    #[napi]
+    pub async fn find_matching_zones(
+        &self,
+        country: String,
+        region: Option<String>,
+        postal_code: Option<String>,
+    ) -> Result<Vec<ShippingZoneOutput>> {
+        let commerce = self.commerce.lock().await;
+        let zones = commerce
+            .shipping_zones()
+            .find_matching_zones(&country, region.as_deref(), postal_code.as_deref())
+            .map_err(|e| Error::from_reason(format!("Failed to find matching zones: {}", e)))?;
+        Ok(zones.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn create_method(
+        &self,
+        input: CreateZoneShippingMethodInput,
+    ) -> Result<ZoneShippingMethodOutput> {
+        let commerce = self.commerce.lock().await;
+        let method = commerce
+            .shipping_zones()
+            .create_method(stateset_core::CreateZoneShippingMethod {
+                zone_id: parse_uuid_str(&input.zone_id, "zone_id")?.into(),
+                name: input.name,
+                carrier: input.carrier,
+                method_type: parse_shipping_method_type(&input.method_type)?,
+                base_rate: parse_decimal_str(&input.base_rate, "base_rate")?,
+                currency: parse_currency_required(&input.currency)?,
+                min_delivery_days: input.min_delivery_days,
+                max_delivery_days: input.max_delivery_days,
+                conditions: build_shipping_conditions(input.conditions)?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create shipping method: {}", e)))?;
+        Ok(method.into())
+    }
+
+    #[napi]
+    pub async fn get_method(&self, id: String) -> Result<Option<ZoneShippingMethodOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "shipping_method")?;
+        let method = commerce
+            .shipping_zones()
+            .get_method(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get shipping method: {}", e)))?;
+        Ok(method.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list_methods(
+        &self,
+        filter: Option<ZoneShippingMethodFilterInput>,
+    ) -> Result<Vec<ZoneShippingMethodOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::ZoneShippingMethodFilter::default()),
+            |f| -> Result<stateset_core::ZoneShippingMethodFilter> {
+                Ok(stateset_core::ZoneShippingMethodFilter {
+                    zone_id: parse_optional_uuid(f.zone_id, "zone_id")?.map(Into::into),
+                    carrier: f.carrier,
+                    method_type: f
+                        .method_type
+                        .as_deref()
+                        .map(parse_shipping_method_type)
+                        .transpose()?,
+                    is_active: f.is_active,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let methods = commerce
+            .shipping_zones()
+            .list_methods(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list shipping methods: {}", e)))?;
+        Ok(methods.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete_method(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "shipping_method")?;
+        commerce
+            .shipping_zones()
+            .delete_method(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete shipping method: {}", e)))
+    }
+
+    /// Calculate available shipping rates for a destination.
+    #[napi]
+    pub async fn calculate_rates(
+        &self,
+        request: ZoneShippingRateRequestInput,
+    ) -> Result<Vec<ZoneShippingRateOutput>> {
+        let commerce = self.commerce.lock().await;
+        let rates = commerce
+            .shipping_zones()
+            .calculate_rates(stateset_core::ZoneShippingRateRequest {
+                country: request.country,
+                region: request.region,
+                postal_code: request.postal_code,
+                weight: parse_optional_decimal_str(request.weight, "weight")?,
+                order_total: parse_optional_decimal_str(request.order_total, "order_total")?,
+                currency: parse_currency_required(&request.currency)?,
+            })
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to calculate shipping rates: {}", e))
+            })?;
+        Ok(rates.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Stock snapshots  (point-in-time inventory)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CaptureStockLineInput {
+    pub product_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub quantity_on_hand: String,
+    /// Exact decimal string
+    pub quantity_available: String,
+    pub location: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CaptureStockSnapshotInput {
+    pub label: Option<String>,
+    pub lines: Vec<CaptureStockLineInput>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StockSnapshotFilterInput {
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StockSnapshotLineOutput {
+    pub id: String,
+    pub stock_snapshot_id: String,
+    pub product_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub quantity_on_hand: String,
+    /// Exact decimal string
+    pub quantity_available: String,
+    pub location: Option<String>,
+}
+
+impl From<stateset_core::StockSnapshotLine> for StockSnapshotLineOutput {
+    fn from(l: stateset_core::StockSnapshotLine) -> Self {
+        Self {
+            id: l.id.to_string(),
+            stock_snapshot_id: l.stock_snapshot_id.to_string(),
+            product_id: l.product_id.to_string(),
+            sku: l.sku,
+            quantity_on_hand: l.quantity_on_hand.to_string(),
+            quantity_available: l.quantity_available.to_string(),
+            location: l.location,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StockSnapshotOutput {
+    pub id: String,
+    pub label: Option<String>,
+    pub total_skus: String,
+    /// Exact decimal string
+    pub total_units: String,
+    pub lines: Vec<StockSnapshotLineOutput>,
+    pub captured_at: String,
+}
+
+impl From<stateset_core::StockSnapshot> for StockSnapshotOutput {
+    fn from(s: stateset_core::StockSnapshot) -> Self {
+        Self {
+            id: s.id.to_string(),
+            label: s.label,
+            total_skus: s.total_skus.to_string(),
+            total_units: s.total_units.to_string(),
+            lines: s.lines.into_iter().map(Into::into).collect(),
+            captured_at: s.captured_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct StockSnapshots {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl StockSnapshots {
+    /// Whether the stock-snapshots backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.stock_snapshots().is_supported())
+    }
+
+    /// Capture a new snapshot; totals are computed from the supplied lines.
+    #[napi]
+    pub async fn capture(&self, input: CaptureStockSnapshotInput) -> Result<StockSnapshotOutput> {
+        let commerce = self.commerce.lock().await;
+        let lines = input
+            .lines
+            .into_iter()
+            .map(|l| -> Result<stateset_core::CaptureStockLine> {
+                Ok(stateset_core::CaptureStockLine {
+                    product_id: parse_uuid_str(&l.product_id, "product_id")?.into(),
+                    sku: l.sku,
+                    quantity_on_hand: parse_decimal_str(&l.quantity_on_hand, "quantity_on_hand")?,
+                    quantity_available: parse_decimal_str(
+                        &l.quantity_available,
+                        "quantity_available",
+                    )?,
+                    location: l.location,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let snapshot = commerce
+            .stock_snapshots()
+            .capture(stateset_core::CaptureStockSnapshot { label: input.label, lines })
+            .map_err(|e| Error::from_reason(format!("Failed to capture stock snapshot: {}", e)))?;
+        Ok(snapshot.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<StockSnapshotOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "stock_snapshot")?;
+        let snapshot = commerce
+            .stock_snapshots()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get stock snapshot: {}", e)))?;
+        Ok(snapshot.map(Into::into))
+    }
+
+    /// Most recent snapshot, if any.
+    #[napi]
+    pub async fn latest(&self) -> Result<Option<StockSnapshotOutput>> {
+        let commerce = self.commerce.lock().await;
+        let snapshot = commerce.stock_snapshots().latest().map_err(|e| {
+            Error::from_reason(format!("Failed to get latest stock snapshot: {}", e))
+        })?;
+        Ok(snapshot.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<StockSnapshotFilterInput>,
+    ) -> Result<Vec<StockSnapshotOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(stateset_core::StockSnapshotFilter::default, |f| {
+            stateset_core::StockSnapshotFilter { limit: f.limit, offset: f.offset }
+        });
+        let snapshots = commerce
+            .stock_snapshots()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list stock snapshots: {}", e)))?;
+        Ok(snapshots.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "stock_snapshot")?;
+        commerce
+            .stock_snapshots()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete stock snapshot: {}", e)))
+    }
+}
+
+// ============================================================================
+// Print stations  (paired agents + print job queue)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatePrintStationInput {
+    pub name: String,
+    pub printers: Option<Vec<String>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct EnqueuePrintJobInput {
+    pub printer_name: Option<String>,
+    /// zpl or pdf
+    pub payload_kind: Option<String>,
+    pub payload: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PrintJobFilterInput {
+    /// queued, picked_up, printed, failed
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PrintStationOutput {
+    pub id: String,
+    pub name: String,
+    pub printers: Vec<String>,
+    pub revoked: bool,
+    pub last_seen_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::PrintStation> for PrintStationOutput {
+    fn from(s: stateset_core::PrintStation) -> Self {
+        Self {
+            id: s.id.to_string(),
+            name: s.name,
+            printers: s.printers,
+            revoked: s.revoked,
+            last_seen_at: s.last_seen_at.map(|d| d.to_rfc3339()),
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PairStationResultOutput {
+    pub station: PrintStationOutput,
+    /// One-time pairing token; shown only at pairing time
+    pub token: String,
+}
+
+impl From<stateset_core::PairStationResult> for PairStationResultOutput {
+    fn from(r: stateset_core::PairStationResult) -> Self {
+        Self { station: r.station.into(), token: r.token }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PrintJobOutput {
+    pub id: String,
+    pub station_id: String,
+    pub printer_name: Option<String>,
+    /// zpl or pdf
+    pub payload_kind: String,
+    pub payload: String,
+    /// queued, picked_up, printed, failed
+    pub status: String,
+    pub created_at: String,
+    pub picked_up_at: Option<String>,
+}
+
+impl From<stateset_core::PrintJob> for PrintJobOutput {
+    fn from(j: stateset_core::PrintJob) -> Self {
+        Self {
+            id: j.id.to_string(),
+            station_id: j.station_id.to_string(),
+            printer_name: j.printer_name,
+            payload_kind: j.payload_kind.to_string(),
+            payload: j.payload,
+            status: j.status.to_string(),
+            created_at: j.created_at.to_rfc3339(),
+            picked_up_at: j.picked_up_at.map(|d| d.to_rfc3339()),
+        }
+    }
+}
+
+fn parse_print_payload_kind(s: &str) -> Result<stateset_core::PrintPayloadKind> {
+    s.parse::<stateset_core::PrintPayloadKind>()
+        .map_err(|_| Error::from_reason(format!("Invalid print payload kind: {}", s)))
+}
+
+fn parse_print_job_status(s: &str) -> Result<stateset_core::PrintJobStatus> {
+    s.parse::<stateset_core::PrintJobStatus>()
+        .map_err(|_| Error::from_reason(format!("Invalid print job status: {}", s)))
+}
+
+#[napi]
+pub struct PrintStations {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl PrintStations {
+    /// Whether the print-stations backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.print_stations().is_supported())
+    }
+
+    /// Pair a new station, returning the station and its one-time token.
+    #[napi]
+    pub async fn pair(&self, input: CreatePrintStationInput) -> Result<PairStationResultOutput> {
+        let commerce = self.commerce.lock().await;
+        let result = commerce
+            .print_stations()
+            .pair(stateset_core::CreatePrintStation {
+                name: input.name,
+                printers: input.printers.unwrap_or_default(),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to pair print station: {}", e)))?;
+        Ok(result.into())
+    }
+
+    #[napi]
+    pub async fn list_stations(&self) -> Result<Vec<PrintStationOutput>> {
+        let commerce = self.commerce.lock().await;
+        let stations = commerce
+            .print_stations()
+            .list_stations()
+            .map_err(|e| Error::from_reason(format!("Failed to list print stations: {}", e)))?;
+        Ok(stations.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn get_station(&self, id: String) -> Result<Option<PrintStationOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "print_station")?;
+        let station = commerce
+            .print_stations()
+            .get_station(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get print station: {}", e)))?;
+        Ok(station.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn revoke_station(&self, id: String) -> Result<PrintStationOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "print_station")?;
+        let station = commerce
+            .print_stations()
+            .revoke_station(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to revoke print station: {}", e)))?;
+        Ok(station.into())
+    }
+
+    #[napi]
+    pub async fn enqueue_job(
+        &self,
+        station_id: String,
+        input: EnqueuePrintJobInput,
+    ) -> Result<PrintJobOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&station_id, "print_station")?;
+        let payload_kind = match input.payload_kind.as_deref() {
+            Some(s) => parse_print_payload_kind(s)?,
+            None => stateset_core::PrintPayloadKind::default(),
+        };
+        let job = commerce
+            .print_stations()
+            .enqueue_job(
+                uuid.into(),
+                stateset_core::EnqueuePrintJob {
+                    printer_name: input.printer_name,
+                    payload_kind,
+                    payload: input.payload,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to enqueue print job: {}", e)))?;
+        Ok(job.into())
+    }
+
+    /// Pick up the next queued job for a station.
+    #[napi]
+    pub async fn next_job(&self, station_id: String) -> Result<Option<PrintJobOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&station_id, "print_station")?;
+        let job = commerce
+            .print_stations()
+            .next_job(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get next print job: {}", e)))?;
+        Ok(job.map(Into::into))
+    }
+
+    /// Mark a job printed (success) or failed.
+    #[napi]
+    pub async fn complete_job(&self, job_id: String, success: bool) -> Result<PrintJobOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&job_id, "print_job")?;
+        let job = commerce
+            .print_stations()
+            .complete_job(uuid.into(), success)
+            .map_err(|e| Error::from_reason(format!("Failed to complete print job: {}", e)))?;
+        Ok(job.into())
+    }
+
+    #[napi]
+    pub async fn list_jobs(
+        &self,
+        station_id: String,
+        filter: Option<PrintJobFilterInput>,
+    ) -> Result<Vec<PrintJobOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&station_id, "print_station")?;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::PrintJobFilter::default()),
+            |f| -> Result<stateset_core::PrintJobFilter> {
+                Ok(stateset_core::PrintJobFilter {
+                    status: f.status.as_deref().map(parse_print_job_status).transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let jobs = commerce
+            .print_stations()
+            .list_jobs(uuid.into(), filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list print jobs: {}", e)))?;
+        Ok(jobs.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Integration Mappings
+// ============================================================================
+
+fn parse_naive_date(s: &str, field: &str) -> Result<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|_| Error::from_reason(format!("Invalid {field} date (expected YYYY-MM-DD)")))
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateIntegrationMappingInput {
+    pub integration: String,
+    pub mapping_group: String,
+    pub field_name: String,
+    pub external_value: String,
+    pub internal_value: String,
+}
+
+impl From<CreateIntegrationMappingInput> for stateset_core::CreateIntegrationMapping {
+    fn from(i: CreateIntegrationMappingInput) -> Self {
+        Self {
+            integration: i.integration,
+            mapping_group: i.mapping_group,
+            field_name: i.field_name,
+            external_value: i.external_value,
+            internal_value: i.internal_value,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateIntegrationMappingInput {
+    pub internal_value: Option<String>,
+    pub is_active: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IntegrationMappingFilterInput {
+    pub integration: Option<String>,
+    pub mapping_group: Option<String>,
+    pub field_name: Option<String>,
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MappingLookupInput {
+    pub integration: String,
+    pub mapping_group: String,
+    pub field_name: String,
+    pub external_value: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IntegrationMappingOutput {
+    pub id: String,
+    pub integration: String,
+    pub mapping_group: String,
+    pub field_name: String,
+    pub external_value: String,
+    pub internal_value: String,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::IntegrationMapping> for IntegrationMappingOutput {
+    fn from(m: stateset_core::IntegrationMapping) -> Self {
+        Self {
+            id: m.id.to_string(),
+            integration: m.integration,
+            mapping_group: m.mapping_group,
+            field_name: m.field_name,
+            external_value: m.external_value,
+            internal_value: m.internal_value,
+            is_active: m.is_active,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct IntegrationMappings {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl IntegrationMappings {
+    /// Whether the integration-mappings backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.integration_mappings().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(
+        &self,
+        input: CreateIntegrationMappingInput,
+    ) -> Result<IntegrationMappingOutput> {
+        let commerce = self.commerce.lock().await;
+        let mapping = commerce.integration_mappings().create(input.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to create integration mapping: {}", e))
+        })?;
+        Ok(mapping.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<IntegrationMappingOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "integration_mapping")?;
+        let mapping = commerce
+            .integration_mappings()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get integration mapping: {}", e)))?;
+        Ok(mapping.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdateIntegrationMappingInput,
+    ) -> Result<IntegrationMappingOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "integration_mapping")?;
+        let mapping = commerce
+            .integration_mappings()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateIntegrationMapping {
+                    internal_value: input.internal_value,
+                    is_active: input.is_active,
+                },
+            )
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to update integration mapping: {}", e))
+            })?;
+        Ok(mapping.into())
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<IntegrationMappingFilterInput>,
+    ) -> Result<Vec<IntegrationMappingOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(stateset_core::IntegrationMappingFilter::default, |f| {
+            stateset_core::IntegrationMappingFilter {
+                integration: f.integration,
+                mapping_group: f.mapping_group,
+                field_name: f.field_name,
+                is_active: f.is_active,
+                limit: f.limit,
+                offset: f.offset,
+            }
+        });
+        let mappings = commerce.integration_mappings().list(filter).map_err(|e| {
+            Error::from_reason(format!("Failed to list integration mappings: {}", e))
+        })?;
+        Ok(mappings.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "integration_mapping")?;
+        commerce
+            .integration_mappings()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete integration mapping: {}", e)))
+    }
+
+    /// Bulk upsert mappings; returns the number of rows affected as a string.
+    #[napi]
+    pub async fn bulk_upsert(&self, items: Vec<CreateIntegrationMappingInput>) -> Result<String> {
+        let commerce = self.commerce.lock().await;
+        let affected = commerce
+            .integration_mappings()
+            .bulk_upsert(items.into_iter().map(Into::into).collect())
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to bulk upsert integration mappings: {}", e))
+            })?;
+        Ok(affected.to_string())
+    }
+
+    /// Resolve the internal value for an external value.
+    #[napi]
+    pub async fn resolve(&self, lookup: MappingLookupInput) -> Result<Option<String>> {
+        let commerce = self.commerce.lock().await;
+        commerce
+            .integration_mappings()
+            .resolve(&stateset_core::MappingLookup {
+                integration: lookup.integration,
+                mapping_group: lookup.mapping_group,
+                field_name: lookup.field_name,
+                external_value: lookup.external_value,
+            })
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to resolve integration mapping: {}", e))
+            })
+    }
+}
+
+// ============================================================================
+// Integration Field Mappings
+// ============================================================================
+
+fn parse_field_transform(s: &str) -> Result<stateset_core::FieldTransform> {
+    s.parse::<stateset_core::FieldTransform>()
+        .map_err(|_| Error::from_reason(format!("Invalid field transform: {}", s)))
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateIntegrationFieldMappingInput {
+    pub integration_account: String,
+    pub mapping_group: String,
+    pub source_field: String,
+    pub destination_field: String,
+    pub template: Option<String>,
+    /// Snake-case transform: `none`, `uppercase`, `lowercase`, `trim`
+    pub transform: Option<String>,
+    pub fallback: Option<String>,
+}
+
+impl TryFrom<CreateIntegrationFieldMappingInput> for stateset_core::CreateIntegrationFieldMapping {
+    type Error = Error;
+
+    fn try_from(i: CreateIntegrationFieldMappingInput) -> Result<Self> {
+        Ok(Self {
+            integration_account: i.integration_account,
+            mapping_group: i.mapping_group,
+            source_field: i.source_field,
+            destination_field: i.destination_field,
+            template: i.template,
+            transform: i
+                .transform
+                .as_deref()
+                .map(parse_field_transform)
+                .transpose()?
+                .unwrap_or_default(),
+            fallback: i.fallback,
+        })
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateIntegrationFieldMappingInput {
+    pub destination_field: Option<String>,
+    pub template: Option<String>,
+    pub transform: Option<String>,
+    pub fallback: Option<String>,
+    pub is_active: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IntegrationFieldMappingFilterInput {
+    pub integration_account: Option<String>,
+    pub mapping_group: Option<String>,
+    pub source_field: Option<String>,
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IntegrationFieldMappingOutput {
+    pub id: String,
+    pub integration_account: String,
+    pub mapping_group: String,
+    pub source_field: String,
+    pub destination_field: String,
+    pub template: Option<String>,
+    /// Snake-case transform
+    pub transform: String,
+    pub fallback: Option<String>,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::IntegrationFieldMapping> for IntegrationFieldMappingOutput {
+    fn from(m: stateset_core::IntegrationFieldMapping) -> Self {
+        Self {
+            id: m.id.to_string(),
+            integration_account: m.integration_account,
+            mapping_group: m.mapping_group,
+            source_field: m.source_field,
+            destination_field: m.destination_field,
+            template: m.template,
+            transform: m.transform.to_string(),
+            fallback: m.fallback,
+            is_active: m.is_active,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct IntegrationFieldMappings {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl IntegrationFieldMappings {
+    /// Whether the integration field-mappings backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.integration_field_mappings().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(
+        &self,
+        input: CreateIntegrationFieldMappingInput,
+    ) -> Result<IntegrationFieldMappingOutput> {
+        let commerce = self.commerce.lock().await;
+        let mapping =
+            commerce.integration_field_mappings().create(input.try_into()?).map_err(|e| {
+                Error::from_reason(format!("Failed to create integration field mapping: {}", e))
+            })?;
+        Ok(mapping.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<IntegrationFieldMappingOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "integration_field_mapping")?;
+        let mapping = commerce.integration_field_mappings().get(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to get integration field mapping: {}", e))
+        })?;
+        Ok(mapping.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdateIntegrationFieldMappingInput,
+    ) -> Result<IntegrationFieldMappingOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "integration_field_mapping")?;
+        let mapping = commerce
+            .integration_field_mappings()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateIntegrationFieldMapping {
+                    destination_field: input.destination_field,
+                    template: input.template,
+                    transform: input.transform.as_deref().map(parse_field_transform).transpose()?,
+                    fallback: input.fallback,
+                    is_active: input.is_active,
+                },
+            )
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to update integration field mapping: {}", e))
+            })?;
+        Ok(mapping.into())
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<IntegrationFieldMappingFilterInput>,
+    ) -> Result<Vec<IntegrationFieldMappingOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter =
+            filter.map_or_else(stateset_core::IntegrationFieldMappingFilter::default, |f| {
+                stateset_core::IntegrationFieldMappingFilter {
+                    integration_account: f.integration_account,
+                    mapping_group: f.mapping_group,
+                    source_field: f.source_field,
+                    is_active: f.is_active,
+                    limit: f.limit,
+                    offset: f.offset,
+                }
+            });
+        let mappings = commerce.integration_field_mappings().list(filter).map_err(|e| {
+            Error::from_reason(format!("Failed to list integration field mappings: {}", e))
+        })?;
+        Ok(mappings.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "integration_field_mapping")?;
+        commerce.integration_field_mappings().delete(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to delete integration field mapping: {}", e))
+        })
+    }
+
+    /// Bulk create field mappings; returns the number of rows affected as a string.
+    #[napi]
+    pub async fn bulk_create(
+        &self,
+        items: Vec<CreateIntegrationFieldMappingInput>,
+    ) -> Result<String> {
+        let commerce = self.commerce.lock().await;
+        let items = items
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<stateset_core::CreateIntegrationFieldMapping>>>()?;
+        let affected = commerce.integration_field_mappings().bulk_create(items).map_err(|e| {
+            Error::from_reason(format!("Failed to bulk create integration field mappings: {}", e))
+        })?;
+        Ok(affected.to_string())
+    }
+
+    /// Bulk delete field mappings by ID; returns the number of rows affected as a string.
+    #[napi]
+    pub async fn bulk_delete(&self, ids: Vec<String>) -> Result<String> {
+        let commerce = self.commerce.lock().await;
+        let ids = ids
+            .iter()
+            .map(|id| {
+                parse_uuid_str(id, "integration_field_mapping")
+                    .map(stateset_core::IntegrationFieldMappingId::from)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let affected = commerce.integration_field_mappings().bulk_delete(ids).map_err(|e| {
+            Error::from_reason(format!("Failed to bulk delete integration field mappings: {}", e))
+        })?;
+        Ok(affected.to_string())
+    }
+
+    /// Distinct mapping groups for an integration account.
+    #[napi]
+    pub async fn distinct_groups(&self, integration_account: String) -> Result<Vec<String>> {
+        let commerce = self.commerce.lock().await;
+        commerce
+            .integration_field_mappings()
+            .distinct_groups(&integration_account)
+            .map_err(|e| Error::from_reason(format!("Failed to list mapping groups: {}", e)))
+    }
+}
+
+// ============================================================================
+// Payment Obligations
+// ============================================================================
+
+fn parse_payment_obligation_status(s: &str) -> Result<stateset_core::PaymentObligationStatus> {
+    s.parse::<stateset_core::PaymentObligationStatus>()
+        .map_err(|_| Error::from_reason(format!("Invalid payment obligation status: {}", s)))
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatePaymentObligationInput {
+    pub supplier_id: String,
+    pub purchase_order_id: Option<String>,
+    /// Exact decimal string
+    pub amount: String,
+    pub currency: Option<String>,
+    /// Date string (YYYY-MM-DD)
+    pub due_date: String,
+    pub notes: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PaymentObligationFilterInput {
+    pub supplier_id: Option<String>,
+    /// Snake-case status
+    pub status: Option<String>,
+    /// Date string (YYYY-MM-DD)
+    pub due_before: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PaymentObligationOutput {
+    pub id: String,
+    pub number: String,
+    pub supplier_id: String,
+    pub purchase_order_id: Option<String>,
+    /// Exact decimal string
+    pub amount: String,
+    /// Exact decimal string
+    pub amount_paid: String,
+    /// Exact decimal string
+    pub outstanding: String,
+    pub currency: String,
+    /// Date string (YYYY-MM-DD)
+    pub due_date: String,
+    /// Snake-case status
+    pub status: String,
+    pub linked_bill_ids: Vec<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::PaymentObligation> for PaymentObligationOutput {
+    fn from(o: stateset_core::PaymentObligation) -> Self {
+        let outstanding = o.outstanding().to_string();
+        Self {
+            id: o.id.to_string(),
+            number: o.number,
+            supplier_id: o.supplier_id.to_string(),
+            purchase_order_id: o.purchase_order_id.map(|id| id.to_string()),
+            amount: o.amount.to_string(),
+            amount_paid: o.amount_paid.to_string(),
+            outstanding,
+            currency: o.currency.to_string(),
+            due_date: o.due_date.to_string(),
+            status: o.status.to_string(),
+            linked_bill_ids: o.linked_bill_ids.iter().map(ToString::to_string).collect(),
+            notes: o.notes,
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PaymentObligationDashboardOutput {
+    pub open_count: String,
+    /// Exact decimal string
+    pub total_outstanding: String,
+    pub overdue_count: String,
+    /// Exact decimal string
+    pub overdue_amount: String,
+}
+
+impl From<stateset_core::PaymentObligationDashboard> for PaymentObligationDashboardOutput {
+    fn from(d: stateset_core::PaymentObligationDashboard) -> Self {
+        Self {
+            open_count: d.open_count.to_string(),
+            total_outstanding: d.total_outstanding.to_string(),
+            overdue_count: d.overdue_count.to_string(),
+            overdue_amount: d.overdue_amount.to_string(),
+        }
+    }
+}
+
+#[napi]
+pub struct PaymentObligations {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl PaymentObligations {
+    /// Whether the payment-obligations backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.payment_obligations().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(
+        &self,
+        input: CreatePaymentObligationInput,
+    ) -> Result<PaymentObligationOutput> {
+        let commerce = self.commerce.lock().await;
+        let obligation = commerce
+            .payment_obligations()
+            .create(stateset_core::CreatePaymentObligation {
+                supplier_id: parse_uuid_str(&input.supplier_id, "supplier_id")?,
+                purchase_order_id: parse_optional_uuid(
+                    input.purchase_order_id,
+                    "purchase_order_id",
+                )?,
+                amount: parse_decimal_str(&input.amount, "amount")?,
+                currency: parse_currency_opt(input.currency)?,
+                due_date: parse_naive_date(&input.due_date, "due_date")?,
+                notes: input.notes,
+            })
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to create payment obligation: {}", e))
+            })?;
+        Ok(obligation.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<PaymentObligationOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "payment_obligation")?;
+        let obligation = commerce
+            .payment_obligations()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get payment obligation: {}", e)))?;
+        Ok(obligation.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<PaymentObligationFilterInput>,
+    ) -> Result<Vec<PaymentObligationOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::PaymentObligationFilter::default()),
+            |f| -> Result<stateset_core::PaymentObligationFilter> {
+                Ok(stateset_core::PaymentObligationFilter {
+                    supplier_id: parse_optional_uuid(f.supplier_id, "supplier_id")?,
+                    status: f.status.as_deref().map(parse_payment_obligation_status).transpose()?,
+                    due_before: f
+                        .due_before
+                        .as_deref()
+                        .map(|d| parse_naive_date(d, "due_before"))
+                        .transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let obligations = commerce.payment_obligations().list(filter).map_err(|e| {
+            Error::from_reason(format!("Failed to list payment obligations: {}", e))
+        })?;
+        Ok(obligations.into_iter().map(Into::into).collect())
+    }
+
+    /// Record a payment against an obligation.
+    #[napi]
+    pub async fn record_payment(
+        &self,
+        id: String,
+        amount: String,
+    ) -> Result<PaymentObligationOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "payment_obligation")?;
+        let obligation = commerce
+            .payment_obligations()
+            .record_payment(uuid.into(), parse_decimal_str(&amount, "amount")?)
+            .map_err(|e| Error::from_reason(format!("Failed to record payment: {}", e)))?;
+        Ok(obligation.into())
+    }
+
+    /// Set the obligation status (e.g. `scheduled`, `cancelled`).
+    #[napi]
+    pub async fn set_status(&self, id: String, status: String) -> Result<PaymentObligationOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "payment_obligation")?;
+        let obligation = commerce
+            .payment_obligations()
+            .set_status(uuid.into(), parse_payment_obligation_status(&status)?)
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to set payment obligation status: {}", e))
+            })?;
+        Ok(obligation.into())
+    }
+
+    /// Link an AP bill to an obligation.
+    #[napi]
+    pub async fn link_bill(&self, id: String, bill_id: String) -> Result<PaymentObligationOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "payment_obligation")?;
+        let bill_uuid = parse_uuid_str(&bill_id, "bill_id")?;
+        let obligation = commerce
+            .payment_obligations()
+            .link_bill(uuid.into(), bill_uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to link bill: {}", e)))?;
+        Ok(obligation.into())
+    }
+
+    /// Aggregate dashboard summary as of the given date (YYYY-MM-DD).
+    #[napi]
+    pub async fn dashboard(&self, today: String) -> Result<PaymentObligationDashboardOutput> {
+        let commerce = self.commerce.lock().await;
+        let day = parse_naive_date(&today, "today")?;
+        let dashboard = commerce.payment_obligations().dashboard(day).map_err(|e| {
+            Error::from_reason(format!("Failed to build payment obligation dashboard: {}", e))
+        })?;
+        Ok(dashboard.into())
+    }
+}
+
+// ============================================================================
+// Purgatory (order ingestion staging)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IngestLineItemInput {
+    pub external_sku: String,
+    /// Exact decimal string
+    pub quantity: String,
+    pub product_id: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IngestOrderInput {
+    pub channel_id: Option<String>,
+    pub external_order_id: String,
+    pub external_status: Option<String>,
+    /// JSON string
+    pub metadata: Option<String>,
+    pub items: Vec<IngestLineItemInput>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MapPurgatoryLineInput {
+    pub product_id: Option<String>,
+    pub ignore_item: Option<bool>,
+    pub non_physical: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PurgatoryFilterInput {
+    pub channel_id: Option<String>,
+    pub is_posted: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PurgatoryLineItemOutput {
+    pub id: String,
+    pub purgatory_order_id: String,
+    pub external_sku: String,
+    pub product_id: Option<String>,
+    /// Exact decimal string
+    pub quantity: String,
+    pub ignore_item: bool,
+    pub non_physical: bool,
+    pub is_resolved: bool,
+}
+
+impl From<stateset_core::PurgatoryLineItem> for PurgatoryLineItemOutput {
+    fn from(l: stateset_core::PurgatoryLineItem) -> Self {
+        let is_resolved = l.is_resolved();
+        Self {
+            id: l.id.to_string(),
+            purgatory_order_id: l.purgatory_order_id.to_string(),
+            external_sku: l.external_sku,
+            product_id: l.product_id.map(|id| id.to_string()),
+            quantity: l.quantity.to_string(),
+            ignore_item: l.ignore_item,
+            non_physical: l.non_physical,
+            is_resolved,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PurgatoryOrderOutput {
+    pub id: String,
+    pub channel_id: Option<String>,
+    pub external_order_id: String,
+    pub external_status: Option<String>,
+    pub is_posted: bool,
+    pub hold_reason: Option<String>,
+    /// JSON string
+    pub metadata: String,
+    pub items: Vec<PurgatoryLineItemOutput>,
+    pub is_ready_to_post: bool,
+    pub unresolved_count: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::PurgatoryOrder> for PurgatoryOrderOutput {
+    fn from(o: stateset_core::PurgatoryOrder) -> Self {
+        let is_ready_to_post = o.is_ready_to_post();
+        let unresolved_count = o.unresolved_count().to_string();
+        Self {
+            id: o.id.to_string(),
+            channel_id: o.channel_id.map(|id| id.to_string()),
+            external_order_id: o.external_order_id,
+            external_status: o.external_status,
+            is_posted: o.is_posted,
+            hold_reason: o.hold_reason,
+            metadata: serde_json::to_string(&o.metadata).unwrap_or_else(|_| "null".to_string()),
+            items: o.items.into_iter().map(Into::into).collect(),
+            is_ready_to_post,
+            unresolved_count,
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct Purgatory {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Purgatory {
+    /// Whether the purgatory backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.purgatory().is_supported())
+    }
+
+    /// Ingest an external order into purgatory.
+    #[napi]
+    pub async fn ingest(&self, input: IngestOrderInput) -> Result<PurgatoryOrderOutput> {
+        let commerce = self.commerce.lock().await;
+        let metadata = match input.metadata {
+            Some(s) => serde_json::from_str(&s)
+                .map_err(|e| Error::from_reason(format!("Invalid metadata JSON: {}", e)))?,
+            None => serde_json::Value::Null,
+        };
+        let items = input
+            .items
+            .into_iter()
+            .map(|i| -> Result<stateset_core::IngestLineItem> {
+                Ok(stateset_core::IngestLineItem {
+                    external_sku: i.external_sku,
+                    quantity: parse_decimal_str(&i.quantity, "quantity")?,
+                    product_id: parse_optional_uuid(i.product_id, "product_id")?.map(Into::into),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let order = commerce
+            .purgatory()
+            .ingest(stateset_core::IngestOrder {
+                channel_id: parse_optional_uuid(input.channel_id, "channel_id")?.map(Into::into),
+                external_order_id: input.external_order_id,
+                external_status: input.external_status,
+                metadata,
+                items,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to ingest purgatory order: {}", e)))?;
+        Ok(order.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<PurgatoryOrderOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "purgatory_order")?;
+        let order = commerce
+            .purgatory()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get purgatory order: {}", e)))?;
+        Ok(order.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<PurgatoryFilterInput>,
+    ) -> Result<Vec<PurgatoryOrderOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::PurgatoryFilter::default()),
+            |f| -> Result<stateset_core::PurgatoryFilter> {
+                Ok(stateset_core::PurgatoryFilter {
+                    channel_id: parse_optional_uuid(f.channel_id, "channel_id")?.map(Into::into),
+                    is_posted: f.is_posted,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let orders = commerce
+            .purgatory()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list purgatory orders: {}", e)))?;
+        Ok(orders.into_iter().map(Into::into).collect())
+    }
+
+    /// Map a staged line to a product and/or toggle its flags.
+    #[napi]
+    pub async fn map_line(
+        &self,
+        id: String,
+        line_id: String,
+        input: MapPurgatoryLineInput,
+    ) -> Result<PurgatoryOrderOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "purgatory_order")?;
+        let line_uuid = parse_uuid_str(&line_id, "purgatory_line_item")?;
+        let order = commerce
+            .purgatory()
+            .map_line(
+                uuid.into(),
+                line_uuid.into(),
+                stateset_core::MapPurgatoryLine {
+                    product_id: parse_optional_uuid(input.product_id, "product_id")?
+                        .map(Into::into),
+                    ignore_item: input.ignore_item,
+                    non_physical: input.non_physical,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to map purgatory line: {}", e)))?;
+        Ok(order.into())
+    }
+
+    /// Post the order out of purgatory.
+    #[napi]
+    pub async fn post(&self, id: String) -> Result<PurgatoryOrderOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "purgatory_order")?;
+        let order = commerce
+            .purgatory()
+            .post(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to post purgatory order: {}", e)))?;
+        Ok(order.into())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "purgatory_order")?;
+        commerce
+            .purgatory()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete purgatory order: {}", e)))
+    }
+}
+
+// ============================================================================
+// Topology Snapshots
+// ============================================================================
+
+fn parse_health_grade(s: &str) -> Result<stateset_core::HealthGrade> {
+    s.parse::<stateset_core::HealthGrade>()
+        .map_err(|_| Error::from_reason(format!("Invalid health grade: {}", s)))
+}
+
+fn parse_u64_str(s: &str, field: &str) -> Result<u64> {
+    s.parse::<u64>().map_err(|_| Error::from_reason(format!("Invalid {field} count")))
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CaptureTopologySnapshotInput {
+    pub channels_total: String,
+    pub channels_active: String,
+    pub warehouses_total: String,
+    pub products_total: String,
+    pub open_orders: String,
+    /// JSON string
+    pub signals: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TopologySnapshotFilterInput {
+    /// Snake-case health grade: `unknown`, `healthy`, `degraded`, `critical`
+    pub health: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TopologySnapshotOutput {
+    pub id: String,
+    pub channels_total: String,
+    pub channels_active: String,
+    pub warehouses_total: String,
+    pub products_total: String,
+    pub open_orders: String,
+    /// Snake-case health grade
+    pub health: String,
+    /// JSON string
+    pub signals: String,
+    pub captured_at: String,
+}
+
+impl From<stateset_core::TopologySnapshot> for TopologySnapshotOutput {
+    fn from(s: stateset_core::TopologySnapshot) -> Self {
+        Self {
+            id: s.id.to_string(),
+            channels_total: s.channels_total.to_string(),
+            channels_active: s.channels_active.to_string(),
+            warehouses_total: s.warehouses_total.to_string(),
+            products_total: s.products_total.to_string(),
+            open_orders: s.open_orders.to_string(),
+            health: s.health.to_string(),
+            signals: serde_json::to_string(&s.signals).unwrap_or_else(|_| "null".to_string()),
+            captured_at: s.captured_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct TopologySnapshots {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl TopologySnapshots {
+    /// Whether the topology-snapshots backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.topology_snapshots().is_supported())
+    }
+
+    /// Capture a new snapshot; health is derived from the supplied metrics.
+    #[napi]
+    pub async fn capture(
+        &self,
+        input: CaptureTopologySnapshotInput,
+    ) -> Result<TopologySnapshotOutput> {
+        let commerce = self.commerce.lock().await;
+        let signals = match input.signals {
+            Some(s) => serde_json::from_str(&s)
+                .map_err(|e| Error::from_reason(format!("Invalid signals JSON: {}", e)))?,
+            None => serde_json::Value::Null,
+        };
+        let snapshot = commerce
+            .topology_snapshots()
+            .capture(stateset_core::CaptureTopologySnapshot {
+                channels_total: parse_u64_str(&input.channels_total, "channels_total")?,
+                channels_active: parse_u64_str(&input.channels_active, "channels_active")?,
+                warehouses_total: parse_u64_str(&input.warehouses_total, "warehouses_total")?,
+                products_total: parse_u64_str(&input.products_total, "products_total")?,
+                open_orders: parse_u64_str(&input.open_orders, "open_orders")?,
+                signals,
+            })
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to capture topology snapshot: {}", e))
+            })?;
+        Ok(snapshot.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<TopologySnapshotOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "topology_snapshot")?;
+        let snapshot = commerce
+            .topology_snapshots()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get topology snapshot: {}", e)))?;
+        Ok(snapshot.map(Into::into))
+    }
+
+    /// Most recent snapshot, if any.
+    #[napi]
+    pub async fn latest(&self) -> Result<Option<TopologySnapshotOutput>> {
+        let commerce = self.commerce.lock().await;
+        let snapshot = commerce.topology_snapshots().latest().map_err(|e| {
+            Error::from_reason(format!("Failed to get latest topology snapshot: {}", e))
+        })?;
+        Ok(snapshot.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<TopologySnapshotFilterInput>,
+    ) -> Result<Vec<TopologySnapshotOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::TopologySnapshotFilter::default()),
+            |f| -> Result<stateset_core::TopologySnapshotFilter> {
+                Ok(stateset_core::TopologySnapshotFilter {
+                    health: f.health.as_deref().map(parse_health_grade).transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let snapshots = commerce
+            .topology_snapshots()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list topology snapshots: {}", e)))?;
+        Ok(snapshots.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "topology_snapshot")?;
+        commerce
+            .topology_snapshots()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete topology snapshot: {}", e)))
+    }
+}
+
+// ============================================================================
+// Vendor Returns
+// ============================================================================
+
+fn parse_vendor_return_status(s: &str) -> Result<stateset_core::VendorReturnStatus> {
+    s.parse::<stateset_core::VendorReturnStatus>()
+        .map_err(|_| Error::from_reason(format!("Invalid vendor return status: {}", s)))
+}
+
+fn parse_vendor_return_reason(s: &str) -> Result<stateset_core::VendorReturnReason> {
+    s.parse::<stateset_core::VendorReturnReason>()
+        .map_err(|_| Error::from_reason(format!("Invalid vendor return reason: {}", s)))
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateVendorReturnItemInput {
+    pub product_id: String,
+    /// Exact decimal string
+    pub quantity: String,
+    /// Exact decimal string
+    pub unit_cost: String,
+    /// Snake-case reason: `defective`, `overage`, `wrong_item`, `other`
+    pub reason: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateVendorReturnInput {
+    pub supplier_id: String,
+    pub purchase_order_id: Option<String>,
+    pub currency: Option<String>,
+    pub items: Vec<CreateVendorReturnItemInput>,
+    pub notes: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct VendorReturnFilterInput {
+    pub supplier_id: Option<String>,
+    /// Snake-case status
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct VendorReturnItemOutput {
+    pub id: String,
+    pub vendor_return_id: String,
+    pub product_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub quantity: String,
+    /// Exact decimal string
+    pub unit_cost: String,
+    /// Exact decimal string
+    pub line_total: String,
+    /// Snake-case reason
+    pub reason: String,
+}
+
+impl From<stateset_core::VendorReturnItem> for VendorReturnItemOutput {
+    fn from(i: stateset_core::VendorReturnItem) -> Self {
+        let line_total = i.line_total().to_string();
+        Self {
+            id: i.id.to_string(),
+            vendor_return_id: i.vendor_return_id.to_string(),
+            product_id: i.product_id.to_string(),
+            sku: i.sku,
+            quantity: i.quantity.to_string(),
+            unit_cost: i.unit_cost.to_string(),
+            line_total,
+            reason: i.reason.to_string(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct VendorReturnOutput {
+    pub id: String,
+    pub number: String,
+    pub supplier_id: String,
+    pub purchase_order_id: Option<String>,
+    /// Snake-case status
+    pub status: String,
+    pub currency: String,
+    pub items: Vec<VendorReturnItemOutput>,
+    /// Exact decimal string
+    pub total_credit: String,
+    pub credit_generated: bool,
+    pub notes: Option<String>,
+    pub processed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::VendorReturn> for VendorReturnOutput {
+    fn from(r: stateset_core::VendorReturn) -> Self {
+        let total_credit = r.total_credit().to_string();
+        Self {
+            id: r.id.to_string(),
+            number: r.number,
+            supplier_id: r.supplier_id.to_string(),
+            purchase_order_id: r.purchase_order_id.map(|id| id.to_string()),
+            status: r.status.to_string(),
+            currency: r.currency.to_string(),
+            items: r.items.into_iter().map(Into::into).collect(),
+            total_credit,
+            credit_generated: r.credit_generated,
+            notes: r.notes,
+            processed_at: r.processed_at.map(|d| d.to_rfc3339()),
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct VendorReturns {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl VendorReturns {
+    /// Whether the vendor-returns backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.vendor_returns().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateVendorReturnInput) -> Result<VendorReturnOutput> {
+        let commerce = self.commerce.lock().await;
+        let items = input
+            .items
+            .into_iter()
+            .map(|i| -> Result<stateset_core::CreateVendorReturnItem> {
+                Ok(stateset_core::CreateVendorReturnItem {
+                    product_id: parse_uuid_str(&i.product_id, "product_id")?.into(),
+                    quantity: parse_decimal_str(&i.quantity, "quantity")?,
+                    unit_cost: parse_decimal_str(&i.unit_cost, "unit_cost")?,
+                    reason: i
+                        .reason
+                        .as_deref()
+                        .map(parse_vendor_return_reason)
+                        .transpose()?
+                        .unwrap_or_default(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let vendor_return = commerce
+            .vendor_returns()
+            .create(stateset_core::CreateVendorReturn {
+                supplier_id: parse_uuid_str(&input.supplier_id, "supplier_id")?,
+                purchase_order_id: parse_optional_uuid(
+                    input.purchase_order_id,
+                    "purchase_order_id",
+                )?,
+                currency: parse_currency_opt(input.currency)?,
+                items,
+                notes: input.notes,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create vendor return: {}", e)))?;
+        Ok(vendor_return.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<VendorReturnOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor_return")?;
+        let vendor_return = commerce
+            .vendor_returns()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get vendor return: {}", e)))?;
+        Ok(vendor_return.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<VendorReturnFilterInput>,
+    ) -> Result<Vec<VendorReturnOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::VendorReturnFilter::default()),
+            |f| -> Result<stateset_core::VendorReturnFilter> {
+                Ok(stateset_core::VendorReturnFilter {
+                    supplier_id: parse_optional_uuid(f.supplier_id, "supplier_id")?,
+                    status: f.status.as_deref().map(parse_vendor_return_status).transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let returns = commerce
+            .vendor_returns()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list vendor returns: {}", e)))?;
+        Ok(returns.into_iter().map(Into::into).collect())
+    }
+
+    /// Submit a draft vendor return to the supplier.
+    #[napi]
+    pub async fn submit(&self, id: String) -> Result<VendorReturnOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor_return")?;
+        let vendor_return = commerce
+            .vendor_returns()
+            .submit(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to submit vendor return: {}", e)))?;
+        Ok(vendor_return.into())
+    }
+
+    /// Process a vendor return, optionally generating a vendor credit.
+    #[napi]
+    pub async fn process(&self, id: String, generate_credit: bool) -> Result<VendorReturnOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor_return")?;
+        let vendor_return = commerce
+            .vendor_returns()
+            .process(uuid.into(), generate_credit)
+            .map_err(|e| Error::from_reason(format!("Failed to process vendor return: {}", e)))?;
+        Ok(vendor_return.into())
+    }
+
+    /// Cancel a vendor return.
+    #[napi]
+    pub async fn cancel(&self, id: String) -> Result<VendorReturnOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor_return")?;
+        let vendor_return = commerce
+            .vendor_returns()
+            .cancel(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to cancel vendor return: {}", e)))?;
+        Ok(vendor_return.into())
+    }
+}
+
+// ============================================================================
+// Fraud (risk assessment + rules)
+// ============================================================================
+
+fn parse_fraud_decision(s: &str) -> Result<stateset_core::FraudDecision> {
+    s.parse::<stateset_core::FraudDecision>()
+        .map_err(|_| Error::from_reason(format!("Invalid fraud decision: {}", s)))
+}
+
+fn parse_fraud_signal_type(s: &str) -> Result<stateset_core::FraudSignalType> {
+    s.parse::<stateset_core::FraudSignalType>()
+        .map_err(|_| Error::from_reason(format!("Invalid fraud signal type: {}", s)))
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateFraudSignalInput {
+    /// Snake-case signal type: `velocity_spike`, `address_mismatch`, ...
+    pub signal_type: String,
+    /// Confidence score (0.0 - 1.0)
+    pub score: f64,
+    pub details: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateFraudAssessmentInput {
+    pub order_id: String,
+    pub signals: Vec<CreateFraudSignalInput>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FraudAssessmentFilterInput {
+    /// Snake-case decision: `accept`, `review`, `reject`
+    pub decision: Option<String>,
+    pub min_risk_score: Option<f64>,
+    pub unreviewed_only: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FraudSignalOutput {
+    pub order_id: String,
+    /// Snake-case signal type
+    pub signal_type: String,
+    pub score: f64,
+    pub details: String,
+    pub detected_at: String,
+}
+
+impl From<stateset_core::FraudSignal> for FraudSignalOutput {
+    fn from(s: stateset_core::FraudSignal) -> Self {
+        Self {
+            order_id: s.order_id.to_string(),
+            signal_type: s.signal_type.to_string(),
+            score: s.score,
+            details: s.details,
+            detected_at: s.detected_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FraudAssessmentOutput {
+    pub order_id: String,
+    pub risk_score: f64,
+    pub signals: Vec<FraudSignalOutput>,
+    /// Snake-case decision
+    pub decision: String,
+    pub reviewed_by: Option<String>,
+    pub review_notes: Option<String>,
+    pub needs_review: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::FraudAssessment> for FraudAssessmentOutput {
+    fn from(a: stateset_core::FraudAssessment) -> Self {
+        let needs_review = a.needs_review();
+        Self {
+            order_id: a.order_id.to_string(),
+            risk_score: a.risk_score,
+            signals: a.signals.into_iter().map(Into::into).collect(),
+            decision: a.decision.to_string(),
+            reviewed_by: a.reviewed_by,
+            review_notes: a.review_notes,
+            needs_review,
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateFraudRuleInput {
+    pub name: String,
+    pub description: Option<String>,
+    /// Snake-case signal type
+    pub signal_type: String,
+    pub threshold: f64,
+    /// Snake-case decision to apply when the rule triggers
+    pub action: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateFraudRuleInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub threshold: Option<f64>,
+    /// Snake-case decision
+    pub action: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FraudRuleFilterInput {
+    /// Snake-case signal type
+    pub signal_type: Option<String>,
+    /// Snake-case decision
+    pub action: Option<String>,
+    pub enabled: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FraudRuleOutput {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    /// Snake-case signal type
+    pub signal_type: String,
+    pub threshold: f64,
+    /// Snake-case decision
+    pub action: String,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::FraudRule> for FraudRuleOutput {
+    fn from(r: stateset_core::FraudRule) -> Self {
+        Self {
+            id: r.id.to_string(),
+            name: r.name,
+            description: r.description,
+            signal_type: r.signal_type.to_string(),
+            threshold: r.threshold,
+            action: r.action.to_string(),
+            enabled: r.enabled,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct Fraud {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Fraud {
+    /// Whether the fraud backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.fraud().is_supported())
+    }
+
+    /// Create a fraud assessment for an order.
+    #[napi]
+    pub async fn create_assessment(
+        &self,
+        input: CreateFraudAssessmentInput,
+    ) -> Result<FraudAssessmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let signals = input
+            .signals
+            .into_iter()
+            .map(|s| -> Result<stateset_core::CreateFraudSignal> {
+                Ok(stateset_core::CreateFraudSignal {
+                    signal_type: parse_fraud_signal_type(&s.signal_type)?,
+                    score: s.score,
+                    details: s.details,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let assessment = commerce
+            .fraud()
+            .create_assessment(stateset_core::CreateFraudAssessment {
+                order_id: parse_uuid_str(&input.order_id, "order_id")?.into(),
+                signals,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create fraud assessment: {}", e)))?;
+        Ok(assessment.into())
+    }
+
+    #[napi]
+    pub async fn get_assessment(&self, order_id: String) -> Result<Option<FraudAssessmentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&order_id, "order_id")?;
+        let assessment = commerce
+            .fraud()
+            .get_assessment(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get fraud assessment: {}", e)))?;
+        Ok(assessment.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list_assessments(
+        &self,
+        filter: Option<FraudAssessmentFilterInput>,
+    ) -> Result<Vec<FraudAssessmentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::FraudAssessmentFilter::default()),
+            |f| -> Result<stateset_core::FraudAssessmentFilter> {
+                Ok(stateset_core::FraudAssessmentFilter {
+                    decision: f.decision.as_deref().map(parse_fraud_decision).transpose()?,
+                    min_risk_score: f.min_risk_score,
+                    unreviewed_only: f.unreviewed_only,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let assessments = commerce
+            .fraud()
+            .list_assessments(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list fraud assessments: {}", e)))?;
+        Ok(assessments.into_iter().map(Into::into).collect())
+    }
+
+    /// Record a manual review decision on an assessment.
+    #[napi]
+    pub async fn review_assessment(
+        &self,
+        order_id: String,
+        decision: String,
+        reviewer: String,
+        notes: Option<String>,
+    ) -> Result<FraudAssessmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&order_id, "order_id")?;
+        let assessment = commerce
+            .fraud()
+            .review_assessment(uuid.into(), parse_fraud_decision(&decision)?, reviewer, notes)
+            .map_err(|e| Error::from_reason(format!("Failed to review fraud assessment: {}", e)))?;
+        Ok(assessment.into())
+    }
+
+    #[napi]
+    pub async fn create_rule(&self, input: CreateFraudRuleInput) -> Result<FraudRuleOutput> {
+        let commerce = self.commerce.lock().await;
+        let rule = commerce
+            .fraud()
+            .create_rule(stateset_core::CreateFraudRule {
+                name: input.name,
+                description: input.description,
+                signal_type: parse_fraud_signal_type(&input.signal_type)?,
+                threshold: input.threshold,
+                action: parse_fraud_decision(&input.action)?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create fraud rule: {}", e)))?;
+        Ok(rule.into())
+    }
+
+    #[napi]
+    pub async fn get_rule(&self, id: String) -> Result<Option<FraudRuleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "fraud_rule")?;
+        let rule = commerce
+            .fraud()
+            .get_rule(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get fraud rule: {}", e)))?;
+        Ok(rule.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update_rule(
+        &self,
+        id: String,
+        input: UpdateFraudRuleInput,
+    ) -> Result<FraudRuleOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "fraud_rule")?;
+        let rule = commerce
+            .fraud()
+            .update_rule(
+                uuid.into(),
+                stateset_core::UpdateFraudRule {
+                    name: input.name,
+                    description: input.description.map(Some),
+                    threshold: input.threshold,
+                    action: input.action.as_deref().map(parse_fraud_decision).transpose()?,
+                    enabled: input.enabled,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update fraud rule: {}", e)))?;
+        Ok(rule.into())
+    }
+
+    #[napi]
+    pub async fn list_rules(
+        &self,
+        filter: Option<FraudRuleFilterInput>,
+    ) -> Result<Vec<FraudRuleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::FraudRuleFilter::default()),
+            |f| -> Result<stateset_core::FraudRuleFilter> {
+                Ok(stateset_core::FraudRuleFilter {
+                    signal_type: f
+                        .signal_type
+                        .as_deref()
+                        .map(parse_fraud_signal_type)
+                        .transpose()?,
+                    action: f.action.as_deref().map(parse_fraud_decision).transpose()?,
+                    enabled: f.enabled,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let rules = commerce
+            .fraud()
+            .list_rules(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list fraud rules: {}", e)))?;
+        Ok(rules.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete_rule(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "fraud_rule")?;
+        commerce
+            .fraud()
+            .delete_rule(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete fraud rule: {}", e)))
+    }
+
+    /// All currently enabled fraud rules.
+    #[napi]
+    pub async fn get_active_rules(&self) -> Result<Vec<FraudRuleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let rules = commerce
+            .fraud()
+            .get_active_rules()
+            .map_err(|e| Error::from_reason(format!("Failed to get active fraud rules: {}", e)))?;
+        Ok(rules.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Search configuration
+// ============================================================================
+
+fn parse_tokenizer(s: &str) -> Result<stateset_core::Tokenizer> {
+    s.parse::<stateset_core::Tokenizer>()
+        .map_err(|_| Error::from_reason(format!("Invalid tokenizer: {}", s)))
+}
+
+fn parse_facet_type(s: &str) -> Result<stateset_core::FacetType> {
+    s.parse::<stateset_core::FacetType>()
+        .map_err(|_| Error::from_reason(format!("Invalid facet type: {}", s)))
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SearchFieldInput {
+    pub field_name: String,
+    pub weight: f64,
+    /// Snake-case tokenizer: `standard`, `ngram`, `edge`, `keyword`
+    pub tokenizer: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FacetConfigInput {
+    pub field_name: String,
+    /// Snake-case facet type: `value`, `range`, `hierarchical`
+    pub facet_type: Option<String>,
+    pub display_name: String,
+    pub sort_order: Option<i32>,
+    pub max_values: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SynonymGroupInput {
+    pub canonical: String,
+    pub synonyms: Vec<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BoostRuleInput {
+    pub field: String,
+    pub value_match: String,
+    pub boost_factor: f64,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateSearchConfigInput {
+    pub name: String,
+    pub description: Option<String>,
+    pub searchable_fields: Option<Vec<SearchFieldInput>>,
+    pub facets: Option<Vec<FacetConfigInput>>,
+    pub synonyms: Option<Vec<SynonymGroupInput>>,
+    pub boost_rules: Option<Vec<BoostRuleInput>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateSearchConfigInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub searchable_fields: Option<Vec<SearchFieldInput>>,
+    pub facets: Option<Vec<FacetConfigInput>>,
+    pub synonyms: Option<Vec<SynonymGroupInput>>,
+    pub boost_rules: Option<Vec<BoostRuleInput>>,
+    pub is_active: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SearchConfigFilterInput {
+    pub is_active: Option<bool>,
+    pub name: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SearchFieldOutput {
+    pub field_name: String,
+    pub weight: f64,
+    /// Snake-case tokenizer
+    pub tokenizer: String,
+    pub enabled: bool,
+}
+
+impl From<stateset_core::SearchField> for SearchFieldOutput {
+    fn from(f: stateset_core::SearchField) -> Self {
+        Self {
+            field_name: f.field_name,
+            weight: f.weight,
+            tokenizer: f.tokenizer.to_string(),
+            enabled: f.enabled,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FacetConfigOutput {
+    pub field_name: String,
+    /// Snake-case facet type
+    pub facet_type: String,
+    pub display_name: String,
+    pub sort_order: i32,
+    pub max_values: Option<u32>,
+}
+
+impl From<stateset_core::FacetConfig> for FacetConfigOutput {
+    fn from(f: stateset_core::FacetConfig) -> Self {
+        Self {
+            field_name: f.field_name,
+            facet_type: f.facet_type.to_string(),
+            display_name: f.display_name,
+            sort_order: f.sort_order,
+            max_values: f.max_values,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SynonymGroupOutput {
+    pub canonical: String,
+    pub synonyms: Vec<String>,
+}
+
+impl From<stateset_core::SynonymGroup> for SynonymGroupOutput {
+    fn from(g: stateset_core::SynonymGroup) -> Self {
+        Self { canonical: g.canonical, synonyms: g.synonyms }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BoostRuleOutput {
+    pub field: String,
+    pub value_match: String,
+    pub boost_factor: f64,
+}
+
+impl From<stateset_core::BoostRule> for BoostRuleOutput {
+    fn from(b: stateset_core::BoostRule) -> Self {
+        Self { field: b.field, value_match: b.value_match, boost_factor: b.boost_factor }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SearchConfigOutput {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub searchable_fields: Vec<SearchFieldOutput>,
+    pub facets: Vec<FacetConfigOutput>,
+    pub synonyms: Vec<SynonymGroupOutput>,
+    pub boost_rules: Vec<BoostRuleOutput>,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::SearchConfig> for SearchConfigOutput {
+    fn from(c: stateset_core::SearchConfig) -> Self {
+        Self {
+            id: c.id.to_string(),
+            name: c.name,
+            description: c.description,
+            searchable_fields: c.searchable_fields.into_iter().map(Into::into).collect(),
+            facets: c.facets.into_iter().map(Into::into).collect(),
+            synonyms: c.synonyms.into_iter().map(Into::into).collect(),
+            boost_rules: c.boost_rules.into_iter().map(Into::into).collect(),
+            is_active: c.is_active,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+fn convert_search_fields(fields: Vec<SearchFieldInput>) -> Result<Vec<stateset_core::SearchField>> {
+    fields
+        .into_iter()
+        .map(|f| -> Result<stateset_core::SearchField> {
+            Ok(stateset_core::SearchField {
+                field_name: f.field_name,
+                weight: f.weight,
+                tokenizer: f
+                    .tokenizer
+                    .as_deref()
+                    .map(parse_tokenizer)
+                    .transpose()?
+                    .unwrap_or_default(),
+                enabled: f.enabled.unwrap_or(true),
+            })
+        })
+        .collect()
+}
+
+fn convert_facets(facets: Vec<FacetConfigInput>) -> Result<Vec<stateset_core::FacetConfig>> {
+    facets
+        .into_iter()
+        .map(|f| -> Result<stateset_core::FacetConfig> {
+            Ok(stateset_core::FacetConfig {
+                field_name: f.field_name,
+                facet_type: f
+                    .facet_type
+                    .as_deref()
+                    .map(parse_facet_type)
+                    .transpose()?
+                    .unwrap_or_default(),
+                display_name: f.display_name,
+                sort_order: f.sort_order.unwrap_or(0),
+                max_values: f.max_values,
+            })
+        })
+        .collect()
+}
+
+fn convert_synonyms(groups: Vec<SynonymGroupInput>) -> Vec<stateset_core::SynonymGroup> {
+    groups
+        .into_iter()
+        .map(|g| stateset_core::SynonymGroup { canonical: g.canonical, synonyms: g.synonyms })
+        .collect()
+}
+
+fn convert_boost_rules(rules: Vec<BoostRuleInput>) -> Vec<stateset_core::BoostRule> {
+    rules
+        .into_iter()
+        .map(|b| stateset_core::BoostRule {
+            field: b.field,
+            value_match: b.value_match,
+            boost_factor: b.boost_factor,
+        })
+        .collect()
+}
+
+#[napi]
+pub struct SearchConfigs {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl SearchConfigs {
+    /// Whether the search-configuration backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.search_config().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateSearchConfigInput) -> Result<SearchConfigOutput> {
+        let commerce = self.commerce.lock().await;
+        let config = commerce
+            .search_config()
+            .create(stateset_core::CreateSearchConfig {
+                name: input.name,
+                description: input.description,
+                searchable_fields: convert_search_fields(
+                    input.searchable_fields.unwrap_or_default(),
+                )?,
+                facets: convert_facets(input.facets.unwrap_or_default())?,
+                synonyms: convert_synonyms(input.synonyms.unwrap_or_default()),
+                boost_rules: convert_boost_rules(input.boost_rules.unwrap_or_default()),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create search config: {}", e)))?;
+        Ok(config.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<SearchConfigOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "search_config")?;
+        let config = commerce
+            .search_config()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get search config: {}", e)))?;
+        Ok(config.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdateSearchConfigInput,
+    ) -> Result<SearchConfigOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "search_config")?;
+        let config = commerce
+            .search_config()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateSearchConfig {
+                    name: input.name,
+                    description: input.description.map(Some),
+                    searchable_fields: input
+                        .searchable_fields
+                        .map(convert_search_fields)
+                        .transpose()?,
+                    facets: input.facets.map(convert_facets).transpose()?,
+                    synonyms: input.synonyms.map(convert_synonyms),
+                    boost_rules: input.boost_rules.map(convert_boost_rules),
+                    is_active: input.is_active,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update search config: {}", e)))?;
+        Ok(config.into())
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<SearchConfigFilterInput>,
+    ) -> Result<Vec<SearchConfigOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(stateset_core::SearchConfigFilter::default, |f| {
+            stateset_core::SearchConfigFilter {
+                is_active: f.is_active,
+                name: f.name,
+                limit: f.limit,
+                offset: f.offset,
+            }
+        });
+        let configs = commerce
+            .search_config()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list search configs: {}", e)))?;
+        Ok(configs.into_iter().map(Into::into).collect())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "search_config")?;
+        commerce
+            .search_config()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete search config: {}", e)))
+    }
+
+    /// The currently active search configuration, if any.
+    #[napi]
+    pub async fn get_active(&self) -> Result<Option<SearchConfigOutput>> {
+        let commerce = self.commerce.lock().await;
+        let config = commerce.search_config().get_active().map_err(|e| {
+            Error::from_reason(format!("Failed to get active search config: {}", e))
+        })?;
+        Ok(config.map(Into::into))
+    }
+
+    /// Make a configuration active, deactivating the current one.
+    #[napi]
+    pub async fn set_active(&self, id: String) -> Result<SearchConfigOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "search_config")?;
+        let config = commerce.search_config().set_active(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to set active search config: {}", e))
+        })?;
+        Ok(config.into())
+    }
+}
+
+// ============================================================================
+// ERC-8004 Trustless Agents (identity / reputation / validation)
+// ============================================================================
+
+fn parse_wallet_proof_type(s: &str) -> Result<stateset_core::AgentWalletProofType> {
+    s.parse::<stateset_core::AgentWalletProofType>()
+        .map_err(|_| Error::from_reason(format!("Invalid agent wallet proof type: {}", s)))
+}
+
+fn parse_i128_str(s: &str, field: &str) -> Result<i128> {
+    s.parse::<i128>()
+        .map_err(|_| Error::from_reason(format!("Invalid {field}: expected integer string")))
+}
+
+fn parse_u8_field(value: u32, field: &str) -> Result<u8> {
+    u8::try_from(value).map_err(|_| Error::from_reason(format!("Invalid {field}: out of range")))
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateAgentIdentityInput {
+    pub agent_registry: String,
+    pub agent_id: String,
+    pub agent_uri: String,
+    pub agent_wallet: Option<String>,
+    pub owner_address: Option<String>,
+    pub agent_card_id: Option<String>,
+    /// JSON-encoded registration document
+    pub registration: Option<String>,
+    pub registration_hash: Option<String>,
+    /// Snake-case proof type
+    pub wallet_proof_type: Option<String>,
+    pub wallet_proof: Option<String>,
+    /// Chain id as a decimal string
+    pub wallet_proof_chain_id: Option<String>,
+    /// RFC3339 timestamp
+    pub wallet_proof_deadline: Option<String>,
+    pub active: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateAgentIdentityInput {
+    pub agent_uri: Option<String>,
+    pub agent_wallet: Option<String>,
+    pub owner_address: Option<String>,
+    pub agent_card_id: Option<String>,
+    /// JSON-encoded registration document
+    pub registration: Option<String>,
+    pub registration_hash: Option<String>,
+    /// Snake-case proof type
+    pub wallet_proof_type: Option<String>,
+    pub wallet_proof: Option<String>,
+    /// Chain id as a decimal string
+    pub wallet_proof_chain_id: Option<String>,
+    /// RFC3339 timestamp
+    pub wallet_proof_deadline: Option<String>,
+    pub active: Option<bool>,
+}
+
+/// Optional on-chain proof data accompanying a wallet binding.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct AgentWalletProofInput {
+    /// Snake-case proof type
+    pub proof_type: Option<String>,
+    pub proof: Option<String>,
+    /// Chain id as a decimal string
+    pub proof_chain_id: Option<String>,
+    /// RFC3339 timestamp
+    pub proof_deadline: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentIdentityFilterInput {
+    pub agent_registry: Option<String>,
+    pub agent_id: Option<String>,
+    pub agent_wallet: Option<String>,
+    pub owner_address: Option<String>,
+    pub agent_card_id: Option<String>,
+    pub active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentIdentityOutput {
+    pub id: String,
+    pub agent_registry: String,
+    pub agent_id: String,
+    pub agent_uri: String,
+    pub agent_wallet: Option<String>,
+    pub owner_address: Option<String>,
+    pub agent_card_id: Option<String>,
+    /// JSON-encoded registration document
+    pub registration: Option<String>,
+    pub registration_hash: Option<String>,
+    /// Snake-case proof type
+    pub wallet_proof_type: Option<String>,
+    pub wallet_proof: Option<String>,
+    /// Chain id as a decimal string
+    pub wallet_proof_chain_id: Option<String>,
+    pub wallet_proof_deadline: Option<String>,
+    pub active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::AgentIdentity> for AgentIdentityOutput {
+    fn from(i: stateset_core::AgentIdentity) -> Self {
+        Self {
+            id: i.id.to_string(),
+            agent_registry: i.agent_registry,
+            agent_id: i.agent_id,
+            agent_uri: i.agent_uri,
+            agent_wallet: i.agent_wallet,
+            owner_address: i.owner_address,
+            agent_card_id: i.agent_card_id.map(|id| id.to_string()),
+            registration: i.registration,
+            registration_hash: i.registration_hash,
+            wallet_proof_type: i.wallet_proof_type.map(|t| t.to_string()),
+            wallet_proof: i.wallet_proof,
+            wallet_proof_chain_id: i.wallet_proof_chain_id.map(|c| c.to_string()),
+            wallet_proof_deadline: i.wallet_proof_deadline.map(|d| d.to_rfc3339()),
+            active: i.active,
+            created_at: i.created_at.to_rfc3339(),
+            updated_at: i.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateAgentFeedbackInput {
+    pub agent_registry: String,
+    pub agent_id: String,
+    pub client_address: String,
+    /// Signed integer value as a decimal string
+    pub value: String,
+    /// Number of decimal places encoded in `value`
+    pub value_decimals: u32,
+    pub tag1: Option<String>,
+    pub tag2: Option<String>,
+    pub endpoint: Option<String>,
+    pub feedback_uri: Option<String>,
+    pub feedback_hash: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentFeedbackFilterInput {
+    pub agent_registry: Option<String>,
+    pub agent_id: Option<String>,
+    pub client_addresses: Option<Vec<String>>,
+    pub tag1: Option<String>,
+    pub tag2: Option<String>,
+    pub include_revoked: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentFeedbackOutput {
+    pub id: String,
+    pub agent_registry: String,
+    pub agent_id: String,
+    pub client_address: String,
+    /// Feedback index as a decimal string
+    pub feedback_index: String,
+    /// Signed integer value as a decimal string
+    pub value: String,
+    pub value_decimals: u32,
+    pub tag1: Option<String>,
+    pub tag2: Option<String>,
+    pub endpoint: Option<String>,
+    pub feedback_uri: Option<String>,
+    pub feedback_hash: Option<String>,
+    pub is_revoked: bool,
+    pub created_at: String,
+    pub revoked_at: Option<String>,
+}
+
+impl From<stateset_core::AgentFeedback> for AgentFeedbackOutput {
+    fn from(f: stateset_core::AgentFeedback) -> Self {
+        Self {
+            id: f.id.to_string(),
+            agent_registry: f.agent_registry,
+            agent_id: f.agent_id,
+            client_address: f.client_address,
+            feedback_index: f.feedback_index.to_string(),
+            value: f.value.to_string(),
+            value_decimals: u32::from(f.value_decimals),
+            tag1: f.tag1,
+            tag2: f.tag2,
+            endpoint: f.endpoint,
+            feedback_uri: f.feedback_uri,
+            feedback_hash: f.feedback_hash,
+            is_revoked: f.is_revoked,
+            created_at: f.created_at.to_rfc3339(),
+            revoked_at: f.revoked_at.map(|d| d.to_rfc3339()),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FeedbackSummaryOutput {
+    /// Count as a decimal string
+    pub count: String,
+    /// Aggregate value as a decimal string
+    pub summary_value: String,
+    pub summary_value_decimals: u32,
+}
+
+impl From<stateset_core::FeedbackSummary> for FeedbackSummaryOutput {
+    fn from(s: stateset_core::FeedbackSummary) -> Self {
+        Self {
+            count: s.count.to_string(),
+            summary_value: s.summary_value.to_string(),
+            summary_value_decimals: u32::from(s.summary_value_decimals),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateAgentValidationRequestInput {
+    pub request_hash: String,
+    pub agent_registry: String,
+    pub agent_id: String,
+    pub validator_address: String,
+    pub request_uri: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentValidationRequestOutput {
+    pub request_hash: String,
+    pub agent_registry: String,
+    pub agent_id: String,
+    pub validator_address: String,
+    pub request_uri: String,
+    pub created_at: String,
+}
+
+impl From<stateset_core::AgentValidationRequest> for AgentValidationRequestOutput {
+    fn from(r: stateset_core::AgentValidationRequest) -> Self {
+        Self {
+            request_hash: r.request_hash,
+            agent_registry: r.agent_registry,
+            agent_id: r.agent_id,
+            validator_address: r.validator_address,
+            request_uri: r.request_uri,
+            created_at: r.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateAgentValidationResponseInput {
+    /// Validation score (0-100)
+    pub response: u32,
+    pub response_uri: Option<String>,
+    pub response_hash: Option<String>,
+    pub tag: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentValidationResponseOutput {
+    pub id: String,
+    pub request_hash: String,
+    pub agent_registry: String,
+    pub agent_id: String,
+    pub validator_address: String,
+    pub response: u32,
+    pub response_uri: Option<String>,
+    pub response_hash: Option<String>,
+    pub tag: Option<String>,
+    pub created_at: String,
+}
+
+impl From<stateset_core::AgentValidationResponse> for AgentValidationResponseOutput {
+    fn from(r: stateset_core::AgentValidationResponse) -> Self {
+        Self {
+            id: r.id.to_string(),
+            request_hash: r.request_hash,
+            agent_registry: r.agent_registry,
+            agent_id: r.agent_id,
+            validator_address: r.validator_address,
+            response: u32::from(r.response),
+            response_uri: r.response_uri,
+            response_hash: r.response_hash,
+            tag: r.tag,
+            created_at: r.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentValidationStatusOutput {
+    pub validator_address: String,
+    pub agent_registry: String,
+    pub agent_id: String,
+    pub response: u32,
+    pub response_hash: Option<String>,
+    pub tag: Option<String>,
+    pub last_update: String,
+}
+
+impl From<stateset_core::AgentValidationStatus> for AgentValidationStatusOutput {
+    fn from(s: stateset_core::AgentValidationStatus) -> Self {
+        Self {
+            validator_address: s.validator_address,
+            agent_registry: s.agent_registry,
+            agent_id: s.agent_id,
+            response: u32::from(s.response),
+            response_hash: s.response_hash,
+            tag: s.tag,
+            last_update: s.last_update.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ValidationSummaryOutput {
+    /// Count as a decimal string
+    pub count: String,
+    pub average_response: u32,
+}
+
+impl From<stateset_core::ValidationSummary> for ValidationSummaryOutput {
+    fn from(s: stateset_core::ValidationSummary) -> Self {
+        Self { count: s.count.to_string(), average_response: u32::from(s.average_response) }
+    }
+}
+
+#[napi]
+pub struct Erc8004 {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Erc8004 {
+    // ---- Identity registry ----
+
+    /// Register a new agent identity.
+    #[napi]
+    pub async fn register_identity(
+        &self,
+        input: CreateAgentIdentityInput,
+    ) -> Result<AgentIdentityOutput> {
+        let commerce = self.commerce.lock().await;
+        let identity = commerce
+            .erc8004()
+            .register_identity(stateset_core::CreateAgentIdentity {
+                agent_registry: input.agent_registry,
+                agent_id: input.agent_id,
+                agent_uri: input.agent_uri,
+                agent_wallet: input.agent_wallet,
+                owner_address: input.owner_address,
+                agent_card_id: parse_optional_uuid(input.agent_card_id, "agent_card_id")?,
+                registration: input.registration,
+                registration_hash: input.registration_hash,
+                wallet_proof_type: input
+                    .wallet_proof_type
+                    .as_deref()
+                    .map(parse_wallet_proof_type)
+                    .transpose()?,
+                wallet_proof: input.wallet_proof,
+                wallet_proof_chain_id: input
+                    .wallet_proof_chain_id
+                    .as_deref()
+                    .map(|c| parse_u64_str(c, "wallet_proof_chain_id"))
+                    .transpose()?,
+                wallet_proof_deadline: parse_rfc3339_opt(
+                    input.wallet_proof_deadline,
+                    "wallet_proof_deadline",
+                )?,
+                active: input.active,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to register agent identity: {}", e)))?;
+        Ok(identity.into())
+    }
+
+    #[napi]
+    pub async fn get_identity(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+    ) -> Result<Option<AgentIdentityOutput>> {
+        let commerce = self.commerce.lock().await;
+        let identity = commerce
+            .erc8004()
+            .get_identity(&agent_registry, &agent_id)
+            .map_err(|e| Error::from_reason(format!("Failed to get agent identity: {}", e)))?;
+        Ok(identity.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn get_identity_by_wallet(
+        &self,
+        agent_wallet: String,
+    ) -> Result<Option<AgentIdentityOutput>> {
+        let commerce = self.commerce.lock().await;
+        let identity = commerce.erc8004().get_identity_by_wallet(&agent_wallet).map_err(|e| {
+            Error::from_reason(format!("Failed to get agent identity by wallet: {}", e))
+        })?;
+        Ok(identity.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update_identity(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        input: UpdateAgentIdentityInput,
+    ) -> Result<AgentIdentityOutput> {
+        let commerce = self.commerce.lock().await;
+        let identity = commerce
+            .erc8004()
+            .update_identity(
+                &agent_registry,
+                &agent_id,
+                stateset_core::UpdateAgentIdentity {
+                    agent_uri: input.agent_uri,
+                    agent_wallet: input.agent_wallet,
+                    owner_address: input.owner_address,
+                    agent_card_id: parse_optional_uuid(input.agent_card_id, "agent_card_id")?,
+                    registration: input.registration,
+                    registration_hash: input.registration_hash,
+                    wallet_proof_type: input
+                        .wallet_proof_type
+                        .as_deref()
+                        .map(parse_wallet_proof_type)
+                        .transpose()?,
+                    wallet_proof: input.wallet_proof,
+                    wallet_proof_chain_id: input
+                        .wallet_proof_chain_id
+                        .as_deref()
+                        .map(|c| parse_u64_str(c, "wallet_proof_chain_id"))
+                        .transpose()?,
+                    wallet_proof_deadline: parse_rfc3339_opt(
+                        input.wallet_proof_deadline,
+                        "wallet_proof_deadline",
+                    )?,
+                    active: input.active,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update agent identity: {}", e)))?;
+        Ok(identity.into())
+    }
+
+    /// Bind a wallet to an agent identity, with optional on-chain proof data.
+    #[napi]
+    pub async fn set_agent_wallet(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        agent_wallet: String,
+        proof: Option<AgentWalletProofInput>,
+    ) -> Result<AgentIdentityOutput> {
+        let commerce = self.commerce.lock().await;
+        let proof = proof.unwrap_or_default();
+        let identity = commerce
+            .erc8004()
+            .set_agent_wallet(
+                &agent_registry,
+                &agent_id,
+                &agent_wallet,
+                proof.proof_type.as_deref().map(parse_wallet_proof_type).transpose()?,
+                proof.proof.as_deref(),
+                proof
+                    .proof_chain_id
+                    .as_deref()
+                    .map(|c| parse_u64_str(c, "proof_chain_id"))
+                    .transpose()?,
+                parse_rfc3339_opt(proof.proof_deadline, "proof_deadline")?,
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to set agent wallet: {}", e)))?;
+        Ok(identity.into())
+    }
+
+    /// Clear the wallet binding on an agent identity.
+    #[napi]
+    pub async fn clear_agent_wallet(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+    ) -> Result<AgentIdentityOutput> {
+        let commerce = self.commerce.lock().await;
+        let identity = commerce
+            .erc8004()
+            .clear_agent_wallet(&agent_registry, &agent_id)
+            .map_err(|e| Error::from_reason(format!("Failed to clear agent wallet: {}", e)))?;
+        Ok(identity.into())
+    }
+
+    #[napi]
+    pub async fn list_identities(
+        &self,
+        filter: Option<AgentIdentityFilterInput>,
+    ) -> Result<Vec<AgentIdentityOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = build_agent_identity_filter(filter)?;
+        let identities = commerce
+            .erc8004()
+            .list_identities(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list agent identities: {}", e)))?;
+        Ok(identities.into_iter().map(Into::into).collect())
+    }
+
+    /// Count identities matching a filter (returned as a decimal string).
+    #[napi]
+    pub async fn count_identities(
+        &self,
+        filter: Option<AgentIdentityFilterInput>,
+    ) -> Result<String> {
+        let commerce = self.commerce.lock().await;
+        let filter = build_agent_identity_filter(filter)?;
+        let count = commerce
+            .erc8004()
+            .count_identities(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to count agent identities: {}", e)))?;
+        Ok(count.to_string())
+    }
+
+    // ---- Reputation registry ----
+
+    /// Give feedback about an agent.
+    #[napi]
+    pub async fn give_feedback(
+        &self,
+        input: CreateAgentFeedbackInput,
+    ) -> Result<AgentFeedbackOutput> {
+        let commerce = self.commerce.lock().await;
+        let feedback = commerce
+            .erc8004()
+            .give_feedback(stateset_core::CreateAgentFeedback {
+                agent_registry: input.agent_registry,
+                agent_id: input.agent_id,
+                client_address: input.client_address,
+                value: parse_i128_str(&input.value, "value")?,
+                value_decimals: parse_u8_field(input.value_decimals, "value_decimals")?,
+                tag1: input.tag1,
+                tag2: input.tag2,
+                endpoint: input.endpoint,
+                feedback_uri: input.feedback_uri,
+                feedback_hash: input.feedback_hash,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to give agent feedback: {}", e)))?;
+        Ok(feedback.into())
+    }
+
+    /// Revoke a previously given feedback entry.
+    #[napi]
+    pub async fn revoke_feedback(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        client_address: String,
+        feedback_index: String,
+    ) -> Result<AgentFeedbackOutput> {
+        let commerce = self.commerce.lock().await;
+        let feedback = commerce
+            .erc8004()
+            .revoke_feedback(
+                &agent_registry,
+                &agent_id,
+                &client_address,
+                parse_u64_str(&feedback_index, "feedback_index")?,
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to revoke agent feedback: {}", e)))?;
+        Ok(feedback.into())
+    }
+
+    #[napi]
+    pub async fn read_feedback(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        client_address: String,
+        feedback_index: String,
+    ) -> Result<Option<AgentFeedbackOutput>> {
+        let commerce = self.commerce.lock().await;
+        let feedback = commerce
+            .erc8004()
+            .read_feedback(
+                &agent_registry,
+                &agent_id,
+                &client_address,
+                parse_u64_str(&feedback_index, "feedback_index")?,
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to read agent feedback: {}", e)))?;
+        Ok(feedback.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn read_all_feedback(
+        &self,
+        filter: Option<AgentFeedbackFilterInput>,
+    ) -> Result<Vec<AgentFeedbackOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(stateset_core::AgentFeedbackFilter::default, |f| {
+            stateset_core::AgentFeedbackFilter {
+                agent_registry: f.agent_registry,
+                agent_id: f.agent_id,
+                client_addresses: f.client_addresses,
+                tag1: f.tag1,
+                tag2: f.tag2,
+                include_revoked: f.include_revoked,
+                limit: f.limit,
+                offset: f.offset,
+            }
+        });
+        let feedback = commerce
+            .erc8004()
+            .read_all_feedback(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to read agent feedback: {}", e)))?;
+        Ok(feedback.into_iter().map(Into::into).collect())
+    }
+
+    /// Aggregate feedback summary for an agent.
+    #[napi]
+    pub async fn feedback_summary(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        client_addresses: Option<Vec<String>>,
+        tag1: Option<String>,
+        tag2: Option<String>,
+    ) -> Result<FeedbackSummaryOutput> {
+        let commerce = self.commerce.lock().await;
+        let summary = commerce
+            .erc8004()
+            .feedback_summary(
+                &agent_registry,
+                &agent_id,
+                client_addresses.unwrap_or_default(),
+                tag1,
+                tag2,
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to get feedback summary: {}", e)))?;
+        Ok(summary.into())
+    }
+
+    // ---- Validation registry ----
+
+    /// Submit a validation request for an agent.
+    #[napi]
+    pub async fn request_validation(
+        &self,
+        input: CreateAgentValidationRequestInput,
+    ) -> Result<AgentValidationRequestOutput> {
+        let commerce = self.commerce.lock().await;
+        let request = commerce
+            .erc8004()
+            .request_validation(stateset_core::CreateAgentValidationRequest {
+                request_hash: input.request_hash,
+                agent_registry: input.agent_registry,
+                agent_id: input.agent_id,
+                validator_address: input.validator_address,
+                request_uri: input.request_uri,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to request validation: {}", e)))?;
+        Ok(request.into())
+    }
+
+    /// Record a validator's response to a validation request.
+    #[napi]
+    pub async fn respond_validation(
+        &self,
+        request_hash: String,
+        input: CreateAgentValidationResponseInput,
+    ) -> Result<AgentValidationResponseOutput> {
+        let commerce = self.commerce.lock().await;
+        let response = commerce
+            .erc8004()
+            .respond_validation(
+                &request_hash,
+                stateset_core::CreateAgentValidationResponse {
+                    response: parse_u8_field(input.response, "response")?,
+                    response_uri: input.response_uri,
+                    response_hash: input.response_hash,
+                    tag: input.tag,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to respond to validation: {}", e)))?;
+        Ok(response.into())
+    }
+
+    #[napi]
+    pub async fn validation_status(
+        &self,
+        request_hash: String,
+    ) -> Result<Option<AgentValidationStatusOutput>> {
+        let commerce = self.commerce.lock().await;
+        let status = commerce
+            .erc8004()
+            .validation_status(&request_hash)
+            .map_err(|e| Error::from_reason(format!("Failed to get validation status: {}", e)))?;
+        Ok(status.map(Into::into))
+    }
+
+    /// Aggregate validation summary for an agent.
+    #[napi]
+    pub async fn validation_summary(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        validator_addresses: Option<Vec<String>>,
+        tag: Option<String>,
+    ) -> Result<ValidationSummaryOutput> {
+        let commerce = self.commerce.lock().await;
+        let summary = commerce
+            .erc8004()
+            .validation_summary(&agent_registry, &agent_id, validator_addresses, tag)
+            .map_err(|e| Error::from_reason(format!("Failed to get validation summary: {}", e)))?;
+        Ok(summary.into())
+    }
+}
+
+fn build_agent_identity_filter(
+    filter: Option<AgentIdentityFilterInput>,
+) -> Result<stateset_core::AgentIdentityFilter> {
+    filter.map_or_else(
+        || Ok(stateset_core::AgentIdentityFilter::default()),
+        |f| -> Result<stateset_core::AgentIdentityFilter> {
+            Ok(stateset_core::AgentIdentityFilter {
+                agent_registry: f.agent_registry,
+                agent_id: f.agent_id,
+                agent_wallet: f.agent_wallet,
+                owner_address: f.owner_address,
+                agent_card_id: parse_optional_uuid(f.agent_card_id, "agent_card_id")?,
+                active: f.active,
+                limit: f.limit,
+                offset: f.offset,
+            })
+        },
+    )
 }

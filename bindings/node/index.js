@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Commerce, Events, CommerceEventSubscription, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, vesX402ComputeSigningHash, X402, VectorSearch, jcsCanonicalize, domainHash, ed25519Sign, ed25519Verify, vesHybridGenerateSigningKeypair, vesHybridSignEventHash, vesHybridVerifyEventSignature, vesTestVectorMlDsaPublicKey, vesHybridGenerateRecipientKeypair, vesTestVectorMlKemPublicKey, vesHybridEncryptPayload, vesHybridDecryptPayload, vesStrictGenerateSigningKeypair, vesStrictSignEventHash, vesStrictVerifyEventSignature, vesStrictGenerateRecipientKeypair, vesStrictEncryptPayload, vesStrictDecryptPayload, vesHybridGenerateSigningPop, vesHybridVerifySigningPop, vesStrictGenerateSigningPop, vesStrictVerifySigningPop, aesGcmEncrypt, aesGcmDecrypt, merkleRoot, GiftCards, StoreCredits, Reviews, Wishlists, Segments, Loyalty, FixedAssets, RevenueRecognition, CycleCounts, EdiDocuments, Prepayments, VendorCredits, PriceSchedules, PriceLevels, TransferOrders, ProductionBatches, SupplierSkus, InboundShipments } = nativeBinding
+const { Commerce, Events, CommerceEventSubscription, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, vesX402ComputeSigningHash, X402, VectorSearch, jcsCanonicalize, domainHash, ed25519Sign, ed25519Verify, vesHybridGenerateSigningKeypair, vesHybridSignEventHash, vesHybridVerifyEventSignature, vesTestVectorMlDsaPublicKey, vesHybridGenerateRecipientKeypair, vesTestVectorMlKemPublicKey, vesHybridEncryptPayload, vesHybridDecryptPayload, vesStrictGenerateSigningKeypair, vesStrictSignEventHash, vesStrictVerifyEventSignature, vesStrictGenerateRecipientKeypair, vesStrictEncryptPayload, vesStrictDecryptPayload, vesHybridGenerateSigningPop, vesHybridVerifySigningPop, vesStrictGenerateSigningPop, vesStrictVerifySigningPop, aesGcmEncrypt, aesGcmDecrypt, merkleRoot, GiftCards, StoreCredits, Reviews, Wishlists, Segments, Loyalty, FixedAssets, RevenueRecognition, CycleCounts, EdiDocuments, Prepayments, VendorCredits, PriceSchedules, PriceLevels, TransferOrders, ProductionBatches, SupplierSkus, InboundShipments, ActivityLogs, Channels, Companies, UnitsOfMeasure, ShippingZones, StockSnapshots, PrintStations, IntegrationMappings, IntegrationFieldMappings, PaymentObligations, Purgatory, TopologySnapshots, VendorReturns, Fraud, SearchConfigs, Erc8004 } = nativeBinding
 
 module.exports.Commerce = Commerce
 module.exports.Events = Events
@@ -392,3 +392,19 @@ module.exports.TransferOrders = TransferOrders
 module.exports.ProductionBatches = ProductionBatches
 module.exports.SupplierSkus = SupplierSkus
 module.exports.InboundShipments = InboundShipments
+module.exports.ActivityLogs = ActivityLogs
+module.exports.Channels = Channels
+module.exports.Companies = Companies
+module.exports.UnitsOfMeasure = UnitsOfMeasure
+module.exports.ShippingZones = ShippingZones
+module.exports.StockSnapshots = StockSnapshots
+module.exports.PrintStations = PrintStations
+module.exports.IntegrationMappings = IntegrationMappings
+module.exports.IntegrationFieldMappings = IntegrationFieldMappings
+module.exports.PaymentObligations = PaymentObligations
+module.exports.Purgatory = Purgatory
+module.exports.TopologySnapshots = TopologySnapshots
+module.exports.VendorReturns = VendorReturns
+module.exports.Fraud = Fraud
+module.exports.SearchConfigs = SearchConfigs
+module.exports.Erc8004 = Erc8004

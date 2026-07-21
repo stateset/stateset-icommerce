@@ -31,6 +31,15 @@ import { giftCardTools } from './gift-cards.js';
 import { storeCreditTools } from './store-credits.js';
 import { segmentTools } from './segments.js';
 import { shippingZoneTools } from './shipping-zones.js';
+import { unitOfMeasureTools } from './units-of-measure.js';
+import { stockSnapshotTools } from './stock-snapshots.js';
+import { printStationTools } from './print-stations.js';
+import { integrationMappingTools } from './integration-mappings.js';
+import { integrationFieldMappingTools } from './integration-field-mappings.js';
+import { paymentObligationTools } from './payment-obligations.js';
+import { purgatoryTools } from './purgatory.js';
+import { topologySnapshotTools } from './topology-snapshots.js';
+import { vendorReturnTools } from './vendor-returns.js';
 import { reviewTools } from './reviews.js';
 import { wishlistTools } from './wishlists.js';
 import { loyaltyTools } from './loyalty.js';
@@ -48,6 +57,7 @@ import { a2aPlatformTools } from './a2a-platform.js';
 import { a2aIntelligenceTools } from './a2a-intelligence.js';
 import { qualityTools } from './quality.js';
 import { lotTools } from './lots.js';
+import { searchConfigTools } from './search-config.js';
 import { serialTools } from './serials.js';
 import { warehouseTools } from './warehouse.js';
 import { receivingTools } from './receiving.js';
@@ -64,6 +74,9 @@ import { revenueRecognitionTools } from './revenue-recognition.js';
 import { cycleCountTools } from './cycle-counts.js';
 import { ediDocumentTools } from './edi-documents.js';
 import { prepaymentTools } from './prepayments.js';
+import { activityLogTools } from './activity-logs.js';
+import { channelTools } from './channels.js';
+import { companyTools } from './companies.js';
 import { vendorCreditTools } from './vendor-credits.js';
 import { priceScheduleTools } from './price-schedules.js';
 import { priceLevelTools } from './price-levels.js';
@@ -106,6 +119,15 @@ export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['store-credits', storeCreditTools],
   ['segments', segmentTools],
   ['shipping-zones', shippingZoneTools],
+  ['units-of-measure', unitOfMeasureTools],
+  ['stock-snapshots', stockSnapshotTools],
+  ['print-stations', printStationTools],
+  ['integration-mappings', integrationMappingTools],
+  ['integration-field-mappings', integrationFieldMappingTools],
+  ['payment-obligations', paymentObligationTools],
+  ['purgatory', purgatoryTools],
+  ['topology-snapshots', topologySnapshotTools],
+  ['vendor-returns', vendorReturnTools],
   ['reviews', reviewTools],
   ['wishlists', wishlistTools],
   ['loyalty', loyaltyTools],
@@ -123,6 +145,7 @@ export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['a2a-intelligence', a2aIntelligenceTools],
   ['quality', qualityTools],
   ['lots', lotTools],
+  ['search-config', searchConfigTools],
   ['serials', serialTools],
   ['warehouse', warehouseTools],
   ['receiving', receivingTools],
@@ -139,6 +162,9 @@ export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['cycle-counts', cycleCountTools],
   ['edi-documents', ediDocumentTools],
   ['prepayments', prepaymentTools],
+  ['activity-logs', activityLogTools],
+  ['channels', channelTools],
+  ['companies', companyTools],
   ['vendor-credits', vendorCreditTools],
   ['price-schedules', priceScheduleTools],
   ['price-levels', priceLevelTools],

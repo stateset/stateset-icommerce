@@ -7,7 +7,7 @@
 
 ## Abstract
 
-StateSet iCommerce is an embedded, zero-dependency commerce engine designed for autonomous AI agents. Built on a Rust core with language bindings for 10 platforms, it provides a complete commerce and ERP surface area — orders, inventory, payments, returns, subscriptions, manufacturing, and more — as deterministic, locally executable operations that AI agents can safely invoke. The system introduces three novel protocols: the **Agent-to-Agent (A2A) Commerce Protocol** for autonomous economic transactions between agents, the **x402 Payment Protocol** for cryptographically verifiable payment intents, and the **Verifiable Encrypted Signatures (VES) v1.0** specification for tamper-proof event synchronization. iCommerce exposes 700+ tools via the Model Context Protocol (MCP), governed by a declarative policy engine with explainable denials, and is backed by comprehensive automated tests across all layers. The result is a portable, embeddable commerce runtime — the "SQLite of Commerce" — that enables AI agents to reason about, decide on, and execute commerce operations independently.
+StateSet iCommerce is an embedded, zero-dependency commerce engine designed for autonomous AI agents. Built on a Rust core with language bindings for 10 platforms, it provides a complete commerce and ERP surface area — orders, inventory, payments, returns, subscriptions, manufacturing, and more — as deterministic, locally executable operations that AI agents can safely invoke. The system introduces three novel protocols: the **Agent-to-Agent (A2A) Commerce Protocol** for autonomous economic transactions between agents, the **x402 Payment Protocol** for cryptographically verifiable payment intents, and the **Verifiable Encrypted Signatures (VES) v1.0** specification for tamper-proof event synchronization. iCommerce exposes 800+ tools via the Model Context Protocol (MCP), governed by a declarative policy engine with explainable denials, and is backed by comprehensive automated tests across all layers. The result is a portable, embeddable commerce runtime — the "SQLite of Commerce" — that enables AI agents to reason about, decide on, and execute commerce operations independently.
 
 ---
 
@@ -20,7 +20,7 @@ StateSet iCommerce is an embedded, zero-dependency commerce engine designed for 
 5. [The Agentic Reasoning Loop](#5-the-agentic-reasoning-loop)
 6. [Rust Core: Domain Model & Type System](#6-rust-core-domain-model--type-system)
 7. [Database Layer: Local-First Persistence](#7-database-layer-local-first-persistence)
-8. [MCP Tool Surface: 365 Deterministic Operations](#8-mcp-tool-surface-365-deterministic-operations)
+8. [MCP Tool Surface](#8-mcp-tool-surface)
 9. [Agent-to-Agent (A2A) Commerce Protocol](#9-agent-to-agent-a2a-commerce-protocol)
 10. [x402 Payment Protocol](#10-x402-payment-protocol)
 11. [Verifiable Encrypted Signatures (VES) v1.0](#11-verifiable-encrypted-signatures-ves-v10)
@@ -68,7 +68,7 @@ This paper presents:
 - The **x402 Payment Protocol** for off-chain payment intents with Ed25519 signatures and gas-abstracted on-chain settlement across multiple blockchain networks
 - **VES v1.0**, a cryptographic specification combining RFC 8785 JSON Canonicalization, domain-separated SHA-256 hashing, Ed25519 signatures, AES-256-GCM encryption, and Merkle tree proofs
 - A **declarative policy engine** with deny-override semantics, per-condition explainability, and transform audit trails
-- An **MCP tool surface** of 700+ commerce operations, the largest known domain-specific MCP server
+- An **MCP tool surface** of 800+ commerce operations, the largest known domain-specific MCP server
 
 ---
 
@@ -152,7 +152,7 @@ All write operations are blocked by default. The `--apply` flag must be explicit
 │                            CLI + MCP Server                                    │
 │                                                                                │
 │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
-│   │ 18 Agent │  │ 700+ MCP │  │  Policy  │  │   Sync   │  │Autonomous│      │
+│   │ 18 Agent │  │ 800+ MCP │  │  Policy  │  │   Sync   │  │Autonomous│      │
 │   │ Configs  │  │  Tools   │  │  Engine  │  │  Engine  │  │  Engine  │      │
 │   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘      │
 │        └──────────────┼──────────────┼──────────────┼──────────────┘           │
@@ -202,7 +202,7 @@ The system is organized into three layers:
 
 1. **Rust Core** (21 crates): Pure domain models, database abstraction, cryptographic primitives, policy evaluation, and pricing calculations — all with zero I/O side effects in the core logic
 2. **Language Bindings**: FFI layer exposing the Rust core to 10 programming languages, each with idiomatic APIs
-3. **CLI + MCP Server**: The agent-facing interface, providing 700+ tools via the Model Context Protocol, 18 specialized agents, and the A2A/x402 protocol implementations
+3. **CLI + MCP Server**: The agent-facing interface, providing 800+ tools via the Model Context Protocol, 18 specialized agents, and the A2A/x402 protocol implementations
 
 ---
 
@@ -223,7 +223,7 @@ Understanding how an LLM interacts with iCommerce is critical to understanding t
 ┌────────────────┐              ┌────────────────┐
 │  2. Select     │              │  5. Execute    │
 │  MCP Tool      │              │  State Change  │
-│  (from 700+)   │              │  (if --apply)  │
+│   (from 800+)   │              │  (if --apply)  │
 └───────┬────────┘              └───────┬────────┘
         │                               ▲
         ▼                               │
@@ -443,7 +443,7 @@ Schema migrations are checksummed for integrity verification and support rollbac
 
 ---
 
-## 8. MCP Tool Surface: 365 Deterministic Operations
+## 8. MCP Tool Surface
 
 ### 8.1 Architecture
 
@@ -973,7 +973,7 @@ iCommerce provides 18 specialized agent configurations, each with a domain-speci
 
 | Agent | Domain | Tool Access |
 |-------|--------|-------------|
-| `customer-service` | Full-service | All 700+ tools |
+| `customer-service` | Full-service | All 800+ tools |
 | `checkout` | Cart + checkout flow | Carts, shipping, payments |
 | `orders` | Order lifecycle | Orders, shipments |
 | `inventory` | Stock management | Inventory, forecasting |
@@ -1023,7 +1023,7 @@ If the primary model is unavailable, the system automatically falls back to the 
 
 ### 14.5 Air-Gapped Commerce
 
-The combination of local-first SQLite execution (Section 3.1) and local LLM support via Ollama unlocks a deployment model with profound privacy implications: **air-gapped commerce**. An enterprise can run iCommerce alongside a local Llama, Mistral, or DeepSeek model, allowing autonomous agents to process highly sensitive ERP and financial data without a single byte ever leaving the corporate intranet. No data is sent to OpenAI, Anthropic, or any external API. This is critical for defense contractors, healthcare organizations, financial institutions, and any enterprise subject to data residency regulations (GDPR, HIPAA, SOC 2). The full 700+ tool surface remains available — only the LLM provider changes.
+The combination of local-first SQLite execution (Section 3.1) and local LLM support via Ollama unlocks a deployment model with profound privacy implications: **air-gapped commerce**. An enterprise can run iCommerce alongside a local Llama, Mistral, or DeepSeek model, allowing autonomous agents to process highly sensitive ERP and financial data without a single byte ever leaving the corporate intranet. No data is sent to OpenAI, Anthropic, or any external API. This is critical for defense contractors, healthcare organizations, financial institutions, and any enterprise subject to data residency regulations (GDPR, HIPAA, SOC 2). The full 800+ tool surface remains available — only the LLM provider changes.
 
 ---
 
@@ -1320,7 +1320,7 @@ The "SQLite of Commerce" analogy extends to its ultimate conclusion: just as SQL
 
 StateSet iCommerce represents a fundamental rethinking of commerce infrastructure for the age of autonomous AI agents. By providing an embeddable, deterministic, and cryptographically verifiable commerce engine with native agent-to-agent transaction primitives, it enables a new class of applications where AI agents independently manage entire commerce operations — from inventory forecasting to payment settlement, from customer service to supplier procurement.
 
-The system's architecture — a type-safe Rust core with 50 repository traits, 700+ MCP tools, the A2A and x402 protocols, VES v1.0 cryptography, and a declarative policy engine with explainable denials — provides the safety guarantees that autonomous agents need to operate at scale. Comprehensive test coverage, memory-safe cryptographic primitives, and defense-in-depth security hardening make iCommerce production-ready for the agentic commerce era.
+The system's architecture — a type-safe Rust core with 50 repository traits, 800+ MCP tools, the A2A and x402 protocols, VES v1.0 cryptography, and a declarative policy engine with explainable denials — provides the safety guarantees that autonomous agents need to operate at scale. Comprehensive test coverage, memory-safe cryptographic primitives, and defense-in-depth security hardening make iCommerce production-ready for the agentic commerce era.
 
 The transition from eCommerce to iCommerce is not merely a technological upgrade; it is a paradigm shift in how commerce systems are designed, deployed, and operated. Where eCommerce assumed a human at every decision point, iCommerce assumes an agent — and provides the runtime, protocols, and safety guarantees to make that assumption viable.
 
