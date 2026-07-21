@@ -364,7 +364,10 @@ pub fn generate_revenue_schedule(
                     // Final-period plug so entries sum exactly to `amount`.
                     amount - accumulated
                 } else {
-                    per_period
+                    // Never over-recognize ahead of the plug: when rounding
+                    // rounds up, uncapped periods would leave a negative
+                    // final entry (a spurious revenue reversal).
+                    per_period.min(amount - accumulated)
                 };
                 accumulated += entry_amount;
                 entries.push(RevenueScheduleEntry {

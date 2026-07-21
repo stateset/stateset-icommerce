@@ -386,6 +386,24 @@ impl Commerce {
         GeneralLedgerApi { commerce: self.inner.clone() }
     }
 
+    /// Get the fixed assets API.
+    #[getter]
+    fn fixed_assets(&self) -> FixedAssets {
+        FixedAssets { commerce: self.inner.clone() }
+    }
+
+    /// Get the revenue recognition (ASC 606) API.
+    #[getter]
+    fn revenue_recognition(&self) -> RevenueRecognition {
+        RevenueRecognition { commerce: self.inner.clone() }
+    }
+
+    /// Get the cycle counts API.
+    #[getter]
+    fn cycle_counts(&self) -> CycleCounts {
+        CycleCounts { commerce: self.inner.clone() }
+    }
+
     /// Get the vector search API for semantic search operations.
     ///
     /// Requires OPENAI_API_KEY environment variable to be set.
@@ -10117,6 +10135,34 @@ impl AccountsPayableApi {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_outputs(bills)
     }
+
+    /// Three-way match a bill against its purchase order and receipts.
+    ///
+    /// `tolerance_percent` is an exact decimal string (e.g. "5" for 5%);
+    /// omit it for exact matching.
+    #[pyo3(signature = (bill_id, tolerance_percent=None))]
+    fn three_way_match(
+        &self,
+        bill_id: String,
+        tolerance_percent: Option<String>,
+    ) -> PyResult<ThreeWayMatchResult> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            bill_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let tolerance = tolerance_percent
+            .map(|s| {
+                s.parse::<Decimal>()
+                    .map_err(|_| PyValueError::new_err("Invalid tolerance_percent decimal"))
+            })
+            .transpose()?;
+        let result = commerce.accounts_payable().three_way_match(uuid, tolerance).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to three-way match bill: {}", e))
+        })?;
+        Ok(result.into())
+    }
 }
 
 // ============================================================================
@@ -11011,6 +11057,136 @@ impl GeneralLedgerApi {
             .get_trial_balance(date)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_output(balance)
+    }
+
+    /// Initialize the standard chart of accounts.
+    fn initialize_chart_of_accounts(&self) -> PyResult<Vec<GlAccount>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let accounts = commerce
+            .general_ledger()
+            .initialize_chart_of_accounts()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        convert_outputs(accounts)
+    }
+
+    /// Create an accounting period. Dates are ISO strings (YYYY-MM-DD).
+    fn create_period(
+        &self,
+        period_name: String,
+        fiscal_year: i32,
+        period_number: i32,
+        start_date: String,
+        end_date: String,
+    ) -> PyResult<GlPeriod> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let period = commerce
+            .general_ledger()
+            .create_period(stateset_core::CreateGlPeriod {
+                period_name,
+                fiscal_year,
+                period_number,
+                start_date: parse_iso_date_py(&start_date, "start_date")?,
+                end_date: parse_iso_date_py(&end_date, "end_date")?,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create period: {}", e)))?;
+        Ok(period.into())
+    }
+
+    /// Open a period (transition from future to open).
+    fn open_period(&self, id: String) -> PyResult<GlPeriod> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let period = commerce
+            .general_ledger()
+            .open_period(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to open period: {}", e)))?;
+        Ok(period.into())
+    }
+
+    /// Revalue foreign-currency account balances at the as-of exchange rate.
+    ///
+    /// `as_of_date` is an ISO date (YYYY-MM-DD); `base_currency` defaults to
+    /// the store's configured base currency.
+    #[pyo3(signature = (as_of_date, base_currency=None))]
+    fn revalue(
+        &self,
+        as_of_date: String,
+        base_currency: Option<String>,
+    ) -> PyResult<RevaluationResult> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let date = chrono::NaiveDate::parse_from_str(&as_of_date, "%Y-%m-%d")
+            .map_err(|_| PyValueError::new_err("Invalid date format"))?;
+        let base = base_currency
+            .map(|s| {
+                s.parse::<stateset_core::Currency>()
+                    .map_err(|_| PyValueError::new_err("Invalid base currency code"))
+            })
+            .transpose()?;
+        let result = commerce
+            .general_ledger()
+            .revalue(date, base)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to revalue: {}", e)))?;
+        Ok(result.into())
+    }
+
+    /// Close the month: post scheduled depreciation, recognize revenue
+    /// through period end, revalue foreign-currency balances, then run the
+    /// period close (closing entries + close period).
+    ///
+    /// Pass `dry_run=True` to compute per-step counts and amounts without
+    /// writing anything.
+    #[pyo3(signature = (
+        period_id,
+        dry_run=None,
+        skip_depreciation=None,
+        skip_revenue_recognition=None,
+        skip_fx_revaluation=None,
+        skip_period_close=None,
+        closed_by=None,
+    ))]
+    fn close_month(
+        &self,
+        period_id: String,
+        dry_run: Option<bool>,
+        skip_depreciation: Option<bool>,
+        skip_revenue_recognition: Option<bool>,
+        skip_fx_revaluation: Option<bool>,
+        skip_period_close: Option<bool>,
+        closed_by: Option<String>,
+    ) -> PyResult<CloseMonthReport> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            period_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let report = commerce
+            .general_ledger()
+            .close_month(
+                uuid,
+                stateset_core::CloseMonthOptions {
+                    dry_run: dry_run.unwrap_or(false),
+                    skip_depreciation: skip_depreciation.unwrap_or(false),
+                    skip_revenue_recognition: skip_revenue_recognition.unwrap_or(false),
+                    skip_fx_revaluation: skip_fx_revaluation.unwrap_or(false),
+                    skip_period_close: skip_period_close.unwrap_or(false),
+                    closed_by,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to close month: {}", e)))?;
+        Ok(report.into())
     }
 }
 
@@ -12544,6 +12720,37 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GlAccount>()?;
     m.add_class::<JournalEntry>()?;
     m.add_class::<TrialBalance>()?;
+    m.add_class::<GlPeriod>()?;
+    m.add_class::<RevaluationLine>()?;
+    m.add_class::<RevaluationResult>()?;
+    m.add_class::<CloseMonthStep>()?;
+    m.add_class::<CloseMonthReport>()?;
+
+    // Three-Way Match (Accounts Payable)
+    m.add_class::<ThreeWayMatchLine>()?;
+    m.add_class::<ThreeWayMatchResult>()?;
+
+    // Fixed Assets
+    m.add_class::<FixedAssets>()?;
+    m.add_class::<FixedAsset>()?;
+    m.add_class::<AssetDisposal>()?;
+    m.add_class::<DepreciationEntry>()?;
+    m.add_class::<DepreciationSchedule>()?;
+
+    // Revenue Recognition
+    m.add_class::<RevenueRecognition>()?;
+    m.add_class::<RevenueContract>()?;
+    m.add_class::<PerformanceObligation>()?;
+    m.add_class::<PerformanceObligationInput>()?;
+    m.add_class::<RevenueScheduleEntry>()?;
+    m.add_class::<RevenueSchedule>()?;
+
+    // Cycle Counts
+    m.add_class::<CycleCounts>()?;
+    m.add_class::<CycleCount>()?;
+    m.add_class::<CycleCountLine>()?;
+    m.add_class::<CycleCountLineInput>()?;
+    m.add_class::<RecordCycleCountLineInput>()?;
 
     // Vector Search
     m.add_class::<VectorSearch>()?;
@@ -14517,5 +14724,1784 @@ impl Loyalty {
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list rewards: {}", e)))?;
         Ok(rewards.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Finance helpers (exact decimal strings, ISO dates, snake_case enums)
+// ============================================================================
+
+fn parse_iso_date_py(s: &str, field: &str) -> PyResult<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|_| PyValueError::new_err(format!("Invalid {field} date (expected YYYY-MM-DD)")))
+}
+
+fn parse_decimal_py(s: &str, field: &str) -> PyResult<Decimal> {
+    s.parse::<Decimal>().map_err(|_| PyValueError::new_err(format!("Invalid {field} decimal")))
+}
+
+fn parse_optional_uuid_py(s: Option<String>, field: &str) -> PyResult<Option<uuid::Uuid>> {
+    s.map(|s| {
+        s.parse::<uuid::Uuid>().map_err(|_| PyValueError::new_err(format!("Invalid {field} UUID")))
+    })
+    .transpose()
+}
+
+fn parse_depreciation_method_py(
+    method: &str,
+    rate: Option<&str>,
+) -> PyResult<stateset_core::DepreciationMethod> {
+    match method {
+        "straight_line" => Ok(stateset_core::DepreciationMethod::StraightLine),
+        "declining_balance" => {
+            let rate = rate.ok_or_else(|| {
+                PyValueError::new_err("declining_balance requires declining_balance_rate")
+            })?;
+            Ok(stateset_core::DepreciationMethod::DecliningBalance {
+                rate: parse_decimal_py(rate, "declining_balance_rate")?,
+            })
+        }
+        "units_of_production" => Ok(stateset_core::DepreciationMethod::UnitsOfProduction),
+        _ => Err(PyValueError::new_err(
+            "Invalid depreciation method (expected straight_line, declining_balance, or units_of_production)",
+        )),
+    }
+}
+
+fn depreciation_method_parts(
+    method: stateset_core::DepreciationMethod,
+) -> (String, Option<String>) {
+    match method {
+        stateset_core::DepreciationMethod::StraightLine => ("straight_line".to_string(), None),
+        stateset_core::DepreciationMethod::DecliningBalance { rate } => {
+            ("declining_balance".to_string(), Some(rate.to_string()))
+        }
+        stateset_core::DepreciationMethod::UnitsOfProduction => {
+            ("units_of_production".to_string(), None)
+        }
+        _ => ("unknown".to_string(), None),
+    }
+}
+
+fn parse_recognition_method_py(
+    method: &str,
+    start: Option<&str>,
+    end: Option<&str>,
+) -> PyResult<stateset_core::RecognitionMethod> {
+    match method {
+        "point_in_time" => Ok(stateset_core::RecognitionMethod::PointInTime),
+        "ratable_over_time" => {
+            let start = start.ok_or_else(|| {
+                PyValueError::new_err("ratable_over_time requires recognition_start")
+            })?;
+            let end = end.ok_or_else(|| {
+                PyValueError::new_err("ratable_over_time requires recognition_end")
+            })?;
+            Ok(stateset_core::RecognitionMethod::RatableOverTime {
+                start: parse_iso_date_py(start, "recognition_start")?,
+                end: parse_iso_date_py(end, "recognition_end")?,
+            })
+        }
+        "milestone" => Ok(stateset_core::RecognitionMethod::Milestone),
+        _ => Err(PyValueError::new_err(
+            "Invalid recognition method (expected point_in_time, ratable_over_time, or milestone)",
+        )),
+    }
+}
+
+fn recognition_method_parts(
+    method: stateset_core::RecognitionMethod,
+) -> (String, Option<String>, Option<String>) {
+    match method {
+        stateset_core::RecognitionMethod::PointInTime => ("point_in_time".to_string(), None, None),
+        stateset_core::RecognitionMethod::RatableOverTime { start, end } => {
+            ("ratable_over_time".to_string(), Some(start.to_string()), Some(end.to_string()))
+        }
+        stateset_core::RecognitionMethod::Milestone => ("milestone".to_string(), None, None),
+        _ => ("unknown".to_string(), None, None),
+    }
+}
+
+// ============================================================================
+// Fixed Assets  (money as exact decimal STRINGS, dates as ISO strings)
+// ============================================================================
+
+/// A recorded asset disposal. Money values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct AssetDisposal {
+    /// ISO date (YYYY-MM-DD)
+    #[pyo3(get)]
+    disposal_date: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    proceeds: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    book_value_at_disposal: String,
+    /// Exact decimal string: proceeds - book value
+    #[pyo3(get)]
+    gain_loss: String,
+    #[pyo3(get)]
+    notes: Option<String>,
+}
+
+impl From<stateset_core::AssetDisposal> for AssetDisposal {
+    fn from(d: stateset_core::AssetDisposal) -> Self {
+        Self {
+            disposal_date: d.disposal_date.to_string(),
+            proceeds: d.proceeds.to_string(),
+            book_value_at_disposal: d.book_value_at_disposal.to_string(),
+            gain_loss: d.gain_loss.to_string(),
+            notes: d.notes,
+        }
+    }
+}
+
+/// A fixed asset. Money values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct FixedAsset {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    asset_number: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    category: String,
+    /// ISO date (YYYY-MM-DD)
+    #[pyo3(get)]
+    acquisition_date: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    acquisition_cost: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    salvage_value: String,
+    #[pyo3(get)]
+    useful_life_months: u32,
+    /// straight_line, declining_balance, units_of_production
+    #[pyo3(get)]
+    depreciation_method: String,
+    /// Set when depreciation_method is declining_balance
+    #[pyo3(get)]
+    declining_balance_rate: Option<String>,
+    /// draft, in_service, fully_depreciated, disposed, written_off
+    #[pyo3(get)]
+    status: String,
+    /// ISO date (YYYY-MM-DD)
+    #[pyo3(get)]
+    in_service_date: Option<String>,
+    #[pyo3(get)]
+    location_id: Option<String>,
+    #[pyo3(get)]
+    asset_account_id: Option<String>,
+    #[pyo3(get)]
+    accumulated_depreciation_account_id: Option<String>,
+    #[pyo3(get)]
+    depreciation_expense_account_id: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    accumulated_depreciation: String,
+    /// Exact decimal string: acquisition_cost - accumulated_depreciation
+    #[pyo3(get)]
+    book_value: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    disposal: Option<AssetDisposal>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::FixedAsset> for FixedAsset {
+    fn from(a: stateset_core::FixedAsset) -> Self {
+        let book_value = a.book_value();
+        let (method, rate) = depreciation_method_parts(a.depreciation_method);
+        Self {
+            id: a.id.to_string(),
+            asset_number: a.asset_number,
+            name: a.name,
+            description: a.description,
+            category: format!("{}", a.category),
+            acquisition_date: a.acquisition_date.to_string(),
+            acquisition_cost: a.acquisition_cost.to_string(),
+            salvage_value: a.salvage_value.to_string(),
+            useful_life_months: a.useful_life_months,
+            depreciation_method: method,
+            declining_balance_rate: rate,
+            status: format!("{}", a.status),
+            in_service_date: a.in_service_date.map(|d| d.to_string()),
+            location_id: a.location_id.map(|id| id.to_string()),
+            asset_account_id: a.asset_account_id.map(|id| id.to_string()),
+            accumulated_depreciation_account_id: a
+                .accumulated_depreciation_account_id
+                .map(|id| id.to_string()),
+            depreciation_expense_account_id: a
+                .depreciation_expense_account_id
+                .map(|id| id.to_string()),
+            accumulated_depreciation: a.accumulated_depreciation.to_string(),
+            book_value: book_value.to_string(),
+            currency: a.currency.to_string(),
+            disposal: a.disposal.map(Into::into),
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// One period in a depreciation schedule. Money values are decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct DepreciationEntry {
+    #[pyo3(get)]
+    period: u32,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    accumulated: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    book_value: String,
+    /// scheduled or posted
+    #[pyo3(get)]
+    status: String,
+}
+
+impl From<stateset_core::DepreciationEntry> for DepreciationEntry {
+    fn from(e: stateset_core::DepreciationEntry) -> Self {
+        Self {
+            period: e.period,
+            amount: e.amount.to_string(),
+            accumulated: e.accumulated.to_string(),
+            book_value: e.book_value.to_string(),
+            status: format!("{}", e.status),
+        }
+    }
+}
+
+/// A depreciation schedule for a fixed asset.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct DepreciationSchedule {
+    #[pyo3(get)]
+    asset_id: String,
+    /// straight_line, declining_balance, units_of_production
+    #[pyo3(get)]
+    method: String,
+    /// Set when method is declining_balance
+    #[pyo3(get)]
+    declining_balance_rate: Option<String>,
+    #[pyo3(get)]
+    entries: Vec<DepreciationEntry>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    total_depreciation: String,
+}
+
+impl From<stateset_core::DepreciationSchedule> for DepreciationSchedule {
+    fn from(s: stateset_core::DepreciationSchedule) -> Self {
+        let (method, rate) = depreciation_method_parts(s.method);
+        Self {
+            asset_id: s.asset_id.to_string(),
+            method,
+            declining_balance_rate: rate,
+            entries: s.entries.into_iter().map(Into::into).collect(),
+            total_depreciation: s.total_depreciation.to_string(),
+        }
+    }
+}
+
+/// Fixed asset operations. Money is exchanged as exact decimal strings,
+/// dates as ISO strings (YYYY-MM-DD), enums as snake_case strings.
+#[pyclass]
+pub struct FixedAssets {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl FixedAssets {
+    /// Whether the fixed-assets backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.fixed_assets().is_supported())
+    }
+
+    /// Create a fixed asset (draft).
+    ///
+    /// `category` is one of land, building, machinery, equipment, vehicle,
+    /// furniture_and_fixtures, computer_hardware, software,
+    /// leasehold_improvement, other. `depreciation_method` is straight_line,
+    /// declining_balance (requires `declining_balance_rate`), or
+    /// units_of_production.
+    #[pyo3(signature = (
+        name,
+        category,
+        acquisition_date,
+        acquisition_cost,
+        salvage_value,
+        useful_life_months,
+        depreciation_method,
+        asset_number=None,
+        description=None,
+        declining_balance_rate=None,
+        in_service_date=None,
+        location_id=None,
+        asset_account_id=None,
+        accumulated_depreciation_account_id=None,
+        depreciation_expense_account_id=None,
+        currency=None,
+    ))]
+    fn create(
+        &self,
+        name: String,
+        category: String,
+        acquisition_date: String,
+        acquisition_cost: String,
+        salvage_value: String,
+        useful_life_months: u32,
+        depreciation_method: String,
+        asset_number: Option<String>,
+        description: Option<String>,
+        declining_balance_rate: Option<String>,
+        in_service_date: Option<String>,
+        location_id: Option<String>,
+        asset_account_id: Option<String>,
+        accumulated_depreciation_account_id: Option<String>,
+        depreciation_expense_account_id: Option<String>,
+        currency: Option<String>,
+    ) -> PyResult<FixedAsset> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let category = category
+            .parse::<stateset_core::FixedAssetCategory>()
+            .map_err(|_| PyValueError::new_err("Invalid fixed asset category"))?;
+        let depreciation_method =
+            parse_depreciation_method_py(&depreciation_method, declining_balance_rate.as_deref())?;
+        let currency = currency
+            .map(|s| {
+                s.parse::<CurrencyCode>()
+                    .map_err(|_| PyValueError::new_err("Invalid currency code"))
+            })
+            .transpose()?;
+        let asset = commerce
+            .fixed_assets()
+            .create(stateset_core::CreateFixedAsset {
+                asset_number,
+                name,
+                description,
+                category,
+                acquisition_date: parse_iso_date_py(&acquisition_date, "acquisition_date")?,
+                acquisition_cost: parse_decimal_py(&acquisition_cost, "acquisition_cost")?,
+                salvage_value: parse_decimal_py(&salvage_value, "salvage_value")?,
+                useful_life_months,
+                depreciation_method,
+                in_service_date: in_service_date
+                    .as_deref()
+                    .map(|s| parse_iso_date_py(s, "in_service_date"))
+                    .transpose()?,
+                location_id: parse_optional_uuid_py(location_id, "location_id")?,
+                asset_account_id: parse_optional_uuid_py(asset_account_id, "asset_account_id")?,
+                accumulated_depreciation_account_id: parse_optional_uuid_py(
+                    accumulated_depreciation_account_id,
+                    "accumulated_depreciation_account_id",
+                )?,
+                depreciation_expense_account_id: parse_optional_uuid_py(
+                    depreciation_expense_account_id,
+                    "depreciation_expense_account_id",
+                )?,
+                currency,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create fixed asset: {}", e)))?;
+        Ok(asset.into())
+    }
+
+    /// Get a fixed asset by ID.
+    fn get(&self, id: String) -> PyResult<Option<FixedAsset>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let asset = commerce
+            .fixed_assets()
+            .get(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get fixed asset: {}", e)))?;
+        Ok(asset.map(Into::into))
+    }
+
+    /// List fixed assets matching the filter.
+    #[pyo3(signature = (
+        category=None,
+        status=None,
+        location_id=None,
+        acquired_from=None,
+        acquired_to=None,
+        search=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list(
+        &self,
+        category: Option<String>,
+        status: Option<String>,
+        location_id: Option<String>,
+        acquired_from: Option<String>,
+        acquired_to: Option<String>,
+        search: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<FixedAsset>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::FixedAssetFilter {
+            category: category
+                .map(|s| {
+                    s.parse::<stateset_core::FixedAssetCategory>()
+                        .map_err(|_| PyValueError::new_err("Invalid fixed asset category"))
+                })
+                .transpose()?,
+            status: status
+                .map(|s| {
+                    s.parse::<stateset_core::FixedAssetStatus>()
+                        .map_err(|_| PyValueError::new_err("Invalid fixed asset status"))
+                })
+                .transpose()?,
+            location_id: parse_optional_uuid_py(location_id, "location_id")?,
+            acquired_from: acquired_from
+                .as_deref()
+                .map(|s| parse_iso_date_py(s, "acquired_from"))
+                .transpose()?,
+            acquired_to: acquired_to
+                .as_deref()
+                .map(|s| parse_iso_date_py(s, "acquired_to"))
+                .transpose()?,
+            search,
+            limit,
+            offset,
+        };
+        let assets = commerce
+            .fixed_assets()
+            .list(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list fixed assets: {}", e)))?;
+        Ok(assets.into_iter().map(Into::into).collect())
+    }
+
+    /// Update a fixed asset's mutable fields.
+    #[pyo3(signature = (
+        id,
+        name=None,
+        description=None,
+        category=None,
+        salvage_value=None,
+        useful_life_months=None,
+        in_service_date=None,
+        location_id=None,
+        asset_account_id=None,
+        accumulated_depreciation_account_id=None,
+        depreciation_expense_account_id=None,
+    ))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        description: Option<String>,
+        category: Option<String>,
+        salvage_value: Option<String>,
+        useful_life_months: Option<u32>,
+        in_service_date: Option<String>,
+        location_id: Option<String>,
+        asset_account_id: Option<String>,
+        accumulated_depreciation_account_id: Option<String>,
+        depreciation_expense_account_id: Option<String>,
+    ) -> PyResult<FixedAsset> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let category = category
+            .map(|s| {
+                s.parse::<stateset_core::FixedAssetCategory>()
+                    .map_err(|_| PyValueError::new_err("Invalid fixed asset category"))
+            })
+            .transpose()?;
+        let asset = commerce
+            .fixed_assets()
+            .update(
+                uuid,
+                stateset_core::UpdateFixedAsset {
+                    name,
+                    description,
+                    category,
+                    salvage_value: salvage_value
+                        .as_deref()
+                        .map(|s| parse_decimal_py(s, "salvage_value"))
+                        .transpose()?,
+                    useful_life_months,
+                    in_service_date: in_service_date
+                        .as_deref()
+                        .map(|s| parse_iso_date_py(s, "in_service_date"))
+                        .transpose()?,
+                    location_id: parse_optional_uuid_py(location_id, "location_id")?,
+                    asset_account_id: parse_optional_uuid_py(asset_account_id, "asset_account_id")?,
+                    accumulated_depreciation_account_id: parse_optional_uuid_py(
+                        accumulated_depreciation_account_id,
+                        "accumulated_depreciation_account_id",
+                    )?,
+                    depreciation_expense_account_id: parse_optional_uuid_py(
+                        depreciation_expense_account_id,
+                        "depreciation_expense_account_id",
+                    )?,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update fixed asset: {}", e)))?;
+        Ok(asset.into())
+    }
+
+    /// Place a draft asset in service on the given ISO date (YYYY-MM-DD).
+    fn place_in_service(&self, id: String, date: String) -> PyResult<FixedAsset> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let date = parse_iso_date_py(&date, "date")?;
+        let asset = commerce.fixed_assets().place_in_service(uuid, date).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to place asset in service: {}", e))
+        })?;
+        Ok(asset.into())
+    }
+
+    /// Dispose of an asset for the given proceeds (exact decimal string),
+    /// recording gain/loss. `date` is an ISO date (YYYY-MM-DD); defaults to
+    /// today.
+    #[pyo3(signature = (id, proceeds, date=None, notes=None))]
+    fn dispose(
+        &self,
+        id: String,
+        proceeds: String,
+        date: Option<String>,
+        notes: Option<String>,
+    ) -> PyResult<FixedAsset> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let proceeds = parse_decimal_py(&proceeds, "proceeds")?;
+        let date = date
+            .as_deref()
+            .map(|s| parse_iso_date_py(s, "date"))
+            .transpose()?
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let asset = commerce.fixed_assets().dispose(uuid, date, proceeds, notes).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to dispose fixed asset: {}", e))
+        })?;
+        Ok(asset.into())
+    }
+
+    /// Write off an asset (disposal with zero proceeds). `date` is an ISO
+    /// date (YYYY-MM-DD); defaults to today.
+    #[pyo3(signature = (id, date=None, notes=None))]
+    fn write_off(
+        &self,
+        id: String,
+        date: Option<String>,
+        notes: Option<String>,
+    ) -> PyResult<FixedAsset> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let date = date
+            .as_deref()
+            .map(|s| parse_iso_date_py(s, "date"))
+            .transpose()?
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let asset = commerce.fixed_assets().write_off(uuid, date, notes).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to write off fixed asset: {}", e))
+        })?;
+        Ok(asset.into())
+    }
+
+    /// Generate and persist the depreciation schedule for an asset.
+    fn generate_schedule(&self, id: String) -> PyResult<DepreciationSchedule> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let schedule = commerce
+            .fixed_assets()
+            .generate_schedule(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to generate schedule: {}", e)))?;
+        Ok(schedule.into())
+    }
+
+    /// Get the persisted depreciation schedule for an asset, if generated.
+    fn get_schedule(&self, id: String) -> PyResult<Option<DepreciationSchedule>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let schedule = commerce
+            .fixed_assets()
+            .get_schedule(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get schedule: {}", e)))?;
+        Ok(schedule.map(Into::into))
+    }
+
+    /// Post the next `periods` scheduled depreciation entries.
+    fn post_depreciation(&self, id: String, periods: u32) -> PyResult<FixedAsset> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let asset = commerce
+            .fixed_assets()
+            .post_depreciation(uuid, periods)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to post depreciation: {}", e)))?;
+        Ok(asset.into())
+    }
+}
+
+// ============================================================================
+// Revenue Recognition  (all monetary values cross as exact decimal strings)
+// ============================================================================
+
+/// Input for a performance obligation under a revenue contract.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct PerformanceObligationInput {
+    #[pyo3(get, set)]
+    description: String,
+    /// Exact decimal string; obligations must sum to the transaction price
+    #[pyo3(get, set)]
+    allocated_amount: String,
+    /// point_in_time, ratable_over_time, milestone
+    #[pyo3(get, set)]
+    recognition_method: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    standalone_selling_price: Option<String>,
+    /// ISO date (YYYY-MM-DD); required for ratable_over_time
+    #[pyo3(get, set)]
+    recognition_start: Option<String>,
+    /// ISO date (YYYY-MM-DD); required for ratable_over_time
+    #[pyo3(get, set)]
+    recognition_end: Option<String>,
+}
+
+#[pymethods]
+impl PerformanceObligationInput {
+    #[new]
+    #[pyo3(signature = (
+        description,
+        allocated_amount,
+        recognition_method,
+        standalone_selling_price=None,
+        recognition_start=None,
+        recognition_end=None,
+    ))]
+    fn new(
+        description: String,
+        allocated_amount: String,
+        recognition_method: String,
+        standalone_selling_price: Option<String>,
+        recognition_start: Option<String>,
+        recognition_end: Option<String>,
+    ) -> Self {
+        Self {
+            description,
+            allocated_amount,
+            recognition_method,
+            standalone_selling_price,
+            recognition_start,
+            recognition_end,
+        }
+    }
+}
+
+impl PerformanceObligationInput {
+    fn into_core(self) -> PyResult<stateset_core::CreatePerformanceObligation> {
+        Ok(stateset_core::CreatePerformanceObligation {
+            description: self.description,
+            standalone_selling_price: self
+                .standalone_selling_price
+                .as_deref()
+                .map(|s| parse_decimal_py(s, "standalone_selling_price"))
+                .transpose()?,
+            allocated_amount: parse_decimal_py(&self.allocated_amount, "allocated_amount")?,
+            recognition_method: parse_recognition_method_py(
+                &self.recognition_method,
+                self.recognition_start.as_deref(),
+                self.recognition_end.as_deref(),
+            )?,
+        })
+    }
+}
+
+/// A performance obligation. Money values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PerformanceObligation {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    contract_id: String,
+    #[pyo3(get)]
+    description: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    standalone_selling_price: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    allocated_amount: String,
+    /// point_in_time, ratable_over_time, milestone
+    #[pyo3(get)]
+    recognition_method: String,
+    /// ISO date (YYYY-MM-DD); set for ratable_over_time
+    #[pyo3(get)]
+    recognition_start: Option<String>,
+    /// ISO date (YYYY-MM-DD); set for ratable_over_time
+    #[pyo3(get)]
+    recognition_end: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    recognized_amount: String,
+    /// Exact decimal string: allocated_amount - recognized_amount
+    #[pyo3(get)]
+    deferred_amount: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::PerformanceObligation> for PerformanceObligation {
+    fn from(o: stateset_core::PerformanceObligation) -> Self {
+        let deferred = o.deferred_amount();
+        let (method, start, end) = recognition_method_parts(o.recognition_method);
+        Self {
+            id: o.id.to_string(),
+            contract_id: o.contract_id.to_string(),
+            description: o.description,
+            standalone_selling_price: o.standalone_selling_price.map(|d| d.to_string()),
+            allocated_amount: o.allocated_amount.to_string(),
+            recognition_method: method,
+            recognition_start: start,
+            recognition_end: end,
+            recognized_amount: o.recognized_amount.to_string(),
+            deferred_amount: deferred.to_string(),
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A revenue contract (ASC 606). Money values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct RevenueContract {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    contract_number: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    order_id: Option<String>,
+    #[pyo3(get)]
+    invoice_id: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    transaction_price: String,
+    #[pyo3(get)]
+    currency: String,
+    /// draft, active, completed, cancelled
+    #[pyo3(get)]
+    status: String,
+    /// ISO date (YYYY-MM-DD)
+    #[pyo3(get)]
+    effective_date: String,
+    #[pyo3(get)]
+    obligations: Vec<PerformanceObligation>,
+    /// Exact decimal string: total recognized across obligations
+    #[pyo3(get)]
+    total_recognized: String,
+    /// Exact decimal string: transaction_price - total_recognized
+    #[pyo3(get)]
+    deferred_balance: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::RevenueContract> for RevenueContract {
+    fn from(c: stateset_core::RevenueContract) -> Self {
+        let total_recognized = c.total_recognized();
+        let deferred_balance = c.deferred_balance();
+        Self {
+            id: c.id.to_string(),
+            contract_number: c.contract_number,
+            customer_id: c.customer_id.to_string(),
+            order_id: c.order_id.map(|id| id.to_string()),
+            invoice_id: c.invoice_id.map(|id| id.to_string()),
+            transaction_price: c.transaction_price.to_string(),
+            currency: c.currency.to_string(),
+            status: format!("{}", c.status),
+            effective_date: c.effective_date.to_string(),
+            obligations: c.obligations.into_iter().map(Into::into).collect(),
+            total_recognized: total_recognized.to_string(),
+            deferred_balance: deferred_balance.to_string(),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// One entry in a revenue recognition schedule.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct RevenueScheduleEntry {
+    #[pyo3(get)]
+    period: u32,
+    /// ISO date (YYYY-MM-DD): first day of the entry's month
+    #[pyo3(get)]
+    period_start: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount: String,
+    /// deferred or recognized
+    #[pyo3(get)]
+    status: String,
+}
+
+impl From<stateset_core::RevenueScheduleEntry> for RevenueScheduleEntry {
+    fn from(e: stateset_core::RevenueScheduleEntry) -> Self {
+        Self {
+            period: e.period,
+            period_start: e.period_start.to_string(),
+            amount: e.amount.to_string(),
+            status: format!("{}", e.status),
+        }
+    }
+}
+
+/// A revenue recognition schedule for an obligation.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct RevenueSchedule {
+    #[pyo3(get)]
+    obligation_id: String,
+    /// point_in_time, ratable_over_time, milestone
+    #[pyo3(get)]
+    method: String,
+    /// ISO date (YYYY-MM-DD); set for ratable_over_time
+    #[pyo3(get)]
+    recognition_start: Option<String>,
+    /// ISO date (YYYY-MM-DD); set for ratable_over_time
+    #[pyo3(get)]
+    recognition_end: Option<String>,
+    #[pyo3(get)]
+    entries: Vec<RevenueScheduleEntry>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    total_amount: String,
+    /// Exact decimal string: sum of recognized entries
+    #[pyo3(get)]
+    recognized_total: String,
+    /// Exact decimal string: sum of deferred entries
+    #[pyo3(get)]
+    deferred_total: String,
+}
+
+impl From<stateset_core::RevenueSchedule> for RevenueSchedule {
+    fn from(s: stateset_core::RevenueSchedule) -> Self {
+        let recognized_total = s.recognized_total();
+        let deferred_total = s.deferred_total();
+        let (method, start, end) = recognition_method_parts(s.method);
+        Self {
+            obligation_id: s.obligation_id.to_string(),
+            method,
+            recognition_start: start,
+            recognition_end: end,
+            entries: s.entries.into_iter().map(Into::into).collect(),
+            total_amount: s.total_amount.to_string(),
+            recognized_total: recognized_total.to_string(),
+            deferred_total: deferred_total.to_string(),
+        }
+    }
+}
+
+/// Revenue recognition (ASC 606) operations. Money is exchanged as exact
+/// decimal strings; dates as ISO strings; enums as snake_case strings.
+#[pyclass]
+pub struct RevenueRecognition {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl RevenueRecognition {
+    /// Whether the revenue-recognition backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.revenue_recognition().is_supported())
+    }
+
+    /// Create a revenue contract with its performance obligations.
+    #[pyo3(signature = (
+        customer_id,
+        transaction_price,
+        effective_date,
+        obligations,
+        contract_number=None,
+        order_id=None,
+        invoice_id=None,
+        currency=None,
+    ))]
+    fn create_contract(
+        &self,
+        customer_id: String,
+        transaction_price: String,
+        effective_date: String,
+        obligations: Vec<PerformanceObligationInput>,
+        contract_number: Option<String>,
+        order_id: Option<String>,
+        invoice_id: Option<String>,
+        currency: Option<String>,
+    ) -> PyResult<RevenueContract> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let customer_id: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let currency = currency
+            .map(|s| {
+                s.parse::<CurrencyCode>()
+                    .map_err(|_| PyValueError::new_err("Invalid currency code"))
+            })
+            .transpose()?;
+        let obligations = obligations
+            .into_iter()
+            .map(PerformanceObligationInput::into_core)
+            .collect::<PyResult<Vec<_>>>()?;
+        let contract = commerce
+            .revenue_recognition()
+            .create_contract(stateset_core::CreateRevenueContract {
+                contract_number,
+                customer_id,
+                order_id: parse_optional_uuid_py(order_id, "order_id")?,
+                invoice_id: parse_optional_uuid_py(invoice_id, "invoice_id")?,
+                transaction_price: parse_decimal_py(&transaction_price, "transaction_price")?,
+                currency,
+                effective_date: parse_iso_date_py(&effective_date, "effective_date")?,
+                obligations,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create revenue contract: {}", e))
+            })?;
+        Ok(contract.into())
+    }
+
+    /// Get a revenue contract (with obligations) by ID.
+    fn get_contract(&self, id: String) -> PyResult<Option<RevenueContract>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let contract = commerce.revenue_recognition().get_contract(uuid).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get revenue contract: {}", e))
+        })?;
+        Ok(contract.map(Into::into))
+    }
+
+    /// List revenue contracts matching the filter.
+    #[pyo3(signature = (
+        customer_id=None,
+        order_id=None,
+        invoice_id=None,
+        status=None,
+        effective_from=None,
+        effective_to=None,
+        search=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list_contracts(
+        &self,
+        customer_id: Option<String>,
+        order_id: Option<String>,
+        invoice_id: Option<String>,
+        status: Option<String>,
+        effective_from: Option<String>,
+        effective_to: Option<String>,
+        search: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<RevenueContract>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::RevenueContractFilter {
+            customer_id: parse_optional_uuid_py(customer_id, "customer_id")?,
+            order_id: parse_optional_uuid_py(order_id, "order_id")?,
+            invoice_id: parse_optional_uuid_py(invoice_id, "invoice_id")?,
+            status: status
+                .map(|s| {
+                    s.parse::<stateset_core::RevenueContractStatus>()
+                        .map_err(|_| PyValueError::new_err("Invalid revenue contract status"))
+                })
+                .transpose()?,
+            effective_from: effective_from
+                .as_deref()
+                .map(|s| parse_iso_date_py(s, "effective_from"))
+                .transpose()?,
+            effective_to: effective_to
+                .as_deref()
+                .map(|s| parse_iso_date_py(s, "effective_to"))
+                .transpose()?,
+            search,
+            limit,
+            offset,
+        };
+        let contracts = commerce.revenue_recognition().list_contracts(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list revenue contracts: {}", e))
+        })?;
+        Ok(contracts.into_iter().map(Into::into).collect())
+    }
+
+    /// Update a revenue contract (status transitions are guarded).
+    #[pyo3(signature = (id, order_id=None, invoice_id=None, status=None, effective_date=None))]
+    fn update_contract(
+        &self,
+        id: String,
+        order_id: Option<String>,
+        invoice_id: Option<String>,
+        status: Option<String>,
+        effective_date: Option<String>,
+    ) -> PyResult<RevenueContract> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let status = status
+            .map(|s| {
+                s.parse::<stateset_core::RevenueContractStatus>()
+                    .map_err(|_| PyValueError::new_err("Invalid revenue contract status"))
+            })
+            .transpose()?;
+        let contract = commerce
+            .revenue_recognition()
+            .update_contract(
+                uuid,
+                stateset_core::UpdateRevenueContract {
+                    order_id: parse_optional_uuid_py(order_id, "order_id")?,
+                    invoice_id: parse_optional_uuid_py(invoice_id, "invoice_id")?,
+                    status,
+                    effective_date: effective_date
+                        .as_deref()
+                        .map(|s| parse_iso_date_py(s, "effective_date"))
+                        .transpose()?,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update revenue contract: {}", e))
+            })?;
+        Ok(contract.into())
+    }
+
+    /// List the performance obligations under a contract.
+    fn list_obligations(&self, contract_id: String) -> PyResult<Vec<PerformanceObligation>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            contract_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let obligations = commerce
+            .revenue_recognition()
+            .list_obligations(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list obligations: {}", e)))?;
+        Ok(obligations.into_iter().map(Into::into).collect())
+    }
+
+    /// Generate and persist the recognition schedule for an obligation.
+    fn generate_schedule(&self, obligation_id: String) -> PyResult<RevenueSchedule> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            obligation_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let schedule = commerce
+            .revenue_recognition()
+            .generate_schedule(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to generate schedule: {}", e)))?;
+        Ok(schedule.into())
+    }
+
+    /// Get the persisted recognition schedule for an obligation, if generated.
+    fn get_schedule(&self, obligation_id: String) -> PyResult<Option<RevenueSchedule>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            obligation_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let schedule = commerce
+            .revenue_recognition()
+            .get_schedule(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get schedule: {}", e)))?;
+        Ok(schedule.map(Into::into))
+    }
+
+    /// Recognize deferred entries with a period start on or before `through`
+    /// (ISO date, YYYY-MM-DD).
+    fn recognize(&self, obligation_id: String, through: String) -> PyResult<RevenueSchedule> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            obligation_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let through = parse_iso_date_py(&through, "through")?;
+        let schedule = commerce
+            .revenue_recognition()
+            .recognize_period(uuid, through)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to recognize revenue: {}", e)))?;
+        Ok(schedule.into())
+    }
+}
+
+// ============================================================================
+// Cycle Counts  (quantities cross as exact decimal strings)
+// ============================================================================
+
+/// Input for an expected cycle count line.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct CycleCountLineInput {
+    #[pyo3(get, set)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    expected_quantity: String,
+    #[pyo3(get, set)]
+    lot_id: Option<String>,
+}
+
+#[pymethods]
+impl CycleCountLineInput {
+    #[new]
+    #[pyo3(signature = (sku, expected_quantity, lot_id=None))]
+    fn new(sku: String, expected_quantity: String, lot_id: Option<String>) -> Self {
+        Self { sku, expected_quantity, lot_id }
+    }
+}
+
+/// Input for recording a physical count against a line.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct RecordCycleCountLineInput {
+    #[pyo3(get, set)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    counted_quantity: String,
+    #[pyo3(get, set)]
+    lot_id: Option<String>,
+}
+
+#[pymethods]
+impl RecordCycleCountLineInput {
+    #[new]
+    #[pyo3(signature = (sku, counted_quantity, lot_id=None))]
+    fn new(sku: String, counted_quantity: String, lot_id: Option<String>) -> Self {
+        Self { sku, counted_quantity, lot_id }
+    }
+}
+
+/// One line of a cycle count. Quantities are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct CycleCountLine {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    cycle_count_id: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    lot_id: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    expected_quantity: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    counted_quantity: Option<String>,
+    /// Exact decimal string: counted_quantity - expected_quantity
+    #[pyo3(get)]
+    variance: Option<String>,
+}
+
+impl From<stateset_core::CycleCountLine> for CycleCountLine {
+    fn from(l: stateset_core::CycleCountLine) -> Self {
+        Self {
+            id: l.id.to_string(),
+            cycle_count_id: l.cycle_count_id.to_string(),
+            sku: l.sku,
+            lot_id: l.lot_id.map(|id| id.to_string()),
+            expected_quantity: l.expected_quantity.to_string(),
+            counted_quantity: l.counted_quantity.map(|d| d.to_string()),
+            variance: l.variance.map(|d| d.to_string()),
+        }
+    }
+}
+
+/// A cycle count with its lines.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct CycleCount {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    warehouse_id: i32,
+    #[pyo3(get)]
+    location_id: Option<i32>,
+    /// draft, in_progress, completed, cancelled
+    #[pyo3(get)]
+    status: String,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    scheduled_date: Option<String>,
+    #[pyo3(get)]
+    counted_by: Option<String>,
+    #[pyo3(get)]
+    lines: Vec<CycleCountLine>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+    #[pyo3(get)]
+    completed_at: Option<String>,
+}
+
+impl From<stateset_core::CycleCount> for CycleCount {
+    fn from(c: stateset_core::CycleCount) -> Self {
+        Self {
+            id: c.id.to_string(),
+            warehouse_id: c.warehouse_id,
+            location_id: c.location_id,
+            status: format!("{}", c.status),
+            scheduled_date: c.scheduled_date.map(|d| d.to_rfc3339()),
+            counted_by: c.counted_by,
+            lines: c.lines.into_iter().map(Into::into).collect(),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+            completed_at: c.completed_at.map(|d| d.to_rfc3339()),
+        }
+    }
+}
+
+/// Cycle count operations. Quantities are exchanged as exact decimal
+/// strings; enums as snake_case strings; timestamps as RFC 3339 strings.
+#[pyclass]
+pub struct CycleCounts {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl CycleCounts {
+    /// Create a cycle count (draft) with its expected lines.
+    #[pyo3(signature = (warehouse_id, lines, location_id=None, scheduled_date=None, counted_by=None))]
+    fn create(
+        &self,
+        warehouse_id: i32,
+        lines: Vec<CycleCountLineInput>,
+        location_id: Option<i32>,
+        scheduled_date: Option<String>,
+        counted_by: Option<String>,
+    ) -> PyResult<CycleCount> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let scheduled_date = match scheduled_date.as_deref() {
+            Some(s) => Some(
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(|_| {
+                        PyValueError::new_err("Invalid scheduled_date RFC 3339 timestamp")
+                    })?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+        let lines = lines
+            .into_iter()
+            .map(|l| -> PyResult<stateset_core::CreateCycleCountLine> {
+                Ok(stateset_core::CreateCycleCountLine {
+                    sku: l.sku,
+                    lot_id: parse_optional_uuid_py(l.lot_id, "lot_id")?,
+                    expected_quantity: parse_decimal_py(&l.expected_quantity, "expected_quantity")?,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let count = commerce
+            .warehouse()
+            .create_cycle_count(stateset_core::CreateCycleCount {
+                warehouse_id,
+                location_id,
+                scheduled_date,
+                counted_by,
+                lines,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create cycle count: {}", e)))?;
+        Ok(count.into())
+    }
+
+    /// Get a cycle count (with lines) by ID.
+    fn get(&self, id: String) -> PyResult<Option<CycleCount>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let count = commerce
+            .warehouse()
+            .get_cycle_count(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get cycle count: {}", e)))?;
+        Ok(count.map(Into::into))
+    }
+
+    /// List cycle counts matching the filter.
+    #[pyo3(signature = (warehouse_id=None, location_id=None, status=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        warehouse_id: Option<i32>,
+        location_id: Option<i32>,
+        status: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<CycleCount>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let status = status
+            .map(|s| {
+                s.parse::<stateset_core::CycleCountStatus>()
+                    .map_err(|_| PyValueError::new_err("Invalid cycle count status"))
+            })
+            .transpose()?;
+        let counts = commerce
+            .warehouse()
+            .list_cycle_counts(stateset_core::CycleCountFilter {
+                warehouse_id,
+                location_id,
+                status,
+                limit,
+                offset,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list cycle counts: {}", e)))?;
+        Ok(counts.into_iter().map(Into::into).collect())
+    }
+
+    /// Start a draft cycle count (draft -> in_progress).
+    fn start(&self, id: String) -> PyResult<CycleCount> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let count = commerce
+            .warehouse()
+            .start_cycle_count(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to start cycle count: {}", e)))?;
+        Ok(count.into())
+    }
+
+    /// Record physical counts against an in-progress cycle count.
+    fn record_counts(
+        &self,
+        id: String,
+        counts: Vec<RecordCycleCountLineInput>,
+    ) -> PyResult<CycleCount> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let counts = counts
+            .into_iter()
+            .map(|c| -> PyResult<stateset_core::RecordCycleCountLine> {
+                Ok(stateset_core::RecordCycleCountLine {
+                    sku: c.sku,
+                    lot_id: parse_optional_uuid_py(c.lot_id, "lot_id")?,
+                    counted_quantity: parse_decimal_py(&c.counted_quantity, "counted_quantity")?,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let count = commerce.warehouse().record_cycle_counts(uuid, counts).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to record cycle counts: {}", e))
+        })?;
+        Ok(count.into())
+    }
+
+    /// Complete an in-progress cycle count, applying variance adjustments.
+    fn complete(&self, id: String) -> PyResult<CycleCount> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let count = commerce.warehouse().complete_cycle_count(uuid).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to complete cycle count: {}", e))
+        })?;
+        Ok(count.into())
+    }
+
+    /// Cancel a draft or in-progress cycle count. No adjustments are applied.
+    fn cancel(&self, id: String) -> PyResult<CycleCount> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let count = commerce
+            .warehouse()
+            .cancel_cycle_count(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to cancel cycle count: {}", e)))?;
+        Ok(count.into())
+    }
+}
+
+// ============================================================================
+// Three-Way Match (Accounts Payable)
+// ============================================================================
+
+/// One line of a three-way match. Quantities and costs are decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ThreeWayMatchLine {
+    #[pyo3(get)]
+    po_line_id: Option<String>,
+    #[pyo3(get)]
+    bill_item_id: String,
+    #[pyo3(get)]
+    description: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    ordered_quantity: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    ordered_unit_cost: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    received_quantity: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    billed_quantity: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    billed_unit_cost: String,
+    /// Exact decimal string: billed_quantity - received_quantity
+    #[pyo3(get)]
+    quantity_variance: String,
+    /// Exact decimal string: billed_unit_cost - ordered_unit_cost
+    #[pyo3(get)]
+    price_variance: String,
+    #[pyo3(get)]
+    matched: bool,
+    #[pyo3(get)]
+    issues: Vec<String>,
+}
+
+impl From<stateset_core::ThreeWayMatchLine> for ThreeWayMatchLine {
+    fn from(l: stateset_core::ThreeWayMatchLine) -> Self {
+        Self {
+            po_line_id: l.po_line_id.map(|id| id.to_string()),
+            bill_item_id: l.bill_item_id.to_string(),
+            description: l.description,
+            ordered_quantity: l.ordered_quantity.map(|d| d.to_string()),
+            ordered_unit_cost: l.ordered_unit_cost.map(|d| d.to_string()),
+            received_quantity: l.received_quantity.to_string(),
+            billed_quantity: l.billed_quantity.to_string(),
+            billed_unit_cost: l.billed_unit_cost.to_string(),
+            quantity_variance: l.quantity_variance.to_string(),
+            price_variance: l.price_variance.to_string(),
+            matched: l.matched,
+            issues: l.issues,
+        }
+    }
+}
+
+/// Result of a three-way match run.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ThreeWayMatchResult {
+    /// Overall status: not_required, pending, matched, variance
+    #[pyo3(get)]
+    match_status: String,
+    /// Number of variance lines (set when match_status is "variance")
+    #[pyo3(get)]
+    variance_line_count: Option<u32>,
+    /// Tolerance applied, as an exact decimal string percentage (e.g. "5")
+    #[pyo3(get)]
+    tolerance_percent: String,
+    #[pyo3(get)]
+    lines: Vec<ThreeWayMatchLine>,
+}
+
+impl From<stateset_core::ThreeWayMatchResult> for ThreeWayMatchResult {
+    fn from(r: stateset_core::ThreeWayMatchResult) -> Self {
+        let (match_status, variance_line_count) = match r.match_status {
+            stateset_core::MatchStatus::NotRequired => ("not_required".to_string(), None),
+            stateset_core::MatchStatus::Pending => ("pending".to_string(), None),
+            stateset_core::MatchStatus::Matched => ("matched".to_string(), None),
+            stateset_core::MatchStatus::Variance { variance_line_count } => {
+                ("variance".to_string(), Some(variance_line_count as u32))
+            }
+            _ => ("unknown".to_string(), None),
+        };
+        Self {
+            match_status,
+            variance_line_count,
+            tolerance_percent: r.tolerance_percent.to_string(),
+            lines: r.lines.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+// ============================================================================
+// General Ledger: periods, FX revaluation, month-end close
+// ============================================================================
+
+/// An accounting period.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct GlPeriod {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    period_name: String,
+    #[pyo3(get)]
+    fiscal_year: i32,
+    #[pyo3(get)]
+    period_number: i32,
+    /// ISO date (YYYY-MM-DD)
+    #[pyo3(get)]
+    start_date: String,
+    /// ISO date (YYYY-MM-DD)
+    #[pyo3(get)]
+    end_date: String,
+    /// One of `future`, `open`, `closed`, `locked`
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    closed_by: Option<String>,
+}
+
+impl From<stateset_core::GlPeriod> for GlPeriod {
+    fn from(p: stateset_core::GlPeriod) -> Self {
+        Self {
+            id: p.id.to_string(),
+            period_name: p.period_name,
+            fiscal_year: p.fiscal_year,
+            period_number: p.period_number,
+            start_date: p.start_date.to_string(),
+            end_date: p.end_date.to_string(),
+            status: p.status.to_string(),
+            closed_by: p.closed_by,
+        }
+    }
+}
+
+/// One revalued account line. Money values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct RevaluationLine {
+    #[pyo3(get)]
+    account_id: String,
+    #[pyo3(get)]
+    account_number: String,
+    #[pyo3(get)]
+    account_name: String,
+    #[pyo3(get)]
+    currency: String,
+    /// Side that increases this account: debit or credit
+    #[pyo3(get)]
+    normal_balance: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    foreign_balance: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    carrying_value: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    rate: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    revalued_value: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    adjustment: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    unrealized_gain_loss: String,
+}
+
+impl From<stateset_core::RevaluationLine> for RevaluationLine {
+    fn from(l: stateset_core::RevaluationLine) -> Self {
+        Self {
+            account_id: l.account_id.to_string(),
+            account_number: l.account_number,
+            account_name: l.account_name,
+            currency: l.currency.to_string(),
+            normal_balance: match l.normal_balance {
+                stateset_core::BalanceSide::Debit => "debit".to_string(),
+                stateset_core::BalanceSide::Credit => "credit".to_string(),
+                _ => "unknown".to_string(),
+            },
+            foreign_balance: l.foreign_balance.to_string(),
+            carrying_value: l.carrying_value.to_string(),
+            rate: l.rate.to_string(),
+            revalued_value: l.revalued_value.to_string(),
+            adjustment: l.adjustment.to_string(),
+            unrealized_gain_loss: l.unrealized_gain_loss.to_string(),
+        }
+    }
+}
+
+/// Result of an FX revaluation run.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct RevaluationResult {
+    /// ISO date (YYYY-MM-DD)
+    #[pyo3(get)]
+    as_of_date: String,
+    #[pyo3(get)]
+    base_currency: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    total_unrealized_gain_loss: String,
+    #[pyo3(get)]
+    lines: Vec<RevaluationLine>,
+    /// Balanced adjusting entry; None when no adjustment was required.
+    #[pyo3(get)]
+    journal_entry: Option<JournalEntry>,
+}
+
+impl From<stateset_core::RevaluationResult> for RevaluationResult {
+    fn from(r: stateset_core::RevaluationResult) -> Self {
+        Self {
+            as_of_date: r.as_of_date.to_string(),
+            base_currency: r.base_currency.to_string(),
+            total_unrealized_gain_loss: r.total_unrealized_gain_loss.to_string(),
+            lines: r.lines.into_iter().map(Into::into).collect(),
+            journal_entry: r.journal_entry.map(Into::into),
+        }
+    }
+}
+
+/// One step of a month-end close run.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct CloseMonthStep {
+    /// One of `executed`, `skipped`, `dry_run`
+    #[pyo3(get)]
+    status: String,
+    /// Entries posted (or that would be posted in a dry run)
+    #[pyo3(get)]
+    entry_count: i64,
+    /// Exact decimal string
+    #[pyo3(get)]
+    total_amount: String,
+    /// Per-item failures that did not abort the close
+    #[pyo3(get)]
+    warnings: Vec<String>,
+}
+
+impl From<stateset_core::CloseMonthStepReport> for CloseMonthStep {
+    fn from(step: stateset_core::CloseMonthStepReport) -> Self {
+        Self {
+            status: step.status.to_string(),
+            entry_count: i64::try_from(step.entry_count).unwrap_or(i64::MAX),
+            total_amount: step.total_amount.to_string(),
+            warnings: step.warnings,
+        }
+    }
+}
+
+/// Report from a month-end close run.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct CloseMonthReport {
+    #[pyo3(get)]
+    period_id: String,
+    #[pyo3(get)]
+    period_name: String,
+    #[pyo3(get)]
+    dry_run: bool,
+    /// Step 1: scheduled depreciation due through period end
+    #[pyo3(get)]
+    depreciation: CloseMonthStep,
+    /// Step 2: deferred revenue recognized through period end
+    #[pyo3(get)]
+    revenue_recognition: CloseMonthStep,
+    /// Step 3: FX revaluation as of period end
+    #[pyo3(get)]
+    fx_revaluation: CloseMonthStep,
+    /// Step 4: closing entries + close period
+    #[pyo3(get)]
+    period_close: CloseMonthStep,
+    /// Posted closing entry; None for dry runs or skipped closes
+    #[pyo3(get)]
+    closing_entry: Option<JournalEntry>,
+    /// Period status after the run (`closed` after a real close)
+    #[pyo3(get)]
+    period_status: String,
+}
+
+impl From<stateset_core::CloseMonthReport> for CloseMonthReport {
+    fn from(r: stateset_core::CloseMonthReport) -> Self {
+        Self {
+            period_id: r.period_id.to_string(),
+            period_name: r.period_name,
+            dry_run: r.dry_run,
+            depreciation: r.depreciation.into(),
+            revenue_recognition: r.revenue_recognition.into(),
+            fx_revaluation: r.fx_revaluation.into(),
+            period_close: r.period_close.into(),
+            closing_entry: r.closing_entry.map(Into::into),
+            period_status: r.period_status.to_string(),
+        }
     }
 }

@@ -61,6 +61,31 @@ class Commerce:
         ...
 
     @property
+    def accounts_payable(self) -> AccountsPayableApi:
+        """Get the accounts payable API."""
+        ...
+
+    @property
+    def general_ledger(self) -> GeneralLedgerApi:
+        """Get the general ledger API."""
+        ...
+
+    @property
+    def fixed_assets(self) -> FixedAssets:
+        """Get the fixed assets API."""
+        ...
+
+    @property
+    def revenue_recognition(self) -> RevenueRecognition:
+        """Get the revenue recognition (ASC 606) API."""
+        ...
+
+    @property
+    def cycle_counts(self) -> CycleCounts:
+        """Get the cycle counts API."""
+        ...
+
+    @property
     def loyalty(self) -> Loyalty:
         """Get the loyalty API."""
         ...
@@ -2415,3 +2440,602 @@ class VectorSearch:
     def clear(self, entity_type: str) -> int: ...
 
     def clear_all(self) -> int: ...
+
+# ============================================================================
+# Accounts Payable
+# ============================================================================
+
+class Bill:
+    id: str
+    bill_number: str
+    supplier_id: str
+    total_amount: float
+    amount_paid: float
+    amount_due: float
+    status: str
+    due_date: str
+
+class ApAgingSummary:
+    current: float
+    days_1_30: float
+    days_31_60: float
+    days_61_90: float
+    days_over_90: float
+    total: float
+
+class ThreeWayMatchLine:
+    """One line of a three-way match. Quantities/costs are decimal strings."""
+
+    po_line_id: Optional[str]
+    bill_item_id: str
+    description: str
+    ordered_quantity: Optional[str]
+    ordered_unit_cost: Optional[str]
+    received_quantity: str
+    billed_quantity: str
+    billed_unit_cost: str
+    quantity_variance: str
+    price_variance: str
+    matched: bool
+    issues: List[str]
+
+class ThreeWayMatchResult:
+    """Result of a three-way match run."""
+
+    match_status: str
+    variance_line_count: Optional[int]
+    tolerance_percent: str
+    lines: List[ThreeWayMatchLine]
+
+class AccountsPayableApi:
+    """Accounts payable operations."""
+
+    def create_bill(self, supplier_id: str, due_date: str) -> Bill: ...
+
+    def get_bill(self, id: str) -> Optional[Bill]: ...
+
+    def list_bills(self) -> List[Bill]: ...
+
+    def approve_bill(self, id: str) -> Bill: ...
+
+    def pay_bill(self, id: str, amount: float, payment_method: Optional[str] = None) -> Bill: ...
+
+    def get_aging_summary(self) -> ApAgingSummary: ...
+
+    def get_overdue_bills(self) -> List[Bill]: ...
+
+    def three_way_match(
+        self, bill_id: str, tolerance_percent: Optional[str] = None
+    ) -> ThreeWayMatchResult:
+        """Three-way match a bill against its purchase order and receipts.
+
+        `tolerance_percent` is an exact decimal string (e.g. "5" for 5%);
+        omit it for exact matching.
+        """
+        ...
+
+# ============================================================================
+# General Ledger
+# ============================================================================
+
+class GlAccount:
+    id: str
+    account_number: str
+    name: str
+    account_type: str
+    current_balance: float
+    status: str
+
+class JournalEntry:
+    id: str
+    entry_number: str
+    description: str
+    status: str
+    entry_date: str
+
+class TrialBalance:
+    total_debits: float
+    total_credits: float
+    is_balanced: bool
+
+class GlPeriod:
+    """An accounting period. Dates are ISO strings (YYYY-MM-DD)."""
+
+    id: str
+    period_name: str
+    fiscal_year: int
+    period_number: int
+    start_date: str
+    end_date: str
+    status: str
+    closed_by: Optional[str]
+
+class RevaluationLine:
+    """One revalued account line. Money values are exact decimal strings."""
+
+    account_id: str
+    account_number: str
+    account_name: str
+    currency: str
+    normal_balance: str
+    foreign_balance: str
+    carrying_value: str
+    rate: str
+    revalued_value: str
+    adjustment: str
+    unrealized_gain_loss: str
+
+class RevaluationResult:
+    """Result of an FX revaluation run."""
+
+    as_of_date: str
+    base_currency: str
+    total_unrealized_gain_loss: str
+    lines: List[RevaluationLine]
+    journal_entry: Optional[JournalEntry]
+
+class CloseMonthStep:
+    """One step of a month-end close run."""
+
+    status: str
+    entry_count: int
+    total_amount: str
+    warnings: List[str]
+
+class CloseMonthReport:
+    """Report from a month-end close run."""
+
+    period_id: str
+    period_name: str
+    dry_run: bool
+    depreciation: CloseMonthStep
+    revenue_recognition: CloseMonthStep
+    fx_revaluation: CloseMonthStep
+    period_close: CloseMonthStep
+    closing_entry: Optional[JournalEntry]
+    period_status: str
+
+class GeneralLedgerApi:
+    """General ledger operations."""
+
+    def create_account(
+        self,
+        account_number: str,
+        name: str,
+        account_type: str,
+        description: Optional[str] = None,
+    ) -> GlAccount: ...
+
+    def get_account(self, id: str) -> Optional[GlAccount]: ...
+
+    def get_account_by_number(self, account_number: str) -> Optional[GlAccount]: ...
+
+    def list_accounts(self) -> List[GlAccount]: ...
+
+    def get_journal_entry(self, id: str) -> Optional[JournalEntry]: ...
+
+    def post_journal_entry(self, id: str, posted_by: str) -> JournalEntry: ...
+
+    def get_trial_balance(self, as_of_date: Optional[str] = None) -> TrialBalance: ...
+
+    def initialize_chart_of_accounts(self) -> List[GlAccount]:
+        """Initialize the standard chart of accounts."""
+        ...
+
+    def create_period(
+        self,
+        period_name: str,
+        fiscal_year: int,
+        period_number: int,
+        start_date: str,
+        end_date: str,
+    ) -> GlPeriod:
+        """Create an accounting period. Dates are ISO strings (YYYY-MM-DD)."""
+        ...
+
+    def open_period(self, id: str) -> GlPeriod:
+        """Open a period (transition from future to open)."""
+        ...
+
+    def revalue(
+        self, as_of_date: str, base_currency: Optional[str] = None
+    ) -> RevaluationResult:
+        """Revalue foreign-currency account balances at the as-of rate.
+
+        `as_of_date` is an ISO date (YYYY-MM-DD); `base_currency` defaults
+        to the store's configured base currency.
+        """
+        ...
+
+    def close_month(
+        self,
+        period_id: str,
+        dry_run: Optional[bool] = None,
+        skip_depreciation: Optional[bool] = None,
+        skip_revenue_recognition: Optional[bool] = None,
+        skip_fx_revaluation: Optional[bool] = None,
+        skip_period_close: Optional[bool] = None,
+        closed_by: Optional[str] = None,
+    ) -> CloseMonthReport:
+        """Close the month: depreciation, revenue recognition, FX
+        revaluation, then the period close. `dry_run=True` computes
+        per-step counts and amounts without writing anything.
+        """
+        ...
+
+# ============================================================================
+# Fixed Assets
+# ============================================================================
+
+class AssetDisposal:
+    """A recorded asset disposal. Money values are exact decimal strings."""
+
+    disposal_date: str
+    proceeds: str
+    book_value_at_disposal: str
+    gain_loss: str
+    notes: Optional[str]
+
+class FixedAsset:
+    """A fixed asset. Money values are exact decimal strings."""
+
+    id: str
+    asset_number: str
+    name: str
+    description: Optional[str]
+    category: str
+    acquisition_date: str
+    acquisition_cost: str
+    salvage_value: str
+    useful_life_months: int
+    depreciation_method: str
+    declining_balance_rate: Optional[str]
+    status: str
+    in_service_date: Optional[str]
+    location_id: Optional[str]
+    asset_account_id: Optional[str]
+    accumulated_depreciation_account_id: Optional[str]
+    depreciation_expense_account_id: Optional[str]
+    accumulated_depreciation: str
+    book_value: str
+    currency: str
+    disposal: Optional[AssetDisposal]
+    created_at: str
+    updated_at: str
+
+class DepreciationEntry:
+    """One period in a depreciation schedule."""
+
+    period: int
+    amount: str
+    accumulated: str
+    book_value: str
+    status: str
+
+class DepreciationSchedule:
+    """A depreciation schedule for a fixed asset."""
+
+    asset_id: str
+    method: str
+    declining_balance_rate: Optional[str]
+    entries: List[DepreciationEntry]
+    total_depreciation: str
+
+class FixedAssets:
+    """Fixed asset operations. Money is exchanged as exact decimal strings,
+    dates as ISO strings (YYYY-MM-DD), enums as snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        name: str,
+        category: str,
+        acquisition_date: str,
+        acquisition_cost: str,
+        salvage_value: str,
+        useful_life_months: int,
+        depreciation_method: str,
+        asset_number: Optional[str] = None,
+        description: Optional[str] = None,
+        declining_balance_rate: Optional[str] = None,
+        in_service_date: Optional[str] = None,
+        location_id: Optional[str] = None,
+        asset_account_id: Optional[str] = None,
+        accumulated_depreciation_account_id: Optional[str] = None,
+        depreciation_expense_account_id: Optional[str] = None,
+        currency: Optional[str] = None,
+    ) -> FixedAsset:
+        """Create a fixed asset (draft)."""
+        ...
+
+    def get(self, id: str) -> Optional[FixedAsset]: ...
+
+    def list(
+        self,
+        category: Optional[str] = None,
+        status: Optional[str] = None,
+        location_id: Optional[str] = None,
+        acquired_from: Optional[str] = None,
+        acquired_to: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[FixedAsset]: ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        category: Optional[str] = None,
+        salvage_value: Optional[str] = None,
+        useful_life_months: Optional[int] = None,
+        in_service_date: Optional[str] = None,
+        location_id: Optional[str] = None,
+        asset_account_id: Optional[str] = None,
+        accumulated_depreciation_account_id: Optional[str] = None,
+        depreciation_expense_account_id: Optional[str] = None,
+    ) -> FixedAsset: ...
+
+    def place_in_service(self, id: str, date: str) -> FixedAsset:
+        """Place a draft asset in service on the given ISO date."""
+        ...
+
+    def dispose(
+        self,
+        id: str,
+        proceeds: str,
+        date: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> FixedAsset:
+        """Dispose of an asset for the given proceeds (decimal string)."""
+        ...
+
+    def write_off(
+        self, id: str, date: Optional[str] = None, notes: Optional[str] = None
+    ) -> FixedAsset:
+        """Write off an asset (disposal with zero proceeds)."""
+        ...
+
+    def generate_schedule(self, id: str) -> DepreciationSchedule:
+        """Generate and persist the depreciation schedule for an asset."""
+        ...
+
+    def get_schedule(self, id: str) -> Optional[DepreciationSchedule]:
+        """Get the persisted depreciation schedule, if generated."""
+        ...
+
+    def post_depreciation(self, id: str, periods: int) -> FixedAsset:
+        """Post the next `periods` scheduled depreciation entries."""
+        ...
+
+# ============================================================================
+# Revenue Recognition (ASC 606)
+# ============================================================================
+
+class PerformanceObligationInput:
+    """Input for a performance obligation under a revenue contract."""
+
+    description: str
+    allocated_amount: str
+    recognition_method: str
+    standalone_selling_price: Optional[str]
+    recognition_start: Optional[str]
+    recognition_end: Optional[str]
+
+    def __init__(
+        self,
+        description: str,
+        allocated_amount: str,
+        recognition_method: str,
+        standalone_selling_price: Optional[str] = None,
+        recognition_start: Optional[str] = None,
+        recognition_end: Optional[str] = None,
+    ) -> None: ...
+
+class PerformanceObligation:
+    """A performance obligation. Money values are exact decimal strings."""
+
+    id: str
+    contract_id: str
+    description: str
+    standalone_selling_price: Optional[str]
+    allocated_amount: str
+    recognition_method: str
+    recognition_start: Optional[str]
+    recognition_end: Optional[str]
+    recognized_amount: str
+    deferred_amount: str
+    created_at: str
+    updated_at: str
+
+class RevenueContract:
+    """A revenue contract (ASC 606). Money values are decimal strings."""
+
+    id: str
+    contract_number: str
+    customer_id: str
+    order_id: Optional[str]
+    invoice_id: Optional[str]
+    transaction_price: str
+    currency: str
+    status: str
+    effective_date: str
+    obligations: List[PerformanceObligation]
+    total_recognized: str
+    deferred_balance: str
+    created_at: str
+    updated_at: str
+
+class RevenueScheduleEntry:
+    """One entry in a revenue recognition schedule."""
+
+    period: int
+    period_start: str
+    amount: str
+    status: str
+
+class RevenueSchedule:
+    """A revenue recognition schedule for an obligation."""
+
+    obligation_id: str
+    method: str
+    recognition_start: Optional[str]
+    recognition_end: Optional[str]
+    entries: List[RevenueScheduleEntry]
+    total_amount: str
+    recognized_total: str
+    deferred_total: str
+
+class RevenueRecognition:
+    """Revenue recognition (ASC 606) operations."""
+
+    def is_supported(self) -> bool: ...
+
+    def create_contract(
+        self,
+        customer_id: str,
+        transaction_price: str,
+        effective_date: str,
+        obligations: List[PerformanceObligationInput],
+        contract_number: Optional[str] = None,
+        order_id: Optional[str] = None,
+        invoice_id: Optional[str] = None,
+        currency: Optional[str] = None,
+    ) -> RevenueContract:
+        """Create a revenue contract with its performance obligations."""
+        ...
+
+    def get_contract(self, id: str) -> Optional[RevenueContract]: ...
+
+    def list_contracts(
+        self,
+        customer_id: Optional[str] = None,
+        order_id: Optional[str] = None,
+        invoice_id: Optional[str] = None,
+        status: Optional[str] = None,
+        effective_from: Optional[str] = None,
+        effective_to: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[RevenueContract]: ...
+
+    def update_contract(
+        self,
+        id: str,
+        order_id: Optional[str] = None,
+        invoice_id: Optional[str] = None,
+        status: Optional[str] = None,
+        effective_date: Optional[str] = None,
+    ) -> RevenueContract: ...
+
+    def list_obligations(self, contract_id: str) -> List[PerformanceObligation]: ...
+
+    def generate_schedule(self, obligation_id: str) -> RevenueSchedule:
+        """Generate and persist the recognition schedule for an obligation."""
+        ...
+
+    def get_schedule(self, obligation_id: str) -> Optional[RevenueSchedule]:
+        """Get the persisted recognition schedule, if generated."""
+        ...
+
+    def recognize(self, obligation_id: str, through: str) -> RevenueSchedule:
+        """Recognize deferred entries with a period start on or before
+        `through` (ISO date, YYYY-MM-DD)."""
+        ...
+
+# ============================================================================
+# Cycle Counts
+# ============================================================================
+
+class CycleCountLineInput:
+    """Input for an expected cycle count line."""
+
+    sku: str
+    expected_quantity: str
+    lot_id: Optional[str]
+
+    def __init__(
+        self, sku: str, expected_quantity: str, lot_id: Optional[str] = None
+    ) -> None: ...
+
+class RecordCycleCountLineInput:
+    """Input for recording a physical count against a line."""
+
+    sku: str
+    counted_quantity: str
+    lot_id: Optional[str]
+
+    def __init__(
+        self, sku: str, counted_quantity: str, lot_id: Optional[str] = None
+    ) -> None: ...
+
+class CycleCountLine:
+    """One line of a cycle count. Quantities are exact decimal strings."""
+
+    id: str
+    cycle_count_id: str
+    sku: str
+    lot_id: Optional[str]
+    expected_quantity: str
+    counted_quantity: Optional[str]
+    variance: Optional[str]
+
+class CycleCount:
+    """A cycle count with its lines."""
+
+    id: str
+    warehouse_id: int
+    location_id: Optional[int]
+    status: str
+    scheduled_date: Optional[str]
+    counted_by: Optional[str]
+    lines: List[CycleCountLine]
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str]
+
+class CycleCounts:
+    """Cycle count operations. Quantities are exact decimal strings."""
+
+    def create(
+        self,
+        warehouse_id: int,
+        lines: List[CycleCountLineInput],
+        location_id: Optional[int] = None,
+        scheduled_date: Optional[str] = None,
+        counted_by: Optional[str] = None,
+    ) -> CycleCount:
+        """Create a cycle count (draft) with its expected lines."""
+        ...
+
+    def get(self, id: str) -> Optional[CycleCount]: ...
+
+    def list(
+        self,
+        warehouse_id: Optional[int] = None,
+        location_id: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[CycleCount]: ...
+
+    def start(self, id: str) -> CycleCount:
+        """Start a draft cycle count (draft -> in_progress)."""
+        ...
+
+    def record_counts(
+        self, id: str, counts: List[RecordCycleCountLineInput]
+    ) -> CycleCount:
+        """Record physical counts against an in-progress cycle count."""
+        ...
+
+    def complete(self, id: str) -> CycleCount:
+        """Complete an in-progress cycle count, applying variances."""
+        ...
+
+    def cancel(self, id: str) -> CycleCount:
+        """Cancel a draft or in-progress cycle count."""
+        ...

@@ -6,6 +6,30 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-07-20
+
+### Added
+- **Python binding parity** for the new domains: `fixed_assets`,
+  `revenue_recognition`, `cycle_counts`, `accounts_payable.three_way_match`,
+  `general_ledger.revalue` / `close_month` (+ chart-of-accounts and
+  period helpers), fully typed in `__init__.pyi`; 21 new pytest tests.
+- **Burn-in test infrastructure**: property-based tests (proptest) over
+  depreciation/revenue schedule math, 3-way-match tolerance behavior,
+  and revaluation journal balance; a seeded 200-operation randomized
+  ledger simulation asserting the trial balance after every operation
+  and a balanced balance sheet after close.
+
+### Fixed
+- `generate_revenue_schedule` could emit a negative final entry (a
+  spurious revenue reversal) when per-period rounding rounded up;
+  periods are now capped at the remaining amount. Found by the new
+  non-negativity property.
+- `run_period_close` (both backends) failed on contra-normal
+  income-statement balances — e.g. a net FX gain on the expense-type
+  gain/loss account; closing lines are now sign-aware, and periods with
+  offsetting activity but zero net income now close instead of erroring.
+  Found by the ledger simulation.
+
 ## [1.11.0] - 2026-07-20
 
 ### Added

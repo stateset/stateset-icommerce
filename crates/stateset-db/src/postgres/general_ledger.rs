@@ -1695,7 +1695,10 @@ impl PgGeneralLedgerRepository {
         let income_statement =
             self.get_income_statement_async(period.start_date, period.end_date).await?;
 
-        if income_statement.net_income == Decimal::ZERO {
+        if income_statement.net_income == Decimal::ZERO
+            && income_statement.revenue_lines.iter().all(|l| l.amount == Decimal::ZERO)
+            && income_statement.expense_lines.iter().all(|l| l.amount == Decimal::ZERO)
+        {
             return Err(CommerceError::ValidationError("No net income to close".to_string()));
         }
 
@@ -1714,19 +1717,26 @@ impl PgGeneralLedgerRepository {
         let mut lines = Vec::new();
 
         for rev in income_statement.revenue_lines {
-            lines.push(CreateJournalEntryLine::debit(
-                rev.account_id,
-                rev.amount,
-                Some(format!("Close {} to Retained Earnings", rev.account_name)),
-            ));
+            // Revenue is credit-normal: positive balances close with a debit,
+            // contra-normal (negative) balances with a credit.
+            let memo = Some(format!("Close {} to Retained Earnings", rev.account_name));
+            if rev.amount > Decimal::ZERO {
+                lines.push(CreateJournalEntryLine::debit(rev.account_id, rev.amount, memo));
+            } else if rev.amount < Decimal::ZERO {
+                lines.push(CreateJournalEntryLine::credit(rev.account_id, rev.amount.abs(), memo));
+            }
         }
 
         for exp in income_statement.expense_lines {
-            lines.push(CreateJournalEntryLine::credit(
-                exp.account_id,
-                exp.amount,
-                Some(format!("Close {} to Retained Earnings", exp.account_name)),
-            ));
+            // Expenses are debit-normal: positive balances close with a
+            // credit, contra-normal balances (e.g. a net FX gain on an
+            // expense-type gain/loss account) with a debit.
+            let memo = Some(format!("Close {} to Retained Earnings", exp.account_name));
+            if exp.amount > Decimal::ZERO {
+                lines.push(CreateJournalEntryLine::credit(exp.account_id, exp.amount, memo));
+            } else if exp.amount < Decimal::ZERO {
+                lines.push(CreateJournalEntryLine::debit(exp.account_id, exp.amount.abs(), memo));
+            }
         }
 
         if income_statement.net_income > Decimal::ZERO {
@@ -1735,7 +1745,7 @@ impl PgGeneralLedgerRepository {
                 income_statement.net_income,
                 Some("Net income to Retained Earnings".to_string()),
             ));
-        } else {
+        } else if income_statement.net_income < Decimal::ZERO {
             lines.push(CreateJournalEntryLine::debit(
                 retained_earnings.id,
                 income_statement.net_income.abs(),
