@@ -94,6 +94,7 @@ const TOOL_MODULES = {
   'a2a-intelligence': namedLoader('./a2a-intelligence.js', 'a2aIntelligenceTools'),
   'agent-receipt': namedLoader('./agent-receipt.js', 'agentReceiptTools'),
   'fixed-assets': namedLoader('./fixed-assets.js', 'fixedAssetTools'),
+  maintenance: namedLoader('./maintenance.js', 'maintenanceTools'),
   'revenue-recognition': namedLoader('./revenue-recognition.js', 'revenueRecognitionTools'),
   'cycle-counts': namedLoader('./cycle-counts.js', 'cycleCountTools'),
   'edi-documents': namedLoader('./edi-documents.js', 'ediDocumentTools'),

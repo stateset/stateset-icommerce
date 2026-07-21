@@ -6,6 +6,45 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-07-21
+
+### Added
+- **Backup, restore, and portable export/import** — the recovery layer.
+  `maintenance().backup_to()` takes a consistent snapshot via SQLite
+  `VACUUM INTO` (safe under concurrent writers) and writes a sidecar
+  manifest recording schema version, migration count, engine version,
+  size, and a SHA-256 checksum that is verified after writing.
+  `restore_from()` verifies that checksum, refuses backups newer than
+  the running binary, refuses to overwrite a non-empty target without
+  an explicit flag, refuses to replace the database the instance
+  currently has open, and swaps atomically (temp file, fsync, rename).
+  `export_all()`/`import_all()` stream a versioned JSON envelope across
+  core commerce and finance domains, proven by an export → import →
+  re-export round-trip acceptance test. Exposed through the embedded
+  accessor, the Node binding, and five MCP tools, so an agent can back
+  up and restore the engine it carries.
+- **Admin Operations section**: purchasing (purchase orders,
+  suppliers), warehouse (warehouses, locations, cycle counts), and
+  manufacturing (work orders, quality inspections, NCRs) — 24 new
+  tests, admin suite at 937.
+- **Python binding parity**: all 16 domains the Node binding gained
+  earlier today (~5,900 lines); pytest 103 → 138.
+
+### Fixed
+- The SQLite migration-count test now derives its expectation from the
+  migration registry instead of a hardcoded number, which had gone
+  stale three times.
+
+### Known limitations
+- Import is content-preserving, not identity-preserving: repository
+  `create` methods mint new IDs, so foreign keys are remapped in
+  dependency order. Use a backup/restore for identity-preserving
+  disaster recovery.
+- Export covers core commerce and finance domains; returns, invoices,
+  payments, and bills are export-only (their state-machine history
+  cannot be replayed through a single `create`). Coverage is
+  documented in the module docs.
+
 ## [1.19.0] - 2026-07-21
 
 ### Added

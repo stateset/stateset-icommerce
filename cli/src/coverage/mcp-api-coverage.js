@@ -77,6 +77,7 @@ export const COMMERCE_GETTER_TO_MODULE = Object.freeze({
   generalLedger: 'general-ledger',
   cycleCounts: 'cycle-counts',
   fixedAssets: 'fixed-assets',
+  maintenance: 'maintenance',
   giftCards: 'gift-cards',
   loyalty: 'loyalty',
   revenueRecognition: 'revenue-recognition',

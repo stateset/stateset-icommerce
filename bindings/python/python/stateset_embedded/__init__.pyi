@@ -76,6 +76,86 @@ class Commerce:
         ...
 
     @property
+    def activity_logs(self) -> ActivityLogs:
+        """Get the activity logs API."""
+        ...
+
+    @property
+    def channels(self) -> Channels:
+        """Get the channels API."""
+        ...
+
+    @property
+    def companies(self) -> Companies:
+        """Get the companies API."""
+        ...
+
+    @property
+    def units_of_measure(self) -> UnitsOfMeasure:
+        """Get the units of measure API."""
+        ...
+
+    @property
+    def shipping_zones(self) -> ShippingZones:
+        """Get the shipping zones API."""
+        ...
+
+    @property
+    def stock_snapshots(self) -> StockSnapshots:
+        """Get the stock snapshots API."""
+        ...
+
+    @property
+    def print_stations(self) -> PrintStations:
+        """Get the print stations API."""
+        ...
+
+    @property
+    def integration_mappings(self) -> IntegrationMappings:
+        """Get the integration mappings API."""
+        ...
+
+    @property
+    def integration_field_mappings(self) -> IntegrationFieldMappings:
+        """Get the integration field mappings API."""
+        ...
+
+    @property
+    def payment_obligations(self) -> PaymentObligations:
+        """Get the payment obligations API."""
+        ...
+
+    @property
+    def purgatory(self) -> Purgatory:
+        """Get the purgatory API."""
+        ...
+
+    @property
+    def topology_snapshots(self) -> TopologySnapshots:
+        """Get the topology snapshots API."""
+        ...
+
+    @property
+    def vendor_returns(self) -> VendorReturns:
+        """Get the vendor returns API."""
+        ...
+
+    @property
+    def fraud(self) -> Fraud:
+        """Get the fraud API."""
+        ...
+
+    @property
+    def search_config(self) -> SearchConfigs:
+        """Get the search config API."""
+        ...
+
+    @property
+    def erc8004(self) -> Erc8004:
+        """Get the erc8004 API."""
+        ...
+
+    @property
     def revenue_recognition(self) -> RevenueRecognition:
         """Get the revenue recognition (ASC 606) API."""
         ...
@@ -3646,3 +3726,1653 @@ class InboundShipments:
         ...
 
     def cancel(self, id: str) -> InboundShipment: ...
+
+
+# ============================================================================
+# activity_logs
+# ============================================================================
+
+class ActivityLogEntry:
+    """A single append-only activity log entry for a subject record."""
+
+    @property
+    def id(self) -> str: ...
+    @property
+    def subject_type(self) -> str: ...
+    @property
+    def subject_id(self) -> str: ...
+    @property
+    def action(self) -> str: ...
+    @property
+    def summary(self) -> str: ...
+    @property
+    def actor_kind(self) -> str:
+        """user, system, integration, agent"""
+    @property
+    def actor(self) -> Optional[str]: ...
+    @property
+    def metadata(self) -> str:
+        """Metadata as a JSON string"""
+    @property
+    def created_at(self) -> str:
+        """RFC3339 timestamp"""
+
+class ActivityLogs:
+    """Activity log operations. Metadata crosses as a JSON string, enums as
+    snake_case strings, timestamps as RFC3339 strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def record(
+        self,
+        subject_type: str,
+        subject_id: str,
+        action: str,
+        summary: str,
+        actor_kind: Optional[str] = None,
+        actor: Optional[str] = None,
+        metadata: Optional[str] = None,
+    ) -> ActivityLogEntry:
+        """Record an activity log entry."""
+
+    def get(self, id: str) -> Optional[ActivityLogEntry]:
+        """Get an activity log entry by ID."""
+
+    def list(
+        self,
+        subject_type: Optional[str] = None,
+        subject_id: Optional[str] = None,
+        action: Optional[str] = None,
+        actor_kind: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[ActivityLogEntry]:
+        """List activity log entries, most recent first."""
+
+    def history_for_subject(
+        self, subject_type: str, subject_id: str
+    ) -> List[ActivityLogEntry]:
+        """Full history for a single subject, most recent first."""
+
+
+# ============================================================================
+# channels
+# ============================================================================
+
+class Channel:
+    """A sales / fulfillment channel."""
+
+    @property
+    def id(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def channel_type(self) -> str: ...
+    @property
+    def integration(self) -> Optional[str]: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def api_locked(self) -> bool: ...
+    @property
+    def default_warehouse_id(self) -> Optional[str]: ...
+    @property
+    def tags(self) -> List[str]: ...
+    @property
+    def metadata(self) -> str: ...
+    @property
+    def created_at(self) -> str: ...
+    @property
+    def updated_at(self) -> str: ...
+
+class ChannelProductMapping:
+    """A mapping between a channel-specific SKU and an internal product SKU."""
+
+    @property
+    def channel_id(self) -> str: ...
+    @property
+    def channel_sku(self) -> str: ...
+    @property
+    def product_id(self) -> str: ...
+    @property
+    def internal_sku(self) -> str: ...
+    @property
+    def created_at(self) -> str: ...
+    @property
+    def updated_at(self) -> str: ...
+
+class ChannelProductSyncItem:
+    """One item in a bulk channel product sync request."""
+
+    def __init__(
+        self,
+        channel_sku: str,
+        product_id: Optional[str] = None,
+        internal_sku: Optional[str] = None,
+        delete: bool = False,
+    ) -> None: ...
+    channel_sku: str
+    product_id: Optional[str]
+    internal_sku: Optional[str]
+    delete: bool
+
+class Channels:
+    """Sales / fulfillment channel operations. Enums cross as snake_case
+    strings, metadata as JSON strings, timestamps as RFC3339 strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        name: str,
+        channel_type: str,
+        integration: Optional[str] = None,
+        default_warehouse_id: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[str] = None,
+    ) -> Channel: ...
+
+    def get(self, id: str) -> Optional[Channel]: ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        integration: Optional[str] = None,
+        status: Optional[str] = None,
+        default_warehouse_id: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[str] = None,
+    ) -> Channel: ...
+
+    def list(
+        self,
+        channel_type: Optional[str] = None,
+        status: Optional[str] = None,
+        integration: Optional[str] = None,
+        api_locked: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Channel]: ...
+
+    def delete(self, id: str) -> None: ...
+
+    def set_lock(self, id: str, locked: bool) -> Channel: ...
+
+    def sync_products(self, id: str, items: List[ChannelProductSyncItem]) -> int: ...
+
+    def list_product_mappings(self, id: str) -> List[ChannelProductMapping]: ...
+
+
+# ============================================================================
+# companies
+# ============================================================================
+
+class Company:
+    """A B2B company / account. Metadata crosses as a JSON string."""
+
+    id: str
+    name: str
+    reference: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+    currency: str
+    payment_terms_days: Optional[int]
+    status: str
+    tags: List[str]
+    metadata: str
+    created_at: str
+    updated_at: str
+
+class CompanyShippingAddress:
+    """A shipping address belonging to a company."""
+
+    id: str
+    company_id: str
+    label: Optional[str]
+    name: Optional[str]
+    line1: str
+    line2: Optional[str]
+    city: str
+    region: Optional[str]
+    postal_code: Optional[str]
+    country: str
+    is_default: bool
+    created_at: str
+    updated_at: str
+
+class CompanyPriceOverride:
+    """A company-specific product price override."""
+
+    company_id: str
+    product_id: str
+    price: str
+    currency: str
+    created_at: str
+    updated_at: str
+
+class Contact:
+    """A contact associated with one or more companies."""
+
+    id: str
+    first_name: str
+    last_name: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+    title: Optional[str]
+    company_ids: List[str]
+    portal_enabled: bool
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+class Companies:
+    """B2B company (account) operations."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        name: str,
+        reference: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+        currency: Optional[str] = None,
+        payment_terms_days: Optional[int] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[str] = None,
+    ) -> Company:
+        """Create a company."""
+        ...
+
+    def get(self, id: str) -> Optional[Company]:
+        """Get a company by ID."""
+        ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        reference: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+        currency: Optional[str] = None,
+        payment_terms_days: Optional[int] = None,
+        status: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[str] = None,
+    ) -> Company:
+        """Update a company (partial update)."""
+        ...
+
+    def list(
+        self,
+        status: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Company]:
+        """List companies matching the filter."""
+        ...
+
+    def delete(self, id: str) -> None:
+        """Delete a company."""
+        ...
+
+    def list_addresses(self, id: str) -> List[CompanyShippingAddress]:
+        """List a company's shipping addresses."""
+        ...
+
+    def list_price_overrides(self, id: str) -> List[CompanyPriceOverride]:
+        """List a company's product price overrides."""
+        ...
+
+    def create_contact(
+        self,
+        first_name: str,
+        last_name: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+        title: Optional[str] = None,
+        company_ids: Optional[List[str]] = None,
+    ) -> Contact:
+        """Create a contact linked to one or more companies."""
+        ...
+
+    def get_contact(self, id: str) -> Optional[Contact]:
+        """Get a contact by ID."""
+        ...
+
+    def list_contacts(self, company_id: str) -> List[Contact]:
+        """List contacts for a company."""
+        ...
+
+
+# ============================================================================
+# units_of_measure
+# ============================================================================
+
+class UnitClass:
+    """A class of mutually-convertible units (e.g. Weight, Length)."""
+
+    id: str
+    name: str
+    description: str | None
+    base_uom_id: str | None
+    created_at: str
+    updated_at: str
+
+class UnitOfMeasure:
+    """A unit of measure within a unit class. `factor` is an exact decimal string."""
+
+    id: str
+    unit_class_id: str
+    name: str
+    abbreviation: str
+    factor: str
+    is_base: bool
+    created_at: str
+    updated_at: str
+
+class UnitConversionRule:
+    """An explicit conversion rule between two units of measure."""
+
+    id: str
+    rule_type: str
+    product_id: str | None
+    from_uom_id: str
+    to_uom_id: str
+    factor: str
+    created_at: str
+    updated_at: str
+
+class UnitsOfMeasure:
+    """Units of measure operations: unit classes, units, and conversion rules."""
+
+    def is_supported(self) -> bool: ...
+
+    def create_class(
+        self,
+        name: str,
+        description: str | None = None,
+    ) -> UnitClass: ...
+
+    def list_classes(self) -> list[UnitClass]: ...
+
+    def delete_class(self, id: str) -> None: ...
+
+    def create_uom(
+        self,
+        unit_class_id: str,
+        name: str,
+        abbreviation: str,
+        factor: str,
+    ) -> UnitOfMeasure: ...
+
+    def list_uoms(
+        self,
+        class_id: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[UnitOfMeasure]: ...
+
+    def set_base_uom(self, id: str) -> UnitOfMeasure: ...
+
+    def delete_uom(self, id: str) -> None: ...
+
+    def create_rule(
+        self,
+        rule_type: str,
+        from_uom_id: str,
+        to_uom_id: str,
+        factor: str,
+        product_id: str | None = None,
+    ) -> UnitConversionRule: ...
+
+    def list_rules(self) -> list[UnitConversionRule]: ...
+
+    def delete_rule(self, id: str) -> None: ...
+
+
+# ============================================================================
+# shipping_zones
+# ============================================================================
+
+class ShippingZone:
+    id: str
+    name: str
+    countries: list[str]
+    regions: list[str]
+    postal_codes: list[str]
+    priority: int
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+class ShippingCondition:
+    min_weight: str | None
+    max_weight: str | None
+    min_price: str | None
+    max_price: str | None
+    rate: str
+    def __init__(
+        self,
+        rate: str,
+        min_weight: str | None = None,
+        max_weight: str | None = None,
+        min_price: str | None = None,
+        max_price: str | None = None,
+    ) -> None: ...
+
+class ZoneShippingMethod:
+    id: str
+    zone_id: str
+    name: str
+    carrier: str | None
+    method_type: str
+    base_rate: str
+    currency: str
+    min_delivery_days: int | None
+    max_delivery_days: int | None
+    conditions: list[ShippingCondition]
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+class ZoneShippingRate:
+    method_id: str
+    method_name: str
+    carrier: str | None
+    rate: str
+    currency: str
+    min_delivery_days: int | None
+    max_delivery_days: int | None
+
+class ShippingZones:
+    def is_supported(self) -> bool: ...
+    def create(
+        self,
+        name: str,
+        countries: list[str] | None = None,
+        regions: list[str] | None = None,
+        postal_codes: list[str] | None = None,
+        priority: int | None = None,
+    ) -> ShippingZone: ...
+    def get(self, id: str) -> ShippingZone | None: ...
+    def update(
+        self,
+        id: str,
+        name: str | None = None,
+        countries: list[str] | None = None,
+        regions: list[str] | None = None,
+        postal_codes: list[str] | None = None,
+        priority: int | None = None,
+        is_active: bool | None = None,
+    ) -> ShippingZone: ...
+    def list(
+        self,
+        country: str | None = None,
+        is_active: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[ShippingZone]: ...
+    def delete(self, id: str) -> None: ...
+    def find_matching_zones(
+        self,
+        country: str,
+        region: str | None = None,
+        postal_code: str | None = None,
+    ) -> list[ShippingZone]: ...
+    def create_method(
+        self,
+        zone_id: str,
+        name: str,
+        method_type: str,
+        base_rate: str,
+        currency: str,
+        carrier: str | None = None,
+        min_delivery_days: int | None = None,
+        max_delivery_days: int | None = None,
+        conditions: list[ShippingCondition] | None = None,
+    ) -> ZoneShippingMethod: ...
+    def get_method(self, id: str) -> ZoneShippingMethod | None: ...
+    def list_methods(
+        self,
+        zone_id: str | None = None,
+        carrier: str | None = None,
+        method_type: str | None = None,
+        is_active: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[ZoneShippingMethod]: ...
+    def delete_method(self, id: str) -> None: ...
+    def calculate_rates(
+        self,
+        country: str,
+        currency: str,
+        region: str | None = None,
+        postal_code: str | None = None,
+        weight: str | None = None,
+        order_total: str | None = None,
+    ) -> list[ZoneShippingRate]: ...
+
+
+# ============================================================================
+# stock_snapshots
+# ============================================================================
+
+class CaptureStockLineInput:
+    """A line on a capture-stock-snapshot request. Quantities are exact
+    decimal strings."""
+
+    product_id: str
+    sku: str
+    quantity_on_hand: str
+    quantity_available: str
+    location: Optional[str]
+
+    def __init__(
+        self,
+        product_id: str,
+        sku: str,
+        quantity_on_hand: str,
+        quantity_available: str,
+        location: Optional[str] = None,
+    ) -> None: ...
+
+class StockSnapshotLine:
+    """A single per-SKU line within a stock snapshot."""
+
+    id: str
+    stock_snapshot_id: str
+    product_id: str
+    sku: str
+    quantity_on_hand: str
+    quantity_available: str
+    location: Optional[str]
+
+class StockSnapshot:
+    """A point-in-time inventory snapshot."""
+
+    id: str
+    label: Optional[str]
+    total_skus: int
+    total_units: str
+    lines: List[StockSnapshotLine]
+    captured_at: str
+
+class StockSnapshots:
+    """Stock snapshot operations. Quantities are exchanged as exact decimal
+    strings, timestamps as RFC3339 strings."""
+
+    def is_supported(self) -> bool: ...
+    def capture(
+        self,
+        lines: List[CaptureStockLineInput],
+        label: Optional[str] = None,
+    ) -> StockSnapshot:
+        """Capture a new snapshot; totals are computed from the lines."""
+        ...
+
+    def get(self, id: str) -> Optional[StockSnapshot]: ...
+    def latest(self) -> Optional[StockSnapshot]:
+        """Most recent snapshot, if any."""
+        ...
+
+    def list(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[StockSnapshot]: ...
+    def delete(self, id: str) -> None: ...
+
+
+# ============================================================================
+# print_stations
+# ============================================================================
+
+class PrintStation:
+    """A paired print station. Timestamps are RFC3339 strings."""
+
+    id: str
+    name: str
+    printers: List[str]
+    revoked: bool
+    last_seen_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+class PairStationResult:
+    """Result of pairing a station: the station plus its one-time bearer token."""
+
+    station: PrintStation
+    token: str
+
+class PrintJob:
+    """A print job queued to a station."""
+
+    id: str
+    station_id: str
+    printer_name: Optional[str]
+    payload_kind: str
+    payload: str
+    status: str
+    created_at: str
+    picked_up_at: Optional[str]
+
+class PrintStations:
+    """Print station operations (paired agents + print job queue)."""
+
+    def is_supported(self) -> bool: ...
+
+    def pair(
+        self,
+        name: str,
+        printers: Optional[List[str]] = None,
+    ) -> PairStationResult:
+        """Pair a new station, returning the station and its one-time token."""
+        ...
+
+    def list_stations(self) -> List[PrintStation]: ...
+
+    def get_station(self, id: str) -> Optional[PrintStation]: ...
+
+    def revoke_station(self, id: str) -> PrintStation: ...
+
+    def enqueue_job(
+        self,
+        station_id: str,
+        payload: str,
+        printer_name: Optional[str] = None,
+        payload_kind: Optional[str] = None,
+    ) -> PrintJob:
+        """Enqueue a print job. payload_kind is zpl (default) or pdf."""
+        ...
+
+    def next_job(self, station_id: str) -> Optional[PrintJob]: ...
+
+    def complete_job(self, job_id: str, success: bool) -> PrintJob: ...
+
+    def list_jobs(
+        self,
+        station_id: str,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[PrintJob]: ...
+
+
+# ============================================================================
+# integration_mappings
+# ============================================================================
+
+class CreateIntegrationMappingInput:
+    """Input for creating an integration mapping (used with `bulk_upsert`)."""
+
+    integration: str
+    mapping_group: str
+    field_name: str
+    external_value: str
+    internal_value: str
+
+    def __init__(
+        self,
+        integration: str,
+        mapping_group: str,
+        field_name: str,
+        external_value: str,
+        internal_value: str,
+    ) -> None: ...
+
+class IntegrationMapping:
+    """A single external -> internal value mapping for an integration."""
+
+    @property
+    def id(self) -> str: ...
+    @property
+    def integration(self) -> str: ...
+    @property
+    def mapping_group(self) -> str: ...
+    @property
+    def field_name(self) -> str: ...
+    @property
+    def external_value(self) -> str: ...
+    @property
+    def internal_value(self) -> str: ...
+    @property
+    def is_active(self) -> bool: ...
+    @property
+    def created_at(self) -> str: ...
+    @property
+    def updated_at(self) -> str: ...
+
+class IntegrationMappings:
+    """Integration mapping operations: translate external system values into
+    canonical internal values for a given integration and mapping group."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        integration: str,
+        mapping_group: str,
+        field_name: str,
+        external_value: str,
+        internal_value: str,
+    ) -> IntegrationMapping:
+        """Create an integration mapping."""
+
+    def get(self, id: str) -> Optional[IntegrationMapping]:
+        """Get an integration mapping by ID."""
+
+    def update(
+        self,
+        id: str,
+        internal_value: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> IntegrationMapping:
+        """Update an integration mapping (partial)."""
+
+    def list(
+        self,
+        integration: Optional[str] = None,
+        mapping_group: Optional[str] = None,
+        field_name: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[IntegrationMapping]:
+        """List integration mappings matching the filter."""
+
+    def delete(self, id: str) -> None:
+        """Delete an integration mapping."""
+
+    def bulk_upsert(self, items: List[CreateIntegrationMappingInput]) -> str:
+        """Bulk upsert mappings; returns the number of rows affected as a string."""
+
+    def resolve(
+        self,
+        integration: str,
+        mapping_group: str,
+        field_name: str,
+        external_value: str,
+    ) -> Optional[str]:
+        """Resolve the internal value for an external value."""
+
+
+# ============================================================================
+# integration_field_mappings
+# ============================================================================
+
+class IntegrationFieldMapping:
+    """A field-path mapping for an integration account."""
+
+    id: str
+    integration_account: str
+    mapping_group: str
+    source_field: str
+    destination_field: str
+    template: Optional[str]
+    transform: str
+    fallback: Optional[str]
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+class NewIntegrationFieldMapping:
+    """A field mapping to create, used for bulk creation."""
+
+    integration_account: str
+    mapping_group: str
+    source_field: str
+    destination_field: str
+    template: Optional[str]
+    transform: Optional[str]
+    fallback: Optional[str]
+
+    def __init__(
+        self,
+        integration_account: str,
+        mapping_group: str,
+        source_field: str,
+        destination_field: str,
+        template: Optional[str] = None,
+        transform: Optional[str] = None,
+        fallback: Optional[str] = None,
+    ) -> None: ...
+
+class IntegrationFieldMappings:
+    """Integration field-mapping operations. Enums cross as snake_case strings,
+    timestamps as RFC3339 strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        integration_account: str,
+        mapping_group: str,
+        source_field: str,
+        destination_field: str,
+        template: Optional[str] = None,
+        transform: Optional[str] = None,
+        fallback: Optional[str] = None,
+    ) -> IntegrationFieldMapping:
+        """Create a field mapping."""
+        ...
+
+    def get(self, id: str) -> Optional[IntegrationFieldMapping]: ...
+
+    def update(
+        self,
+        id: str,
+        destination_field: Optional[str] = None,
+        template: Optional[str] = None,
+        transform: Optional[str] = None,
+        fallback: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> IntegrationFieldMapping: ...
+
+    def list(
+        self,
+        integration_account: Optional[str] = None,
+        mapping_group: Optional[str] = None,
+        source_field: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[IntegrationFieldMapping]: ...
+
+    def delete(self, id: str) -> None: ...
+
+    def bulk_create(self, items: List[NewIntegrationFieldMapping]) -> int:
+        """Bulk create field mappings; returns the number of rows affected."""
+        ...
+
+    def bulk_delete(self, ids: List[str]) -> int:
+        """Bulk delete field mappings by ID; returns the number of rows affected."""
+        ...
+
+    def distinct_groups(self, integration_account: str) -> List[str]:
+        """Distinct mapping groups for an integration account."""
+        ...
+
+
+# ============================================================================
+# payment_obligations
+# ============================================================================
+
+class PaymentObligation:
+    """A scheduled amount owed to a supplier. Money values are exact decimal
+    strings; dates are ISO strings (YYYY-MM-DD)."""
+
+    id: str
+    number: str
+    supplier_id: str
+    purchase_order_id: Optional[str]
+    amount: str
+    amount_paid: str
+    outstanding: str
+    currency: str
+    due_date: str
+    status: str
+    linked_bill_ids: List[str]
+    notes: Optional[str]
+    created_at: str
+    updated_at: str
+
+class PaymentObligationDashboard:
+    """Aggregate summary across payment obligations."""
+
+    open_count: int
+    total_outstanding: str
+    overdue_count: int
+    overdue_amount: str
+
+class PaymentObligations:
+    """Payment obligation operations. Money is exchanged as exact decimal
+    strings, dates as ISO strings (YYYY-MM-DD), enums as snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        supplier_id: str,
+        amount: str,
+        due_date: str,
+        purchase_order_id: Optional[str] = None,
+        currency: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> PaymentObligation: ...
+
+    def get(self, id: str) -> Optional[PaymentObligation]: ...
+
+    def list(
+        self,
+        supplier_id: Optional[str] = None,
+        status: Optional[str] = None,
+        due_before: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[PaymentObligation]: ...
+
+    def record_payment(self, id: str, amount: str) -> PaymentObligation: ...
+
+    def set_status(self, id: str, status: str) -> PaymentObligation: ...
+
+    def link_bill(self, id: str, bill_id: str) -> PaymentObligation: ...
+
+    def dashboard(self, today: str) -> PaymentObligationDashboard: ...
+
+
+# ============================================================================
+# purgatory
+# ============================================================================
+
+class IngestLineItemInput:
+    external_sku: str
+    quantity: str
+    product_id: str | None
+    def __init__(
+        self,
+        external_sku: str,
+        quantity: str,
+        product_id: str | None = None,
+    ) -> None: ...
+
+class PurgatoryLineItem:
+    @property
+    def id(self) -> str: ...
+    @property
+    def purgatory_order_id(self) -> str: ...
+    @property
+    def external_sku(self) -> str: ...
+    @property
+    def product_id(self) -> str | None: ...
+    @property
+    def quantity(self) -> str: ...
+    @property
+    def ignore_item(self) -> bool: ...
+    @property
+    def non_physical(self) -> bool: ...
+    @property
+    def is_resolved(self) -> bool: ...
+
+class PurgatoryOrder:
+    @property
+    def id(self) -> str: ...
+    @property
+    def channel_id(self) -> str | None: ...
+    @property
+    def external_order_id(self) -> str: ...
+    @property
+    def external_status(self) -> str | None: ...
+    @property
+    def is_posted(self) -> bool: ...
+    @property
+    def hold_reason(self) -> str | None: ...
+    @property
+    def metadata(self) -> str: ...
+    @property
+    def items(self) -> list[PurgatoryLineItem]: ...
+    @property
+    def is_ready_to_post(self) -> bool: ...
+    @property
+    def unresolved_count(self) -> str: ...
+    @property
+    def created_at(self) -> str: ...
+    @property
+    def updated_at(self) -> str: ...
+
+class Purgatory:
+    def is_supported(self) -> bool: ...
+    def ingest(
+        self,
+        external_order_id: str,
+        items: list[IngestLineItemInput],
+        channel_id: str | None = None,
+        external_status: str | None = None,
+        metadata: str | None = None,
+    ) -> PurgatoryOrder: ...
+    def get(self, id: str) -> PurgatoryOrder | None: ...
+    def list(
+        self,
+        channel_id: str | None = None,
+        is_posted: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[PurgatoryOrder]: ...
+    def map_line(
+        self,
+        id: str,
+        line_id: str,
+        product_id: str | None = None,
+        ignore_item: bool | None = None,
+        non_physical: bool | None = None,
+    ) -> PurgatoryOrder: ...
+    def post(self, id: str) -> PurgatoryOrder: ...
+    def delete(self, id: str) -> None: ...
+
+
+# ============================================================================
+# topology_snapshots
+# ============================================================================
+
+class TopologySnapshot:
+    """A captured operational topology snapshot."""
+
+    id: str
+    channels_total: int
+    channels_active: int
+    warehouses_total: int
+    products_total: int
+    open_orders: int
+    health: str
+    signals: str
+    captured_at: str
+
+class TopologySnapshots:
+    """Operational topology snapshot operations. Counts cross as integers,
+    signals as a JSON string, enums as snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def capture(
+        self,
+        channels_total: int,
+        channels_active: int,
+        warehouses_total: int,
+        products_total: int,
+        open_orders: int,
+        signals: Optional[str] = None,
+    ) -> TopologySnapshot:
+        """Capture a new snapshot; health is derived from the metrics."""
+        ...
+
+    def get(self, id: str) -> Optional[TopologySnapshot]: ...
+
+    def latest(self) -> Optional[TopologySnapshot]: ...
+
+    def list(
+        self,
+        health: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[TopologySnapshot]:
+        """List snapshots, newest first, with optional health filtering."""
+        ...
+
+    def delete(self, id: str) -> None: ...
+
+
+# ============================================================================
+# vendor_returns
+# ============================================================================
+
+class VendorReturnItemInput:
+    """A line on a create-vendor-return request."""
+
+    product_id: str
+    quantity: str
+    unit_cost: str
+    reason: Optional[str]
+
+    def __init__(
+        self,
+        product_id: str,
+        quantity: str,
+        unit_cost: str,
+        reason: Optional[str] = None,
+    ) -> None: ...
+
+class VendorReturnItem:
+    """A single line on a vendor return. Money values are exact decimal
+    strings."""
+
+    id: str
+    vendor_return_id: str
+    product_id: str
+    sku: str
+    quantity: str
+    unit_cost: str
+    line_total: str
+    reason: str
+
+class VendorReturn:
+    """A return of goods to a supplier. Money values are exact decimal
+    strings, timestamps RFC 3339 strings, enums snake_case strings."""
+
+    id: str
+    number: str
+    supplier_id: str
+    purchase_order_id: Optional[str]
+    status: str
+    currency: str
+    items: List[VendorReturnItem]
+    total_credit: str
+    credit_generated: bool
+    notes: Optional[str]
+    processed_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+class VendorReturns:
+    """Vendor return operations. Money and quantities are exchanged as exact
+    decimal strings, timestamps as RFC 3339 strings, enums as snake_case."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        supplier_id: str,
+        items: List[VendorReturnItemInput],
+        purchase_order_id: Optional[str] = None,
+        currency: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> VendorReturn:
+        """Create a vendor return (draft). At least one item is required."""
+        ...
+
+    def get(self, id: str) -> Optional[VendorReturn]: ...
+
+    def list(
+        self,
+        supplier_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[VendorReturn]: ...
+
+    def submit(self, id: str) -> VendorReturn:
+        """Submit a draft vendor return to the supplier."""
+        ...
+
+    def process(self, id: str, generate_credit: bool) -> VendorReturn:
+        """Process a vendor return, optionally generating a vendor credit."""
+        ...
+
+    def cancel(self, id: str) -> VendorReturn:
+        """Cancel a vendor return."""
+        ...
+
+
+# ============================================================================
+# fraud
+# ============================================================================
+
+class FraudSignalInput:
+    signal_type: str
+    score: float
+    details: str
+    def __init__(self, signal_type: str, score: float, details: str) -> None: ...
+
+class FraudSignal:
+    order_id: str
+    signal_type: str
+    score: float
+    details: str
+    detected_at: str
+
+class FraudAssessment:
+    order_id: str
+    risk_score: float
+    signals: list[FraudSignal]
+    decision: str
+    reviewed_by: str | None
+    review_notes: str | None
+    needs_review: bool
+    created_at: str
+    updated_at: str
+
+class FraudRule:
+    id: str
+    name: str
+    description: str | None
+    signal_type: str
+    threshold: float
+    action: str
+    enabled: bool
+    created_at: str
+    updated_at: str
+
+class Fraud:
+    def is_supported(self) -> bool: ...
+    def create_assessment(
+        self, order_id: str, signals: list[FraudSignalInput]
+    ) -> FraudAssessment: ...
+    def get_assessment(self, order_id: str) -> FraudAssessment | None: ...
+    def list_assessments(
+        self,
+        decision: str | None = None,
+        min_risk_score: float | None = None,
+        unreviewed_only: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[FraudAssessment]: ...
+    def review_assessment(
+        self,
+        order_id: str,
+        decision: str,
+        reviewer: str,
+        notes: str | None = None,
+    ) -> FraudAssessment: ...
+    def create_rule(
+        self,
+        name: str,
+        signal_type: str,
+        threshold: float,
+        action: str,
+        description: str | None = None,
+    ) -> FraudRule: ...
+    def get_rule(self, id: str) -> FraudRule | None: ...
+    def update_rule(
+        self,
+        id: str,
+        name: str | None = None,
+        description: str | None = None,
+        threshold: float | None = None,
+        action: str | None = None,
+        enabled: bool | None = None,
+    ) -> FraudRule: ...
+    def list_rules(
+        self,
+        signal_type: str | None = None,
+        action: str | None = None,
+        enabled: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[FraudRule]: ...
+    def delete_rule(self, id: str) -> None: ...
+    def get_active_rules(self) -> list[FraudRule]: ...
+
+
+# ============================================================================
+# search_config
+# ============================================================================
+
+class SearchFieldInput:
+    """A searchable field passed to create/update."""
+
+    field_name: str
+    weight: float
+    tokenizer: Optional[str]
+    enabled: Optional[bool]
+
+    def __init__(
+        self,
+        field_name: str,
+        weight: float,
+        tokenizer: Optional[str] = None,
+        enabled: Optional[bool] = None,
+    ) -> None: ...
+
+class FacetConfigInput:
+    """A facet configuration passed to create/update."""
+
+    field_name: str
+    display_name: str
+    facet_type: Optional[str]
+    sort_order: Optional[int]
+    max_values: Optional[int]
+
+    def __init__(
+        self,
+        field_name: str,
+        display_name: str,
+        facet_type: Optional[str] = None,
+        sort_order: Optional[int] = None,
+        max_values: Optional[int] = None,
+    ) -> None: ...
+
+class SynonymGroupInput:
+    """A synonym group passed to create/update."""
+
+    canonical: str
+    synonyms: List[str]
+
+    def __init__(self, canonical: str, synonyms: List[str]) -> None: ...
+
+class BoostRuleInput:
+    """A relevance boost rule passed to create/update."""
+
+    field: str
+    value_match: str
+    boost_factor: float
+
+    def __init__(self, field: str, value_match: str, boost_factor: float) -> None: ...
+
+class SearchField:
+    """A searchable field on a search configuration."""
+
+    @property
+    def field_name(self) -> str: ...
+    @property
+    def weight(self) -> float: ...
+    @property
+    def tokenizer(self) -> str:
+        """standard, ngram, edge, keyword"""
+        ...
+    @property
+    def enabled(self) -> bool: ...
+
+class FacetConfig:
+    """A facet on a search configuration."""
+
+    @property
+    def field_name(self) -> str: ...
+    @property
+    def facet_type(self) -> str:
+        """value, range, hierarchical"""
+        ...
+    @property
+    def display_name(self) -> str: ...
+    @property
+    def sort_order(self) -> int: ...
+    @property
+    def max_values(self) -> Optional[int]: ...
+
+class SynonymGroup:
+    """A synonym group on a search configuration."""
+
+    @property
+    def canonical(self) -> str: ...
+    @property
+    def synonyms(self) -> List[str]: ...
+
+class BoostRule:
+    """A relevance boost rule on a search configuration."""
+
+    @property
+    def field(self) -> str: ...
+    @property
+    def value_match(self) -> str: ...
+    @property
+    def boost_factor(self) -> float: ...
+
+class SearchConfig:
+    """A search configuration. Timestamps are RFC3339 strings."""
+
+    @property
+    def id(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def description(self) -> Optional[str]: ...
+    @property
+    def searchable_fields(self) -> List[SearchField]: ...
+    @property
+    def facets(self) -> List[FacetConfig]: ...
+    @property
+    def synonyms(self) -> List[SynonymGroup]: ...
+    @property
+    def boost_rules(self) -> List[BoostRule]: ...
+    @property
+    def is_active(self) -> bool: ...
+    @property
+    def created_at(self) -> str: ...
+    @property
+    def updated_at(self) -> str: ...
+
+class SearchConfigs:
+    """Search configuration operations. Enums cross as snake_case strings and
+    timestamps as RFC3339 strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        searchable_fields: Optional[List[SearchFieldInput]] = None,
+        facets: Optional[List[FacetConfigInput]] = None,
+        synonyms: Optional[List[SynonymGroupInput]] = None,
+        boost_rules: Optional[List[BoostRuleInput]] = None,
+    ) -> SearchConfig:
+        """Create a search configuration."""
+        ...
+
+    def get(self, id: str) -> Optional[SearchConfig]: ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        searchable_fields: Optional[List[SearchFieldInput]] = None,
+        facets: Optional[List[FacetConfigInput]] = None,
+        synonyms: Optional[List[SynonymGroupInput]] = None,
+        boost_rules: Optional[List[BoostRuleInput]] = None,
+        is_active: Optional[bool] = None,
+    ) -> SearchConfig:
+        """Update a search configuration."""
+        ...
+
+    def list(
+        self,
+        is_active: Optional[bool] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[SearchConfig]: ...
+
+    def delete(self, id: str) -> None: ...
+
+    def get_active(self) -> Optional[SearchConfig]: ...
+
+    def set_active(self, id: str) -> SearchConfig: ...
+
+
+# ============================================================================
+# erc8004
+# ============================================================================
+
+class AgentIdentity:
+    id: str
+    agent_registry: str
+    agent_id: str
+    agent_uri: str
+    agent_wallet: str | None
+    owner_address: str | None
+    agent_card_id: str | None
+    registration: str | None
+    registration_hash: str | None
+    wallet_proof_type: str | None
+    wallet_proof: str | None
+    wallet_proof_chain_id: str | None
+    wallet_proof_deadline: str | None
+    active: bool
+    created_at: str
+    updated_at: str
+
+class AgentFeedback:
+    id: str
+    agent_registry: str
+    agent_id: str
+    client_address: str
+    feedback_index: str
+    value: str
+    value_decimals: int
+    tag1: str | None
+    tag2: str | None
+    endpoint: str | None
+    feedback_uri: str | None
+    feedback_hash: str | None
+    is_revoked: bool
+    created_at: str
+    revoked_at: str | None
+
+class FeedbackSummary:
+    count: str
+    summary_value: str
+    summary_value_decimals: int
+
+class AgentValidationRequest:
+    request_hash: str
+    agent_registry: str
+    agent_id: str
+    validator_address: str
+    request_uri: str
+    created_at: str
+
+class AgentValidationResponse:
+    id: str
+    request_hash: str
+    agent_registry: str
+    agent_id: str
+    validator_address: str
+    response: int
+    response_uri: str | None
+    response_hash: str | None
+    tag: str | None
+    created_at: str
+
+class AgentValidationStatus:
+    validator_address: str
+    agent_registry: str
+    agent_id: str
+    response: int
+    response_hash: str | None
+    tag: str | None
+    last_update: str
+
+class ValidationSummary:
+    count: str
+    average_response: int
+
+class Erc8004:
+    def register_identity(
+        self,
+        agent_registry: str,
+        agent_id: str,
+        agent_uri: str,
+        agent_wallet: str | None = None,
+        owner_address: str | None = None,
+        agent_card_id: str | None = None,
+        registration: str | None = None,
+        registration_hash: str | None = None,
+        wallet_proof_type: str | None = None,
+        wallet_proof: str | None = None,
+        wallet_proof_chain_id: str | None = None,
+        wallet_proof_deadline: str | None = None,
+        active: bool | None = None,
+    ) -> AgentIdentity: ...
+    def get_identity(self, agent_registry: str, agent_id: str) -> AgentIdentity | None: ...
+    def get_identity_by_wallet(self, agent_wallet: str) -> AgentIdentity | None: ...
+    def update_identity(
+        self,
+        agent_registry: str,
+        agent_id: str,
+        agent_uri: str | None = None,
+        agent_wallet: str | None = None,
+        owner_address: str | None = None,
+        agent_card_id: str | None = None,
+        registration: str | None = None,
+        registration_hash: str | None = None,
+        wallet_proof_type: str | None = None,
+        wallet_proof: str | None = None,
+        wallet_proof_chain_id: str | None = None,
+        wallet_proof_deadline: str | None = None,
+        active: bool | None = None,
+    ) -> AgentIdentity: ...
+    def set_agent_wallet(
+        self,
+        agent_registry: str,
+        agent_id: str,
+        agent_wallet: str,
+        proof_type: str | None = None,
+        proof: str | None = None,
+        proof_chain_id: str | None = None,
+        proof_deadline: str | None = None,
+    ) -> AgentIdentity: ...
+    def clear_agent_wallet(self, agent_registry: str, agent_id: str) -> AgentIdentity: ...
+    def list_identities(
+        self,
+        agent_registry: str | None = None,
+        agent_id: str | None = None,
+        agent_wallet: str | None = None,
+        owner_address: str | None = None,
+        agent_card_id: str | None = None,
+        active: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[AgentIdentity]: ...
+    def count_identities(
+        self,
+        agent_registry: str | None = None,
+        agent_id: str | None = None,
+        agent_wallet: str | None = None,
+        owner_address: str | None = None,
+        agent_card_id: str | None = None,
+        active: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> str: ...
+    def give_feedback(
+        self,
+        agent_registry: str,
+        agent_id: str,
+        client_address: str,
+        value: str,
+        value_decimals: int,
+        tag1: str | None = None,
+        tag2: str | None = None,
+        endpoint: str | None = None,
+        feedback_uri: str | None = None,
+        feedback_hash: str | None = None,
+    ) -> AgentFeedback: ...
+    def revoke_feedback(
+        self,
+        agent_registry: str,
+        agent_id: str,
+        client_address: str,
+        feedback_index: str,
+    ) -> AgentFeedback: ...
+    def read_feedback(
+        self,
+        agent_registry: str,
+        agent_id: str,
+        client_address: str,
+        feedback_index: str,
+    ) -> AgentFeedback | None: ...
+    def read_all_feedback(
+        self,
+        agent_registry: str | None = None,
+        agent_id: str | None = None,
+        client_addresses: list[str] | None = None,
+        tag1: str | None = None,
+        tag2: str | None = None,
+        include_revoked: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[AgentFeedback]: ...
+    def feedback_summary(
+        self,
+        agent_registry: str,
+        agent_id: str,
+        client_addresses: list[str] | None = None,
+        tag1: str | None = None,
+        tag2: str | None = None,
+    ) -> FeedbackSummary: ...
+    def request_validation(
+        self,
+        request_hash: str,
+        agent_registry: str,
+        agent_id: str,
+        validator_address: str,
+        request_uri: str,
+    ) -> AgentValidationRequest: ...
+    def respond_validation(
+        self,
+        request_hash: str,
+        response: int,
+        response_uri: str | None = None,
+        response_hash: str | None = None,
+        tag: str | None = None,
+    ) -> AgentValidationResponse: ...
+    def validation_status(self, request_hash: str) -> AgentValidationStatus | None: ...
+    def validation_summary(
+        self,
+        agent_registry: str,
+        agent_id: str,
+        validator_addresses: list[str] | None = None,
+        tag: str | None = None,
+    ) -> ValidationSummary: ...

@@ -102,6 +102,31 @@ export interface CommerceEngine {
     /** Optional even on EDI-capable builds; the API layer computes a fallback. */
     summary?: () => Promise<EdiSummary>;
   };
+  /** Optional: purchasing (purchase orders + suppliers). Read-only slice. */
+  purchaseOrders?: {
+    list: () => Promise<PurchaseOrder[]>;
+    get: (id: string) => Promise<PurchaseOrder | null>;
+    listSuppliers: () => Promise<Supplier[]>;
+  };
+  /** Optional: warehouses + storage locations. Read-only slice. */
+  warehouse?: {
+    listWarehouses: () => Promise<WarehouseRecord[]>;
+    listLocations: (warehouseId?: number) => Promise<WarehouseLocation[]>;
+  };
+  /** Optional: cycle counts. Read-only slice. */
+  cycleCounts?: {
+    list: (filter?: CycleCountFilter) => Promise<CycleCount[]>;
+  };
+  /** Optional: manufacturing work orders. Read-only slice. */
+  workOrders?: {
+    list: () => Promise<WorkOrder[]>;
+    get: (id: string) => Promise<WorkOrder | null>;
+  };
+  /** Optional: quality inspections + non-conformance reports. Read-only slice. */
+  quality?: {
+    listInspections: () => Promise<QualityInspection[]>;
+    listNcrs: () => Promise<NonConformanceReport[]>;
+  };
   analytics: {
     getDashboardMetrics: () => Promise<DashboardMetrics>;
     getHourlyActivity: (date?: string) => Promise<HourlyActivity[]>;
@@ -1173,6 +1198,7 @@ function createMockCommerceEngine(): CommerceEngine {
         getMockFinanceData().ediDocuments.find((doc) => doc.id === id) || null,
       summary: async () => summarizeEdiDocuments(getMockFinanceData().ediDocuments),
     },
+    ...createMockOperationsSections(),
     analytics: {
       getDashboardMetrics: async () => getMockData().dashboardMetrics,
       getHourlyActivity: async () => getMockData().hourlyActivity,
@@ -2565,5 +2591,481 @@ export const ediDocumentsApi = {
       return commerce.ediDocuments.summary();
     }
     return summarizeEdiDocuments(await commerce.ediDocuments.list());
+  },
+};
+
+// ============================================================================
+// Operations domains (purchasing, warehouse, manufacturing) — read-only
+//
+// Types mirror the napi binding outputs in bindings/node/index.d.ts. Amounts
+// are passed through untouched; formatting is display-only in components.
+// ============================================================================
+
+/** A purchase order header (`commerce.purchaseOrders.list`). */
+export interface PurchaseOrder {
+  id: string;
+  poNumber: string;
+  supplierId: string;
+  status: string;
+  subtotal: number;
+  total: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A supplier record (`commerce.purchaseOrders.listSuppliers`). */
+export interface Supplier {
+  id: string;
+  name: string;
+  supplierCode?: string;
+  email?: string;
+  phone?: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+/** A warehouse (`commerce.warehouse.listWarehouses`). */
+export interface WarehouseRecord {
+  id: number;
+  code: string;
+  name: string;
+  warehouseType: string;
+  isActive: boolean;
+  timezone?: string;
+  createdAt: string;
+}
+
+/** A storage location inside a warehouse (`commerce.warehouse.listLocations`). */
+export interface WarehouseLocation {
+  id: number;
+  warehouseId: number;
+  code: string;
+  locationType: string;
+  zone?: string;
+  aisle?: string;
+  rack?: string;
+  bin?: string;
+  isActive: boolean;
+  isPickable: boolean;
+  isReceivable: boolean;
+}
+
+/** One counted line on a cycle count. Quantities are exact decimal strings. */
+export interface CycleCountLine {
+  id: string;
+  cycleCountId: string;
+  sku: string;
+  lotId?: string;
+  expectedQuantity: string;
+  countedQuantity?: string;
+  variance?: string;
+}
+
+/** A cycle count (`commerce.cycleCounts.list`). */
+export interface CycleCount {
+  id: string;
+  warehouseId: number;
+  locationId?: number;
+  /** draft, in_progress, completed, cancelled */
+  status: string;
+  scheduledDate?: string;
+  countedBy?: string;
+  lines: CycleCountLine[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+/** Filter accepted by `commerce.cycleCounts.list`. */
+export interface CycleCountFilter {
+  warehouseId?: number;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** A manufacturing work order (`commerce.workOrders.list`). */
+export interface WorkOrder {
+  id: string;
+  workOrderNumber: string;
+  productId: string;
+  bomId?: string;
+  status: string;
+  priority: string;
+  quantityToBuild: number;
+  quantityCompleted: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A quality inspection (`commerce.quality.listInspections`). */
+export interface QualityInspection {
+  id: string;
+  inspectionNumber: string;
+  inspectionType: string;
+  referenceType: string;
+  referenceId: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A non-conformance report (`commerce.quality.listNcrs`). */
+export interface NonConformanceReport {
+  id: string;
+  ncrNumber: string;
+  source: string;
+  severity: string;
+  sku: string;
+  quantityAffected: number;
+  status: string;
+  description: string;
+  createdAt: string;
+}
+
+type MockOperationsData = {
+  purchaseOrders: PurchaseOrder[];
+  suppliers: Supplier[];
+  warehouses: WarehouseRecord[];
+  locations: WarehouseLocation[];
+  cycleCounts: CycleCount[];
+  workOrders: WorkOrder[];
+  inspections: QualityInspection[];
+  ncrs: NonConformanceReport[];
+};
+
+let mockOperationsCache: MockOperationsData | null = null;
+
+function buildMockOperationsData(): MockOperationsData {
+  const supplierSpecs: [string, string, string, boolean][] = [
+    ['Northwind Components', 'SUP-NWC', 'orders@northwind.example', true],
+    ['Globex Packaging', 'SUP-GLX', 'ap@globex.example', true],
+    ['Initech Electronics', 'SUP-INI', 'sales@initech.example', true],
+    ['Acme Raw Materials', 'SUP-ACM', 'hello@acme.example', true],
+    ['Umbrella Logistics', 'SUP-UMB', 'ops@umbrella.example', false],
+  ];
+  const suppliers = supplierSpecs.map(([name, supplierCode, email, isActive], index) => ({
+    id: `sup_${100 + index}`,
+    name,
+    supplierCode,
+    email,
+    phone: `+1-555-01${(10 + index).toString().padStart(2, '0')}`,
+    isActive,
+    createdAt: formatMockDate(-300 + index * 12, index % 9),
+  } satisfies Supplier));
+
+  const poStatuses = ['draft', 'submitted', 'approved', 'sent', 'received', 'cancelled'];
+  const purchaseOrders = Array.from({ length: 20 }, (_, index) => {
+    const subtotal = roundCurrency(750 + deterministicNumber(index + 2101, 0, 9400));
+    const createdAt = formatMockDate(-(index * 3) - 1, index % 11);
+    return {
+      id: `po_${7000 + index}`,
+      poNumber: `PO-${7000 + index}`,
+      supplierId: suppliers[index % suppliers.length].id,
+      status: poStatuses[index % poStatuses.length],
+      subtotal,
+      total: roundCurrency(subtotal * 1.07),
+      createdAt,
+      updatedAt: createdAt,
+    } satisfies PurchaseOrder;
+  });
+
+  const warehouseSpecs: [string, string, string][] = [
+    ['WH-MAIN', 'Reno Distribution Center', 'distribution'],
+    ['WH-EAST', 'Columbus Fulfillment', 'fulfillment'],
+    ['WH-MFG', 'Fremont Manufacturing', 'manufacturing'],
+  ];
+  const warehouses = warehouseSpecs.map(([code, name, warehouseType], index) => ({
+    id: index + 1,
+    code,
+    name,
+    warehouseType,
+    isActive: true,
+    timezone: index === 1 ? 'America/New_York' : 'America/Los_Angeles',
+    createdAt: formatMockDate(-500 + index * 40, index % 7),
+  } satisfies WarehouseRecord));
+
+  const locationTypes = ['bin', 'bulk', 'staging', 'receiving'];
+  const locations: WarehouseLocation[] = [];
+  let locationId = 0;
+  for (const warehouse of warehouses) {
+    for (let index = 0; index < 8; index += 1) {
+      locationId += 1;
+      const zone = String.fromCharCode(65 + (index % 3));
+      const aisle = `${1 + (index % 4)}`;
+      const rack = `${1 + (index % 2)}`;
+      const bin = (index + 1).toString().padStart(2, '0');
+      const locationType = locationTypes[index % locationTypes.length];
+      locations.push({
+        id: locationId,
+        warehouseId: warehouse.id,
+        code: `${warehouse.code}-${zone}${aisle}-${rack}${bin}`,
+        locationType,
+        zone,
+        aisle,
+        rack,
+        bin,
+        isActive: true,
+        isPickable: locationType !== 'receiving',
+        isReceivable: locationType === 'receiving' || locationType === 'staging',
+      });
+    }
+  }
+
+  const cycleCountStatuses = ['draft', 'in_progress', 'completed', 'completed', 'cancelled'];
+  const cycleCounts = Array.from({ length: 12 }, (_, index) => {
+    const status = cycleCountStatuses[index % cycleCountStatuses.length];
+    const warehouse = warehouses[index % warehouses.length];
+    const createdAt = formatMockDate(-(index * 5) - 2, index % 10);
+    const id = `cc_${8000 + index}`;
+    const lines: CycleCountLine[] = Array.from({ length: 3 }, (_, line) => {
+      const expected = 40 + deterministicNumber(index * 10 + line + 2201, 0, 160);
+      const counted = status === 'completed' ? expected - (line === 1 ? 2 : 0) : undefined;
+      return {
+        id: `${id}_line_${line + 1}`,
+        cycleCountId: id,
+        sku: `SKU-${1000 + ((index * 3 + line) % 40)}`,
+        expectedQuantity: expected.toFixed(2),
+        countedQuantity: counted === undefined ? undefined : counted.toFixed(2),
+        variance: counted === undefined ? undefined : (counted - expected).toFixed(2),
+      };
+    });
+    return {
+      id,
+      warehouseId: warehouse.id,
+      locationId: locations[index % locations.length].id,
+      status,
+      scheduledDate: toDateKey(createdAt),
+      countedBy: status === 'draft' ? undefined : `operator_${1 + (index % 3)}`,
+      lines,
+      createdAt,
+      updatedAt: createdAt,
+      completedAt: status === 'completed' ? formatMockDate(-(index * 5) - 1, index % 10) : undefined,
+    } satisfies CycleCount;
+  });
+
+  const workOrderStatuses = ['draft', 'released', 'in_progress', 'completed', 'cancelled'];
+  const priorities = ['low', 'normal', 'high', 'urgent'];
+  const workOrders = Array.from({ length: 16 }, (_, index) => {
+    const status = workOrderStatuses[index % workOrderStatuses.length];
+    const quantityToBuild = 25 + deterministicNumber(index + 2301, 0, 475);
+    const quantityCompleted =
+      status === 'completed'
+        ? quantityToBuild
+        : status === 'in_progress'
+          ? Math.floor(quantityToBuild / 2)
+          : 0;
+    const createdAt = formatMockDate(-(index * 4) - 1, index % 12);
+    return {
+      id: `wo_${9000 + index}`,
+      workOrderNumber: `WO-${9000 + index}`,
+      productId: `prod_${200 + (index % 8)}`,
+      bomId: `bom_${300 + (index % 5)}`,
+      status,
+      priority: priorities[index % priorities.length],
+      quantityToBuild,
+      quantityCompleted,
+      version: 1,
+      createdAt,
+      updatedAt: createdAt,
+    } satisfies WorkOrder;
+  });
+
+  const inspectionTypes = ['incoming', 'in_process', 'final', 'return'];
+  const inspectionStatuses = ['pending', 'in_progress', 'passed', 'failed'];
+  const inspections = Array.from({ length: 14 }, (_, index) => {
+    const createdAt = formatMockDate(-(index * 3) - 1, index % 9);
+    return {
+      id: `insp_${9500 + index}`,
+      inspectionNumber: `QI-${9500 + index}`,
+      inspectionType: inspectionTypes[index % inspectionTypes.length],
+      referenceType: index % 2 === 0 ? 'work_order' : 'purchase_order',
+      referenceId: index % 2 === 0 ? `wo_${9000 + (index % 16)}` : `po_${7000 + (index % 20)}`,
+      status: inspectionStatuses[index % inspectionStatuses.length],
+      createdAt,
+      updatedAt: createdAt,
+    } satisfies QualityInspection;
+  });
+
+  const severities = ['minor', 'major', 'critical'];
+  const ncrStatuses = ['open', 'under_review', 'closed'];
+  const ncrs = Array.from({ length: 9 }, (_, index) => ({
+    id: `ncr_${9700 + index}`,
+    ncrNumber: `NCR-${9700 + index}`,
+    source: index % 2 === 0 ? 'inspection' : 'customer_return',
+    severity: severities[index % severities.length],
+    sku: `SKU-${1000 + (index % 40)}`,
+    quantityAffected: 1 + deterministicNumber(index + 2401, 0, 60),
+    status: ncrStatuses[index % ncrStatuses.length],
+    description: 'Dimensional tolerance out of spec on inbound lot',
+    createdAt: formatMockDate(-(index * 6) - 2, index % 8),
+  } satisfies NonConformanceReport));
+
+  return {
+    purchaseOrders,
+    suppliers,
+    warehouses,
+    locations,
+    cycleCounts,
+    workOrders,
+    inspections,
+    ncrs,
+  };
+}
+
+function getMockOperationsData(): MockOperationsData {
+  if (!mockOperationsCache) {
+    mockOperationsCache = buildMockOperationsData();
+  }
+  return mockOperationsCache;
+}
+
+/**
+ * Mock implementations of the operations engine sections. Split out so the
+ * mock engine factory stays readable.
+ */
+function createMockOperationsSections(): Pick<
+  CommerceEngine,
+  'purchaseOrders' | 'warehouse' | 'cycleCounts' | 'workOrders' | 'quality'
+> {
+  return {
+    purchaseOrders: {
+      list: async () => getMockOperationsData().purchaseOrders,
+      get: async (id: string) =>
+        getMockOperationsData().purchaseOrders.find((po) => po.id === id) || null,
+      listSuppliers: async () => getMockOperationsData().suppliers,
+    },
+    warehouse: {
+      listWarehouses: async () => getMockOperationsData().warehouses,
+      listLocations: async (warehouseId?: number) => {
+        const { locations } = getMockOperationsData();
+        return warehouseId === undefined
+          ? locations
+          : locations.filter((location) => location.warehouseId === warehouseId);
+      },
+    },
+    cycleCounts: {
+      list: async (filter?: CycleCountFilter) => {
+        let counts = getMockOperationsData().cycleCounts;
+        if (filter?.warehouseId !== undefined) {
+          counts = counts.filter((count) => count.warehouseId === filter.warehouseId);
+        }
+        if (filter?.status) {
+          counts = counts.filter((count) => count.status === filter.status);
+        }
+        const offset = filter?.offset || 0;
+        const limit = filter?.limit;
+        return counts.slice(offset, limit === undefined ? undefined : offset + limit);
+      },
+    },
+    workOrders: {
+      list: async () => getMockOperationsData().workOrders,
+      get: async (id: string) =>
+        getMockOperationsData().workOrders.find((order) => order.id === id) || null,
+    },
+    quality: {
+      listInspections: async () => getMockOperationsData().inspections,
+      listNcrs: async () => getMockOperationsData().ncrs,
+    },
+  };
+}
+
+/**
+ * Purchasing accessors. Older engine builds do not expose the purchasing
+ * surface; those degrade to empty results so the page can explain rather
+ * than crash (same contract as `ediDocumentsApi`).
+ */
+export const purchaseOrdersApi = {
+  async list(): Promise<PurchaseOrder[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.purchaseOrders?.list !== 'function') {
+      return [];
+    }
+    return commerce.purchaseOrders.list();
+  },
+
+  async get(id: string): Promise<PurchaseOrder | null> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.purchaseOrders?.get !== 'function') {
+      return null;
+    }
+    return commerce.purchaseOrders.get(id);
+  },
+
+  async listSuppliers(): Promise<Supplier[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.purchaseOrders?.listSuppliers !== 'function') {
+      return [];
+    }
+    return commerce.purchaseOrders.listSuppliers();
+  },
+};
+
+/** Warehouse + location accessors. Degrade to empty lists on older builds. */
+export const warehouseApi = {
+  async listWarehouses(): Promise<WarehouseRecord[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.warehouse?.listWarehouses !== 'function') {
+      return [];
+    }
+    return commerce.warehouse.listWarehouses();
+  },
+
+  async listLocations(warehouseId?: number): Promise<WarehouseLocation[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.warehouse?.listLocations !== 'function') {
+      return [];
+    }
+    return commerce.warehouse.listLocations(warehouseId);
+  },
+};
+
+/** Cycle-count accessors. Degrade to an empty list on older builds. */
+export const cycleCountsApi = {
+  async list(filter?: CycleCountFilter): Promise<CycleCount[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.cycleCounts?.list !== 'function') {
+      return [];
+    }
+    return commerce.cycleCounts.list(filter);
+  },
+};
+
+/** Work-order accessors. Degrade to empty results on older builds. */
+export const workOrdersApi = {
+  async list(): Promise<WorkOrder[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.workOrders?.list !== 'function') {
+      return [];
+    }
+    return commerce.workOrders.list();
+  },
+
+  async get(id: string): Promise<WorkOrder | null> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.workOrders?.get !== 'function') {
+      return null;
+    }
+    return commerce.workOrders.get(id);
+  },
+};
+
+/** Quality accessors (inspections + NCRs). Degrade to empty lists. */
+export const qualityApi = {
+  async listInspections(): Promise<QualityInspection[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.quality?.listInspections !== 'function') {
+      return [];
+    }
+    return commerce.quality.listInspections();
+  },
+
+  async listNcrs(): Promise<NonConformanceReport[]> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.quality?.listNcrs !== 'function') {
+      return [];
+    }
+    return commerce.quality.listNcrs();
   },
 };

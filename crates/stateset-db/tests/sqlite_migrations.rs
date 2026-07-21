@@ -46,10 +46,12 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let applied: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |row| row.get(0))
         .expect("count _migrations");
-    // Base: 65 migrations (001-065)
-    // 027_vector_search is skipped without vector feature
-    // 028_bm25_search is skipped without FTS5
-    let expected = 65
+    // Derived from the migration registry so adding a migration does not leave
+    // this assertion stale (it previously hardcoded 65 and went red at 066).
+    // 027_vector_search is skipped without the vector feature and
+    // 028_bm25_search is skipped without FTS5.
+    let expected = i64::try_from(stateset_db::migrations::known_migration_names().len())
+        .expect("migration count fits in i64")
         - if cfg!(feature = "vector") { 0 } else { 1 }
         - if fts5_available(&conn) { 0 } else { 1 };
     assert_eq!(applied, expected, "expected all embedded migrations to apply");

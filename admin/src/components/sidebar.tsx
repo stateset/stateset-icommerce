@@ -37,8 +37,10 @@ export const navigation = [
   // Finance section: /finance redirects to /finance/ledger; the ledger,
   // bills, and close pages share an in-page tab nav (finance-nav.tsx).
   { name: 'Finance', href: '/finance', icon: BanknotesIcon },
-  // Operations section: trading-partner EDI document tracking (read-only).
-  { name: 'EDI', href: '/operations/edi', icon: ArrowsRightLeftIcon },
+  // Operations section: /operations redirects to /operations/purchasing; the
+  // purchasing, warehouse, manufacturing, and EDI pages share an in-page tab
+  // nav (operations/operations-nav.tsx). All read-only.
+  { name: 'Operations', href: '/operations', icon: ArrowsRightLeftIcon },
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
   { name: 'Gateway', href: '/gateway', icon: ServerStackIcon },
   { name: 'Build info', href: '/build-info', icon: ShieldCheckIcon },

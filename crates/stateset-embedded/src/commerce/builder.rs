@@ -163,8 +163,10 @@ impl CommerceBuilder {
                 metrics,
                 #[cfg(feature = "events")]
                 event_system,
-                #[cfg(all(feature = "sqlite", feature = "vector"))]
+                #[cfg(feature = "sqlite")]
                 sqlite_db: None,
+                #[cfg(feature = "sqlite")]
+                sqlite_path: None,
             });
         }
 
@@ -188,18 +190,18 @@ impl CommerceBuilder {
             }
 
             let sqlite_db = Arc::new(SqliteDatabase::new(&config)?);
-            #[cfg(all(feature = "sqlite", feature = "vector"))]
             let db: Arc<dyn Database> = sqlite_db.clone();
-            #[cfg(not(all(feature = "sqlite", feature = "vector")))]
-            let db: Arc<dyn Database> = sqlite_db;
+            let file_path = (path != ":memory:").then(|| path.clone());
             Ok(Commerce {
                 db,
                 backend: CommerceBackend::Sqlite,
                 metrics,
                 #[cfg(feature = "events")]
                 event_system,
-                #[cfg(all(feature = "sqlite", feature = "vector"))]
+                #[cfg(feature = "sqlite")]
                 sqlite_db: Some(sqlite_db),
+                #[cfg(feature = "sqlite")]
+                sqlite_path: file_path,
             })
         }
 

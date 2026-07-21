@@ -1218,6 +1218,31 @@ impl Commerce {
         }
     }
 
+    /// Access backup, restore and export/import operations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let commerce = stateset_embedded::Commerce::new("./store.db")?;
+    /// let report = commerce.maintenance().backup_to("./backups/nightly.db")?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    #[must_use]
+    pub fn maintenance(&self) -> crate::Maintenance {
+        #[cfg(feature = "sqlite")]
+        {
+            crate::Maintenance::new(
+                self.db.clone(),
+                self.sqlite_db.clone(),
+                self.sqlite_path.clone(),
+            )
+        }
+        #[cfg(not(feature = "sqlite"))]
+        {
+            crate::Maintenance::new(self.db.clone())
+        }
+    }
+
     /// Access revenue recognition (ASC 606) operations.
     #[must_use]
     pub fn revenue_recognition(&self) -> crate::RevenueRecognition {

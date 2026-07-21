@@ -408,6 +408,12 @@ impl Commerce {
         PaymentObligations { commerce: self.inner.clone() }
     }
 
+    /// Get the maintenance API (backup, restore, export, import)
+    #[napi(getter)]
+    pub fn maintenance(&self) -> Maintenance {
+        Maintenance { commerce: self.inner.clone() }
+    }
+
     /// Get the purgatory API (order ingestion staging)
     #[napi(getter)]
     pub fn purgatory(&self) -> Purgatory {
@@ -23935,4 +23941,328 @@ fn build_agent_identity_filter(
             })
         },
     )
+}
+
+// ---------------------------------------------------------------------------
+// Maintenance (backup / restore / structured export & import)
+// ---------------------------------------------------------------------------
+
+/// Manifest written alongside a database backup.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct BackupManifestOutput {
+    pub manifest_version: u32,
+    pub schema_version: String,
+    pub migration_count: u32,
+    pub engine_version: String,
+    pub created_at: String,
+    pub source_path: String,
+    pub size_bytes: i64,
+    pub checksum: String,
+}
+
+/// Result of a database backup.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct BackupReportOutput {
+    pub backup_path: String,
+    pub manifest_path: String,
+    pub manifest: BackupManifestOutput,
+}
+
+/// Options controlling a restore.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct RestoreOptionsInput {
+    pub overwrite: Option<bool>,
+    pub skip_checksum: Option<bool>,
+    pub allow_newer_schema: Option<bool>,
+}
+
+/// Result of a database restore.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct RestoreReportOutput {
+    pub target_path: String,
+    pub schema_version: String,
+    pub size_bytes: i64,
+    pub checksum_verified: bool,
+    pub replaced_existing: bool,
+}
+
+/// Per-domain record count.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct DomainCountOutput {
+    pub domain: String,
+    pub count: u32,
+}
+
+/// Options controlling a structured export.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct ExportOptionsInput {
+    pub domains: Option<Vec<String>>,
+    pub page_size: Option<u32>,
+    pub pretty: Option<bool>,
+}
+
+/// Result of a structured export.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct ExportReportOutput {
+    pub counts: Vec<DomainCountOutput>,
+    pub total: u32,
+}
+
+/// Options controlling a structured import.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct ImportOptionsInput {
+    pub domains: Option<Vec<String>>,
+    /// `skip` (default) or `fail`.
+    pub on_conflict: Option<String>,
+    pub dry_run: Option<bool>,
+}
+
+/// Result of a structured import.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct ImportReportOutput {
+    pub created: Vec<DomainCountOutput>,
+    pub skipped: Vec<DomainCountOutput>,
+    pub unsupported_domains: Vec<String>,
+    pub total_created: u32,
+}
+
+/// Domains that structured export/import can cover.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct PortableDomainsOutput {
+    pub exportable: Vec<String>,
+    pub importable: Vec<String>,
+}
+
+fn domain_counts(counts: Vec<(String, usize)>) -> Vec<DomainCountOutput> {
+    counts
+        .into_iter()
+        .map(|(domain, count)| DomainCountOutput { domain, count: count as u32 })
+        .collect()
+}
+
+#[napi]
+pub struct Maintenance {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Maintenance {
+    /// Whether file-level backup and restore are available on this instance.
+    #[napi]
+    pub async fn supports_backup(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.maintenance().supports_backup())
+    }
+
+    /// Alias of `supportsBackup`, matching the other accessor modules.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.maintenance().supports_backup())
+    }
+
+    /// Take a consistent backup to `backupPath`, writing a sidecar manifest.
+    #[napi]
+    pub async fn backup(&self, backup_path: String) -> Result<BackupReportOutput> {
+        let commerce = self.commerce.lock().await;
+        let report = commerce
+            .maintenance()
+            .backup_to(&backup_path)
+            .map_err(|e| Error::from_reason(format!("Failed to back up database: {}", e)))?;
+        let m = report.manifest;
+        Ok(BackupReportOutput {
+            backup_path: report.backup_path.display().to_string(),
+            manifest_path: report.manifest_path.display().to_string(),
+            manifest: BackupManifestOutput {
+                manifest_version: m.manifest_version,
+                schema_version: m.schema_version,
+                migration_count: m.migration_count as u32,
+                engine_version: m.engine_version,
+                created_at: m.created_at.to_rfc3339(),
+                source_path: m.source_path,
+                size_bytes: m.size_bytes as i64,
+                checksum: m.checksum,
+            },
+        })
+    }
+
+    /// Alias of `backup`.
+    #[napi]
+    pub async fn backup_to(&self, backup_path: String) -> Result<BackupReportOutput> {
+        self.backup(backup_path).await
+    }
+
+    /// Restore a backup to `targetPath`.
+    #[napi]
+    pub async fn restore(
+        &self,
+        backup_path: String,
+        target_path: String,
+        options: Option<RestoreOptionsInput>,
+    ) -> Result<RestoreReportOutput> {
+        let commerce = self.commerce.lock().await;
+        let opts = options.unwrap_or(RestoreOptionsInput {
+            overwrite: None,
+            skip_checksum: None,
+            allow_newer_schema: None,
+        });
+        let restore_options = stateset_embedded::maintenance::RestoreOptions {
+            overwrite: opts.overwrite.unwrap_or(false),
+            skip_checksum: opts.skip_checksum.unwrap_or(false),
+            allow_newer_schema: opts.allow_newer_schema.unwrap_or(false),
+        };
+        let report = commerce
+            .maintenance()
+            .restore_from(&backup_path, &target_path, &restore_options)
+            .map_err(|e| Error::from_reason(format!("Failed to restore database: {}", e)))?;
+        Ok(RestoreReportOutput {
+            target_path: report.target_path.display().to_string(),
+            schema_version: report.schema_version,
+            size_bytes: report.size_bytes as i64,
+            checksum_verified: report.checksum_verified,
+            replaced_existing: report.replaced_existing,
+        })
+    }
+
+    /// Alias of `restore`.
+    #[napi]
+    pub async fn restore_from(
+        &self,
+        backup_path: String,
+        target_path: String,
+        options: Option<RestoreOptionsInput>,
+    ) -> Result<RestoreReportOutput> {
+        self.restore(backup_path, target_path, options).await
+    }
+
+    /// Write a structured JSON export to `path`.
+    #[napi]
+    pub async fn export(
+        &self,
+        path: String,
+        options: Option<ExportOptionsInput>,
+    ) -> Result<ExportReportOutput> {
+        let commerce = self.commerce.lock().await;
+        let mut export_options = stateset_embedded::maintenance::ExportOptions::default();
+        if let Some(o) = options {
+            if let Some(domains) = o.domains {
+                export_options.domains = domains;
+            }
+            if let Some(page_size) = o.page_size.filter(|p| *p > 0) {
+                export_options.page_size = page_size;
+            }
+            if let Some(pretty) = o.pretty {
+                export_options.pretty = pretty;
+            }
+        }
+        let report = commerce
+            .maintenance()
+            .export_to_file_with(&path, &export_options)
+            .map_err(|e| Error::from_reason(format!("Failed to export data: {}", e)))?;
+        Ok(ExportReportOutput { total: report.total as u32, counts: domain_counts(report.counts) })
+    }
+
+    /// Alias of `export`.
+    #[napi]
+    pub async fn export_to_file(
+        &self,
+        path: String,
+        options: Option<ExportOptionsInput>,
+    ) -> Result<ExportReportOutput> {
+        self.export(path, options).await
+    }
+
+    /// Read a structured JSON export from `path` and replay it.
+    #[napi]
+    pub async fn import(
+        &self,
+        path: String,
+        options: Option<ImportOptionsInput>,
+    ) -> Result<ImportReportOutput> {
+        let commerce = self.commerce.lock().await;
+        let mut import_options = stateset_embedded::maintenance::ImportOptions::default();
+        if let Some(o) = options {
+            if let Some(domains) = o.domains {
+                import_options.domains = domains;
+            }
+            if let Some(policy) = o.on_conflict {
+                import_options.on_conflict = match policy.as_str() {
+                    "skip" => stateset_embedded::maintenance::ConflictPolicy::Skip,
+                    "fail" => stateset_embedded::maintenance::ConflictPolicy::Fail,
+                    other => {
+                        return Err(Error::from_reason(format!(
+                            "Invalid onConflict '{}': expected 'skip' or 'fail'",
+                            other
+                        )));
+                    }
+                };
+            }
+            if let Some(dry_run) = o.dry_run {
+                import_options.dry_run = dry_run;
+            }
+        }
+        let report = commerce
+            .maintenance()
+            .import_from_file(&path, &import_options)
+            .map_err(|e| Error::from_reason(format!("Failed to import data: {}", e)))?;
+        Ok(ImportReportOutput {
+            created: domain_counts(report.created),
+            skipped: domain_counts(report.skipped),
+            unsupported_domains: report.unsupported_domains,
+            total_created: report.total_created as u32,
+        })
+    }
+
+    /// Alias of `import`.
+    #[napi]
+    pub async fn import_from_file(
+        &self,
+        path: String,
+        options: Option<ImportOptionsInput>,
+    ) -> Result<ImportReportOutput> {
+        self.import(path, options).await
+    }
+
+    /// Domains the structured export covers, in export order.
+    #[napi]
+    pub async fn exportable_domains(&self) -> Result<Vec<String>> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.maintenance().exportable_domains().into_iter().map(ToOwned::to_owned).collect())
+    }
+
+    /// Domains the structured import can write.
+    #[napi]
+    pub async fn importable_domains(&self) -> Result<Vec<String>> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.maintenance().importable_domains().into_iter().map(ToOwned::to_owned).collect())
+    }
+
+    /// Both portable domain lists in one call.
+    #[napi]
+    pub async fn list_portable_domains(&self) -> Result<PortableDomainsOutput> {
+        let commerce = self.commerce.lock().await;
+        let maintenance = commerce.maintenance();
+        Ok(PortableDomainsOutput {
+            exportable: maintenance
+                .exportable_domains()
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect(),
+            importable: maintenance
+                .importable_domains()
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect(),
+        })
+    }
 }

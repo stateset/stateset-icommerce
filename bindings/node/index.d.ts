@@ -4364,6 +4364,72 @@ export interface ValidationSummaryOutput {
   count: string
   averageResponse: number
 }
+/** Manifest written alongside a database backup. */
+export interface BackupManifestOutput {
+  manifestVersion: number
+  schemaVersion: string
+  migrationCount: number
+  engineVersion: string
+  createdAt: string
+  sourcePath: string
+  sizeBytes: number
+  checksum: string
+}
+/** Result of a database backup. */
+export interface BackupReportOutput {
+  backupPath: string
+  manifestPath: string
+  manifest: BackupManifestOutput
+}
+/** Options controlling a restore. */
+export interface RestoreOptionsInput {
+  overwrite?: boolean
+  skipChecksum?: boolean
+  allowNewerSchema?: boolean
+}
+/** Result of a database restore. */
+export interface RestoreReportOutput {
+  targetPath: string
+  schemaVersion: string
+  sizeBytes: number
+  checksumVerified: boolean
+  replacedExisting: boolean
+}
+/** Per-domain record count. */
+export interface DomainCountOutput {
+  domain: string
+  count: number
+}
+/** Options controlling a structured export. */
+export interface ExportOptionsInput {
+  domains?: Array<string>
+  pageSize?: number
+  pretty?: boolean
+}
+/** Result of a structured export. */
+export interface ExportReportOutput {
+  counts: Array<DomainCountOutput>
+  total: number
+}
+/** Options controlling a structured import. */
+export interface ImportOptionsInput {
+  domains?: Array<string>
+  /** `skip` (default) or `fail`. */
+  onConflict?: string
+  dryRun?: boolean
+}
+/** Result of a structured import. */
+export interface ImportReportOutput {
+  created: Array<DomainCountOutput>
+  skipped: Array<DomainCountOutput>
+  unsupportedDomains: Array<string>
+  totalCreated: number
+}
+/** Domains that structured export/import can cover. */
+export interface PortableDomainsOutput {
+  exportable: Array<string>
+  importable: Array<string>
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -4477,6 +4543,8 @@ export declare class Commerce {
   get integrationFieldMappings(): IntegrationFieldMappings
   /** Get the payment obligations API (scheduled AP payments) */
   get paymentObligations(): PaymentObligations
+  /** Get the maintenance API (backup, restore, export, import) */
+  get maintenance(): Maintenance
   /** Get the purgatory API (order ingestion staging) */
   get purgatory(): Purgatory
   /** Get the topology snapshots API (operational topology health) */
@@ -5797,4 +5865,32 @@ export declare class Erc8004 {
   validationStatus(requestHash: string): Promise<AgentValidationStatusOutput | null>
   /** Aggregate validation summary for an agent. */
   validationSummary(agentRegistry: string, agentId: string, validatorAddresses?: Array<string> | undefined | null, tag?: string | undefined | null): Promise<ValidationSummaryOutput>
+}
+export declare class Maintenance {
+  /** Whether file-level backup and restore are available on this instance. */
+  supportsBackup(): Promise<boolean>
+  /** Alias of `supportsBackup`, matching the other accessor modules. */
+  isSupported(): Promise<boolean>
+  /** Take a consistent backup to `backupPath`, writing a sidecar manifest. */
+  backup(backupPath: string): Promise<BackupReportOutput>
+  /** Alias of `backup`. */
+  backupTo(backupPath: string): Promise<BackupReportOutput>
+  /** Restore a backup to `targetPath`. */
+  restore(backupPath: string, targetPath: string, options?: RestoreOptionsInput | undefined | null): Promise<RestoreReportOutput>
+  /** Alias of `restore`. */
+  restoreFrom(backupPath: string, targetPath: string, options?: RestoreOptionsInput | undefined | null): Promise<RestoreReportOutput>
+  /** Write a structured JSON export to `path`. */
+  export(path: string, options?: ExportOptionsInput | undefined | null): Promise<ExportReportOutput>
+  /** Alias of `export`. */
+  exportToFile(path: string, options?: ExportOptionsInput | undefined | null): Promise<ExportReportOutput>
+  /** Read a structured JSON export from `path` and replay it. */
+  import(path: string, options?: ImportOptionsInput | undefined | null): Promise<ImportReportOutput>
+  /** Alias of `import`. */
+  importFromFile(path: string, options?: ImportOptionsInput | undefined | null): Promise<ImportReportOutput>
+  /** Domains the structured export covers, in export order. */
+  exportableDomains(): Promise<Array<string>>
+  /** Domains the structured import can write. */
+  importableDomains(): Promise<Array<string>>
+  /** Both portable domain lists in one call. */
+  listPortableDomains(): Promise<PortableDomainsOutput>
 }

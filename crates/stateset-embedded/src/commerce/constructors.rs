@@ -42,10 +42,8 @@ impl Commerce {
         };
 
         let sqlite_db = Arc::new(SqliteDatabase::new(&config)?);
-        #[cfg(all(feature = "sqlite", feature = "vector"))]
         let db: Arc<dyn Database> = sqlite_db.clone();
-        #[cfg(not(all(feature = "sqlite", feature = "vector")))]
-        let db: Arc<dyn Database> = sqlite_db;
+        let file_path = (path != ":memory:").then(|| path.to_owned());
         let metrics = init_metrics(MetricsConfig::default());
 
         Ok(Self {
@@ -54,8 +52,10 @@ impl Commerce {
             metrics,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
-            #[cfg(all(feature = "sqlite", feature = "vector"))]
+            #[cfg(feature = "sqlite")]
             sqlite_db: Some(sqlite_db),
+            #[cfg(feature = "sqlite")]
+            sqlite_path: file_path,
         })
     }
 
@@ -172,8 +172,10 @@ impl Commerce {
             metrics,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
-            #[cfg(all(feature = "sqlite", feature = "vector"))]
+            #[cfg(feature = "sqlite")]
             sqlite_db: None,
+            #[cfg(feature = "sqlite")]
+            sqlite_path: None,
         })
     }
 
@@ -215,8 +217,10 @@ impl Commerce {
             metrics,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
-            #[cfg(all(feature = "sqlite", feature = "vector"))]
+            #[cfg(feature = "sqlite")]
             sqlite_db: None,
+            #[cfg(feature = "sqlite")]
+            sqlite_path: None,
         })
     }
 
@@ -232,8 +236,10 @@ impl Commerce {
             metrics,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
-            #[cfg(all(feature = "sqlite", feature = "vector"))]
+            #[cfg(feature = "sqlite")]
             sqlite_db: None,
+            #[cfg(feature = "sqlite")]
+            sqlite_path: None,
         }
     }
 

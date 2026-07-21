@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**893 tools** across **86 domains**.
+**898 tools** across **87 domains**.
 
 ## Domains
 
@@ -83,6 +83,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [general-ledger](#general-ledger) | 17 |
 | [agent-receipt](#agent-receipt) | 11 |
 | [fixed-assets](#fixed-assets) | 9 |
+| [maintenance](#maintenance) | 5 |
 | [revenue-recognition](#revenue-recognition) | 6 |
 | [cycle-counts](#cycle-counts) | 7 |
 | [edi-documents](#edi-documents) | 5 |
@@ -1245,6 +1246,16 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `generate_depreciation_schedule` | write | Generate the depreciation schedule for a fixed asset. |
 | `get_depreciation_schedule` | read | Get the depreciation schedule for a fixed asset. |
 | `post_depreciation` | write | Post depreciation for a period. |
+
+## maintenance
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `backup_database` | write | Create a consistent, checksum-verified backup of the database plus a sidecar manifest. Safe to run while the store is being written to. |
+| `restore_database` | write | Restore a backup to a target path. Verifies the manifest checksum, refuses backups from a newer engine, and refuses to overwrite an existing database unless overwrite is set. |
+| `export_full_data` | read | Export the full store to a versioned JSON file (distinct from export_data, which dumps a single entity type for parity testing). Covers the core commerce and finance domains; see the maintenance module docs for exactly what is and is not included. |
+| `import_full_data` | write | Import a JSON export into this store. Records are replayed through the normal create paths, so IDs are re-minted and foreign keys remapped. |
+| `list_portable_domains` | read | List the domains that data export and import can cover. |
 
 ## revenue-recognition
 

@@ -70,6 +70,7 @@ import { backorderTools } from './backorders.js';
 import { generalLedgerTools } from './general-ledger.js';
 import { agentReceiptTools } from './agent-receipt.js';
 import { fixedAssetTools } from './fixed-assets.js';
+import { maintenanceTools } from './maintenance.js';
 import { revenueRecognitionTools } from './revenue-recognition.js';
 import { cycleCountTools } from './cycle-counts.js';
 import { ediDocumentTools } from './edi-documents.js';
@@ -158,6 +159,7 @@ export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['general-ledger', generalLedgerTools],
   ['agent-receipt', agentReceiptTools],
   ['fixed-assets', fixedAssetTools],
+  ['maintenance', maintenanceTools],
   ['revenue-recognition', revenueRecognitionTools],
   ['cycle-counts', cycleCountTools],
   ['edi-documents', ediDocumentTools],

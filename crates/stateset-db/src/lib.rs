@@ -48,7 +48,10 @@ pub mod audit;
 #[cfg(feature = "sqlite")]
 pub mod backup;
 #[cfg(feature = "sqlite")]
+pub mod maintenance;
+#[cfg(feature = "sqlite")]
 pub mod migrations;
+pub mod portability;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 

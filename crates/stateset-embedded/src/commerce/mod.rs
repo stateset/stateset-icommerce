@@ -21,7 +21,7 @@ use stateset_observability::Metrics;
 #[cfg(feature = "events")]
 use crate::events::EventSystem;
 
-#[cfg(all(feature = "sqlite", feature = "vector"))]
+#[cfg(feature = "sqlite")]
 use stateset_db::SqliteDatabase;
 
 pub use builder::CommerceBuilder;
@@ -136,8 +136,13 @@ pub struct Commerce {
     metrics: Metrics,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
-    #[cfg(all(feature = "sqlite", feature = "vector"))]
+    #[cfg(feature = "sqlite")]
     sqlite_db: Option<Arc<SqliteDatabase>>,
+    /// Filesystem path of the SQLite database, when one is backing this
+    /// instance. Needed by backup/restore, which operate on files rather than
+    /// on the repository abstraction. `None` for `:memory:` and non-SQLite.
+    #[cfg(feature = "sqlite")]
+    sqlite_path: Option<String>,
 }
 
 impl std::fmt::Debug for Commerce {

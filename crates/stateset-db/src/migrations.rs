@@ -100,6 +100,22 @@ fn compute_migration_checksum(sql: &str) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Names of every migration this binary knows about, in application order.
+///
+/// Used by backup/restore tooling to determine the schema version a binary
+/// supports, so that restoring a backup taken by a *newer* binary can be
+/// refused rather than silently corrupting data.
+#[must_use]
+pub fn known_migration_names() -> Vec<&'static str> {
+    get_migrations().into_iter().map(|(name, _)| name).collect()
+}
+
+/// The highest (last) migration name known to this binary.
+#[must_use]
+pub fn latest_known_migration() -> &'static str {
+    get_migrations().last().map_or("", |(name, _)| *name)
+}
+
 /// Get list of migrations in order
 fn get_migrations() -> Vec<(&'static str, &'static str)> {
     vec![

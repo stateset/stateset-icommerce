@@ -392,6 +392,102 @@ impl Commerce {
         FixedAssets { commerce: self.inner.clone() }
     }
 
+    /// Get the activity logs API.
+    #[getter]
+    fn activity_logs(&self) -> ActivityLogs {
+        ActivityLogs { commerce: self.inner.clone() }
+    }
+
+    /// Get the channels API.
+    #[getter]
+    fn channels(&self) -> Channels {
+        Channels { commerce: self.inner.clone() }
+    }
+
+    /// Get the companies API.
+    #[getter]
+    fn companies(&self) -> Companies {
+        Companies { commerce: self.inner.clone() }
+    }
+
+    /// Get the units of measure API.
+    #[getter]
+    fn units_of_measure(&self) -> UnitsOfMeasure {
+        UnitsOfMeasure { commerce: self.inner.clone() }
+    }
+
+    /// Get the shipping zones API.
+    #[getter]
+    fn shipping_zones(&self) -> ShippingZones {
+        ShippingZones { commerce: self.inner.clone() }
+    }
+
+    /// Get the stock snapshots API.
+    #[getter]
+    fn stock_snapshots(&self) -> StockSnapshots {
+        StockSnapshots { commerce: self.inner.clone() }
+    }
+
+    /// Get the print stations API.
+    #[getter]
+    fn print_stations(&self) -> PrintStations {
+        PrintStations { commerce: self.inner.clone() }
+    }
+
+    /// Get the integration mappings API.
+    #[getter]
+    fn integration_mappings(&self) -> IntegrationMappings {
+        IntegrationMappings { commerce: self.inner.clone() }
+    }
+
+    /// Get the integration field mappings API.
+    #[getter]
+    fn integration_field_mappings(&self) -> IntegrationFieldMappings {
+        IntegrationFieldMappings { commerce: self.inner.clone() }
+    }
+
+    /// Get the payment obligations API (amounts scheduled to suppliers).
+    #[getter]
+    fn payment_obligations(&self) -> PaymentObligations {
+        PaymentObligations { commerce: self.inner.clone() }
+    }
+
+    /// Get the purgatory (order ingestion staging) API.
+    #[getter]
+    fn purgatory(&self) -> Purgatory {
+        Purgatory { commerce: self.inner.clone() }
+    }
+
+    /// Get the topology snapshots API.
+    #[getter]
+    fn topology_snapshots(&self) -> TopologySnapshots {
+        TopologySnapshots { commerce: self.inner.clone() }
+    }
+
+    /// Get the vendor returns (return-to-supplier) API.
+    #[getter]
+    fn vendor_returns(&self) -> VendorReturns {
+        VendorReturns { commerce: self.inner.clone() }
+    }
+
+    /// Get the fraud API.
+    #[getter]
+    fn fraud(&self) -> Fraud {
+        Fraud { commerce: self.inner.clone() }
+    }
+
+    /// Get the search configuration API.
+    #[getter]
+    fn search_config(&self) -> SearchConfigs {
+        SearchConfigs { commerce: self.inner.clone() }
+    }
+
+    /// Get the ERC-8004 trustless agents API.
+    #[getter]
+    fn erc8004(&self) -> Erc8004 {
+        Erc8004 { commerce: self.inner.clone() }
+    }
+
     /// Get the revenue recognition (ASC 606) API.
     #[getter]
     fn revenue_recognition(&self) -> RevenueRecognition {
@@ -12849,6 +12945,108 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CustomerSearchResult>()?;
     m.add_class::<EmbeddingStats>()?;
 
+    // Activity Logs
+    m.add_class::<ActivityLogs>()?;
+    m.add_class::<ActivityLogEntry>()?;
+
+    // Channels
+    m.add_class::<Channels>()?;
+    m.add_class::<Channel>()?;
+    m.add_class::<ChannelProductMapping>()?;
+    m.add_class::<ChannelProductSyncItem>()?;
+
+    // Companies
+    m.add_class::<Companies>()?;
+    m.add_class::<Company>()?;
+    m.add_class::<CompanyShippingAddress>()?;
+    m.add_class::<CompanyPriceOverride>()?;
+    m.add_class::<Contact>()?;
+
+    // Units of Measure
+    m.add_class::<UnitClass>()?;
+    m.add_class::<UnitOfMeasure>()?;
+    m.add_class::<UnitConversionRule>()?;
+    m.add_class::<UnitsOfMeasure>()?;
+
+    // Shipping Zones
+    m.add_class::<ShippingZones>()?;
+    m.add_class::<ShippingZone>()?;
+    m.add_class::<ShippingCondition>()?;
+    m.add_class::<ZoneShippingMethod>()?;
+    m.add_class::<ZoneShippingRate>()?;
+
+    // Stock Snapshots
+    m.add_class::<CaptureStockLineInput>()?;
+    m.add_class::<StockSnapshotLine>()?;
+    m.add_class::<StockSnapshot>()?;
+    m.add_class::<StockSnapshots>()?;
+
+    // Print Stations
+    m.add_class::<PrintStations>()?;
+    m.add_class::<PrintStation>()?;
+    m.add_class::<PairStationResult>()?;
+    m.add_class::<PrintJob>()?;
+
+    // Integration Mappings
+    m.add_class::<IntegrationMappings>()?;
+    m.add_class::<IntegrationMapping>()?;
+    m.add_class::<CreateIntegrationMappingInput>()?;
+
+    // Integration Field Mappings
+    m.add_class::<IntegrationFieldMappings>()?;
+    m.add_class::<IntegrationFieldMapping>()?;
+    m.add_class::<NewIntegrationFieldMapping>()?;
+
+    // Payment Obligations
+    m.add_class::<PaymentObligation>()?;
+    m.add_class::<PaymentObligationDashboard>()?;
+    m.add_class::<PaymentObligations>()?;
+
+    // Purgatory
+    m.add_class::<Purgatory>()?;
+    m.add_class::<PurgatoryOrder>()?;
+    m.add_class::<PurgatoryLineItem>()?;
+    m.add_class::<IngestLineItemInput>()?;
+
+    // Topology Snapshots
+    m.add_class::<TopologySnapshots>()?;
+    m.add_class::<TopologySnapshot>()?;
+
+    // Vendor Returns
+    m.add_class::<VendorReturns>()?;
+    m.add_class::<VendorReturn>()?;
+    m.add_class::<VendorReturnItem>()?;
+    m.add_class::<VendorReturnItemInput>()?;
+
+    // Fraud
+    m.add_class::<Fraud>()?;
+    m.add_class::<FraudSignalInput>()?;
+    m.add_class::<FraudSignal>()?;
+    m.add_class::<FraudAssessment>()?;
+    m.add_class::<FraudRule>()?;
+
+    // Search configuration
+    m.add_class::<SearchFieldInput>()?;
+    m.add_class::<FacetConfigInput>()?;
+    m.add_class::<SynonymGroupInput>()?;
+    m.add_class::<BoostRuleInput>()?;
+    m.add_class::<SearchField>()?;
+    m.add_class::<FacetConfig>()?;
+    m.add_class::<SynonymGroup>()?;
+    m.add_class::<BoostRule>()?;
+    m.add_class::<SearchConfig>()?;
+    m.add_class::<SearchConfigs>()?;
+
+    // ERC-8004 Trustless Agents
+    m.add_class::<AgentIdentity>()?;
+    m.add_class::<AgentFeedback>()?;
+    m.add_class::<FeedbackSummary>()?;
+    m.add_class::<AgentValidationRequest>()?;
+    m.add_class::<AgentValidationResponse>()?;
+    m.add_class::<AgentValidationStatus>()?;
+    m.add_class::<ValidationSummary>()?;
+    m.add_class::<Erc8004>()?;
+
     Ok(())
 }
 
@@ -18762,5 +18960,5731 @@ impl InboundShipments {
             PyRuntimeError::new_err(format!("Failed to cancel inbound shipment: {}", e))
         })?;
         Ok(shipment.into())
+    }
+}
+
+// ============================================================================
+// Activity Logs (append-only subject history)
+// ============================================================================
+
+/// A single append-only activity log entry for a subject record.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ActivityLogEntry {
+    #[pyo3(get)]
+    id: String,
+    /// Subject record type (e.g. sales_order)
+    #[pyo3(get)]
+    subject_type: String,
+    #[pyo3(get)]
+    subject_id: String,
+    /// Machine action key (e.g. status_changed)
+    #[pyo3(get)]
+    action: String,
+    #[pyo3(get)]
+    summary: String,
+    /// user, system, integration, agent
+    #[pyo3(get)]
+    actor_kind: String,
+    #[pyo3(get)]
+    actor: Option<String>,
+    /// Metadata as a JSON string
+    #[pyo3(get)]
+    metadata: String,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::ActivityLogEntry> for ActivityLogEntry {
+    fn from(entry: stateset_core::ActivityLogEntry) -> Self {
+        Self {
+            id: entry.id.to_string(),
+            subject_type: entry.subject_type,
+            subject_id: entry.subject_id.to_string(),
+            action: entry.action,
+            summary: entry.summary,
+            actor_kind: entry.actor_kind.to_string(),
+            actor: entry.actor,
+            metadata: json_value_to_string(&entry.metadata),
+            created_at: entry.created_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_actor_kind_py(value: &str) -> PyResult<stateset_core::ActorKind> {
+    value
+        .parse::<stateset_core::ActorKind>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid actor kind: {value}")))
+}
+
+/// Activity log operations. Metadata crosses as a JSON string, enums as
+/// snake_case strings, timestamps as RFC3339 strings.
+#[pyclass]
+pub struct ActivityLogs {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl ActivityLogs {
+    /// Whether the activity-logs backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.activity_logs().is_supported())
+    }
+
+    /// Record an activity log entry.
+    ///
+    /// `actor_kind` is one of user, system, integration, agent (default user).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        subject_type,
+        subject_id,
+        action,
+        summary,
+        actor_kind=None,
+        actor=None,
+        metadata=None,
+    ))]
+    fn record(
+        &self,
+        subject_type: String,
+        subject_id: String,
+        action: String,
+        summary: String,
+        actor_kind: Option<String>,
+        actor: Option<String>,
+        metadata: Option<String>,
+    ) -> PyResult<ActivityLogEntry> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let actor_kind = match actor_kind.as_deref() {
+            Some(value) => parse_actor_kind_py(value)?,
+            None => stateset_core::ActorKind::default(),
+        };
+        let metadata = match metadata.as_deref() {
+            Some(value) => parse_json_value(value, "metadata")?,
+            None => serde_json::Value::Null,
+        };
+        let entry = commerce
+            .activity_logs()
+            .record(stateset_core::RecordActivity {
+                subject_type,
+                subject_id: parse_uuid_str(&subject_id, "subject_id")?,
+                action,
+                summary,
+                actor_kind,
+                actor,
+                metadata,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to record activity: {}", e)))?;
+        Ok(entry.into())
+    }
+
+    /// Get an activity log entry by ID.
+    fn get(&self, id: String) -> PyResult<Option<ActivityLogEntry>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "activity_log")?;
+        let entry = commerce.activity_logs().get(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get activity log entry: {}", e))
+        })?;
+        Ok(entry.map(Into::into))
+    }
+
+    /// List activity log entries, most recent first.
+    #[pyo3(signature = (
+        subject_type=None,
+        subject_id=None,
+        action=None,
+        actor_kind=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list(
+        &self,
+        subject_type: Option<String>,
+        subject_id: Option<String>,
+        action: Option<String>,
+        actor_kind: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<ActivityLogEntry>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::ActivityLogFilter {
+            subject_type,
+            subject_id: parse_optional_uuid_py(subject_id, "subject_id")?,
+            action,
+            actor_kind: actor_kind.as_deref().map(parse_actor_kind_py).transpose()?,
+            limit,
+            offset,
+        };
+        let entries = commerce
+            .activity_logs()
+            .list(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list activity logs: {}", e)))?;
+        Ok(entries.into_iter().map(Into::into).collect())
+    }
+
+    /// Full history for a single subject, most recent first.
+    fn history_for_subject(
+        &self,
+        subject_type: String,
+        subject_id: String,
+    ) -> PyResult<Vec<ActivityLogEntry>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&subject_id, "subject_id")?;
+        let entries =
+            commerce.activity_logs().history_for_subject(&subject_type, uuid).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to get activity history: {}", e))
+            })?;
+        Ok(entries.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Channels  (sales / fulfillment channels)
+// ============================================================================
+
+/// A sales / fulfillment channel.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct Channel {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    /// sales_channel, fulfillment_channel, end_to_end_channel
+    #[pyo3(get)]
+    channel_type: String,
+    #[pyo3(get)]
+    integration: Option<String>,
+    /// active, paused, deleted
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    api_locked: bool,
+    #[pyo3(get)]
+    default_warehouse_id: Option<String>,
+    #[pyo3(get)]
+    tags: Vec<String>,
+    /// Metadata as a JSON string
+    #[pyo3(get)]
+    metadata: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Channel> for Channel {
+    fn from(c: stateset_core::Channel) -> Self {
+        Self {
+            id: c.id.to_string(),
+            name: c.name,
+            channel_type: c.channel_type.to_string(),
+            integration: c.integration,
+            status: c.status.to_string(),
+            api_locked: c.api_locked,
+            default_warehouse_id: c.default_warehouse_id.map(|w| w.to_string()),
+            tags: c.tags,
+            metadata: json_value_to_string(&c.metadata),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A mapping between a channel-specific SKU and an internal product SKU.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ChannelProductMapping {
+    #[pyo3(get)]
+    channel_id: String,
+    #[pyo3(get)]
+    channel_sku: String,
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    internal_sku: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::ChannelProductMapping> for ChannelProductMapping {
+    fn from(m: stateset_core::ChannelProductMapping) -> Self {
+        Self {
+            channel_id: m.channel_id.to_string(),
+            channel_sku: m.channel_sku,
+            product_id: m.product_id.to_string(),
+            internal_sku: m.internal_sku,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// One item in a bulk channel product sync request.
+///
+/// Set `delete=True` to remove the mapping for `channel_sku` instead of
+/// upserting it.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct ChannelProductSyncItem {
+    #[pyo3(get, set)]
+    channel_sku: String,
+    #[pyo3(get, set)]
+    product_id: Option<String>,
+    #[pyo3(get, set)]
+    internal_sku: Option<String>,
+    #[pyo3(get, set)]
+    delete: bool,
+}
+
+#[pymethods]
+impl ChannelProductSyncItem {
+    #[new]
+    #[pyo3(signature = (channel_sku, product_id=None, internal_sku=None, delete=false))]
+    fn new(
+        channel_sku: String,
+        product_id: Option<String>,
+        internal_sku: Option<String>,
+        delete: bool,
+    ) -> Self {
+        Self { channel_sku, product_id, internal_sku, delete }
+    }
+}
+
+fn parse_channel_type_py(s: &str) -> PyResult<stateset_core::ChannelType> {
+    s.parse::<stateset_core::ChannelType>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid channel type: {s}")))
+}
+
+fn parse_channel_status_py(s: &str) -> PyResult<stateset_core::ChannelStatus> {
+    s.parse::<stateset_core::ChannelStatus>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid channel status: {s}")))
+}
+
+/// Sales / fulfillment channel operations. Enums cross as snake_case strings,
+/// metadata as JSON strings, timestamps as RFC3339 strings.
+#[pyclass]
+pub struct Channels {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Channels {
+    /// Whether the channels backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.channels().is_supported())
+    }
+
+    /// Create a channel.
+    ///
+    /// `channel_type` is one of sales_channel, fulfillment_channel,
+    /// end_to_end_channel and cannot be changed afterwards.
+    #[pyo3(signature = (
+        name,
+        channel_type,
+        integration=None,
+        default_warehouse_id=None,
+        tags=None,
+        metadata=None,
+    ))]
+    fn create(
+        &self,
+        name: String,
+        channel_type: String,
+        integration: Option<String>,
+        default_warehouse_id: Option<String>,
+        tags: Option<Vec<String>>,
+        metadata: Option<String>,
+    ) -> PyResult<Channel> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let channel_type = parse_channel_type_py(&channel_type)?;
+        let default_warehouse_id =
+            parse_optional_uuid_py(default_warehouse_id, "default_warehouse_id")?.map(Into::into);
+        let metadata = metadata
+            .map(|m| parse_json_value(&m, "metadata"))
+            .transpose()?
+            .unwrap_or(serde_json::Value::Null);
+        let channel = commerce
+            .channels()
+            .create(stateset_core::CreateChannel {
+                name,
+                channel_type,
+                integration,
+                default_warehouse_id,
+                tags: tags.unwrap_or_default(),
+                metadata,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create channel: {}", e)))?;
+        Ok(channel.into())
+    }
+
+    /// Get a channel by ID, or `None` when it does not exist.
+    fn get(&self, id: &str) -> PyResult<Option<Channel>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(id, "channel")?;
+        let channel = commerce
+            .channels()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get channel: {}", e)))?;
+        Ok(channel.map(Into::into))
+    }
+
+    /// Update a channel (PATCH semantics; omitted fields are preserved).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        id,
+        name=None,
+        integration=None,
+        status=None,
+        default_warehouse_id=None,
+        tags=None,
+        metadata=None,
+    ))]
+    fn update(
+        &self,
+        id: &str,
+        name: Option<String>,
+        integration: Option<String>,
+        status: Option<String>,
+        default_warehouse_id: Option<String>,
+        tags: Option<Vec<String>>,
+        metadata: Option<String>,
+    ) -> PyResult<Channel> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(id, "channel")?;
+        let status = status.as_deref().map(parse_channel_status_py).transpose()?;
+        let default_warehouse_id =
+            parse_optional_uuid_py(default_warehouse_id, "default_warehouse_id")?.map(Into::into);
+        let metadata = metadata.map(|m| parse_json_value(&m, "metadata")).transpose()?;
+        let channel = commerce
+            .channels()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateChannel {
+                    name,
+                    integration,
+                    status,
+                    default_warehouse_id,
+                    tags,
+                    metadata,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update channel: {}", e)))?;
+        Ok(channel.into())
+    }
+
+    /// List channels matching the given filters.
+    #[pyo3(signature = (
+        channel_type=None,
+        status=None,
+        integration=None,
+        api_locked=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list(
+        &self,
+        channel_type: Option<String>,
+        status: Option<String>,
+        integration: Option<String>,
+        api_locked: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Channel>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::ChannelFilter {
+            channel_type: channel_type.as_deref().map(parse_channel_type_py).transpose()?,
+            status: status.as_deref().map(parse_channel_status_py).transpose()?,
+            integration,
+            api_locked,
+            limit,
+            offset,
+        };
+        let channels = commerce
+            .channels()
+            .list(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list channels: {}", e)))?;
+        Ok(channels.into_iter().map(Into::into).collect())
+    }
+
+    /// Soft-delete a channel.
+    fn delete(&self, id: &str) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(id, "channel")?;
+        commerce
+            .channels()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete channel: {}", e)))
+    }
+
+    /// Lock or unlock a channel against external mutations.
+    fn set_lock(&self, id: &str, locked: bool) -> PyResult<Channel> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(id, "channel")?;
+        let channel = commerce
+            .channels()
+            .set_lock(uuid.into(), locked)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to set channel lock: {}", e)))?;
+        Ok(channel.into())
+    }
+
+    /// Bulk upsert/delete channel SKU mappings. Returns the affected count.
+    fn sync_products(&self, id: &str, items: Vec<ChannelProductSyncItem>) -> PyResult<u64> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(id, "channel")?;
+        let items = items
+            .into_iter()
+            .map(|i| -> PyResult<stateset_core::ChannelProductSyncItem> {
+                Ok(stateset_core::ChannelProductSyncItem {
+                    channel_sku: i.channel_sku,
+                    product_id: parse_optional_uuid_py(i.product_id, "product_id")?.map(Into::into),
+                    internal_sku: i.internal_sku,
+                    delete: i.delete,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        commerce
+            .channels()
+            .sync_products(uuid.into(), items)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to sync channel products: {}", e)))
+    }
+
+    /// List a channel's SKU mappings.
+    fn list_product_mappings(&self, id: &str) -> PyResult<Vec<ChannelProductMapping>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(id, "channel")?;
+        let mappings = commerce.channels().list_product_mappings(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list channel product mappings: {}", e))
+        })?;
+        Ok(mappings.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Companies  (B2B accounts and contacts)
+// ============================================================================
+
+/// A B2B company / account. Metadata crosses as a JSON string.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct Company {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    reference: Option<String>,
+    #[pyo3(get)]
+    email: Option<String>,
+    #[pyo3(get)]
+    phone: Option<String>,
+    /// ISO 4217 currency code
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    payment_terms_days: Option<i32>,
+    /// active, inactive
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    tags: Vec<String>,
+    /// Metadata as a JSON string
+    #[pyo3(get)]
+    metadata: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Company> for Company {
+    fn from(c: stateset_core::Company) -> Self {
+        Self {
+            id: c.id.to_string(),
+            name: c.name,
+            reference: c.reference,
+            email: c.email,
+            phone: c.phone,
+            currency: c.currency.to_string(),
+            payment_terms_days: c.payment_terms_days,
+            status: c.status.to_string(),
+            tags: c.tags,
+            metadata: json_value_to_string(&c.metadata),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A shipping address belonging to a company.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct CompanyShippingAddress {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    company_id: String,
+    #[pyo3(get)]
+    label: Option<String>,
+    #[pyo3(get)]
+    name: Option<String>,
+    #[pyo3(get)]
+    line1: String,
+    #[pyo3(get)]
+    line2: Option<String>,
+    #[pyo3(get)]
+    city: String,
+    #[pyo3(get)]
+    region: Option<String>,
+    #[pyo3(get)]
+    postal_code: Option<String>,
+    /// ISO 3166-1 alpha-2 country code
+    #[pyo3(get)]
+    country: String,
+    #[pyo3(get)]
+    is_default: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::CompanyShippingAddress> for CompanyShippingAddress {
+    fn from(a: stateset_core::CompanyShippingAddress) -> Self {
+        Self {
+            id: a.id.to_string(),
+            company_id: a.company_id.to_string(),
+            label: a.label,
+            name: a.name,
+            line1: a.line1,
+            line2: a.line2,
+            city: a.city,
+            region: a.region,
+            postal_code: a.postal_code,
+            country: a.country,
+            is_default: a.is_default,
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A company-specific product price override. Money is an exact decimal string.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct CompanyPriceOverride {
+    #[pyo3(get)]
+    company_id: String,
+    #[pyo3(get)]
+    product_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    price: String,
+    /// ISO 4217 currency code
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::CompanyPriceOverride> for CompanyPriceOverride {
+    fn from(o: stateset_core::CompanyPriceOverride) -> Self {
+        Self {
+            company_id: o.company_id.to_string(),
+            product_id: o.product_id.to_string(),
+            price: o.price.to_string(),
+            currency: o.currency.to_string(),
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A contact associated with one or more companies.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct Contact {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    first_name: String,
+    #[pyo3(get)]
+    last_name: Option<String>,
+    #[pyo3(get)]
+    email: Option<String>,
+    #[pyo3(get)]
+    phone: Option<String>,
+    #[pyo3(get)]
+    title: Option<String>,
+    #[pyo3(get)]
+    company_ids: Vec<String>,
+    #[pyo3(get)]
+    portal_enabled: bool,
+    #[pyo3(get)]
+    is_active: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Contact> for Contact {
+    fn from(c: stateset_core::Contact) -> Self {
+        Self {
+            id: c.id.to_string(),
+            first_name: c.first_name,
+            last_name: c.last_name,
+            email: c.email,
+            phone: c.phone,
+            title: c.title,
+            company_ids: c.company_ids.iter().map(ToString::to_string).collect(),
+            portal_enabled: c.portal_enabled,
+            is_active: c.is_active,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_company_status_py(s: &str) -> PyResult<stateset_core::CompanyStatus> {
+    s.parse::<stateset_core::CompanyStatus>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid company status: {s}")))
+}
+
+fn parse_company_metadata_py(s: Option<String>) -> PyResult<serde_json::Value> {
+    match s {
+        Some(s) => parse_json_value(&s, "metadata"),
+        None => Ok(serde_json::Value::Null),
+    }
+}
+
+/// B2B company (account) operations. Money is exchanged as exact decimal
+/// strings, timestamps as RFC 3339 strings, enums as snake_case strings.
+#[pyclass]
+pub struct Companies {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Companies {
+    /// Whether the companies backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.companies().is_supported())
+    }
+
+    /// Create a company.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        name,
+        reference=None,
+        email=None,
+        phone=None,
+        currency=None,
+        payment_terms_days=None,
+        tags=None,
+        metadata=None,
+    ))]
+    fn create(
+        &self,
+        name: String,
+        reference: Option<String>,
+        email: Option<String>,
+        phone: Option<String>,
+        currency: Option<String>,
+        payment_terms_days: Option<i32>,
+        tags: Option<Vec<String>>,
+        metadata: Option<String>,
+    ) -> PyResult<Company> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let company = commerce
+            .companies()
+            .create(stateset_core::CreateCompany {
+                name,
+                reference,
+                email,
+                phone,
+                currency: parse_currency_opt_py(currency)?,
+                payment_terms_days,
+                tags: tags.unwrap_or_default(),
+                metadata: parse_company_metadata_py(metadata)?,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create company: {}", e)))?;
+        Ok(company.into())
+    }
+
+    /// Get a company by ID.
+    fn get(&self, id: String) -> PyResult<Option<Company>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "company")?;
+        let company = commerce
+            .companies()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get company: {}", e)))?;
+        Ok(company.map(Into::into))
+    }
+
+    /// Update a company (partial update; omitted fields are unchanged).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        id,
+        name=None,
+        reference=None,
+        email=None,
+        phone=None,
+        currency=None,
+        payment_terms_days=None,
+        status=None,
+        tags=None,
+        metadata=None,
+    ))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        reference: Option<String>,
+        email: Option<String>,
+        phone: Option<String>,
+        currency: Option<String>,
+        payment_terms_days: Option<i32>,
+        status: Option<String>,
+        tags: Option<Vec<String>>,
+        metadata: Option<String>,
+    ) -> PyResult<Company> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "company")?;
+        let metadata = metadata.as_deref().map(|s| parse_json_value(s, "metadata")).transpose()?;
+        let company = commerce
+            .companies()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateCompany {
+                    name,
+                    reference,
+                    email,
+                    phone,
+                    currency: parse_currency_opt_py(currency)?,
+                    payment_terms_days,
+                    status: status.as_deref().map(parse_company_status_py).transpose()?,
+                    tags,
+                    metadata,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update company: {}", e)))?;
+        Ok(company.into())
+    }
+
+    /// List companies matching the filter.
+    #[pyo3(signature = (status=None, search=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        status: Option<String>,
+        search: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Company>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::CompanyFilter {
+            status: status.as_deref().map(parse_company_status_py).transpose()?,
+            search,
+            limit,
+            offset,
+        };
+        let companies = commerce
+            .companies()
+            .list(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list companies: {}", e)))?;
+        Ok(companies.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a company.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "company")?;
+        commerce
+            .companies()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete company: {}", e)))
+    }
+
+    /// List a company's shipping addresses.
+    fn list_addresses(&self, id: String) -> PyResult<Vec<CompanyShippingAddress>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "company")?;
+        let addresses = commerce.companies().list_addresses(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list company addresses: {}", e))
+        })?;
+        Ok(addresses.into_iter().map(Into::into).collect())
+    }
+
+    /// List a company's product price overrides.
+    fn list_price_overrides(&self, id: String) -> PyResult<Vec<CompanyPriceOverride>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "company")?;
+        let overrides = commerce.companies().list_price_overrides(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list company price overrides: {}", e))
+        })?;
+        Ok(overrides.into_iter().map(Into::into).collect())
+    }
+
+    /// Create a contact linked to one or more companies.
+    #[pyo3(signature = (
+        first_name,
+        last_name=None,
+        email=None,
+        phone=None,
+        title=None,
+        company_ids=None,
+    ))]
+    fn create_contact(
+        &self,
+        first_name: String,
+        last_name: Option<String>,
+        email: Option<String>,
+        phone: Option<String>,
+        title: Option<String>,
+        company_ids: Option<Vec<String>>,
+    ) -> PyResult<Contact> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let company_ids = company_ids
+            .unwrap_or_default()
+            .iter()
+            .map(|id| Ok(parse_uuid_str(id, "company_id")?.into()))
+            .collect::<PyResult<Vec<_>>>()?;
+        let contact = commerce
+            .companies()
+            .create_contact(stateset_core::CreateContact {
+                first_name,
+                last_name,
+                email,
+                phone,
+                title,
+                company_ids,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create contact: {}", e)))?;
+        Ok(contact.into())
+    }
+
+    /// Get a contact by ID.
+    fn get_contact(&self, id: String) -> PyResult<Option<Contact>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "contact")?;
+        let contact = commerce
+            .companies()
+            .get_contact(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get contact: {}", e)))?;
+        Ok(contact.map(Into::into))
+    }
+
+    /// List contacts for a company.
+    fn list_contacts(&self, company_id: String) -> PyResult<Vec<Contact>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&company_id, "company")?;
+        let contacts = commerce
+            .companies()
+            .list_contacts(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list contacts: {}", e)))?;
+        Ok(contacts.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Units of measure  (unit classes, UOMs, conversion rules)
+// ============================================================================
+
+/// A class of mutually-convertible units (e.g. Weight, Length).
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct UnitClass {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    base_uom_id: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::UnitClass> for UnitClass {
+    fn from(c: stateset_core::UnitClass) -> Self {
+        Self {
+            id: c.id.to_string(),
+            name: c.name,
+            description: c.description,
+            base_uom_id: c.base_uom_id.map(|id| id.to_string()),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A unit of measure within a unit class.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct UnitOfMeasure {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    unit_class_id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    abbreviation: String,
+    /// Exact decimal string relative to the class base unit
+    #[pyo3(get)]
+    factor: String,
+    #[pyo3(get)]
+    is_base: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::UnitOfMeasure> for UnitOfMeasure {
+    fn from(u: stateset_core::UnitOfMeasure) -> Self {
+        Self {
+            id: u.id.to_string(),
+            unit_class_id: u.unit_class_id.to_string(),
+            name: u.name,
+            abbreviation: u.abbreviation,
+            factor: u.factor.to_string(),
+            is_base: u.is_base,
+            created_at: u.created_at.to_rfc3339(),
+            updated_at: u.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// An explicit conversion rule between two units of measure.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct UnitConversionRule {
+    #[pyo3(get)]
+    id: String,
+    /// SYSTEM or SKU
+    #[pyo3(get)]
+    rule_type: String,
+    #[pyo3(get)]
+    product_id: Option<String>,
+    #[pyo3(get)]
+    from_uom_id: String,
+    #[pyo3(get)]
+    to_uom_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    factor: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::UnitConversionRule> for UnitConversionRule {
+    fn from(r: stateset_core::UnitConversionRule) -> Self {
+        Self {
+            id: r.id.to_string(),
+            rule_type: r.rule_type.to_string(),
+            product_id: r.product_id.map(|id| id.to_string()),
+            from_uom_id: r.from_uom_id.to_string(),
+            to_uom_id: r.to_uom_id.to_string(),
+            factor: r.factor.to_string(),
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_conversion_rule_type_py(s: &str) -> PyResult<stateset_core::ConversionRuleType> {
+    s.parse::<stateset_core::ConversionRuleType>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid conversion rule type: {s}")))
+}
+
+/// Units of measure operations: unit classes, units, and conversion rules.
+/// Quantities and factors are exchanged as exact decimal strings.
+#[pyclass]
+pub struct UnitsOfMeasure {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl UnitsOfMeasure {
+    /// Whether the units-of-measure backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.units_of_measure().is_supported())
+    }
+
+    /// Create a unit class.
+    #[pyo3(signature = (name, description=None))]
+    fn create_class(&self, name: String, description: Option<String>) -> PyResult<UnitClass> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let class = commerce
+            .units_of_measure()
+            .create_class(stateset_core::CreateUnitClass { name, description })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create unit class: {}", e)))?;
+        Ok(class.into())
+    }
+
+    /// List all unit classes.
+    fn list_classes(&self) -> PyResult<Vec<UnitClass>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let classes = commerce
+            .units_of_measure()
+            .list_classes()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list unit classes: {}", e)))?;
+        Ok(classes.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a unit class.
+    fn delete_class(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "unit_class")?;
+        commerce
+            .units_of_measure()
+            .delete_class(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete unit class: {}", e)))
+    }
+
+    /// Create a unit of measure within a class.
+    fn create_uom(
+        &self,
+        unit_class_id: String,
+        name: String,
+        abbreviation: String,
+        factor: String,
+    ) -> PyResult<UnitOfMeasure> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uom = commerce
+            .units_of_measure()
+            .create_uom(stateset_core::CreateUnitOfMeasure {
+                unit_class_id: parse_uuid_str(&unit_class_id, "unit_class_id")?.into(),
+                name,
+                abbreviation,
+                factor: parse_decimal_py(&factor, "factor")?,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create unit of measure: {}", e))
+            })?;
+        Ok(uom.into())
+    }
+
+    /// List units of measure, optionally filtered by class.
+    #[pyo3(signature = (class_id=None, limit=None, offset=None))]
+    fn list_uoms(
+        &self,
+        class_id: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<UnitOfMeasure>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::UnitOfMeasureFilter {
+            class_id: parse_optional_uuid_py(class_id, "class_id")?.map(Into::into),
+            limit,
+            offset,
+        };
+        let uoms = commerce.units_of_measure().list_uoms(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list units of measure: {}", e))
+        })?;
+        Ok(uoms.into_iter().map(Into::into).collect())
+    }
+
+    /// Mark a UOM as the base unit for its class.
+    fn set_base_uom(&self, id: String) -> PyResult<UnitOfMeasure> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "unit_of_measure")?;
+        let uom = commerce.units_of_measure().set_base_uom(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to set base unit of measure: {}", e))
+        })?;
+        Ok(uom.into())
+    }
+
+    /// Delete a unit of measure.
+    fn delete_uom(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "unit_of_measure")?;
+        commerce.units_of_measure().delete_uom(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete unit of measure: {}", e))
+        })
+    }
+
+    /// Create a conversion rule. `rule_type` is SYSTEM or SKU; SKU rules
+    /// require `product_id` and SYSTEM rules must omit it.
+    #[pyo3(signature = (rule_type, from_uom_id, to_uom_id, factor, product_id=None))]
+    fn create_rule(
+        &self,
+        rule_type: String,
+        from_uom_id: String,
+        to_uom_id: String,
+        factor: String,
+        product_id: Option<String>,
+    ) -> PyResult<UnitConversionRule> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let rule = commerce
+            .units_of_measure()
+            .create_rule(stateset_core::CreateUnitConversionRule {
+                rule_type: parse_conversion_rule_type_py(&rule_type)?,
+                product_id: parse_optional_uuid_py(product_id, "product_id")?.map(Into::into),
+                from_uom_id: parse_uuid_str(&from_uom_id, "from_uom_id")?.into(),
+                to_uom_id: parse_uuid_str(&to_uom_id, "to_uom_id")?.into(),
+                factor: parse_decimal_py(&factor, "factor")?,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create conversion rule: {}", e))
+            })?;
+        Ok(rule.into())
+    }
+
+    /// List all conversion rules.
+    fn list_rules(&self) -> PyResult<Vec<UnitConversionRule>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let rules = commerce.units_of_measure().list_rules().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list conversion rules: {}", e))
+        })?;
+        Ok(rules.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a conversion rule.
+    fn delete_rule(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "unit_conversion_rule")?;
+        commerce.units_of_measure().delete_rule(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete conversion rule: {}", e))
+        })
+    }
+}
+
+// ============================================================================
+// Shipping zones  (geographic zones + zone shipping methods and rates)
+// ============================================================================
+
+/// A geographic shipping zone.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ShippingZone {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    countries: Vec<String>,
+    #[pyo3(get)]
+    regions: Vec<String>,
+    #[pyo3(get)]
+    postal_codes: Vec<String>,
+    #[pyo3(get)]
+    priority: i32,
+    #[pyo3(get)]
+    is_active: bool,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    created_at: String,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::ShippingZone> for ShippingZone {
+    fn from(z: stateset_core::ShippingZone) -> Self {
+        Self {
+            id: z.id.to_string(),
+            name: z.name,
+            countries: z.countries,
+            regions: z.regions,
+            postal_codes: z.postal_codes,
+            priority: z.priority,
+            is_active: z.is_active,
+            created_at: z.created_at.to_rfc3339(),
+            updated_at: z.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A conditional rate tier on a zone shipping method. Money and weight values
+/// are exact decimal strings.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct ShippingCondition {
+    /// Exact decimal string
+    #[pyo3(get)]
+    min_weight: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    max_weight: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    min_price: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    max_price: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    rate: String,
+}
+
+#[pymethods]
+impl ShippingCondition {
+    #[new]
+    #[pyo3(signature = (rate, min_weight=None, max_weight=None, min_price=None, max_price=None))]
+    fn new(
+        rate: String,
+        min_weight: Option<String>,
+        max_weight: Option<String>,
+        min_price: Option<String>,
+        max_price: Option<String>,
+    ) -> Self {
+        Self { min_weight, max_weight, min_price, max_price, rate }
+    }
+}
+
+impl From<stateset_core::ShippingCondition> for ShippingCondition {
+    fn from(c: stateset_core::ShippingCondition) -> Self {
+        Self {
+            min_weight: c.min_weight.map(|d| d.to_string()),
+            max_weight: c.max_weight.map(|d| d.to_string()),
+            min_price: c.min_price.map(|d| d.to_string()),
+            max_price: c.max_price.map(|d| d.to_string()),
+            rate: c.rate.to_string(),
+        }
+    }
+}
+
+/// A shipping method configured within a zone. Money values are exact decimal
+/// strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ZoneShippingMethod {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    zone_id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    carrier: Option<String>,
+    /// flat, weight_based, price_based, calculated, free
+    #[pyo3(get)]
+    method_type: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    base_rate: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    min_delivery_days: Option<i32>,
+    #[pyo3(get)]
+    max_delivery_days: Option<i32>,
+    #[pyo3(get)]
+    conditions: Vec<ShippingCondition>,
+    #[pyo3(get)]
+    is_active: bool,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    created_at: String,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::ZoneShippingMethod> for ZoneShippingMethod {
+    fn from(m: stateset_core::ZoneShippingMethod) -> Self {
+        Self {
+            id: m.id.to_string(),
+            zone_id: m.zone_id.to_string(),
+            name: m.name,
+            carrier: m.carrier,
+            method_type: format!("{}", m.method_type),
+            base_rate: m.base_rate.to_string(),
+            currency: m.currency.to_string(),
+            min_delivery_days: m.min_delivery_days,
+            max_delivery_days: m.max_delivery_days,
+            conditions: m.conditions.into_iter().map(Into::into).collect(),
+            is_active: m.is_active,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A calculated shipping rate for a destination. Money values are exact
+/// decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ZoneShippingRate {
+    #[pyo3(get)]
+    method_id: String,
+    #[pyo3(get)]
+    method_name: String,
+    #[pyo3(get)]
+    carrier: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    rate: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    min_delivery_days: Option<i32>,
+    #[pyo3(get)]
+    max_delivery_days: Option<i32>,
+}
+
+impl From<stateset_core::ZoneShippingRate> for ZoneShippingRate {
+    fn from(r: stateset_core::ZoneShippingRate) -> Self {
+        Self {
+            method_id: r.method_id.to_string(),
+            method_name: r.method_name,
+            carrier: r.carrier,
+            rate: r.rate.to_string(),
+            currency: r.currency.to_string(),
+            min_delivery_days: r.min_delivery_days,
+            max_delivery_days: r.max_delivery_days,
+        }
+    }
+}
+
+fn parse_shipping_method_type_py(s: &str) -> PyResult<stateset_core::ShippingMethodType> {
+    s.parse::<stateset_core::ShippingMethodType>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid shipping method type: {s}")))
+}
+
+fn parse_currency_required_py(s: &str) -> PyResult<CurrencyCode> {
+    s.parse::<CurrencyCode>().map_err(|_| PyValueError::new_err("Invalid currency code"))
+}
+
+fn build_shipping_conditions_py(
+    conditions: Option<Vec<ShippingCondition>>,
+) -> PyResult<Vec<stateset_core::ShippingCondition>> {
+    conditions
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| -> PyResult<stateset_core::ShippingCondition> {
+            Ok(stateset_core::ShippingCondition {
+                min_weight: parse_optional_decimal_py(c.min_weight, "min_weight")?,
+                max_weight: parse_optional_decimal_py(c.max_weight, "max_weight")?,
+                min_price: parse_optional_decimal_py(c.min_price, "min_price")?,
+                max_price: parse_optional_decimal_py(c.max_price, "max_price")?,
+                rate: parse_decimal_py(&c.rate, "rate")?,
+            })
+        })
+        .collect()
+}
+
+/// Shipping zone and zone-method operations.
+#[pyclass]
+pub struct ShippingZones {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl ShippingZones {
+    /// Whether the shipping-zones backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.shipping_zones().is_supported())
+    }
+
+    /// Create a shipping zone.
+    #[pyo3(signature = (name, countries=None, regions=None, postal_codes=None, priority=None))]
+    fn create(
+        &self,
+        name: String,
+        countries: Option<Vec<String>>,
+        regions: Option<Vec<String>>,
+        postal_codes: Option<Vec<String>>,
+        priority: Option<i32>,
+    ) -> PyResult<ShippingZone> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let zone = commerce
+            .shipping_zones()
+            .create(stateset_core::CreateShippingZone {
+                name,
+                countries: countries.unwrap_or_default(),
+                regions: regions.unwrap_or_default(),
+                postal_codes: postal_codes.unwrap_or_default(),
+                priority,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create shipping zone: {}", e))
+            })?;
+        Ok(zone.into())
+    }
+
+    /// Get a shipping zone by ID.
+    fn get(&self, id: String) -> PyResult<Option<ShippingZone>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "shipping_zone")?;
+        let zone = commerce
+            .shipping_zones()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get shipping zone: {}", e)))?;
+        Ok(zone.map(Into::into))
+    }
+
+    /// Update a shipping zone.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        id,
+        name=None,
+        countries=None,
+        regions=None,
+        postal_codes=None,
+        priority=None,
+        is_active=None,
+    ))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        countries: Option<Vec<String>>,
+        regions: Option<Vec<String>>,
+        postal_codes: Option<Vec<String>>,
+        priority: Option<i32>,
+        is_active: Option<bool>,
+    ) -> PyResult<ShippingZone> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "shipping_zone")?;
+        let zone = commerce
+            .shipping_zones()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateShippingZone {
+                    name,
+                    countries,
+                    regions,
+                    postal_codes,
+                    priority,
+                    is_active,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update shipping zone: {}", e))
+            })?;
+        Ok(zone.into())
+    }
+
+    /// List shipping zones matching the filter.
+    #[pyo3(signature = (country=None, is_active=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        country: Option<String>,
+        is_active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<ShippingZone>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let zones = commerce
+            .shipping_zones()
+            .list(stateset_core::ShippingZoneFilter { country, is_active, limit, offset })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list shipping zones: {}", e))
+            })?;
+        Ok(zones.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a shipping zone.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "shipping_zone")?;
+        commerce
+            .shipping_zones()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete shipping zone: {}", e)))
+    }
+
+    /// Find zones whose geographic criteria match a destination.
+    #[pyo3(signature = (country, region=None, postal_code=None))]
+    fn find_matching_zones(
+        &self,
+        country: String,
+        region: Option<String>,
+        postal_code: Option<String>,
+    ) -> PyResult<Vec<ShippingZone>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let zones = commerce
+            .shipping_zones()
+            .find_matching_zones(&country, region.as_deref(), postal_code.as_deref())
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to find matching zones: {}", e))
+            })?;
+        Ok(zones.into_iter().map(Into::into).collect())
+    }
+
+    /// Create a shipping method within a zone.
+    ///
+    /// `method_type` is one of flat, weight_based, price_based, calculated, free.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        zone_id,
+        name,
+        method_type,
+        base_rate,
+        currency,
+        carrier=None,
+        min_delivery_days=None,
+        max_delivery_days=None,
+        conditions=None,
+    ))]
+    fn create_method(
+        &self,
+        zone_id: String,
+        name: String,
+        method_type: String,
+        base_rate: String,
+        currency: String,
+        carrier: Option<String>,
+        min_delivery_days: Option<i32>,
+        max_delivery_days: Option<i32>,
+        conditions: Option<Vec<ShippingCondition>>,
+    ) -> PyResult<ZoneShippingMethod> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let method = commerce
+            .shipping_zones()
+            .create_method(stateset_core::CreateZoneShippingMethod {
+                zone_id: parse_uuid_str(&zone_id, "zone_id")?.into(),
+                name,
+                carrier,
+                method_type: parse_shipping_method_type_py(&method_type)?,
+                base_rate: parse_decimal_py(&base_rate, "base_rate")?,
+                currency: parse_currency_required_py(&currency)?,
+                min_delivery_days,
+                max_delivery_days,
+                conditions: build_shipping_conditions_py(conditions)?,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create shipping method: {}", e))
+            })?;
+        Ok(method.into())
+    }
+
+    /// Get a shipping method by ID.
+    fn get_method(&self, id: String) -> PyResult<Option<ZoneShippingMethod>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "shipping_method")?;
+        let method = commerce.shipping_zones().get_method(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get shipping method: {}", e))
+        })?;
+        Ok(method.map(Into::into))
+    }
+
+    /// List shipping methods matching the filter.
+    #[pyo3(signature = (
+        zone_id=None,
+        carrier=None,
+        method_type=None,
+        is_active=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list_methods(
+        &self,
+        zone_id: Option<String>,
+        carrier: Option<String>,
+        method_type: Option<String>,
+        is_active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<ZoneShippingMethod>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::ZoneShippingMethodFilter {
+            zone_id: parse_optional_uuid_py(zone_id, "zone_id")?.map(Into::into),
+            carrier,
+            method_type: method_type.as_deref().map(parse_shipping_method_type_py).transpose()?,
+            is_active,
+            limit,
+            offset,
+        };
+        let methods = commerce.shipping_zones().list_methods(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list shipping methods: {}", e))
+        })?;
+        Ok(methods.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a shipping method.
+    fn delete_method(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "shipping_method")?;
+        commerce.shipping_zones().delete_method(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete shipping method: {}", e))
+        })
+    }
+
+    /// Calculate available shipping rates for a destination.
+    #[pyo3(signature = (country, currency, region=None, postal_code=None, weight=None, order_total=None))]
+    fn calculate_rates(
+        &self,
+        country: String,
+        currency: String,
+        region: Option<String>,
+        postal_code: Option<String>,
+        weight: Option<String>,
+        order_total: Option<String>,
+    ) -> PyResult<Vec<ZoneShippingRate>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let rates = commerce
+            .shipping_zones()
+            .calculate_rates(stateset_core::ZoneShippingRateRequest {
+                country,
+                region,
+                postal_code,
+                weight: parse_optional_decimal_py(weight, "weight")?,
+                order_total: parse_optional_decimal_py(order_total, "order_total")?,
+                currency: parse_currency_required_py(&currency)?,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to calculate shipping rates: {}", e))
+            })?;
+        Ok(rates.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Stock Snapshots  (point-in-time inventory)
+// ============================================================================
+
+/// A line on a capture-stock-snapshot request. Quantities are exact decimal
+/// strings.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct CaptureStockLineInput {
+    #[pyo3(get, set)]
+    product_id: String,
+    #[pyo3(get, set)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    quantity_on_hand: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    quantity_available: String,
+    #[pyo3(get, set)]
+    location: Option<String>,
+}
+
+#[pymethods]
+impl CaptureStockLineInput {
+    #[new]
+    #[pyo3(signature = (product_id, sku, quantity_on_hand, quantity_available, location=None))]
+    fn new(
+        product_id: String,
+        sku: String,
+        quantity_on_hand: String,
+        quantity_available: String,
+        location: Option<String>,
+    ) -> Self {
+        Self { product_id, sku, quantity_on_hand, quantity_available, location }
+    }
+}
+
+/// A single per-SKU line within a stock snapshot. Quantities are exact decimal
+/// strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct StockSnapshotLine {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    stock_snapshot_id: String,
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity_on_hand: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity_available: String,
+    #[pyo3(get)]
+    location: Option<String>,
+}
+
+impl From<stateset_core::StockSnapshotLine> for StockSnapshotLine {
+    fn from(l: stateset_core::StockSnapshotLine) -> Self {
+        Self {
+            id: l.id.to_string(),
+            stock_snapshot_id: l.stock_snapshot_id.to_string(),
+            product_id: l.product_id.to_string(),
+            sku: l.sku,
+            quantity_on_hand: l.quantity_on_hand.to_string(),
+            quantity_available: l.quantity_available.to_string(),
+            location: l.location,
+        }
+    }
+}
+
+/// A point-in-time inventory snapshot. Quantities are exact decimal strings,
+/// timestamps RFC3339.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct StockSnapshot {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    label: Option<String>,
+    /// Number of distinct SKUs captured
+    #[pyo3(get)]
+    total_skus: u64,
+    /// Exact decimal string
+    #[pyo3(get)]
+    total_units: String,
+    #[pyo3(get)]
+    lines: Vec<StockSnapshotLine>,
+    #[pyo3(get)]
+    captured_at: String,
+}
+
+impl From<stateset_core::StockSnapshot> for StockSnapshot {
+    fn from(s: stateset_core::StockSnapshot) -> Self {
+        Self {
+            id: s.id.to_string(),
+            label: s.label,
+            total_skus: s.total_skus,
+            total_units: s.total_units.to_string(),
+            lines: s.lines.into_iter().map(Into::into).collect(),
+            captured_at: s.captured_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Stock snapshot operations.
+#[pyclass]
+pub struct StockSnapshots {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl StockSnapshots {
+    /// Whether the stock-snapshots backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.stock_snapshots().is_supported())
+    }
+
+    /// Capture a new snapshot; totals are computed from the supplied lines.
+    #[pyo3(signature = (lines, label=None))]
+    fn capture(
+        &self,
+        lines: Vec<CaptureStockLineInput>,
+        label: Option<String>,
+    ) -> PyResult<StockSnapshot> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let lines = lines
+            .into_iter()
+            .map(|l| -> PyResult<stateset_core::CaptureStockLine> {
+                Ok(stateset_core::CaptureStockLine {
+                    product_id: parse_uuid_str_py(&l.product_id, "product_id")?.into(),
+                    sku: l.sku,
+                    quantity_on_hand: parse_decimal_py(&l.quantity_on_hand, "quantity_on_hand")?,
+                    quantity_available: parse_decimal_py(
+                        &l.quantity_available,
+                        "quantity_available",
+                    )?,
+                    location: l.location,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let snapshot = commerce
+            .stock_snapshots()
+            .capture(stateset_core::CaptureStockSnapshot { label, lines })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to capture stock snapshot: {}", e))
+            })?;
+        Ok(snapshot.into())
+    }
+
+    /// Get a snapshot by ID.
+    fn get(&self, id: String) -> PyResult<Option<StockSnapshot>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "stock snapshot")?;
+        let snapshot = commerce
+            .stock_snapshots()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get stock snapshot: {}", e)))?;
+        Ok(snapshot.map(Into::into))
+    }
+
+    /// Most recent snapshot, if any.
+    fn latest(&self) -> PyResult<Option<StockSnapshot>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let snapshot = commerce.stock_snapshots().latest().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get latest stock snapshot: {}", e))
+        })?;
+        Ok(snapshot.map(Into::into))
+    }
+
+    /// List snapshots, newest first.
+    #[pyo3(signature = (limit=None, offset=None))]
+    fn list(&self, limit: Option<u32>, offset: Option<u32>) -> PyResult<Vec<StockSnapshot>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let snapshots = commerce
+            .stock_snapshots()
+            .list(stateset_core::StockSnapshotFilter { limit, offset })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list stock snapshots: {}", e))
+            })?;
+        Ok(snapshots.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a snapshot.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "stock snapshot")?;
+        commerce
+            .stock_snapshots()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete stock snapshot: {}", e)))
+    }
+}
+
+// ============================================================================
+// Print stations (paired agents + print job queue)
+// ============================================================================
+
+fn parse_print_payload_kind_py(s: &str) -> PyResult<stateset_core::PrintPayloadKind> {
+    s.parse::<stateset_core::PrintPayloadKind>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid print payload kind: {s}")))
+}
+
+fn parse_print_job_status_py(s: &str) -> PyResult<stateset_core::PrintJobStatus> {
+    s.parse::<stateset_core::PrintJobStatus>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid print job status: {s}")))
+}
+
+/// A paired print station. Timestamps are RFC3339 strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PrintStation {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    printers: Vec<String>,
+    #[pyo3(get)]
+    revoked: bool,
+    #[pyo3(get)]
+    last_seen_at: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::PrintStation> for PrintStation {
+    fn from(s: stateset_core::PrintStation) -> Self {
+        Self {
+            id: s.id.to_string(),
+            name: s.name,
+            printers: s.printers,
+            revoked: s.revoked,
+            last_seen_at: s.last_seen_at.map(|d| d.to_rfc3339()),
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Result of pairing a station: the station plus its one-time bearer token.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PairStationResult {
+    #[pyo3(get)]
+    station: PrintStation,
+    /// One-time pairing token; shown only at pairing time.
+    #[pyo3(get)]
+    token: String,
+}
+
+impl From<stateset_core::PairStationResult> for PairStationResult {
+    fn from(r: stateset_core::PairStationResult) -> Self {
+        Self { station: r.station.into(), token: r.token }
+    }
+}
+
+/// A print job queued to a station.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PrintJob {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    station_id: String,
+    #[pyo3(get)]
+    printer_name: Option<String>,
+    /// zpl or pdf
+    #[pyo3(get)]
+    payload_kind: String,
+    #[pyo3(get)]
+    payload: String,
+    /// queued, picked_up, printed, failed
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    picked_up_at: Option<String>,
+}
+
+impl From<stateset_core::PrintJob> for PrintJob {
+    fn from(j: stateset_core::PrintJob) -> Self {
+        Self {
+            id: j.id.to_string(),
+            station_id: j.station_id.to_string(),
+            printer_name: j.printer_name,
+            payload_kind: j.payload_kind.to_string(),
+            payload: j.payload,
+            status: j.status.to_string(),
+            created_at: j.created_at.to_rfc3339(),
+            picked_up_at: j.picked_up_at.map(|d| d.to_rfc3339()),
+        }
+    }
+}
+
+/// Print station operations (paired agents + print job queue).
+/// IDs are UUID strings, timestamps RFC3339, enums snake_case strings.
+#[pyclass]
+pub struct PrintStations {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl PrintStations {
+    /// Whether the print-stations backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.print_stations().is_supported())
+    }
+
+    /// Pair a new station, returning the station and its one-time token.
+    #[pyo3(signature = (name, printers=None))]
+    fn pair(&self, name: String, printers: Option<Vec<String>>) -> PyResult<PairStationResult> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let result = commerce
+            .print_stations()
+            .pair(stateset_core::CreatePrintStation {
+                name,
+                printers: printers.unwrap_or_default(),
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to pair print station: {}", e)))?;
+        Ok(result.into())
+    }
+
+    /// List paired stations.
+    fn list_stations(&self) -> PyResult<Vec<PrintStation>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let stations = commerce.print_stations().list_stations().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list print stations: {}", e))
+        })?;
+        Ok(stations.into_iter().map(Into::into).collect())
+    }
+
+    /// Get a station by ID.
+    fn get_station(&self, id: String) -> PyResult<Option<PrintStation>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "print_station")?;
+        let station = commerce
+            .print_stations()
+            .get_station(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get print station: {}", e)))?;
+        Ok(station.map(Into::into))
+    }
+
+    /// Revoke a station's pairing token.
+    fn revoke_station(&self, id: String) -> PyResult<PrintStation> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "print_station")?;
+        let station = commerce.print_stations().revoke_station(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to revoke print station: {}", e))
+        })?;
+        Ok(station.into())
+    }
+
+    /// Enqueue a print job to a station. `payload_kind` is zpl (default) or pdf.
+    #[pyo3(signature = (station_id, payload, printer_name=None, payload_kind=None))]
+    fn enqueue_job(
+        &self,
+        station_id: String,
+        payload: String,
+        printer_name: Option<String>,
+        payload_kind: Option<String>,
+    ) -> PyResult<PrintJob> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&station_id, "print_station")?;
+        let payload_kind = match payload_kind.as_deref() {
+            Some(s) => parse_print_payload_kind_py(s)?,
+            None => stateset_core::PrintPayloadKind::default(),
+        };
+        let job = commerce
+            .print_stations()
+            .enqueue_job(
+                uuid.into(),
+                stateset_core::EnqueuePrintJob { printer_name, payload_kind, payload },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to enqueue print job: {}", e)))?;
+        Ok(job.into())
+    }
+
+    /// Pick up the next queued job for a station.
+    fn next_job(&self, station_id: String) -> PyResult<Option<PrintJob>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&station_id, "print_station")?;
+        let job = commerce
+            .print_stations()
+            .next_job(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get next print job: {}", e)))?;
+        Ok(job.map(Into::into))
+    }
+
+    /// Mark a job printed (success) or failed.
+    fn complete_job(&self, job_id: String, success: bool) -> PyResult<PrintJob> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&job_id, "print_job")?;
+        let job = commerce
+            .print_stations()
+            .complete_job(uuid.into(), success)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to complete print job: {}", e)))?;
+        Ok(job.into())
+    }
+
+    /// List jobs for a station. `status` is queued, picked_up, printed or failed.
+    #[pyo3(signature = (station_id, status=None, limit=None, offset=None))]
+    fn list_jobs(
+        &self,
+        station_id: String,
+        status: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PrintJob>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&station_id, "print_station")?;
+        let filter = stateset_core::PrintJobFilter {
+            status: status.as_deref().map(parse_print_job_status_py).transpose()?,
+            limit,
+            offset,
+        };
+        let jobs = commerce
+            .print_stations()
+            .list_jobs(uuid.into(), filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list print jobs: {}", e)))?;
+        Ok(jobs.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Integration Mappings
+// ============================================================================
+
+/// Input for creating an integration mapping (used with `bulk_upsert`).
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct CreateIntegrationMappingInput {
+    #[pyo3(get, set)]
+    integration: String,
+    #[pyo3(get, set)]
+    mapping_group: String,
+    #[pyo3(get, set)]
+    field_name: String,
+    #[pyo3(get, set)]
+    external_value: String,
+    #[pyo3(get, set)]
+    internal_value: String,
+}
+
+#[pymethods]
+impl CreateIntegrationMappingInput {
+    #[new]
+    fn new(
+        integration: String,
+        mapping_group: String,
+        field_name: String,
+        external_value: String,
+        internal_value: String,
+    ) -> Self {
+        Self { integration, mapping_group, field_name, external_value, internal_value }
+    }
+}
+
+impl From<CreateIntegrationMappingInput> for stateset_core::CreateIntegrationMapping {
+    fn from(i: CreateIntegrationMappingInput) -> Self {
+        Self {
+            integration: i.integration,
+            mapping_group: i.mapping_group,
+            field_name: i.field_name,
+            external_value: i.external_value,
+            internal_value: i.internal_value,
+        }
+    }
+}
+
+/// A single external -> internal value mapping for an integration.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct IntegrationMapping {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    integration: String,
+    #[pyo3(get)]
+    mapping_group: String,
+    #[pyo3(get)]
+    field_name: String,
+    #[pyo3(get)]
+    external_value: String,
+    #[pyo3(get)]
+    internal_value: String,
+    #[pyo3(get)]
+    is_active: bool,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    created_at: String,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::IntegrationMapping> for IntegrationMapping {
+    fn from(m: stateset_core::IntegrationMapping) -> Self {
+        Self {
+            id: m.id.to_string(),
+            integration: m.integration,
+            mapping_group: m.mapping_group,
+            field_name: m.field_name,
+            external_value: m.external_value,
+            internal_value: m.internal_value,
+            is_active: m.is_active,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Integration mapping operations: translate external system values into
+/// canonical internal values for a given integration and mapping group.
+#[pyclass]
+pub struct IntegrationMappings {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl IntegrationMappings {
+    /// Whether the integration-mappings backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.integration_mappings().is_supported())
+    }
+
+    /// Create an integration mapping.
+    fn create(
+        &self,
+        integration: String,
+        mapping_group: String,
+        field_name: String,
+        external_value: String,
+        internal_value: String,
+    ) -> PyResult<IntegrationMapping> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mapping = commerce
+            .integration_mappings()
+            .create(stateset_core::CreateIntegrationMapping {
+                integration,
+                mapping_group,
+                field_name,
+                external_value,
+                internal_value,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create integration mapping: {}", e))
+            })?;
+        Ok(mapping.into())
+    }
+
+    /// Get an integration mapping by ID.
+    fn get(&self, id: String) -> PyResult<Option<IntegrationMapping>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let mapping = commerce.integration_mappings().get(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get integration mapping: {}", e))
+        })?;
+        Ok(mapping.map(Into::into))
+    }
+
+    /// Update an integration mapping (partial).
+    #[pyo3(signature = (id, internal_value=None, is_active=None))]
+    fn update(
+        &self,
+        id: String,
+        internal_value: Option<String>,
+        is_active: Option<bool>,
+    ) -> PyResult<IntegrationMapping> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let mapping = commerce
+            .integration_mappings()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateIntegrationMapping { internal_value, is_active },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update integration mapping: {}", e))
+            })?;
+        Ok(mapping.into())
+    }
+
+    /// List integration mappings matching the filter.
+    #[pyo3(signature = (
+        integration=None,
+        mapping_group=None,
+        field_name=None,
+        is_active=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list(
+        &self,
+        integration: Option<String>,
+        mapping_group: Option<String>,
+        field_name: Option<String>,
+        is_active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<IntegrationMapping>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mappings = commerce
+            .integration_mappings()
+            .list(stateset_core::IntegrationMappingFilter {
+                integration,
+                mapping_group,
+                field_name,
+                is_active,
+                limit,
+                offset,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list integration mappings: {}", e))
+            })?;
+        Ok(mappings.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete an integration mapping.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        commerce.integration_mappings().delete(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete integration mapping: {}", e))
+        })
+    }
+
+    /// Bulk upsert mappings; returns the number of rows affected as a string.
+    fn bulk_upsert(&self, items: Vec<CreateIntegrationMappingInput>) -> PyResult<String> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let affected = commerce
+            .integration_mappings()
+            .bulk_upsert(items.into_iter().map(Into::into).collect())
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!(
+                    "Failed to bulk upsert integration mappings: {}",
+                    e
+                ))
+            })?;
+        Ok(affected.to_string())
+    }
+
+    /// Resolve the internal value for an external value.
+    fn resolve(
+        &self,
+        integration: String,
+        mapping_group: String,
+        field_name: String,
+        external_value: String,
+    ) -> PyResult<Option<String>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        commerce
+            .integration_mappings()
+            .resolve(&stateset_core::MappingLookup {
+                integration,
+                mapping_group,
+                field_name,
+                external_value,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to resolve integration mapping: {}", e))
+            })
+    }
+}
+
+// ============================================================================
+// Integration Field Mappings
+// ============================================================================
+
+fn parse_field_transform_py(value: &str) -> PyResult<stateset_core::FieldTransform> {
+    value
+        .parse::<stateset_core::FieldTransform>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid field transform: {value}")))
+}
+
+/// A field-path mapping for an integration account.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct IntegrationFieldMapping {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    integration_account: String,
+    #[pyo3(get)]
+    mapping_group: String,
+    #[pyo3(get)]
+    source_field: String,
+    #[pyo3(get)]
+    destination_field: String,
+    #[pyo3(get)]
+    template: Option<String>,
+    /// Snake-case transform: none, uppercase, lowercase, trim
+    #[pyo3(get)]
+    transform: String,
+    #[pyo3(get)]
+    fallback: Option<String>,
+    #[pyo3(get)]
+    is_active: bool,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    created_at: String,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::IntegrationFieldMapping> for IntegrationFieldMapping {
+    fn from(m: stateset_core::IntegrationFieldMapping) -> Self {
+        Self {
+            id: m.id.to_string(),
+            integration_account: m.integration_account,
+            mapping_group: m.mapping_group,
+            source_field: m.source_field,
+            destination_field: m.destination_field,
+            template: m.template,
+            transform: m.transform.to_string(),
+            fallback: m.fallback,
+            is_active: m.is_active,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A field mapping to create, used for bulk creation.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct NewIntegrationFieldMapping {
+    #[pyo3(get, set)]
+    integration_account: String,
+    #[pyo3(get, set)]
+    mapping_group: String,
+    #[pyo3(get, set)]
+    source_field: String,
+    #[pyo3(get, set)]
+    destination_field: String,
+    #[pyo3(get, set)]
+    template: Option<String>,
+    /// Snake-case transform: none, uppercase, lowercase, trim
+    #[pyo3(get, set)]
+    transform: Option<String>,
+    #[pyo3(get, set)]
+    fallback: Option<String>,
+}
+
+#[pymethods]
+impl NewIntegrationFieldMapping {
+    #[new]
+    #[pyo3(signature = (
+        integration_account,
+        mapping_group,
+        source_field,
+        destination_field,
+        template=None,
+        transform=None,
+        fallback=None,
+    ))]
+    const fn new(
+        integration_account: String,
+        mapping_group: String,
+        source_field: String,
+        destination_field: String,
+        template: Option<String>,
+        transform: Option<String>,
+        fallback: Option<String>,
+    ) -> Self {
+        Self {
+            integration_account,
+            mapping_group,
+            source_field,
+            destination_field,
+            template,
+            transform,
+            fallback,
+        }
+    }
+}
+
+impl TryFrom<NewIntegrationFieldMapping> for stateset_core::CreateIntegrationFieldMapping {
+    type Error = PyErr;
+
+    fn try_from(item: NewIntegrationFieldMapping) -> PyResult<Self> {
+        Ok(Self {
+            integration_account: item.integration_account,
+            mapping_group: item.mapping_group,
+            source_field: item.source_field,
+            destination_field: item.destination_field,
+            template: item.template,
+            transform: item
+                .transform
+                .as_deref()
+                .map(parse_field_transform_py)
+                .transpose()?
+                .unwrap_or_default(),
+            fallback: item.fallback,
+        })
+    }
+}
+
+/// Integration field-mapping operations. Enums cross as snake_case strings,
+/// timestamps as RFC3339 strings.
+#[pyclass]
+pub struct IntegrationFieldMappings {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl IntegrationFieldMappings {
+    /// Whether the integration field-mappings backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.integration_field_mappings().is_supported())
+    }
+
+    /// Create a field mapping.
+    ///
+    /// `transform` is one of none, uppercase, lowercase, trim (defaults to none).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        integration_account,
+        mapping_group,
+        source_field,
+        destination_field,
+        template=None,
+        transform=None,
+        fallback=None,
+    ))]
+    fn create(
+        &self,
+        integration_account: String,
+        mapping_group: String,
+        source_field: String,
+        destination_field: String,
+        template: Option<String>,
+        transform: Option<String>,
+        fallback: Option<String>,
+    ) -> PyResult<IntegrationFieldMapping> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let transform =
+            transform.as_deref().map(parse_field_transform_py).transpose()?.unwrap_or_default();
+        let mapping = commerce
+            .integration_field_mappings()
+            .create(stateset_core::CreateIntegrationFieldMapping {
+                integration_account,
+                mapping_group,
+                source_field,
+                destination_field,
+                template,
+                transform,
+                fallback,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!(
+                    "Failed to create integration field mapping: {}",
+                    e
+                ))
+            })?;
+        Ok(mapping.into())
+    }
+
+    /// Get a field mapping by ID.
+    fn get(&self, id: String) -> PyResult<Option<IntegrationFieldMapping>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "integration_field_mapping")?;
+        let mapping = commerce.integration_field_mappings().get(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get integration field mapping: {}", e))
+        })?;
+        Ok(mapping.map(Into::into))
+    }
+
+    /// Update a field mapping (partial).
+    #[pyo3(signature = (
+        id,
+        destination_field=None,
+        template=None,
+        transform=None,
+        fallback=None,
+        is_active=None,
+    ))]
+    fn update(
+        &self,
+        id: String,
+        destination_field: Option<String>,
+        template: Option<String>,
+        transform: Option<String>,
+        fallback: Option<String>,
+        is_active: Option<bool>,
+    ) -> PyResult<IntegrationFieldMapping> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "integration_field_mapping")?;
+        let transform = transform.as_deref().map(parse_field_transform_py).transpose()?;
+        let mapping = commerce
+            .integration_field_mappings()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateIntegrationFieldMapping {
+                    destination_field,
+                    template,
+                    transform,
+                    fallback,
+                    is_active,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!(
+                    "Failed to update integration field mapping: {}",
+                    e
+                ))
+            })?;
+        Ok(mapping.into())
+    }
+
+    /// List field mappings matching the filter.
+    #[pyo3(signature = (
+        integration_account=None,
+        mapping_group=None,
+        source_field=None,
+        is_active=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list(
+        &self,
+        integration_account: Option<String>,
+        mapping_group: Option<String>,
+        source_field: Option<String>,
+        is_active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<IntegrationFieldMapping>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mappings = commerce
+            .integration_field_mappings()
+            .list(stateset_core::IntegrationFieldMappingFilter {
+                integration_account,
+                mapping_group,
+                source_field,
+                is_active,
+                limit,
+                offset,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list integration field mappings: {}", e))
+            })?;
+        Ok(mappings.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a field mapping.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "integration_field_mapping")?;
+        commerce.integration_field_mappings().delete(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete integration field mapping: {}", e))
+        })
+    }
+
+    /// Bulk create field mappings; returns the number of rows affected.
+    fn bulk_create(&self, items: Vec<NewIntegrationFieldMapping>) -> PyResult<u64> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let items = items
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<stateset_core::CreateIntegrationFieldMapping>>>()?;
+        commerce.integration_field_mappings().bulk_create(items).map_err(|e| {
+            PyRuntimeError::new_err(format!(
+                "Failed to bulk create integration field mappings: {}",
+                e
+            ))
+        })
+    }
+
+    /// Bulk delete field mappings by ID; returns the number of rows affected.
+    fn bulk_delete(&self, ids: Vec<String>) -> PyResult<u64> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let ids = ids
+            .iter()
+            .map(|id| {
+                parse_uuid_str(id, "integration_field_mapping")
+                    .map(stateset_core::IntegrationFieldMappingId::from)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        commerce.integration_field_mappings().bulk_delete(ids).map_err(|e| {
+            PyRuntimeError::new_err(format!(
+                "Failed to bulk delete integration field mappings: {}",
+                e
+            ))
+        })
+    }
+
+    /// Distinct mapping groups for an integration account.
+    fn distinct_groups(&self, integration_account: String) -> PyResult<Vec<String>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        commerce
+            .integration_field_mappings()
+            .distinct_groups(&integration_account)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list mapping groups: {}", e)))
+    }
+}
+
+// ============================================================================
+// Payment Obligations  (scheduled amounts owed to suppliers)
+// ============================================================================
+
+fn parse_payment_obligation_status_py(s: &str) -> PyResult<stateset_core::PaymentObligationStatus> {
+    s.parse::<stateset_core::PaymentObligationStatus>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid payment obligation status: {s}")))
+}
+
+/// A scheduled amount owed to a supplier. Money values are exact decimal
+/// strings; dates are ISO strings (YYYY-MM-DD).
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PaymentObligation {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    number: String,
+    #[pyo3(get)]
+    supplier_id: String,
+    #[pyo3(get)]
+    purchase_order_id: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount_paid: String,
+    /// Exact decimal string: amount - amount_paid (never negative)
+    #[pyo3(get)]
+    outstanding: String,
+    #[pyo3(get)]
+    currency: String,
+    /// ISO date (YYYY-MM-DD)
+    #[pyo3(get)]
+    due_date: String,
+    /// pending, scheduled, partially_paid, paid, cancelled
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    linked_bill_ids: Vec<String>,
+    #[pyo3(get)]
+    notes: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::PaymentObligation> for PaymentObligation {
+    fn from(o: stateset_core::PaymentObligation) -> Self {
+        let outstanding = o.outstanding().to_string();
+        Self {
+            id: o.id.to_string(),
+            number: o.number,
+            supplier_id: o.supplier_id.to_string(),
+            purchase_order_id: o.purchase_order_id.map(|id| id.to_string()),
+            amount: o.amount.to_string(),
+            amount_paid: o.amount_paid.to_string(),
+            outstanding,
+            currency: o.currency.to_string(),
+            due_date: o.due_date.to_string(),
+            status: format!("{}", o.status),
+            linked_bill_ids: o.linked_bill_ids.iter().map(ToString::to_string).collect(),
+            notes: o.notes,
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Aggregate summary across payment obligations. Counts are integers, money
+/// values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PaymentObligationDashboard {
+    #[pyo3(get)]
+    open_count: u64,
+    /// Exact decimal string
+    #[pyo3(get)]
+    total_outstanding: String,
+    #[pyo3(get)]
+    overdue_count: u64,
+    /// Exact decimal string
+    #[pyo3(get)]
+    overdue_amount: String,
+}
+
+impl From<stateset_core::PaymentObligationDashboard> for PaymentObligationDashboard {
+    fn from(d: stateset_core::PaymentObligationDashboard) -> Self {
+        Self {
+            open_count: d.open_count,
+            total_outstanding: d.total_outstanding.to_string(),
+            overdue_count: d.overdue_count,
+            overdue_amount: d.overdue_amount.to_string(),
+        }
+    }
+}
+
+/// Payment obligation operations. Money is exchanged as exact decimal strings,
+/// dates as ISO strings (YYYY-MM-DD), enums as snake_case strings.
+#[pyclass]
+pub struct PaymentObligations {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl PaymentObligations {
+    /// Whether the payment-obligations backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.payment_obligations().is_supported())
+    }
+
+    /// Create a payment obligation.
+    #[pyo3(signature = (supplier_id, amount, due_date, purchase_order_id=None, currency=None, notes=None))]
+    fn create(
+        &self,
+        supplier_id: String,
+        amount: String,
+        due_date: String,
+        purchase_order_id: Option<String>,
+        currency: Option<String>,
+        notes: Option<String>,
+    ) -> PyResult<PaymentObligation> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let obligation = commerce
+            .payment_obligations()
+            .create(stateset_core::CreatePaymentObligation {
+                supplier_id: parse_uuid_str_py(&supplier_id, "supplier_id")?,
+                purchase_order_id: parse_optional_uuid_py(purchase_order_id, "purchase_order_id")?,
+                amount: parse_decimal_py(&amount, "amount")?,
+                currency: parse_currency_opt_py(currency)?,
+                due_date: parse_iso_date_py(&due_date, "due_date")?,
+                notes,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create payment obligation: {}", e))
+            })?;
+        Ok(obligation.into())
+    }
+
+    /// Get a payment obligation by ID.
+    fn get(&self, id: String) -> PyResult<Option<PaymentObligation>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "payment_obligation")?;
+        let obligation = commerce.payment_obligations().get(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get payment obligation: {}", e))
+        })?;
+        Ok(obligation.map(Into::into))
+    }
+
+    /// List payment obligations matching the filter.
+    #[pyo3(signature = (supplier_id=None, status=None, due_before=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        supplier_id: Option<String>,
+        status: Option<String>,
+        due_before: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PaymentObligation>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::PaymentObligationFilter {
+            supplier_id: parse_optional_uuid_py(supplier_id, "supplier_id")?,
+            status: status.as_deref().map(parse_payment_obligation_status_py).transpose()?,
+            due_before: due_before
+                .as_deref()
+                .map(|d| parse_iso_date_py(d, "due_before"))
+                .transpose()?,
+            limit,
+            offset,
+        };
+        let obligations = commerce.payment_obligations().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list payment obligations: {}", e))
+        })?;
+        Ok(obligations.into_iter().map(Into::into).collect())
+    }
+
+    /// Record a payment against an obligation.
+    fn record_payment(&self, id: String, amount: String) -> PyResult<PaymentObligation> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "payment_obligation")?;
+        let obligation = commerce
+            .payment_obligations()
+            .record_payment(uuid.into(), parse_decimal_py(&amount, "amount")?)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to record payment: {}", e)))?;
+        Ok(obligation.into())
+    }
+
+    /// Set the obligation status (e.g. `scheduled`, `cancelled`).
+    fn set_status(&self, id: String, status: String) -> PyResult<PaymentObligation> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "payment_obligation")?;
+        let obligation = commerce
+            .payment_obligations()
+            .set_status(uuid.into(), parse_payment_obligation_status_py(&status)?)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to set payment obligation status: {}", e))
+            })?;
+        Ok(obligation.into())
+    }
+
+    /// Link an AP bill to an obligation.
+    fn link_bill(&self, id: String, bill_id: String) -> PyResult<PaymentObligation> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "payment_obligation")?;
+        let bill_uuid = parse_uuid_str_py(&bill_id, "bill_id")?;
+        let obligation = commerce
+            .payment_obligations()
+            .link_bill(uuid.into(), bill_uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to link bill: {}", e)))?;
+        Ok(obligation.into())
+    }
+
+    /// Aggregate dashboard summary as of the given date (YYYY-MM-DD).
+    fn dashboard(&self, today: String) -> PyResult<PaymentObligationDashboard> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let day = parse_iso_date_py(&today, "today")?;
+        let dashboard = commerce.payment_obligations().dashboard(day).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to build payment obligation dashboard: {}", e))
+        })?;
+        Ok(dashboard.into())
+    }
+}
+
+// ============================================================================
+// Purgatory (order ingestion staging)
+// ============================================================================
+
+/// Input for one ingested order line.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct IngestLineItemInput {
+    /// SKU as received from the external channel.
+    #[pyo3(get, set)]
+    external_sku: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    quantity: String,
+    /// Optional pre-resolved product mapping (UUID).
+    #[pyo3(get, set)]
+    product_id: Option<String>,
+}
+
+#[pymethods]
+impl IngestLineItemInput {
+    #[new]
+    #[pyo3(signature = (external_sku, quantity, product_id=None))]
+    fn new(external_sku: String, quantity: String, product_id: Option<String>) -> Self {
+        Self { external_sku, quantity, product_id }
+    }
+}
+
+/// A single ingested order line awaiting resolution.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PurgatoryLineItem {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    purgatory_order_id: String,
+    #[pyo3(get)]
+    external_sku: String,
+    #[pyo3(get)]
+    product_id: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity: String,
+    #[pyo3(get)]
+    ignore_item: bool,
+    #[pyo3(get)]
+    non_physical: bool,
+    /// True when mapped to a product, ignored, or non-physical.
+    #[pyo3(get)]
+    is_resolved: bool,
+}
+
+impl From<stateset_core::PurgatoryLineItem> for PurgatoryLineItem {
+    fn from(l: stateset_core::PurgatoryLineItem) -> Self {
+        let is_resolved = l.is_resolved();
+        Self {
+            id: l.id.to_string(),
+            purgatory_order_id: l.purgatory_order_id.to_string(),
+            external_sku: l.external_sku,
+            product_id: l.product_id.map(|id| id.to_string()),
+            quantity: l.quantity.to_string(),
+            ignore_item: l.ignore_item,
+            non_physical: l.non_physical,
+            is_resolved,
+        }
+    }
+}
+
+/// An ingested-but-not-yet-posted order in the staging area.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PurgatoryOrder {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    channel_id: Option<String>,
+    #[pyo3(get)]
+    external_order_id: String,
+    #[pyo3(get)]
+    external_status: Option<String>,
+    #[pyo3(get)]
+    is_posted: bool,
+    #[pyo3(get)]
+    hold_reason: Option<String>,
+    /// JSON string
+    #[pyo3(get)]
+    metadata: String,
+    #[pyo3(get)]
+    items: Vec<PurgatoryLineItem>,
+    /// True when every line is resolved, so the order can be posted.
+    #[pyo3(get)]
+    is_ready_to_post: bool,
+    /// Count of unresolved lines, as a string.
+    #[pyo3(get)]
+    unresolved_count: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::PurgatoryOrder> for PurgatoryOrder {
+    fn from(o: stateset_core::PurgatoryOrder) -> Self {
+        let is_ready_to_post = o.is_ready_to_post();
+        let unresolved_count = o.unresolved_count().to_string();
+        Self {
+            id: o.id.to_string(),
+            channel_id: o.channel_id.map(|id| id.to_string()),
+            external_order_id: o.external_order_id,
+            external_status: o.external_status,
+            is_posted: o.is_posted,
+            hold_reason: o.hold_reason,
+            metadata: json_value_to_string(&o.metadata),
+            items: o.items.into_iter().map(Into::into).collect(),
+            is_ready_to_post,
+            unresolved_count,
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Purgatory (order ingestion staging) operations. Quantities are exchanged as
+/// exact decimal strings, metadata as JSON strings, timestamps as RFC3339.
+#[pyclass]
+pub struct Purgatory {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Purgatory {
+    /// Whether the purgatory backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.purgatory().is_supported())
+    }
+
+    /// Ingest an external order into purgatory.
+    #[pyo3(signature = (
+        external_order_id,
+        items,
+        channel_id=None,
+        external_status=None,
+        metadata=None,
+    ))]
+    fn ingest(
+        &self,
+        external_order_id: String,
+        items: Vec<IngestLineItemInput>,
+        channel_id: Option<String>,
+        external_status: Option<String>,
+        metadata: Option<String>,
+    ) -> PyResult<PurgatoryOrder> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let metadata = match metadata {
+            Some(s) => parse_json_value(&s, "metadata")?,
+            None => serde_json::Value::Null,
+        };
+        let items = items
+            .into_iter()
+            .map(|i| -> PyResult<stateset_core::IngestLineItem> {
+                Ok(stateset_core::IngestLineItem {
+                    external_sku: i.external_sku,
+                    quantity: parse_decimal_py(&i.quantity, "quantity")?,
+                    product_id: parse_optional_uuid_py(i.product_id, "product_id")?.map(Into::into),
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let order = commerce
+            .purgatory()
+            .ingest(stateset_core::IngestOrder {
+                channel_id: parse_optional_uuid_py(channel_id, "channel_id")?.map(Into::into),
+                external_order_id,
+                external_status,
+                metadata,
+                items,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to ingest purgatory order: {}", e))
+            })?;
+        Ok(order.into())
+    }
+
+    /// Get a purgatory order by ID.
+    fn get(&self, id: String) -> PyResult<Option<PurgatoryOrder>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "purgatory_order")?;
+        let order = commerce.purgatory().get(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get purgatory order: {}", e))
+        })?;
+        Ok(order.map(Into::into))
+    }
+
+    /// List purgatory orders.
+    #[pyo3(signature = (channel_id=None, is_posted=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        channel_id: Option<String>,
+        is_posted: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PurgatoryOrder>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::PurgatoryFilter {
+            channel_id: parse_optional_uuid_py(channel_id, "channel_id")?.map(Into::into),
+            is_posted,
+            limit,
+            offset,
+        };
+        let orders = commerce.purgatory().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list purgatory orders: {}", e))
+        })?;
+        Ok(orders.into_iter().map(Into::into).collect())
+    }
+
+    /// Map a staged line to a product and/or toggle its flags.
+    #[pyo3(signature = (id, line_id, product_id=None, ignore_item=None, non_physical=None))]
+    fn map_line(
+        &self,
+        id: String,
+        line_id: String,
+        product_id: Option<String>,
+        ignore_item: Option<bool>,
+        non_physical: Option<bool>,
+    ) -> PyResult<PurgatoryOrder> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "purgatory_order")?;
+        let line_uuid = parse_uuid_str(&line_id, "purgatory_line_item")?;
+        let order = commerce
+            .purgatory()
+            .map_line(
+                uuid.into(),
+                line_uuid.into(),
+                stateset_core::MapPurgatoryLine {
+                    product_id: parse_optional_uuid_py(product_id, "product_id")?.map(Into::into),
+                    ignore_item,
+                    non_physical,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to map purgatory line: {}", e)))?;
+        Ok(order.into())
+    }
+
+    /// Post the order out of purgatory.
+    fn post(&self, id: String) -> PyResult<PurgatoryOrder> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "purgatory_order")?;
+        let order = commerce.purgatory().post(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to post purgatory order: {}", e))
+        })?;
+        Ok(order.into())
+    }
+
+    /// Delete a purgatory order.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "purgatory_order")?;
+        commerce.purgatory().delete(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete purgatory order: {}", e))
+        })
+    }
+}
+
+// ============================================================================
+// Topology Snapshots
+// ============================================================================
+
+fn parse_health_grade_py(s: &str) -> PyResult<stateset_core::HealthGrade> {
+    s.parse::<stateset_core::HealthGrade>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid health grade: {}", s)))
+}
+
+/// A captured operational topology snapshot.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct TopologySnapshot {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    channels_total: u64,
+    #[pyo3(get)]
+    channels_active: u64,
+    #[pyo3(get)]
+    warehouses_total: u64,
+    #[pyo3(get)]
+    products_total: u64,
+    #[pyo3(get)]
+    open_orders: u64,
+    /// Snake-case health grade: unknown, healthy, degraded, critical
+    #[pyo3(get)]
+    health: String,
+    /// Free-form diagnostic signals as a JSON string
+    #[pyo3(get)]
+    signals: String,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    captured_at: String,
+}
+
+impl From<stateset_core::TopologySnapshot> for TopologySnapshot {
+    fn from(s: stateset_core::TopologySnapshot) -> Self {
+        Self {
+            id: s.id.to_string(),
+            channels_total: s.channels_total,
+            channels_active: s.channels_active,
+            warehouses_total: s.warehouses_total,
+            products_total: s.products_total,
+            open_orders: s.open_orders,
+            health: s.health.to_string(),
+            signals: serde_json::to_string(&s.signals).unwrap_or_else(|_| "null".to_string()),
+            captured_at: s.captured_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Operational topology snapshot operations. Counts cross as integers,
+/// signals as a JSON string, enums as snake_case strings.
+#[pyclass]
+pub struct TopologySnapshots {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl TopologySnapshots {
+    /// Whether the topology-snapshots backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.topology_snapshots().is_supported())
+    }
+
+    /// Capture a new snapshot; health is derived from the supplied metrics.
+    ///
+    /// `signals` is an optional JSON string of free-form diagnostics.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        channels_total,
+        channels_active,
+        warehouses_total,
+        products_total,
+        open_orders,
+        signals=None,
+    ))]
+    fn capture(
+        &self,
+        channels_total: u64,
+        channels_active: u64,
+        warehouses_total: u64,
+        products_total: u64,
+        open_orders: u64,
+        signals: Option<String>,
+    ) -> PyResult<TopologySnapshot> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let signals = match signals {
+            Some(s) => parse_json_value(&s, "signals")?,
+            None => serde_json::Value::Null,
+        };
+        let snapshot = commerce
+            .topology_snapshots()
+            .capture(stateset_core::CaptureTopologySnapshot {
+                channels_total,
+                channels_active,
+                warehouses_total,
+                products_total,
+                open_orders,
+                signals,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to capture topology snapshot: {}", e))
+            })?;
+        Ok(snapshot.into())
+    }
+
+    /// Get a snapshot by ID.
+    fn get(&self, id: String) -> PyResult<Option<TopologySnapshot>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "topology_snapshot")?;
+        let snapshot = commerce.topology_snapshots().get(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get topology snapshot: {}", e))
+        })?;
+        Ok(snapshot.map(Into::into))
+    }
+
+    /// Most recent snapshot, if any.
+    fn latest(&self) -> PyResult<Option<TopologySnapshot>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let snapshot = commerce.topology_snapshots().latest().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get latest topology snapshot: {}", e))
+        })?;
+        Ok(snapshot.map(Into::into))
+    }
+
+    /// List snapshots, newest first, with optional health filtering.
+    #[pyo3(signature = (health=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        health: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<TopologySnapshot>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::TopologySnapshotFilter {
+            health: health.as_deref().map(parse_health_grade_py).transpose()?,
+            limit,
+            offset,
+        };
+        let snapshots = commerce.topology_snapshots().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list topology snapshots: {}", e))
+        })?;
+        Ok(snapshots.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a snapshot.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "topology_snapshot")?;
+        commerce.topology_snapshots().delete(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete topology snapshot: {}", e))
+        })
+    }
+}
+
+// ============================================================================
+// Vendor Returns  (return-to-supplier / RTV)
+// ============================================================================
+
+fn parse_vendor_return_status_py(s: &str) -> PyResult<stateset_core::VendorReturnStatus> {
+    s.parse::<stateset_core::VendorReturnStatus>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid vendor return status: {s}")))
+}
+
+fn parse_vendor_return_reason_py(s: &str) -> PyResult<stateset_core::VendorReturnReason> {
+    s.parse::<stateset_core::VendorReturnReason>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid vendor return reason: {s}")))
+}
+
+/// A line on a create-vendor-return request. Quantities and money are exact
+/// decimal strings; `reason` is one of defective, overage, wrong_item, other.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct VendorReturnItemInput {
+    #[pyo3(get, set)]
+    product_id: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    quantity: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    unit_cost: String,
+    /// Snake-case reason: defective, overage, wrong_item, other
+    #[pyo3(get, set)]
+    reason: Option<String>,
+}
+
+#[pymethods]
+impl VendorReturnItemInput {
+    #[new]
+    #[pyo3(signature = (product_id, quantity, unit_cost, reason=None))]
+    fn new(
+        product_id: String,
+        quantity: String,
+        unit_cost: String,
+        reason: Option<String>,
+    ) -> Self {
+        Self { product_id, quantity, unit_cost, reason }
+    }
+}
+
+/// A single line on a vendor return. Money values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct VendorReturnItem {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    vendor_return_id: String,
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    unit_cost: String,
+    /// Exact decimal string: quantity * unit_cost
+    #[pyo3(get)]
+    line_total: String,
+    /// defective, overage, wrong_item, other
+    #[pyo3(get)]
+    reason: String,
+}
+
+impl From<stateset_core::VendorReturnItem> for VendorReturnItem {
+    fn from(i: stateset_core::VendorReturnItem) -> Self {
+        let line_total = i.line_total().to_string();
+        Self {
+            id: i.id.to_string(),
+            vendor_return_id: i.vendor_return_id.to_string(),
+            product_id: i.product_id.to_string(),
+            sku: i.sku,
+            quantity: i.quantity.to_string(),
+            unit_cost: i.unit_cost.to_string(),
+            line_total,
+            reason: i.reason.to_string(),
+        }
+    }
+}
+
+/// A return of goods to a supplier. Money values are exact decimal strings,
+/// timestamps RFC 3339 strings, enums snake_case strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct VendorReturn {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    number: String,
+    #[pyo3(get)]
+    supplier_id: String,
+    #[pyo3(get)]
+    purchase_order_id: Option<String>,
+    /// draft, pending, processed, cancelled
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    items: Vec<VendorReturnItem>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    total_credit: String,
+    #[pyo3(get)]
+    credit_generated: bool,
+    #[pyo3(get)]
+    notes: Option<String>,
+    #[pyo3(get)]
+    processed_at: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::VendorReturn> for VendorReturn {
+    fn from(r: stateset_core::VendorReturn) -> Self {
+        let total_credit = r.total_credit().to_string();
+        Self {
+            id: r.id.to_string(),
+            number: r.number,
+            supplier_id: r.supplier_id.to_string(),
+            purchase_order_id: r.purchase_order_id.map(|id| id.to_string()),
+            status: r.status.to_string(),
+            currency: r.currency.to_string(),
+            items: r.items.into_iter().map(Into::into).collect(),
+            total_credit,
+            credit_generated: r.credit_generated,
+            notes: r.notes,
+            processed_at: r.processed_at.map(|d| d.to_rfc3339()),
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Vendor return operations. Money and quantities are exchanged as exact
+/// decimal strings, timestamps as RFC 3339 strings, enums as snake_case.
+#[pyclass]
+pub struct VendorReturns {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl VendorReturns {
+    /// Whether the vendor-returns backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.vendor_returns().is_supported())
+    }
+
+    /// Create a vendor return (draft). At least one item is required.
+    #[pyo3(signature = (supplier_id, items, purchase_order_id=None, currency=None, notes=None))]
+    fn create(
+        &self,
+        supplier_id: String,
+        items: Vec<VendorReturnItemInput>,
+        purchase_order_id: Option<String>,
+        currency: Option<String>,
+        notes: Option<String>,
+    ) -> PyResult<VendorReturn> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let items = items
+            .into_iter()
+            .map(|i| -> PyResult<stateset_core::CreateVendorReturnItem> {
+                Ok(stateset_core::CreateVendorReturnItem {
+                    product_id: parse_uuid_str_py(&i.product_id, "product_id")?.into(),
+                    quantity: parse_decimal_py(&i.quantity, "quantity")?,
+                    unit_cost: parse_decimal_py(&i.unit_cost, "unit_cost")?,
+                    reason: i
+                        .reason
+                        .as_deref()
+                        .map(parse_vendor_return_reason_py)
+                        .transpose()?
+                        .unwrap_or_default(),
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let vendor_return = commerce
+            .vendor_returns()
+            .create(stateset_core::CreateVendorReturn {
+                supplier_id: parse_uuid_str_py(&supplier_id, "supplier_id")?,
+                purchase_order_id: parse_optional_uuid_py(purchase_order_id, "purchase_order_id")?,
+                currency: parse_currency_opt_py(currency)?,
+                items,
+                notes,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create vendor return: {}", e))
+            })?;
+        Ok(vendor_return.into())
+    }
+
+    /// Get a vendor return by ID.
+    fn get(&self, id: String) -> PyResult<Option<VendorReturn>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor_return")?;
+        let vendor_return = commerce
+            .vendor_returns()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get vendor return: {}", e)))?;
+        Ok(vendor_return.map(Into::into))
+    }
+
+    /// List vendor returns, optionally filtered.
+    #[pyo3(signature = (supplier_id=None, status=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        supplier_id: Option<String>,
+        status: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<VendorReturn>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::VendorReturnFilter {
+            supplier_id: parse_optional_uuid_py(supplier_id, "supplier_id")?,
+            status: status.as_deref().map(parse_vendor_return_status_py).transpose()?,
+            limit,
+            offset,
+        };
+        let returns = commerce.vendor_returns().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list vendor returns: {}", e))
+        })?;
+        Ok(returns.into_iter().map(Into::into).collect())
+    }
+
+    /// Submit a draft vendor return to the supplier.
+    fn submit(&self, id: String) -> PyResult<VendorReturn> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor_return")?;
+        let vendor_return = commerce.vendor_returns().submit(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to submit vendor return: {}", e))
+        })?;
+        Ok(vendor_return.into())
+    }
+
+    /// Process a vendor return, optionally generating a vendor credit.
+    fn process(&self, id: String, generate_credit: bool) -> PyResult<VendorReturn> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor_return")?;
+        let vendor_return =
+            commerce.vendor_returns().process(uuid.into(), generate_credit).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to process vendor return: {}", e))
+            })?;
+        Ok(vendor_return.into())
+    }
+
+    /// Cancel a vendor return.
+    fn cancel(&self, id: String) -> PyResult<VendorReturn> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor_return")?;
+        let vendor_return = commerce.vendor_returns().cancel(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to cancel vendor return: {}", e))
+        })?;
+        Ok(vendor_return.into())
+    }
+}
+
+// ============================================================================
+// Fraud (risk assessment + rules)
+// ============================================================================
+
+fn parse_fraud_decision_py(value: &str) -> PyResult<stateset_core::FraudDecision> {
+    value
+        .parse::<stateset_core::FraudDecision>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid fraud decision: {value}")))
+}
+
+fn parse_fraud_signal_type_py(value: &str) -> PyResult<stateset_core::FraudSignalType> {
+    value
+        .parse::<stateset_core::FraudSignalType>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid fraud signal type: {value}")))
+}
+
+/// One fraud signal to submit with an assessment.
+///
+/// `signal_type` is a snake_case string: velocity_spike, address_mismatch,
+/// high_value_first_order, geo_ip_anomaly, bin_country_mismatch,
+/// device_fingerprint, proxy_vpn, disposable_email, payment_retries,
+/// unusual_time. `score` is a confidence in the range 0.0 - 1.0.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct FraudSignalInput {
+    #[pyo3(get)]
+    signal_type: String,
+    #[pyo3(get)]
+    score: f64,
+    #[pyo3(get)]
+    details: String,
+}
+
+#[pymethods]
+impl FraudSignalInput {
+    #[new]
+    #[pyo3(signature = (signal_type, score, details))]
+    fn new(signal_type: String, score: f64, details: String) -> Self {
+        Self { signal_type, score, details }
+    }
+}
+
+/// A single fraud signal recorded against an order.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct FraudSignal {
+    #[pyo3(get)]
+    order_id: String,
+    /// Snake-case signal type
+    #[pyo3(get)]
+    signal_type: String,
+    /// Confidence score (0.0 - 1.0)
+    #[pyo3(get)]
+    score: f64,
+    #[pyo3(get)]
+    details: String,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    detected_at: String,
+}
+
+impl From<stateset_core::FraudSignal> for FraudSignal {
+    fn from(signal: stateset_core::FraudSignal) -> Self {
+        Self {
+            order_id: signal.order_id.to_string(),
+            signal_type: signal.signal_type.to_string(),
+            score: signal.score,
+            details: signal.details,
+            detected_at: signal.detected_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A fraud risk assessment for an order.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct FraudAssessment {
+    #[pyo3(get)]
+    order_id: String,
+    /// Overall risk score (0.0 = safe, 1.0 = high risk)
+    #[pyo3(get)]
+    risk_score: f64,
+    #[pyo3(get)]
+    signals: Vec<FraudSignal>,
+    /// accept, review, reject
+    #[pyo3(get)]
+    decision: String,
+    #[pyo3(get)]
+    reviewed_by: Option<String>,
+    #[pyo3(get)]
+    review_notes: Option<String>,
+    /// True when the decision is review and no reviewer has acted yet
+    #[pyo3(get)]
+    needs_review: bool,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    created_at: String,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::FraudAssessment> for FraudAssessment {
+    fn from(assessment: stateset_core::FraudAssessment) -> Self {
+        let needs_review = assessment.needs_review();
+        Self {
+            order_id: assessment.order_id.to_string(),
+            risk_score: assessment.risk_score,
+            signals: assessment.signals.into_iter().map(Into::into).collect(),
+            decision: assessment.decision.to_string(),
+            reviewed_by: assessment.reviewed_by,
+            review_notes: assessment.review_notes,
+            needs_review,
+            created_at: assessment.created_at.to_rfc3339(),
+            updated_at: assessment.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A configurable fraud detection rule.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct FraudRule {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    /// Snake-case signal type
+    #[pyo3(get)]
+    signal_type: String,
+    /// Score threshold that triggers the rule (0.0 - 1.0)
+    #[pyo3(get)]
+    threshold: f64,
+    /// accept, review, reject
+    #[pyo3(get)]
+    action: String,
+    #[pyo3(get)]
+    enabled: bool,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    created_at: String,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::FraudRule> for FraudRule {
+    fn from(rule: stateset_core::FraudRule) -> Self {
+        Self {
+            id: rule.id.to_string(),
+            name: rule.name,
+            description: rule.description,
+            signal_type: rule.signal_type.to_string(),
+            threshold: rule.threshold,
+            action: rule.action.to_string(),
+            enabled: rule.enabled,
+            created_at: rule.created_at.to_rfc3339(),
+            updated_at: rule.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Fraud operations: signal-based risk assessments, manual review, and
+/// configurable rules. Enums cross as snake_case strings, timestamps as
+/// RFC3339 strings.
+#[pyclass]
+pub struct Fraud {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Fraud {
+    /// Whether the fraud backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.fraud().is_supported())
+    }
+
+    /// Create a fraud assessment for an order from a list of `FraudSignalInput`.
+    #[pyo3(signature = (order_id, signals))]
+    fn create_assessment(
+        &self,
+        order_id: String,
+        signals: Vec<FraudSignalInput>,
+    ) -> PyResult<FraudAssessment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let signals = signals
+            .into_iter()
+            .map(|s| -> PyResult<stateset_core::CreateFraudSignal> {
+                Ok(stateset_core::CreateFraudSignal {
+                    signal_type: parse_fraud_signal_type_py(&s.signal_type)?,
+                    score: s.score,
+                    details: s.details,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let assessment = commerce
+            .fraud()
+            .create_assessment(stateset_core::CreateFraudAssessment {
+                order_id: parse_uuid_str(&order_id, "order_id")?.into(),
+                signals,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create fraud assessment: {}", e))
+            })?;
+        Ok(assessment.into())
+    }
+
+    /// Get the fraud assessment for an order, if one exists.
+    fn get_assessment(&self, order_id: String) -> PyResult<Option<FraudAssessment>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&order_id, "order_id")?;
+        let assessment = commerce.fraud().get_assessment(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get fraud assessment: {}", e))
+        })?;
+        Ok(assessment.map(Into::into))
+    }
+
+    /// List fraud assessments, optionally filtered.
+    #[pyo3(signature = (
+        decision=None,
+        min_risk_score=None,
+        unreviewed_only=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list_assessments(
+        &self,
+        decision: Option<String>,
+        min_risk_score: Option<f64>,
+        unreviewed_only: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<FraudAssessment>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::FraudAssessmentFilter {
+            decision: decision.as_deref().map(parse_fraud_decision_py).transpose()?,
+            min_risk_score,
+            unreviewed_only,
+            limit,
+            offset,
+        };
+        let assessments = commerce.fraud().list_assessments(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list fraud assessments: {}", e))
+        })?;
+        Ok(assessments.into_iter().map(Into::into).collect())
+    }
+
+    /// Record a manual review decision on an assessment.
+    #[pyo3(signature = (order_id, decision, reviewer, notes=None))]
+    fn review_assessment(
+        &self,
+        order_id: String,
+        decision: String,
+        reviewer: String,
+        notes: Option<String>,
+    ) -> PyResult<FraudAssessment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&order_id, "order_id")?;
+        let decision = parse_fraud_decision_py(&decision)?;
+        let assessment =
+            commerce.fraud().review_assessment(uuid.into(), decision, reviewer, notes).map_err(
+                |e| PyRuntimeError::new_err(format!("Failed to review fraud assessment: {}", e)),
+            )?;
+        Ok(assessment.into())
+    }
+
+    /// Create a fraud rule.
+    #[pyo3(signature = (name, signal_type, threshold, action, description=None))]
+    fn create_rule(
+        &self,
+        name: String,
+        signal_type: String,
+        threshold: f64,
+        action: String,
+        description: Option<String>,
+    ) -> PyResult<FraudRule> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let rule = commerce
+            .fraud()
+            .create_rule(stateset_core::CreateFraudRule {
+                name,
+                description,
+                signal_type: parse_fraud_signal_type_py(&signal_type)?,
+                threshold,
+                action: parse_fraud_decision_py(&action)?,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create fraud rule: {}", e)))?;
+        Ok(rule.into())
+    }
+
+    /// Get a fraud rule by ID.
+    fn get_rule(&self, id: String) -> PyResult<Option<FraudRule>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "fraud_rule")?;
+        let rule = commerce
+            .fraud()
+            .get_rule(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get fraud rule: {}", e)))?;
+        Ok(rule.map(Into::into))
+    }
+
+    /// Update a fraud rule. Only the provided fields change.
+    #[pyo3(signature = (id, name=None, description=None, threshold=None, action=None, enabled=None))]
+    fn update_rule(
+        &self,
+        id: String,
+        name: Option<String>,
+        description: Option<String>,
+        threshold: Option<f64>,
+        action: Option<String>,
+        enabled: Option<bool>,
+    ) -> PyResult<FraudRule> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "fraud_rule")?;
+        let rule = commerce
+            .fraud()
+            .update_rule(
+                uuid.into(),
+                stateset_core::UpdateFraudRule {
+                    name,
+                    description: description.map(Some),
+                    threshold,
+                    action: action.as_deref().map(parse_fraud_decision_py).transpose()?,
+                    enabled,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update fraud rule: {}", e)))?;
+        Ok(rule.into())
+    }
+
+    /// List fraud rules, optionally filtered.
+    #[pyo3(signature = (signal_type=None, action=None, enabled=None, limit=None, offset=None))]
+    fn list_rules(
+        &self,
+        signal_type: Option<String>,
+        action: Option<String>,
+        enabled: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<FraudRule>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::FraudRuleFilter {
+            signal_type: signal_type.as_deref().map(parse_fraud_signal_type_py).transpose()?,
+            action: action.as_deref().map(parse_fraud_decision_py).transpose()?,
+            enabled,
+            limit,
+            offset,
+        };
+        let rules = commerce
+            .fraud()
+            .list_rules(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list fraud rules: {}", e)))?;
+        Ok(rules.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a fraud rule.
+    fn delete_rule(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "fraud_rule")?;
+        commerce
+            .fraud()
+            .delete_rule(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete fraud rule: {}", e)))
+    }
+
+    /// All currently enabled fraud rules.
+    fn get_active_rules(&self) -> PyResult<Vec<FraudRule>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let rules = commerce.fraud().get_active_rules().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get active fraud rules: {}", e))
+        })?;
+        Ok(rules.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Search configuration
+// ============================================================================
+
+/// A searchable field passed to create/update.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct SearchFieldInput {
+    #[pyo3(get, set)]
+    field_name: String,
+    #[pyo3(get, set)]
+    weight: f64,
+    /// One of: standard, ngram, edge, keyword
+    #[pyo3(get, set)]
+    tokenizer: Option<String>,
+    #[pyo3(get, set)]
+    enabled: Option<bool>,
+}
+
+#[pymethods]
+impl SearchFieldInput {
+    #[new]
+    #[pyo3(signature = (field_name, weight, tokenizer=None, enabled=None))]
+    fn new(
+        field_name: String,
+        weight: f64,
+        tokenizer: Option<String>,
+        enabled: Option<bool>,
+    ) -> Self {
+        Self { field_name, weight, tokenizer, enabled }
+    }
+}
+
+/// A facet configuration passed to create/update.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct FacetConfigInput {
+    #[pyo3(get, set)]
+    field_name: String,
+    #[pyo3(get, set)]
+    display_name: String,
+    /// One of: value, range, hierarchical
+    #[pyo3(get, set)]
+    facet_type: Option<String>,
+    #[pyo3(get, set)]
+    sort_order: Option<i32>,
+    #[pyo3(get, set)]
+    max_values: Option<u32>,
+}
+
+#[pymethods]
+impl FacetConfigInput {
+    #[new]
+    #[pyo3(signature = (field_name, display_name, facet_type=None, sort_order=None, max_values=None))]
+    fn new(
+        field_name: String,
+        display_name: String,
+        facet_type: Option<String>,
+        sort_order: Option<i32>,
+        max_values: Option<u32>,
+    ) -> Self {
+        Self { field_name, display_name, facet_type, sort_order, max_values }
+    }
+}
+
+/// A synonym group passed to create/update.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct SynonymGroupInput {
+    #[pyo3(get, set)]
+    canonical: String,
+    #[pyo3(get, set)]
+    synonyms: Vec<String>,
+}
+
+#[pymethods]
+impl SynonymGroupInput {
+    #[new]
+    fn new(canonical: String, synonyms: Vec<String>) -> Self {
+        Self { canonical, synonyms }
+    }
+}
+
+/// A relevance boost rule passed to create/update.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct BoostRuleInput {
+    #[pyo3(get, set)]
+    field: String,
+    #[pyo3(get, set)]
+    value_match: String,
+    #[pyo3(get, set)]
+    boost_factor: f64,
+}
+
+#[pymethods]
+impl BoostRuleInput {
+    #[new]
+    fn new(field: String, value_match: String, boost_factor: f64) -> Self {
+        Self { field, value_match, boost_factor }
+    }
+}
+
+/// A searchable field on a search configuration.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct SearchField {
+    #[pyo3(get)]
+    field_name: String,
+    #[pyo3(get)]
+    weight: f64,
+    /// standard, ngram, edge, keyword
+    #[pyo3(get)]
+    tokenizer: String,
+    #[pyo3(get)]
+    enabled: bool,
+}
+
+impl From<stateset_core::SearchField> for SearchField {
+    fn from(f: stateset_core::SearchField) -> Self {
+        Self {
+            field_name: f.field_name,
+            weight: f.weight,
+            tokenizer: f.tokenizer.to_string(),
+            enabled: f.enabled,
+        }
+    }
+}
+
+/// A facet on a search configuration.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct FacetConfig {
+    #[pyo3(get)]
+    field_name: String,
+    /// value, range, hierarchical
+    #[pyo3(get)]
+    facet_type: String,
+    #[pyo3(get)]
+    display_name: String,
+    #[pyo3(get)]
+    sort_order: i32,
+    #[pyo3(get)]
+    max_values: Option<u32>,
+}
+
+impl From<stateset_core::FacetConfig> for FacetConfig {
+    fn from(f: stateset_core::FacetConfig) -> Self {
+        Self {
+            field_name: f.field_name,
+            facet_type: f.facet_type.to_string(),
+            display_name: f.display_name,
+            sort_order: f.sort_order,
+            max_values: f.max_values,
+        }
+    }
+}
+
+/// A synonym group on a search configuration.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct SynonymGroup {
+    #[pyo3(get)]
+    canonical: String,
+    #[pyo3(get)]
+    synonyms: Vec<String>,
+}
+
+impl From<stateset_core::SynonymGroup> for SynonymGroup {
+    fn from(g: stateset_core::SynonymGroup) -> Self {
+        Self { canonical: g.canonical, synonyms: g.synonyms }
+    }
+}
+
+/// A relevance boost rule on a search configuration.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct BoostRule {
+    #[pyo3(get)]
+    field: String,
+    #[pyo3(get)]
+    value_match: String,
+    #[pyo3(get)]
+    boost_factor: f64,
+}
+
+impl From<stateset_core::BoostRule> for BoostRule {
+    fn from(b: stateset_core::BoostRule) -> Self {
+        Self { field: b.field, value_match: b.value_match, boost_factor: b.boost_factor }
+    }
+}
+
+/// A search configuration. Timestamps are RFC3339 strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct SearchConfig {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    searchable_fields: Vec<SearchField>,
+    #[pyo3(get)]
+    facets: Vec<FacetConfig>,
+    #[pyo3(get)]
+    synonyms: Vec<SynonymGroup>,
+    #[pyo3(get)]
+    boost_rules: Vec<BoostRule>,
+    #[pyo3(get)]
+    is_active: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::SearchConfig> for SearchConfig {
+    fn from(c: stateset_core::SearchConfig) -> Self {
+        Self {
+            id: c.id.to_string(),
+            name: c.name,
+            description: c.description,
+            searchable_fields: c.searchable_fields.into_iter().map(Into::into).collect(),
+            facets: c.facets.into_iter().map(Into::into).collect(),
+            synonyms: c.synonyms.into_iter().map(Into::into).collect(),
+            boost_rules: c.boost_rules.into_iter().map(Into::into).collect(),
+            is_active: c.is_active,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_search_fields_py(
+    fields: Vec<SearchFieldInput>,
+) -> PyResult<Vec<stateset_core::SearchField>> {
+    fields
+        .into_iter()
+        .map(|f| {
+            Ok(stateset_core::SearchField {
+                field_name: f.field_name,
+                weight: f.weight,
+                tokenizer: f
+                    .tokenizer
+                    .as_deref()
+                    .map(|t| {
+                        t.parse::<stateset_core::Tokenizer>().map_err(|_| {
+                            PyValueError::new_err(format!("Invalid tokenizer '{}'", t))
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or_default(),
+                enabled: f.enabled.unwrap_or(true),
+            })
+        })
+        .collect()
+}
+
+fn parse_facet_configs_py(
+    facets: Vec<FacetConfigInput>,
+) -> PyResult<Vec<stateset_core::FacetConfig>> {
+    facets
+        .into_iter()
+        .map(|f| {
+            Ok(stateset_core::FacetConfig {
+                field_name: f.field_name,
+                facet_type: f
+                    .facet_type
+                    .as_deref()
+                    .map(|t| {
+                        t.parse::<stateset_core::FacetType>().map_err(|_| {
+                            PyValueError::new_err(format!("Invalid facet type '{}'", t))
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or_default(),
+                display_name: f.display_name,
+                sort_order: f.sort_order.unwrap_or(0),
+                max_values: f.max_values,
+            })
+        })
+        .collect()
+}
+
+fn convert_synonym_groups_py(groups: Vec<SynonymGroupInput>) -> Vec<stateset_core::SynonymGroup> {
+    groups
+        .into_iter()
+        .map(|g| stateset_core::SynonymGroup { canonical: g.canonical, synonyms: g.synonyms })
+        .collect()
+}
+
+fn convert_boost_rules_py(rules: Vec<BoostRuleInput>) -> Vec<stateset_core::BoostRule> {
+    rules
+        .into_iter()
+        .map(|b| stateset_core::BoostRule {
+            field: b.field,
+            value_match: b.value_match,
+            boost_factor: b.boost_factor,
+        })
+        .collect()
+}
+
+/// Search configuration operations. Enums cross as snake_case strings and
+/// timestamps as RFC3339 strings.
+#[pyclass]
+pub struct SearchConfigs {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl SearchConfigs {
+    /// Whether the search-configuration backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.search_config().is_supported())
+    }
+
+    /// Create a search configuration.
+    #[pyo3(signature = (
+        name,
+        description=None,
+        searchable_fields=None,
+        facets=None,
+        synonyms=None,
+        boost_rules=None,
+    ))]
+    fn create(
+        &self,
+        name: String,
+        description: Option<String>,
+        searchable_fields: Option<Vec<SearchFieldInput>>,
+        facets: Option<Vec<FacetConfigInput>>,
+        synonyms: Option<Vec<SynonymGroupInput>>,
+        boost_rules: Option<Vec<BoostRuleInput>>,
+    ) -> PyResult<SearchConfig> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let config = commerce
+            .search_config()
+            .create(stateset_core::CreateSearchConfig {
+                name,
+                description,
+                searchable_fields: parse_search_fields_py(searchable_fields.unwrap_or_default())?,
+                facets: parse_facet_configs_py(facets.unwrap_or_default())?,
+                synonyms: convert_synonym_groups_py(synonyms.unwrap_or_default()),
+                boost_rules: convert_boost_rules_py(boost_rules.unwrap_or_default()),
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create search config: {}", e))
+            })?;
+        Ok(config.into())
+    }
+
+    /// Get a search configuration by ID.
+    fn get(&self, id: String) -> PyResult<Option<SearchConfig>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "search_config")?;
+        let config = commerce
+            .search_config()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get search config: {}", e)))?;
+        Ok(config.map(Into::into))
+    }
+
+    /// Update a search configuration.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        id,
+        name=None,
+        description=None,
+        searchable_fields=None,
+        facets=None,
+        synonyms=None,
+        boost_rules=None,
+        is_active=None,
+    ))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        description: Option<String>,
+        searchable_fields: Option<Vec<SearchFieldInput>>,
+        facets: Option<Vec<FacetConfigInput>>,
+        synonyms: Option<Vec<SynonymGroupInput>>,
+        boost_rules: Option<Vec<BoostRuleInput>>,
+        is_active: Option<bool>,
+    ) -> PyResult<SearchConfig> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "search_config")?;
+        let config = commerce
+            .search_config()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateSearchConfig {
+                    name,
+                    description: description.map(Some),
+                    searchable_fields: searchable_fields.map(parse_search_fields_py).transpose()?,
+                    facets: facets.map(parse_facet_configs_py).transpose()?,
+                    synonyms: synonyms.map(convert_synonym_groups_py),
+                    boost_rules: boost_rules.map(convert_boost_rules_py),
+                    is_active,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update search config: {}", e))
+            })?;
+        Ok(config.into())
+    }
+
+    /// List search configurations matching the filter.
+    #[pyo3(signature = (is_active=None, name=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        is_active: Option<bool>,
+        name: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<SearchConfig>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::SearchConfigFilter { is_active, name, limit, offset };
+        let configs = commerce.search_config().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list search configs: {}", e))
+        })?;
+        Ok(configs.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a search configuration.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "search_config")?;
+        commerce
+            .search_config()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete search config: {}", e)))
+    }
+
+    /// The currently active search configuration, if any.
+    fn get_active(&self) -> PyResult<Option<SearchConfig>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let config = commerce.search_config().get_active().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get active search config: {}", e))
+        })?;
+        Ok(config.map(Into::into))
+    }
+
+    /// Make a configuration active, deactivating the current one.
+    fn set_active(&self, id: String) -> PyResult<SearchConfig> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str(&id, "search_config")?;
+        let config = commerce.search_config().set_active(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to set active search config: {}", e))
+        })?;
+        Ok(config.into())
+    }
+}
+
+// ============================================================================
+// ERC-8004 Trustless Agents (identity / reputation / validation)
+// ============================================================================
+
+fn parse_wallet_proof_type_py(s: &str) -> PyResult<stateset_core::AgentWalletProofType> {
+    s.parse::<stateset_core::AgentWalletProofType>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid agent wallet proof type: {}", s)))
+}
+
+fn parse_i128_py(s: &str, field: &str) -> PyResult<i128> {
+    s.parse::<i128>()
+        .map_err(|_| PyValueError::new_err(format!("Invalid {field}: expected integer string")))
+}
+
+fn parse_u8_py(value: u32, field: &str) -> PyResult<u8> {
+    u8::try_from(value).map_err(|_| PyValueError::new_err(format!("Invalid {field}: out of range")))
+}
+
+fn parse_u64_py(s: &str, field: &str) -> PyResult<u64> {
+    s.parse::<u64>().map_err(|_| {
+        PyValueError::new_err(format!("Invalid {field}: expected unsigned integer string"))
+    })
+}
+
+/// An ERC-8004 agent identity record.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct AgentIdentity {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    agent_registry: String,
+    #[pyo3(get)]
+    agent_id: String,
+    #[pyo3(get)]
+    agent_uri: String,
+    #[pyo3(get)]
+    agent_wallet: Option<String>,
+    #[pyo3(get)]
+    owner_address: Option<String>,
+    #[pyo3(get)]
+    agent_card_id: Option<String>,
+    /// JSON-encoded registration document
+    #[pyo3(get)]
+    registration: Option<String>,
+    #[pyo3(get)]
+    registration_hash: Option<String>,
+    /// Snake-case proof type: eip712 or erc1271
+    #[pyo3(get)]
+    wallet_proof_type: Option<String>,
+    #[pyo3(get)]
+    wallet_proof: Option<String>,
+    /// Chain id as a decimal string
+    #[pyo3(get)]
+    wallet_proof_chain_id: Option<String>,
+    /// RFC3339 timestamp
+    #[pyo3(get)]
+    wallet_proof_deadline: Option<String>,
+    #[pyo3(get)]
+    active: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::AgentIdentity> for AgentIdentity {
+    fn from(i: stateset_core::AgentIdentity) -> Self {
+        Self {
+            id: i.id.to_string(),
+            agent_registry: i.agent_registry,
+            agent_id: i.agent_id,
+            agent_uri: i.agent_uri,
+            agent_wallet: i.agent_wallet,
+            owner_address: i.owner_address,
+            agent_card_id: i.agent_card_id.map(|id| id.to_string()),
+            registration: i.registration,
+            registration_hash: i.registration_hash,
+            wallet_proof_type: i.wallet_proof_type.map(|t| t.to_string()),
+            wallet_proof: i.wallet_proof,
+            wallet_proof_chain_id: i.wallet_proof_chain_id.map(|c| c.to_string()),
+            wallet_proof_deadline: i.wallet_proof_deadline.map(|d| d.to_rfc3339()),
+            active: i.active,
+            created_at: i.created_at.to_rfc3339(),
+            updated_at: i.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A feedback entry about an agent.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct AgentFeedback {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    agent_registry: String,
+    #[pyo3(get)]
+    agent_id: String,
+    #[pyo3(get)]
+    client_address: String,
+    /// Feedback index as a decimal string
+    #[pyo3(get)]
+    feedback_index: String,
+    /// Signed integer value as a decimal string
+    #[pyo3(get)]
+    value: String,
+    #[pyo3(get)]
+    value_decimals: u32,
+    #[pyo3(get)]
+    tag1: Option<String>,
+    #[pyo3(get)]
+    tag2: Option<String>,
+    #[pyo3(get)]
+    endpoint: Option<String>,
+    #[pyo3(get)]
+    feedback_uri: Option<String>,
+    #[pyo3(get)]
+    feedback_hash: Option<String>,
+    #[pyo3(get)]
+    is_revoked: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    revoked_at: Option<String>,
+}
+
+impl From<stateset_core::AgentFeedback> for AgentFeedback {
+    fn from(f: stateset_core::AgentFeedback) -> Self {
+        Self {
+            id: f.id.to_string(),
+            agent_registry: f.agent_registry,
+            agent_id: f.agent_id,
+            client_address: f.client_address,
+            feedback_index: f.feedback_index.to_string(),
+            value: f.value.to_string(),
+            value_decimals: u32::from(f.value_decimals),
+            tag1: f.tag1,
+            tag2: f.tag2,
+            endpoint: f.endpoint,
+            feedback_uri: f.feedback_uri,
+            feedback_hash: f.feedback_hash,
+            is_revoked: f.is_revoked,
+            created_at: f.created_at.to_rfc3339(),
+            revoked_at: f.revoked_at.map(|d| d.to_rfc3339()),
+        }
+    }
+}
+
+/// Aggregate feedback summary for an agent.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct FeedbackSummary {
+    /// Count as a decimal string
+    #[pyo3(get)]
+    count: String,
+    /// Aggregate value as a decimal string
+    #[pyo3(get)]
+    summary_value: String,
+    #[pyo3(get)]
+    summary_value_decimals: u32,
+}
+
+impl From<stateset_core::FeedbackSummary> for FeedbackSummary {
+    fn from(s: stateset_core::FeedbackSummary) -> Self {
+        Self {
+            count: s.count.to_string(),
+            summary_value: s.summary_value.to_string(),
+            summary_value_decimals: u32::from(s.summary_value_decimals),
+        }
+    }
+}
+
+/// A validation request submitted for an agent.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct AgentValidationRequest {
+    #[pyo3(get)]
+    request_hash: String,
+    #[pyo3(get)]
+    agent_registry: String,
+    #[pyo3(get)]
+    agent_id: String,
+    #[pyo3(get)]
+    validator_address: String,
+    #[pyo3(get)]
+    request_uri: String,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::AgentValidationRequest> for AgentValidationRequest {
+    fn from(r: stateset_core::AgentValidationRequest) -> Self {
+        Self {
+            request_hash: r.request_hash,
+            agent_registry: r.agent_registry,
+            agent_id: r.agent_id,
+            validator_address: r.validator_address,
+            request_uri: r.request_uri,
+            created_at: r.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A validator's response to a validation request.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct AgentValidationResponse {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    request_hash: String,
+    #[pyo3(get)]
+    agent_registry: String,
+    #[pyo3(get)]
+    agent_id: String,
+    #[pyo3(get)]
+    validator_address: String,
+    /// Validation score (0-100)
+    #[pyo3(get)]
+    response: u32,
+    #[pyo3(get)]
+    response_uri: Option<String>,
+    #[pyo3(get)]
+    response_hash: Option<String>,
+    #[pyo3(get)]
+    tag: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::AgentValidationResponse> for AgentValidationResponse {
+    fn from(r: stateset_core::AgentValidationResponse) -> Self {
+        Self {
+            id: r.id.to_string(),
+            request_hash: r.request_hash,
+            agent_registry: r.agent_registry,
+            agent_id: r.agent_id,
+            validator_address: r.validator_address,
+            response: u32::from(r.response),
+            response_uri: r.response_uri,
+            response_hash: r.response_hash,
+            tag: r.tag,
+            created_at: r.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Current validation status for a request hash.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct AgentValidationStatus {
+    #[pyo3(get)]
+    validator_address: String,
+    #[pyo3(get)]
+    agent_registry: String,
+    #[pyo3(get)]
+    agent_id: String,
+    #[pyo3(get)]
+    response: u32,
+    #[pyo3(get)]
+    response_hash: Option<String>,
+    #[pyo3(get)]
+    tag: Option<String>,
+    #[pyo3(get)]
+    last_update: String,
+}
+
+impl From<stateset_core::AgentValidationStatus> for AgentValidationStatus {
+    fn from(s: stateset_core::AgentValidationStatus) -> Self {
+        Self {
+            validator_address: s.validator_address,
+            agent_registry: s.agent_registry,
+            agent_id: s.agent_id,
+            response: u32::from(s.response),
+            response_hash: s.response_hash,
+            tag: s.tag,
+            last_update: s.last_update.to_rfc3339(),
+        }
+    }
+}
+
+/// Aggregate validation summary for an agent.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ValidationSummary {
+    /// Count as a decimal string
+    #[pyo3(get)]
+    count: String,
+    #[pyo3(get)]
+    average_response: u32,
+}
+
+impl From<stateset_core::ValidationSummary> for ValidationSummary {
+    fn from(s: stateset_core::ValidationSummary) -> Self {
+        Self { count: s.count.to_string(), average_response: u32::from(s.average_response) }
+    }
+}
+
+/// ERC-8004 trustless agent registries: identity, reputation and validation.
+///
+/// Large integers (chain ids, feedback indexes, counts, signed feedback values)
+/// cross as exact decimal strings; timestamps as RFC3339 strings; enums as
+/// snake_case strings.
+#[pyclass]
+pub struct Erc8004 {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Erc8004 {
+    // ---- Identity registry ----
+
+    /// Register a new agent identity.
+    ///
+    /// `wallet_proof_type` is eip712 or erc1271.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        agent_registry,
+        agent_id,
+        agent_uri,
+        agent_wallet=None,
+        owner_address=None,
+        agent_card_id=None,
+        registration=None,
+        registration_hash=None,
+        wallet_proof_type=None,
+        wallet_proof=None,
+        wallet_proof_chain_id=None,
+        wallet_proof_deadline=None,
+        active=None,
+    ))]
+    fn register_identity(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        agent_uri: String,
+        agent_wallet: Option<String>,
+        owner_address: Option<String>,
+        agent_card_id: Option<String>,
+        registration: Option<String>,
+        registration_hash: Option<String>,
+        wallet_proof_type: Option<String>,
+        wallet_proof: Option<String>,
+        wallet_proof_chain_id: Option<String>,
+        wallet_proof_deadline: Option<String>,
+        active: Option<bool>,
+    ) -> PyResult<AgentIdentity> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let identity = commerce
+            .erc8004()
+            .register_identity(stateset_core::CreateAgentIdentity {
+                agent_registry,
+                agent_id,
+                agent_uri,
+                agent_wallet,
+                owner_address,
+                agent_card_id: parse_optional_uuid_py(agent_card_id, "agent_card_id")?,
+                registration,
+                registration_hash,
+                wallet_proof_type: wallet_proof_type
+                    .as_deref()
+                    .map(parse_wallet_proof_type_py)
+                    .transpose()?,
+                wallet_proof,
+                wallet_proof_chain_id: wallet_proof_chain_id
+                    .as_deref()
+                    .map(|c| parse_u64_py(c, "wallet_proof_chain_id"))
+                    .transpose()?,
+                wallet_proof_deadline: parse_rfc3339_opt_py(
+                    wallet_proof_deadline,
+                    "wallet_proof_deadline",
+                )?,
+                active,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to register agent identity: {}", e))
+            })?;
+        Ok(identity.into())
+    }
+
+    /// Get an agent identity by registry and agent id.
+    fn get_identity(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+    ) -> PyResult<Option<AgentIdentity>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let identity = commerce
+            .erc8004()
+            .get_identity(&agent_registry, &agent_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get agent identity: {}", e)))?;
+        Ok(identity.map(Into::into))
+    }
+
+    /// Get an agent identity by its bound wallet address.
+    fn get_identity_by_wallet(&self, agent_wallet: String) -> PyResult<Option<AgentIdentity>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let identity = commerce.erc8004().get_identity_by_wallet(&agent_wallet).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get agent identity by wallet: {}", e))
+        })?;
+        Ok(identity.map(Into::into))
+    }
+
+    /// Update an agent identity.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        agent_registry,
+        agent_id,
+        agent_uri=None,
+        agent_wallet=None,
+        owner_address=None,
+        agent_card_id=None,
+        registration=None,
+        registration_hash=None,
+        wallet_proof_type=None,
+        wallet_proof=None,
+        wallet_proof_chain_id=None,
+        wallet_proof_deadline=None,
+        active=None,
+    ))]
+    fn update_identity(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        agent_uri: Option<String>,
+        agent_wallet: Option<String>,
+        owner_address: Option<String>,
+        agent_card_id: Option<String>,
+        registration: Option<String>,
+        registration_hash: Option<String>,
+        wallet_proof_type: Option<String>,
+        wallet_proof: Option<String>,
+        wallet_proof_chain_id: Option<String>,
+        wallet_proof_deadline: Option<String>,
+        active: Option<bool>,
+    ) -> PyResult<AgentIdentity> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let identity = commerce
+            .erc8004()
+            .update_identity(
+                &agent_registry,
+                &agent_id,
+                stateset_core::UpdateAgentIdentity {
+                    agent_uri,
+                    agent_wallet,
+                    owner_address,
+                    agent_card_id: parse_optional_uuid_py(agent_card_id, "agent_card_id")?,
+                    registration,
+                    registration_hash,
+                    wallet_proof_type: wallet_proof_type
+                        .as_deref()
+                        .map(parse_wallet_proof_type_py)
+                        .transpose()?,
+                    wallet_proof,
+                    wallet_proof_chain_id: wallet_proof_chain_id
+                        .as_deref()
+                        .map(|c| parse_u64_py(c, "wallet_proof_chain_id"))
+                        .transpose()?,
+                    wallet_proof_deadline: parse_rfc3339_opt_py(
+                        wallet_proof_deadline,
+                        "wallet_proof_deadline",
+                    )?,
+                    active,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update agent identity: {}", e))
+            })?;
+        Ok(identity.into())
+    }
+
+    /// Bind a wallet to an agent identity, with optional on-chain proof data.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        agent_registry,
+        agent_id,
+        agent_wallet,
+        proof_type=None,
+        proof=None,
+        proof_chain_id=None,
+        proof_deadline=None,
+    ))]
+    fn set_agent_wallet(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        agent_wallet: String,
+        proof_type: Option<String>,
+        proof: Option<String>,
+        proof_chain_id: Option<String>,
+        proof_deadline: Option<String>,
+    ) -> PyResult<AgentIdentity> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let identity = commerce
+            .erc8004()
+            .set_agent_wallet(
+                &agent_registry,
+                &agent_id,
+                &agent_wallet,
+                proof_type.as_deref().map(parse_wallet_proof_type_py).transpose()?,
+                proof.as_deref(),
+                proof_chain_id.as_deref().map(|c| parse_u64_py(c, "proof_chain_id")).transpose()?,
+                parse_rfc3339_opt_py(proof_deadline, "proof_deadline")?,
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to set agent wallet: {}", e)))?;
+        Ok(identity.into())
+    }
+
+    /// Clear the wallet binding on an agent identity.
+    fn clear_agent_wallet(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+    ) -> PyResult<AgentIdentity> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let identity = commerce
+            .erc8004()
+            .clear_agent_wallet(&agent_registry, &agent_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to clear agent wallet: {}", e)))?;
+        Ok(identity.into())
+    }
+
+    /// List agent identities matching the filter.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        agent_registry=None,
+        agent_id=None,
+        agent_wallet=None,
+        owner_address=None,
+        agent_card_id=None,
+        active=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn list_identities(
+        &self,
+        agent_registry: Option<String>,
+        agent_id: Option<String>,
+        agent_wallet: Option<String>,
+        owner_address: Option<String>,
+        agent_card_id: Option<String>,
+        active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<AgentIdentity>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::AgentIdentityFilter {
+            agent_registry,
+            agent_id,
+            agent_wallet,
+            owner_address,
+            agent_card_id: parse_optional_uuid_py(agent_card_id, "agent_card_id")?,
+            active,
+            limit,
+            offset,
+        };
+        let identities = commerce.erc8004().list_identities(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list agent identities: {}", e))
+        })?;
+        Ok(identities.into_iter().map(Into::into).collect())
+    }
+
+    /// Count identities matching a filter (returned as a decimal string).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        agent_registry=None,
+        agent_id=None,
+        agent_wallet=None,
+        owner_address=None,
+        agent_card_id=None,
+        active=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn count_identities(
+        &self,
+        agent_registry: Option<String>,
+        agent_id: Option<String>,
+        agent_wallet: Option<String>,
+        owner_address: Option<String>,
+        agent_card_id: Option<String>,
+        active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<String> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::AgentIdentityFilter {
+            agent_registry,
+            agent_id,
+            agent_wallet,
+            owner_address,
+            agent_card_id: parse_optional_uuid_py(agent_card_id, "agent_card_id")?,
+            active,
+            limit,
+            offset,
+        };
+        let count = commerce.erc8004().count_identities(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to count agent identities: {}", e))
+        })?;
+        Ok(count.to_string())
+    }
+
+    // ---- Reputation registry ----
+
+    /// Give feedback about an agent.
+    ///
+    /// `value` is a signed integer decimal string scaled by `value_decimals`.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        agent_registry,
+        agent_id,
+        client_address,
+        value,
+        value_decimals,
+        tag1=None,
+        tag2=None,
+        endpoint=None,
+        feedback_uri=None,
+        feedback_hash=None,
+    ))]
+    fn give_feedback(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        client_address: String,
+        value: String,
+        value_decimals: u32,
+        tag1: Option<String>,
+        tag2: Option<String>,
+        endpoint: Option<String>,
+        feedback_uri: Option<String>,
+        feedback_hash: Option<String>,
+    ) -> PyResult<AgentFeedback> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let feedback = commerce
+            .erc8004()
+            .give_feedback(stateset_core::CreateAgentFeedback {
+                agent_registry,
+                agent_id,
+                client_address,
+                value: parse_i128_py(&value, "value")?,
+                value_decimals: parse_u8_py(value_decimals, "value_decimals")?,
+                tag1,
+                tag2,
+                endpoint,
+                feedback_uri,
+                feedback_hash,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to give agent feedback: {}", e))
+            })?;
+        Ok(feedback.into())
+    }
+
+    /// Revoke a previously given feedback entry.
+    fn revoke_feedback(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        client_address: String,
+        feedback_index: String,
+    ) -> PyResult<AgentFeedback> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let feedback = commerce
+            .erc8004()
+            .revoke_feedback(
+                &agent_registry,
+                &agent_id,
+                &client_address,
+                parse_u64_py(&feedback_index, "feedback_index")?,
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to revoke agent feedback: {}", e))
+            })?;
+        Ok(feedback.into())
+    }
+
+    /// Read a single feedback entry.
+    fn read_feedback(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        client_address: String,
+        feedback_index: String,
+    ) -> PyResult<Option<AgentFeedback>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let feedback = commerce
+            .erc8004()
+            .read_feedback(
+                &agent_registry,
+                &agent_id,
+                &client_address,
+                parse_u64_py(&feedback_index, "feedback_index")?,
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to read agent feedback: {}", e))
+            })?;
+        Ok(feedback.map(Into::into))
+    }
+
+    /// Read all feedback entries matching the filter.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        agent_registry=None,
+        agent_id=None,
+        client_addresses=None,
+        tag1=None,
+        tag2=None,
+        include_revoked=None,
+        limit=None,
+        offset=None,
+    ))]
+    fn read_all_feedback(
+        &self,
+        agent_registry: Option<String>,
+        agent_id: Option<String>,
+        client_addresses: Option<Vec<String>>,
+        tag1: Option<String>,
+        tag2: Option<String>,
+        include_revoked: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<AgentFeedback>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::AgentFeedbackFilter {
+            agent_registry,
+            agent_id,
+            client_addresses,
+            tag1,
+            tag2,
+            include_revoked,
+            limit,
+            offset,
+        };
+        let feedback = commerce.erc8004().read_all_feedback(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to read agent feedback: {}", e))
+        })?;
+        Ok(feedback.into_iter().map(Into::into).collect())
+    }
+
+    /// Aggregate feedback summary for an agent.
+    #[pyo3(signature = (agent_registry, agent_id, client_addresses=None, tag1=None, tag2=None))]
+    fn feedback_summary(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        client_addresses: Option<Vec<String>>,
+        tag1: Option<String>,
+        tag2: Option<String>,
+    ) -> PyResult<FeedbackSummary> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let summary = commerce
+            .erc8004()
+            .feedback_summary(
+                &agent_registry,
+                &agent_id,
+                client_addresses.unwrap_or_default(),
+                tag1,
+                tag2,
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to get feedback summary: {}", e))
+            })?;
+        Ok(summary.into())
+    }
+
+    // ---- Validation registry ----
+
+    /// Submit a validation request for an agent.
+    fn request_validation(
+        &self,
+        request_hash: String,
+        agent_registry: String,
+        agent_id: String,
+        validator_address: String,
+        request_uri: String,
+    ) -> PyResult<AgentValidationRequest> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let request = commerce
+            .erc8004()
+            .request_validation(stateset_core::CreateAgentValidationRequest {
+                request_hash,
+                agent_registry,
+                agent_id,
+                validator_address,
+                request_uri,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to request validation: {}", e)))?;
+        Ok(request.into())
+    }
+
+    /// Record a validator's response to a validation request.
+    ///
+    /// `response` is a validation score in the range 0-100.
+    #[pyo3(signature = (request_hash, response, response_uri=None, response_hash=None, tag=None))]
+    fn respond_validation(
+        &self,
+        request_hash: String,
+        response: u32,
+        response_uri: Option<String>,
+        response_hash: Option<String>,
+        tag: Option<String>,
+    ) -> PyResult<AgentValidationResponse> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let response = commerce
+            .erc8004()
+            .respond_validation(
+                &request_hash,
+                stateset_core::CreateAgentValidationResponse {
+                    response: parse_u8_py(response, "response")?,
+                    response_uri,
+                    response_hash,
+                    tag,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to respond to validation: {}", e))
+            })?;
+        Ok(response.into())
+    }
+
+    /// Current validation status for a request hash.
+    fn validation_status(&self, request_hash: String) -> PyResult<Option<AgentValidationStatus>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let status = commerce.erc8004().validation_status(&request_hash).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get validation status: {}", e))
+        })?;
+        Ok(status.map(Into::into))
+    }
+
+    /// Aggregate validation summary for an agent.
+    #[pyo3(signature = (agent_registry, agent_id, validator_addresses=None, tag=None))]
+    fn validation_summary(
+        &self,
+        agent_registry: String,
+        agent_id: String,
+        validator_addresses: Option<Vec<String>>,
+        tag: Option<String>,
+    ) -> PyResult<ValidationSummary> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let summary = commerce
+            .erc8004()
+            .validation_summary(&agent_registry, &agent_id, validator_addresses, tag)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to get validation summary: {}", e))
+            })?;
+        Ok(summary.into())
     }
 }
