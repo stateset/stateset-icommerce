@@ -1,5 +1,6 @@
 //! Fixed asset register endpoints.
 
+use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
@@ -86,6 +87,8 @@ pub(crate) struct FixedAssetFilterParams {
     pub search: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -111,6 +114,11 @@ pub(crate) struct FixedAssetResponse {
 pub(crate) struct FixedAssetListResponse {
     pub fixed_assets: Vec<FixedAssetResponse>,
     pub total: usize,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -274,6 +282,12 @@ pub(crate) async fn list(
         Some(s) => Some(parse_id(s, "status")?),
         None => None,
     };
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
     let base = stateset_core::FixedAssetFilter {
         category,
         status,
@@ -281,13 +295,26 @@ pub(crate) async fn list(
         ..Default::default()
     };
     let total = c.fixed_assets().list(base.clone())?.len();
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let filter = stateset_core::FixedAssetFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
+        limit: Some(overfetch_limit(limit)),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
+        after_cursor,
         ..base
     };
-    let assets = c.fixed_assets().list(filter)?;
-    Ok(Json(FixedAssetListResponse { fixed_assets: assets.iter().map(to_resp).collect(), total }))
+    let mut assets = c.fixed_assets().list(filter)?;
+    let has_more = finalize_page(&mut assets, limit);
+    let next_cursor = if has_more {
+        assets.last().map(|a| encode_cursor(&a.created_at.to_rfc3339(), &a.id.to_string()))
+    } else {
+        None
+    };
+    Ok(Json(FixedAssetListResponse {
+        fixed_assets: assets.iter().map(to_resp).collect(),
+        total,
+        next_cursor,
+        has_more,
+    }))
 }
 
 #[utoipa::path(get, operation_id = "fixed_assets_get_one", path = "/api/v1/fixed-assets/{id}", tag = "fixed_assets",
@@ -575,5 +602,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn list_fixed_assets_has_more_and_next_cursor() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        for i in 0..3 {
+            let _ = i;
+            let body = serde_json::json!({
+                "name": "Cursor Asset",
+                "category": "machinery",
+                "acquisition_date": "2026-01-01",
+                "acquisition_cost": "1000",
+                "useful_life_months": 12,
+                "depreciation_method": "straight_line"
+            });
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::post("/fixed-assets")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::CREATED);
+        }
+
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/fixed-assets?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_of(resp).await;
+        assert_eq!(json["fixed_assets"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], true);
+        let cursor = json["next_cursor"].as_str().expect("next_cursor").to_string();
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/fixed-assets?limit=2&after={cursor}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_of(resp).await;
+        assert_eq!(json["fixed_assets"].as_array().unwrap().len(), 1);
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none() || json["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_fixed_assets_invalid_cursor_returns_400() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        let resp = app
+            .oneshot(Request::get("/fixed-assets?after=!!!invalid!!!").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

@@ -1,5 +1,6 @@
 //! Purchase order and supplier endpoints (procurement).
 
+use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
@@ -121,6 +122,8 @@ pub(crate) struct PurchaseOrderFilterParams {
     pub status: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -161,6 +164,11 @@ pub(crate) struct PurchaseOrderResponse {
 pub(crate) struct PurchaseOrderListResponse {
     pub purchase_orders: Vec<PurchaseOrderResponse>,
     pub total: u64,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -433,22 +441,38 @@ pub(crate) async fn list(
         Some(s) => Some(parse_id(s, "status")?),
         None => None,
     };
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
     let total = c.purchase_orders().count(stateset_core::PurchaseOrderFilter {
         supplier_id,
         status,
         ..Default::default()
     })?;
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let filter = stateset_core::PurchaseOrderFilter {
         supplier_id,
         status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
+        limit: Some(overfetch_limit(limit)),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
+        after_cursor,
         ..Default::default()
     };
-    let orders = c.purchase_orders().list(filter)?;
+    let mut orders = c.purchase_orders().list(filter)?;
+    let has_more = finalize_page(&mut orders, limit);
+    let next_cursor = if has_more {
+        orders.last().map(|po| encode_cursor(&po.order_date.to_rfc3339(), &po.id.to_string()))
+    } else {
+        None
+    };
     Ok(Json(PurchaseOrderListResponse {
         purchase_orders: orders.iter().map(to_resp).collect(),
         total,
+        next_cursor,
+        has_more,
     }))
 }
 
@@ -967,5 +991,72 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn list_purchase_orders_has_more_and_next_cursor() {
+        let app = app();
+        let supplier_id = create_supplier_via_api(&app).await;
+        for i in 0..3 {
+            let body = serde_json::json!({
+                "supplier_id": supplier_id,
+                "items": [{
+                    "sku": format!("CUR-{i}"),
+                    "name": "Cursor Item",
+                    "quantity": "1",
+                    "unit_cost": "1.00"
+                }]
+            });
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::post("/purchase-orders")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::CREATED);
+        }
+
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/purchase-orders?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["total"], 3);
+        assert_eq!(json["purchase_orders"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], true);
+        let cursor = json["next_cursor"].as_str().expect("next_cursor").to_string();
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/purchase-orders?limit=2&after={cursor}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["purchase_orders"].as_array().unwrap().len(), 1);
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none() || json["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_purchase_orders_invalid_cursor_returns_400() {
+        let app = app();
+        let resp = app
+            .oneshot(
+                Request::get("/purchase-orders?after=!!!invalid!!!").body(Body::empty()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

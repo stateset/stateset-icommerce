@@ -29,7 +29,7 @@
 //! assert!(json.contains("\"type\":\"order_created\""));
 //! ```
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::{
@@ -509,6 +509,90 @@ pub enum CommerceEvent {
         rating: Option<u8>,
         timestamp: DateTime<Utc>,
     },
+
+    // Fixed asset events
+    FixedAssetPlacedInService {
+        asset_id: Uuid,
+        asset_number: String,
+        in_service_date: NaiveDate,
+        acquisition_cost: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    FixedAssetDisposed {
+        asset_id: Uuid,
+        asset_number: String,
+        disposal_date: NaiveDate,
+        proceeds: Decimal,
+        gain_loss: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    FixedAssetWrittenOff {
+        asset_id: Uuid,
+        asset_number: String,
+        write_off_date: NaiveDate,
+        loss: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    DepreciationPosted {
+        asset_id: Uuid,
+        asset_number: String,
+        periods: u32,
+        amount: Decimal,
+        accumulated_depreciation: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+
+    // Revenue recognition events
+    RevenueRecognized {
+        obligation_id: Uuid,
+        amount: Decimal,
+        total_recognized: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    RevenueContractCompleted {
+        contract_id: Uuid,
+        contract_number: String,
+        transaction_price: Decimal,
+        currency: CurrencyCode,
+        timestamp: DateTime<Utc>,
+    },
+
+    // Warehouse events
+    CycleCountCompleted {
+        cycle_count_id: Uuid,
+        warehouse_id: i32,
+        line_count: usize,
+        variance_line_count: usize,
+        total_variance: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+
+    // Accounts payable events
+    ThreeWayMatchVarianceDetected {
+        bill_id: Uuid,
+        purchase_order_id: Uuid,
+        variance_line_count: usize,
+        tolerance_percent: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+
+    // General ledger events
+    FxRevaluationPosted {
+        as_of_date: NaiveDate,
+        base_currency: CurrencyCode,
+        total_unrealized_gain_loss: Decimal,
+        journal_entry_id: Option<Uuid>,
+        timestamp: DateTime<Utc>,
+    },
+    MonthEndCloseCompleted {
+        period_id: Uuid,
+        period_name: String,
+        depreciation_total: Decimal,
+        revenue_recognized_total: Decimal,
+        fx_unrealized_gain_loss: Decimal,
+        closing_entry_id: Option<Uuid>,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl CommerceEvent {
@@ -591,6 +675,21 @@ impl CommerceEvent {
             Self::A2APurchaseInitiated { .. } => "a2a_purchase_initiated",
             Self::A2APurchasePaid { .. } => "a2a_purchase_paid",
             Self::A2ADeliveryConfirmed { .. } => "a2a_delivery_confirmed",
+            // Fixed asset events
+            Self::FixedAssetPlacedInService { .. } => "fixed_asset_placed_in_service",
+            Self::FixedAssetDisposed { .. } => "fixed_asset_disposed",
+            Self::FixedAssetWrittenOff { .. } => "fixed_asset_written_off",
+            Self::DepreciationPosted { .. } => "depreciation_posted",
+            // Revenue recognition events
+            Self::RevenueRecognized { .. } => "revenue_recognized",
+            Self::RevenueContractCompleted { .. } => "revenue_contract_completed",
+            // Warehouse events
+            Self::CycleCountCompleted { .. } => "cycle_count_completed",
+            // Accounts payable events
+            Self::ThreeWayMatchVarianceDetected { .. } => "three_way_match_variance_detected",
+            // General ledger events
+            Self::FxRevaluationPosted { .. } => "fx_revaluation_posted",
+            Self::MonthEndCloseCompleted { .. } => "month_end_close_completed",
         }
     }
 
@@ -672,7 +771,22 @@ impl CommerceEvent {
             | Self::A2AQuoteRejected { timestamp, .. }
             | Self::A2APurchaseInitiated { timestamp, .. }
             | Self::A2APurchasePaid { timestamp, .. }
-            | Self::A2ADeliveryConfirmed { timestamp, .. } => *timestamp,
+            | Self::A2ADeliveryConfirmed { timestamp, .. }
+            // Fixed asset events
+            | Self::FixedAssetPlacedInService { timestamp, .. }
+            | Self::FixedAssetDisposed { timestamp, .. }
+            | Self::FixedAssetWrittenOff { timestamp, .. }
+            | Self::DepreciationPosted { timestamp, .. }
+            // Revenue recognition events
+            | Self::RevenueRecognized { timestamp, .. }
+            | Self::RevenueContractCompleted { timestamp, .. }
+            // Warehouse events
+            | Self::CycleCountCompleted { timestamp, .. }
+            // Accounts payable events
+            | Self::ThreeWayMatchVarianceDetected { timestamp, .. }
+            // General ledger events
+            | Self::FxRevaluationPosted { timestamp, .. }
+            | Self::MonthEndCloseCompleted { timestamp, .. } => *timestamp,
         }
     }
 

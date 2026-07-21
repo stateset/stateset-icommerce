@@ -68,6 +68,33 @@ export interface CommerceEngine {
     cancel: (id: string, reason?: string) => Promise<Subscription>;
     getAnalytics: () => Promise<SubscriptionAnalytics>;
   };
+  generalLedger: {
+    listAccounts: () => Promise<GlAccount[]>;
+    getTrialBalance: (asOfDate: string) => Promise<TrialBalance>;
+    listJournalEntries: () => Promise<JournalEntry[]>;
+    /** Optional: not every engine build exposes period listing yet. */
+    listPeriods?: () => Promise<GlPeriod[]>;
+    closeMonth: (periodId: string, options?: CloseMonthOptions) => Promise<CloseMonthReport>;
+  };
+  accountsPayable: {
+    listBills: () => Promise<Bill[]>;
+    getAgingSummary: () => Promise<ApAgingSummary>;
+  };
+  accountsReceivable: {
+    getAgingSummary: () => Promise<ArAgingSummary>;
+    /** Optional: not every engine build exposes DSO. */
+    getDso?: (days: number) => Promise<number>;
+  };
+  invoices: {
+    list: () => Promise<Invoice[]>;
+  };
+  fixedAssets: {
+    list: (filter?: FixedAssetFilter) => Promise<FixedAsset[]>;
+    getSchedule: (id: string) => Promise<DepreciationSchedule | null>;
+  };
+  revenueRecognition: {
+    listContracts: (filter?: RevenueContractFilter) => Promise<RevenueContract[]>;
+  };
   analytics: {
     getDashboardMetrics: () => Promise<DashboardMetrics>;
     getHourlyActivity: (date?: string) => Promise<HourlyActivity[]>;
@@ -1069,6 +1096,53 @@ function createMockCommerceEngine(): CommerceEngine {
       }),
       getAnalytics: async () => getMockData().subscriptionAnalytics,
     },
+    generalLedger: {
+      listAccounts: async () => getMockFinanceData().glAccounts,
+      getTrialBalance: async (asOfDate: string) => ({
+        ...getMockFinanceData().trialBalance,
+        asOfDate,
+      }),
+      listJournalEntries: async () => getMockFinanceData().journalEntries,
+      listPeriods: async () => getMockFinanceData().glPeriods,
+      closeMonth: async (periodId: string, options?: CloseMonthOptions) =>
+        buildMockCloseMonthReport(periodId, options),
+    },
+    accountsPayable: {
+      listBills: async () => getMockFinanceData().bills,
+      getAgingSummary: async () => getMockFinanceData().apAging,
+    },
+    accountsReceivable: {
+      getAgingSummary: async () => getMockFinanceData().arAging,
+      getDso: async (days: number) => Number((28.4 + (days % 30) * 0.2).toFixed(1)),
+    },
+    invoices: {
+      list: async () => getMockFinanceData().invoices,
+    },
+    fixedAssets: {
+      list: async (filter?: FixedAssetFilter) => {
+        let assets = getMockFinanceData().fixedAssets;
+        if (filter?.status) {
+          assets = assets.filter((asset) => asset.status === filter.status);
+        }
+        if (filter?.category) {
+          assets = assets.filter((asset) => asset.category === filter.category);
+        }
+        return assets;
+      },
+      getSchedule: async (id: string) => getMockFinanceData().depreciationSchedules[id] || null,
+    },
+    revenueRecognition: {
+      listContracts: async (filter?: RevenueContractFilter) => {
+        let contracts = getMockFinanceData().revenueContracts;
+        if (filter?.status) {
+          contracts = contracts.filter((contract) => contract.status === filter.status);
+        }
+        if (filter?.customerId) {
+          contracts = contracts.filter((contract) => contract.customerId === filter.customerId);
+        }
+        return contracts;
+      },
+    },
     analytics: {
       getDashboardMetrics: async () => getMockData().dashboardMetrics,
       getHourlyActivity: async () => getMockData().hourlyActivity,
@@ -1680,3 +1754,658 @@ export interface SubscriptionAnalytics {
   subscriptionsByPlan: Record<string, number>;
   subscriptionsByFrequency: Record<string, number>;
 }
+
+// ============================================================================
+// Finance API (General Ledger + Accounts Payable)
+// ============================================================================
+
+export interface GlAccount {
+  id: string;
+  accountNumber: string;
+  name: string;
+  accountType: string;
+  balance: number;
+  status: string;
+  description?: string;
+}
+
+export interface JournalEntry {
+  id: string;
+  entryNumber: string;
+  entryDate: string;
+  description: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface TrialBalance {
+  asOfDate: string;
+  totalDebits: number;
+  totalCredits: number;
+  isBalanced: boolean;
+}
+
+export interface GlPeriod {
+  id: string;
+  periodName: string;
+  fiscalYear: number;
+  periodNumber: number;
+  startDate: string;
+  endDate: string;
+  /** One of `future`, `open`, `closed`, `locked` */
+  status: string;
+  closedBy?: string;
+}
+
+export interface CloseMonthOptions {
+  /** Compute per-step counts/amounts without writing anything */
+  dryRun?: boolean;
+  skipDepreciation?: boolean;
+  skipRevenueRecognition?: boolean;
+  skipFxRevaluation?: boolean;
+  skipPeriodClose?: boolean;
+  closedBy?: string;
+}
+
+export interface CloseMonthStep {
+  /** One of `executed`, `skipped`, `dry_run` */
+  status: string;
+  entryCount: number;
+  /** Exact decimal string — render only, never parse for math */
+  totalAmount: string;
+  warnings: string[];
+}
+
+export interface CloseMonthReport {
+  periodId: string;
+  periodName: string;
+  dryRun: boolean;
+  depreciation: CloseMonthStep;
+  revenueRecognition: CloseMonthStep;
+  fxRevaluation: CloseMonthStep;
+  periodClose: CloseMonthStep;
+  closingEntry?: JournalEntry;
+  periodStatus: string;
+}
+
+export interface Bill {
+  id: string;
+  billNumber: string;
+  supplierId: string;
+  status: string;
+  totalAmount: number;
+  amountPaid: number;
+  amountDue: number;
+  dueDate: string;
+  createdAt: string;
+}
+
+export interface ApAgingSummary {
+  current: number;
+  days130: number;
+  days3160: number;
+  days6190: number;
+  daysOver90: number;
+  total: number;
+}
+
+export interface ArAgingSummary {
+  current: number;
+  days130: number;
+  days3160: number;
+  days6190: number;
+  daysOver90: number;
+  total: number;
+}
+
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  customerId: string;
+  orderId?: string;
+  status: string;
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+  amountPaid: number;
+  dueDate: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FixedAssetFilter {
+  category?: string;
+  /** One of `draft`, `in_service`, `fully_depreciated`, `disposed`, `written_off` */
+  status?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface FixedAsset {
+  id: string;
+  assetNumber: string;
+  name: string;
+  description?: string;
+  category: string;
+  /** ISO date (YYYY-MM-DD) */
+  acquisitionDate: string;
+  /** Exact decimal string — render only, never parse for math */
+  acquisitionCost: string;
+  /** Exact decimal string */
+  salvageValue: string;
+  usefulLifeMonths: number;
+  /** One of `straight_line`, `declining_balance`, `units_of_production` */
+  depreciationMethod: string;
+  /** One of `draft`, `in_service`, `fully_depreciated`, `disposed`, `written_off` */
+  status: string;
+  inServiceDate?: string;
+  /** Exact decimal string */
+  accumulatedDepreciation: string;
+  /** Exact decimal string: acquisition_cost - accumulated_depreciation */
+  bookValue: string;
+  currency: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DepreciationEntry {
+  period: number;
+  /** Exact decimal string */
+  amount: string;
+  /** Exact decimal string */
+  accumulated: string;
+  /** Exact decimal string */
+  bookValue: string;
+  /** One of `scheduled`, `posted` */
+  status: string;
+}
+
+export interface DepreciationSchedule {
+  assetId: string;
+  method: string;
+  entries: DepreciationEntry[];
+  /** Exact decimal string */
+  totalDepreciation: string;
+}
+
+export interface RevenueContractFilter {
+  customerId?: string;
+  /** One of `draft`, `active`, `completed`, `cancelled` */
+  status?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface PerformanceObligation {
+  id: string;
+  contractId: string;
+  description: string;
+  /** Exact decimal string */
+  allocatedAmount: string;
+  /** One of `point_in_time`, `ratable_over_time`, `milestone` */
+  recognitionMethod: string;
+  recognitionStart?: string;
+  recognitionEnd?: string;
+  /** Exact decimal string */
+  recognizedAmount: string;
+  /** Exact decimal string: allocated_amount - recognized_amount */
+  deferredAmount: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RevenueContract {
+  id: string;
+  contractNumber: string;
+  customerId: string;
+  orderId?: string;
+  invoiceId?: string;
+  /** Exact decimal string */
+  transactionPrice: string;
+  currency: string;
+  /** One of `draft`, `active`, `completed`, `cancelled` */
+  status: string;
+  /** ISO date (YYYY-MM-DD) */
+  effectiveDate: string;
+  obligations: PerformanceObligation[];
+  /** Exact decimal string: total recognized across obligations */
+  totalRecognized: string;
+  /** Exact decimal string: transaction_price - total_recognized */
+  deferredBalance: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+type MockFinanceData = {
+  glAccounts: GlAccount[];
+  journalEntries: JournalEntry[];
+  trialBalance: TrialBalance;
+  glPeriods: GlPeriod[];
+  bills: Bill[];
+  apAging: ApAgingSummary;
+  arAging: ArAgingSummary;
+  invoices: Invoice[];
+  fixedAssets: FixedAsset[];
+  depreciationSchedules: Record<string, DepreciationSchedule>;
+  revenueContracts: RevenueContract[];
+};
+
+let mockFinanceCache: MockFinanceData | null = null;
+
+function buildMockFinanceData(): MockFinanceData {
+  const accountSpecs: [string, string, string, number][] = [
+    ['1000', 'Cash', 'asset', 182_450.25],
+    ['1100', 'Accounts Receivable', 'asset', 42_310.4],
+    ['1200', 'Inventory', 'asset', 96_780.1],
+    ['2000', 'Accounts Payable', 'liability', 38_920.15],
+    ['2100', 'Deferred Revenue', 'liability', 12_400.0],
+    ['3000', 'Retained Earnings', 'equity', 148_305.2],
+    ['4000', 'Sales Revenue', 'revenue', 240_115.6],
+    ['5000', 'Cost of Goods Sold', 'expense', 118_200.2],
+  ];
+
+  const glAccounts = accountSpecs.map(([accountNumber, name, accountType, balance]) => ({
+    id: `gl_${accountNumber}`,
+    accountNumber,
+    name,
+    accountType,
+    balance,
+    status: 'active',
+    description: `${name} account`,
+  }));
+
+  const journalEntries = Array.from({ length: 12 }, (_, index) => {
+    const createdAt = formatMockDate(-(index * 2) - 1, index % 8);
+    return {
+      id: `je_${2000 + index}`,
+      entryNumber: `JE-${2000 + index}`,
+      entryDate: toDateKey(createdAt),
+      description:
+        index % 3 === 0
+          ? 'Daily sales posting'
+          : index % 3 === 1
+            ? 'Inventory receipt accrual'
+            : 'Supplier bill accrual',
+      status: index % 5 === 0 ? 'draft' : 'posted',
+      createdAt,
+    };
+  });
+
+  const glPeriods: GlPeriod[] = [
+    {
+      id: 'per_2026_01',
+      periodName: '2026-01',
+      fiscalYear: 2026,
+      periodNumber: 1,
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      status: 'closed',
+      closedBy: 'system',
+    },
+    {
+      id: 'per_2026_02',
+      periodName: '2026-02',
+      fiscalYear: 2026,
+      periodNumber: 2,
+      startDate: '2026-02-01',
+      endDate: '2026-02-28',
+      status: 'open',
+    },
+    {
+      id: 'per_2026_03',
+      periodName: '2026-03',
+      fiscalYear: 2026,
+      periodNumber: 3,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31',
+      status: 'future',
+    },
+  ];
+
+  const billStatuses = ['open', 'approved', 'paid', 'overdue', 'open', 'approved'];
+  const bills = Array.from({ length: 18 }, (_, index) => {
+    const totalAmount = roundCurrency(320 + deterministicNumber(index + 1601, 0, 4200));
+    const status = billStatuses[index % billStatuses.length];
+    const amountPaid = status === 'paid' ? totalAmount : 0;
+    const createdAt = formatMockDate(-(index * 4) - 2, index % 9);
+    return {
+      id: `bill_${3000 + index}`,
+      billNumber: `BILL-${3000 + index}`,
+      supplierId: `sup_${100 + (index % 5)}`,
+      status,
+      totalAmount,
+      amountPaid,
+      amountDue: roundCurrency(totalAmount - amountPaid),
+      dueDate: toDateKey(formatMockDate(20 - index * 6)),
+      createdAt,
+    } satisfies Bill;
+  });
+
+  const openBills = bills.filter((bill) => bill.amountDue > 0);
+  const bucketTotal = (predicate: (index: number) => boolean) =>
+    roundCurrency(
+      openBills.filter((_, index) => predicate(index)).reduce((sum, bill) => sum + bill.amountDue, 0),
+    );
+  const apAging: ApAgingSummary = {
+    current: bucketTotal((index) => index % 5 < 2),
+    days130: bucketTotal((index) => index % 5 === 2),
+    days3160: bucketTotal((index) => index % 5 === 3),
+    days6190: bucketTotal((index) => index % 5 === 4),
+    daysOver90: 0,
+    total: roundCurrency(openBills.reduce((sum, bill) => sum + bill.amountDue, 0)),
+  };
+
+  const invoiceStatuses = ['sent', 'paid', 'overdue', 'sent', 'partially_paid', 'sent'];
+  const invoices = Array.from({ length: 24 }, (_, index) => {
+    const subtotal = roundCurrency(480 + deterministicNumber(index + 1701, 0, 5200));
+    const taxAmount = roundCurrency(subtotal * 0.08);
+    const total = roundCurrency(subtotal + taxAmount);
+    const status = invoiceStatuses[index % invoiceStatuses.length];
+    const amountPaid =
+      status === 'paid' ? total : status === 'partially_paid' ? roundCurrency(total * 0.4) : 0;
+    const createdAt = formatMockDate(-(index * 7) - 3, index % 9);
+    return {
+      id: `inv_ar_${4000 + index}`,
+      invoiceNumber: `INV-${4000 + index}`,
+      customerId: `cus_${100 + (index % 6)}`,
+      status,
+      subtotal,
+      taxAmount,
+      total,
+      amountPaid,
+      dueDate: toDateKey(formatMockDate(25 - index * 9)),
+      createdAt,
+      updatedAt: createdAt,
+    } satisfies Invoice;
+  });
+
+  const openInvoices = invoices.filter(
+    (invoice) => invoice.status !== 'paid' && invoice.total - invoice.amountPaid > 0,
+  );
+  const arBucketTotal = (predicate: (daysPastDue: number) => boolean) =>
+    roundCurrency(
+      openInvoices.reduce((sum, invoice) => {
+        const daysPastDue = Math.floor((MOCK_NOW - Date.parse(invoice.dueDate)) / DAY_MS);
+        return predicate(daysPastDue) ? sum + (invoice.total - invoice.amountPaid) : sum;
+      }, 0),
+    );
+  const arAging: ArAgingSummary = {
+    current: arBucketTotal((days) => days <= 0),
+    days130: arBucketTotal((days) => days >= 1 && days <= 30),
+    days3160: arBucketTotal((days) => days >= 31 && days <= 60),
+    days6190: arBucketTotal((days) => days >= 61 && days <= 90),
+    daysOver90: arBucketTotal((days) => days > 90),
+    total: roundCurrency(
+      openInvoices.reduce((sum, invoice) => sum + (invoice.total - invoice.amountPaid), 0),
+    ),
+  };
+
+  const assetSpecs: [string, string, string, string, number, string, string][] = [
+    // name, category, cost, salvage, life months, status, accumulated
+    ['Forklift A', 'equipment', '42000.00', '2000.00', 120, 'in_service', '14000.00'],
+    ['Warehouse racking', 'fixtures', '18500.00', '500.00', 84, 'in_service', '5285.71'],
+    ['Delivery van', 'vehicles', '38000.00', '4000.00', 60, 'in_service', '17000.00'],
+    ['Packing line', 'equipment', '96000.00', '6000.00', 96, 'draft', '0.00'],
+    ['Office laptops (batch 3)', 'it', '12400.00', '400.00', 36, 'fully_depreciated', '12000.00'],
+    ['Old conveyor', 'equipment', '25000.00', '1000.00', 72, 'disposed', '21500.00'],
+  ];
+  const fixedAssets = assetSpecs.map(
+    ([name, category, acquisitionCost, salvageValue, usefulLifeMonths, status, accumulatedDepreciation], index) => {
+      const createdAt = formatMockDate(-400 + index * 30, index % 8);
+      const bookValue = (
+        Number(acquisitionCost) - Number(accumulatedDepreciation)
+      ).toFixed(2);
+      return {
+        id: `fa_${5000 + index}`,
+        assetNumber: `FA-${5000 + index}`,
+        name,
+        description: `${name} (demo asset)`,
+        category,
+        acquisitionDate: toDateKey(createdAt),
+        acquisitionCost,
+        salvageValue,
+        usefulLifeMonths,
+        depreciationMethod: index % 3 === 2 ? 'declining_balance' : 'straight_line',
+        status,
+        inServiceDate: status === 'draft' ? undefined : toDateKey(createdAt),
+        accumulatedDepreciation,
+        bookValue,
+        currency: 'USD',
+        createdAt,
+        updatedAt: formatMockDate(-(index % 12), index % 6),
+      } satisfies FixedAsset;
+    },
+  );
+
+  const depreciationSchedules: Record<string, DepreciationSchedule> = {};
+  for (const asset of fixedAssets) {
+    if (asset.status === 'draft') {
+      continue;
+    }
+    const depreciable = Number(asset.acquisitionCost) - Number(asset.salvageValue);
+    const monthly = depreciable / asset.usefulLifeMonths;
+    const periods = Math.min(asset.usefulLifeMonths, 12);
+    let accumulated = 0;
+    const entries = Array.from({ length: periods }, (_, period) => {
+      accumulated += monthly;
+      return {
+        period: period + 1,
+        amount: monthly.toFixed(2),
+        accumulated: accumulated.toFixed(2),
+        bookValue: (Number(asset.acquisitionCost) - accumulated).toFixed(2),
+        status: accumulated <= Number(asset.accumulatedDepreciation) ? 'posted' : 'scheduled',
+      } satisfies DepreciationEntry;
+    });
+    depreciationSchedules[asset.id] = {
+      assetId: asset.id,
+      method: asset.depreciationMethod,
+      entries,
+      totalDepreciation: accumulated.toFixed(2),
+    };
+  }
+
+  const contractStatuses = ['active', 'active', 'draft', 'completed', 'cancelled'];
+  const revenueContracts = Array.from({ length: 8 }, (_, index) => {
+    const status = contractStatuses[index % contractStatuses.length];
+    const first = roundCurrency(2400 + deterministicNumber(index + 1801, 0, 8600));
+    const second = roundCurrency(900 + deterministicNumber(index + 1901, 0, 2400));
+    const transactionPrice = roundCurrency(first + second);
+    const firstRecognized =
+      status === 'completed' ? first : status === 'active' ? roundCurrency(first * 0.5) : 0;
+    const secondRecognized = status === 'completed' ? second : 0;
+    const totalRecognized = roundCurrency(firstRecognized + secondRecognized);
+    const createdAt = formatMockDate(-200 + index * 20, index % 7);
+    const contractId = `rc_${6000 + index}`;
+    const obligation = (
+      suffix: string,
+      description: string,
+      allocatedAmount: number,
+      recognizedAmount: number,
+      recognitionMethod: string,
+    ): PerformanceObligation => ({
+      id: `${contractId}_ob_${suffix}`,
+      contractId,
+      description,
+      allocatedAmount: allocatedAmount.toFixed(2),
+      recognitionMethod,
+      recognitionStart: recognitionMethod === 'ratable_over_time' ? toDateKey(createdAt) : undefined,
+      recognitionEnd:
+        recognitionMethod === 'ratable_over_time'
+          ? toDateKey(formatMockDate(-200 + index * 20 + 365))
+          : undefined,
+      recognizedAmount: recognizedAmount.toFixed(2),
+      deferredAmount: roundCurrency(allocatedAmount - recognizedAmount).toFixed(2),
+      createdAt,
+      updatedAt: createdAt,
+    });
+    return {
+      id: contractId,
+      contractNumber: `RC-${6000 + index}`,
+      customerId: `cus_${100 + (index % 6)}`,
+      transactionPrice: transactionPrice.toFixed(2),
+      currency: 'USD',
+      status,
+      effectiveDate: toDateKey(createdAt),
+      obligations: [
+        obligation('1', 'Platform subscription', first, firstRecognized, 'ratable_over_time'),
+        obligation('2', 'Onboarding services', second, secondRecognized, 'point_in_time'),
+      ],
+      totalRecognized: totalRecognized.toFixed(2),
+      deferredBalance: roundCurrency(transactionPrice - totalRecognized).toFixed(2),
+      createdAt,
+      updatedAt: createdAt,
+    } satisfies RevenueContract;
+  });
+
+  return {
+    glAccounts,
+    journalEntries,
+    trialBalance: {
+      asOfDate: toDateKey(formatMockDate(0)),
+      totalDebits: 439_745.95,
+      totalCredits: 439_745.95,
+      isBalanced: true,
+    },
+    glPeriods,
+    bills,
+    apAging,
+    arAging,
+    invoices,
+    fixedAssets,
+    depreciationSchedules,
+    revenueContracts,
+  };
+}
+
+function getMockFinanceData(): MockFinanceData {
+  if (!mockFinanceCache) {
+    mockFinanceCache = buildMockFinanceData();
+  }
+  return mockFinanceCache;
+}
+
+function buildMockCloseMonthReport(
+  periodId: string,
+  options?: CloseMonthOptions,
+): CloseMonthReport {
+  const dryRun = options?.dryRun === true;
+  const period = getMockFinanceData().glPeriods.find((entry) => entry.id === periodId);
+  const stepStatus = dryRun ? 'dry_run' : 'executed';
+  const step = (entryCount: number, totalAmount: string, warnings: string[] = []): CloseMonthStep => ({
+    status: stepStatus,
+    entryCount,
+    totalAmount,
+    warnings,
+  });
+
+  return {
+    periodId,
+    periodName: period?.periodName || periodId,
+    dryRun,
+    depreciation: step(3, '1250.00'),
+    revenueRecognition: step(2, '840.50'),
+    fxRevaluation: step(0, '0.00', ['No foreign-currency balances to revalue']),
+    periodClose: step(1, '12480.75'),
+    closingEntry: dryRun
+      ? undefined
+      : {
+          id: 'je_close_1',
+          entryNumber: 'JE-CLOSE-1',
+          entryDate: period?.endDate || toDateKey(formatMockDate(0)),
+          description: `Closing entries for ${period?.periodName || periodId}`,
+          status: 'posted',
+          createdAt: new Date().toISOString(),
+        },
+    periodStatus: dryRun ? period?.status || 'open' : 'closed',
+  };
+}
+
+export const generalLedgerApi = {
+  async listAccounts(): Promise<GlAccount[]> {
+    const commerce = await getCommerceEngine();
+    return commerce.generalLedger.listAccounts();
+  },
+
+  async getTrialBalance(asOfDate: string): Promise<TrialBalance> {
+    const commerce = await getCommerceEngine();
+    return commerce.generalLedger.getTrialBalance(asOfDate);
+  },
+
+  async listJournalEntries(): Promise<JournalEntry[]> {
+    const commerce = await getCommerceEngine();
+    return commerce.generalLedger.listJournalEntries();
+  },
+
+  async listPeriods(): Promise<GlPeriod[]> {
+    const commerce = await getCommerceEngine();
+    // Not every engine build exposes period listing yet; degrade to an
+    // empty list so the close page can explain rather than crash.
+    if (typeof commerce.generalLedger.listPeriods !== 'function') {
+      return [];
+    }
+    return commerce.generalLedger.listPeriods();
+  },
+
+  async closeMonth(periodId: string, options?: CloseMonthOptions): Promise<CloseMonthReport> {
+    const commerce = await getCommerceEngine();
+    return commerce.generalLedger.closeMonth(periodId, options);
+  },
+};
+
+export const accountsPayableApi = {
+  async listBills(): Promise<Bill[]> {
+    const commerce = await getCommerceEngine();
+    return commerce.accountsPayable.listBills();
+  },
+
+  async getAgingSummary(): Promise<ApAgingSummary> {
+    const commerce = await getCommerceEngine();
+    return commerce.accountsPayable.getAgingSummary();
+  },
+};
+
+export const accountsReceivableApi = {
+  async getAgingSummary(): Promise<ArAgingSummary> {
+    const commerce = await getCommerceEngine();
+    return commerce.accountsReceivable.getAgingSummary();
+  },
+
+  /**
+   * Days Sales Outstanding over the trailing `days` window. Not every engine
+   * build exposes DSO yet; degrade to `null` so the page can hide the stat
+   * rather than crash.
+   */
+  async getDso(days: number): Promise<number | null> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.accountsReceivable.getDso !== 'function') {
+      return null;
+    }
+    return commerce.accountsReceivable.getDso(days);
+  },
+
+  async listInvoices(): Promise<Invoice[]> {
+    const commerce = await getCommerceEngine();
+    return commerce.invoices.list();
+  },
+};
+
+export const fixedAssetsApi = {
+  async list(filter?: FixedAssetFilter): Promise<FixedAsset[]> {
+    const commerce = await getCommerceEngine();
+    return commerce.fixedAssets.list(filter);
+  },
+
+  async getSchedule(assetId: string): Promise<DepreciationSchedule | null> {
+    const commerce = await getCommerceEngine();
+    return commerce.fixedAssets.getSchedule(assetId);
+  },
+};
+
+export const revenueRecognitionApi = {
+  async listContracts(filter?: RevenueContractFilter): Promise<RevenueContract[]> {
+    const commerce = await getCommerceEngine();
+    return commerce.revenueRecognition.listContracts(filter);
+  },
+};

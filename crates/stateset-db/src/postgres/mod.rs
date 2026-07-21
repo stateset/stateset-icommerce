@@ -127,6 +127,29 @@ pub use zone_shipping_methods::*;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
 use stateset_core::CommerceError;
+
+/// Parse a keyset `(sort_key, id)` cursor into typed Postgres bind values.
+///
+/// The sort key must be an RFC 3339 timestamp and the id a UUID, matching how
+/// cursors are encoded at the HTTP layer.
+pub(crate) fn parse_after_cursor(
+    after_cursor: Option<&(String, String)>,
+) -> Result<Option<(chrono::DateTime<chrono::Utc>, uuid::Uuid)>, CommerceError> {
+    match after_cursor {
+        Some((sort_key, id)) => {
+            let ts = chrono::DateTime::parse_from_rfc3339(sort_key)
+                .map_err(|e| {
+                    CommerceError::ValidationError(format!("invalid cursor timestamp: {e}"))
+                })?
+                .with_timezone(&chrono::Utc);
+            let id = uuid::Uuid::parse_str(id)
+                .map_err(|e| CommerceError::ValidationError(format!("invalid cursor id: {e}")))?;
+            Ok(Some((ts, id)))
+        }
+        None => Ok(None),
+    }
+}
+
 use std::future::Future;
 use std::str::FromStr;
 use std::time::Duration;

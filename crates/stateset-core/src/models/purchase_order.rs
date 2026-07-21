@@ -578,6 +578,9 @@ pub struct PurchaseOrderFilter {
     pub limit: Option<u32>,
     /// Offset for pagination
     pub offset: Option<u32>,
+    /// Keyset cursor: return records after this `(sort_key, id)` pair.
+    /// Sort key is `order_date` (DESC ordering).
+    pub after_cursor: Option<(String, String)>,
 }
 
 /// Generate a unique supplier code

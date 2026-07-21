@@ -31,13 +31,16 @@ fn app() -> axum::Router {
 
 /// Build a router and return the shared state for direct Commerce access.
 fn app_with_state() -> (axum::Router, AppState) {
-    let state = AppState::new(test_commerce());
+    // These fixtures exercise idempotency scoping via `x-tenant-id` without a
+    // tenant database directory; opt into the explicit escape hatch now that
+    // silent fallthrough is rejected.
+    let state = AppState::new(test_commerce()).with_ignore_tenant_header();
     let router = stateset_http::routes::api_router().with_state(state.clone());
     (router, state)
 }
 
 fn secure_app() -> (axum::Router, String) {
-    let builder = ServerBuilder::new(test_commerce());
+    let builder = ServerBuilder::new(test_commerce()).with_ignore_tenant_header();
     let token =
         builder.bearer_auth_token().expect("default auth token should be configured").to_string();
     (builder.build(), token)
@@ -45,6 +48,7 @@ fn secure_app() -> (axum::Router, String) {
 
 fn secure_authz_app() -> (axum::Router, String) {
     let builder = ServerBuilder::new(test_commerce())
+        .with_ignore_tenant_header()
         .with_authz_engine(authz_engine())
         .trust_actor_headers_for_authz();
     let token =
@@ -54,6 +58,7 @@ fn secure_authz_app() -> (axum::Router, String) {
 
 fn secure_bound_authz_app(actor_id: &str) -> (axum::Router, String) {
     let builder = ServerBuilder::new(test_commerce())
+        .with_ignore_tenant_header()
         .with_authz_engine(authz_engine())
         .bind_auth_actor(actor_id);
     let token =
@@ -64,6 +69,7 @@ fn secure_bound_authz_app(actor_id: &str) -> (axum::Router, String) {
 fn multi_actor_authz_app() -> axum::Router {
     ServerBuilder::new(test_commerce())
         .without_auth()
+        .with_ignore_tenant_header()
         .add_bearer_auth_for_actor("viewer-token", "viewer-1")
         .add_bearer_auth_for_actor("admin-token", "admin-1")
         .with_authz_engine(authz_engine())
@@ -720,6 +726,82 @@ async fn metrics_trusted_proxy_uses_standard_forwarded_header_when_peer_is_trust
 
     let resp = router.oneshot(request).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn tenant_header_without_tenant_routing_returns_400() {
+    let router = ServerBuilder::new(test_commerce()).without_auth().build();
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/customers")
+                .header("x-tenant-id", "tenant-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["code"], "bad_request");
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("tenant routing is not enabled on this deployment"),
+        "unexpected message: {}",
+        json["error"]["message"]
+    );
+}
+
+#[tokio::test]
+async fn ignore_tenant_header_escape_hatch_serves_shared_data() {
+    let router =
+        ServerBuilder::new(test_commerce()).without_auth().with_ignore_tenant_header().build();
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/customers")
+                .header("x-tenant-id", "tenant-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn tenant_routing_rejects_path_traversal_tenant_ids() {
+    let tenant_dir =
+        std::env::temp_dir().join(format!("stateset-http-tenant-traversal-{}", Uuid::new_v4()));
+    let token = "traversal-token";
+    let router = tenant_app(&tenant_dir, token, "tenant-real");
+
+    for tenant in ["..", "../other", "./x", "/etc/passwd", "a/b", "a\\b", "a.b"] {
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/customers")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("x-tenant-id", tenant)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Depending on middleware ordering the request is refused either as an
+        // invalid tenant id (400) or as a tenant/token mismatch (403); either
+        // way it must never reach a database outside the tenant directory.
+        assert!(
+            resp.status() == StatusCode::BAD_REQUEST || resp.status() == StatusCode::FORBIDDEN,
+            "tenant id {tenant:?} returned {}",
+            resp.status()
+        );
+    }
+    let _ = std::fs::remove_dir_all(&tenant_dir);
 }
 
 #[tokio::test]

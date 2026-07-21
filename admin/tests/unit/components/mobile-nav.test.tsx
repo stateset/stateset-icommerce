@@ -55,6 +55,7 @@ vi.mock('@heroicons/react/24/outline', () => {
     ChartBarIcon: makeIcon('chart-bar'),
     ServerStackIcon: makeIcon('server-stack'),
     ShieldCheckIcon: makeIcon('shield-check'),
+    BanknotesIcon: makeIcon('banknotes'),
     Cog6ToothIcon: makeIcon('cog'),
   };
 });

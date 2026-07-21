@@ -526,9 +526,18 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 params.push(Box::new(Utc::now().to_rfc3339()));
             }
 
-            sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+            // Keyset cursor: (created_at, id) for stable DESC ordering
+            if let Some((cursor_created, cursor_id)) = &filter.after_cursor {
+                sql.push_str(" AND (created_at < ? OR (created_at = ? AND id < ?))");
+                params.push(Box::new(cursor_created.clone()));
+                params.push(Box::new(cursor_created.clone()));
+                params.push(Box::new(cursor_id.clone()));
+            }
+
+            sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?");
             params.push(Box::new(limit));
-            params.push(Box::new(offset));
+            // Offset pagination applies only in non-cursor mode.
+            params.push(Box::new(if filter.after_cursor.is_none() { offset } else { 0 }));
 
             let mut stmt =
                 conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -1588,5 +1597,30 @@ mod tests {
             Decimal::from(thread_count as u64),
             "completions were lost to a race: {results:?}"
         );
+    }
+
+    #[test]
+    fn list_after_cursor_paginates_without_overlap() {
+        let repo = fresh_repo();
+        for _ in 0..3 {
+            make_wo(&repo, dec!(1));
+        }
+        let all = repo.list(WorkOrderFilter::default()).expect("list all");
+        assert_eq!(all.len(), 3);
+
+        let first_page =
+            repo.list(WorkOrderFilter { limit: Some(2), ..Default::default() }).expect("page 1");
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].id, all[0].id);
+
+        let last = &first_page[1];
+        let second_page = repo
+            .list(WorkOrderFilter {
+                after_cursor: Some((last.created_at.to_rfc3339(), last.id.to_string())),
+                ..Default::default()
+            })
+            .expect("page 2");
+        assert_eq!(second_page.len(), 1);
+        assert_eq!(second_page[0].id, all[2].id);
     }
 }

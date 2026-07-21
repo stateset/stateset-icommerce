@@ -710,13 +710,22 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             params_vec.push(Box::new(status.to_string()));
         }
 
-        sql.push_str(" ORDER BY order_date DESC");
+        // Keyset cursor: (order_date, id) for stable DESC ordering
+        if let Some((cursor_date, cursor_id)) = &filter.after_cursor {
+            sql.push_str(" AND (order_date < ? OR (order_date = ? AND id < ?))");
+            params_vec.push(Box::new(cursor_date.clone()));
+            params_vec.push(Box::new(cursor_date.clone()));
+            params_vec.push(Box::new(cursor_id.clone()));
+        }
+
+        sql.push_str(" ORDER BY order_date DESC, id DESC");
 
         // Apply pagination the same way Postgres does: default the page size to
         // 100 and always honor the offset (SQLite previously ignored `offset` and
         // had no default cap, so it returned a different page than Postgres).
+        // Offset pagination applies only in non-cursor mode.
         let limit = filter.limit.unwrap_or(100);
-        let offset = filter.offset.unwrap_or(0);
+        let offset = if filter.after_cursor.is_none() { filter.offset.unwrap_or(0) } else { 0 };
         sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -1789,12 +1798,13 @@ mod tests {
         assert_eq!(repo.list(base.clone()).expect("all").len(), 3);
 
         // offset must skip rows (Postgres applies it; SQLite used to ignore it).
-        let offset1 = repo.list(PurchaseOrderFilter { offset: Some(1), ..base }).expect("offset");
+        let offset1 =
+            repo.list(PurchaseOrderFilter { offset: Some(1), ..base.clone() }).expect("offset");
         assert_eq!(offset1.len(), 2, "offset must skip rows");
 
         // limit + offset selects a page.
         let page = repo
-            .list(PurchaseOrderFilter { limit: Some(2), offset: Some(1), ..base })
+            .list(PurchaseOrderFilter { limit: Some(2), offset: Some(1), ..base.clone() })
             .expect("page");
         assert_eq!(page.len(), 2);
 
@@ -1872,5 +1882,38 @@ mod tests {
     fn get_supplier_unknown_id_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get_supplier(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_after_cursor_paginates_without_overlap() {
+        let repo = fresh_repo();
+        let s = make_supplier(&repo, "CURSOR");
+        for i in 0..3 {
+            repo.create(CreatePurchaseOrder {
+                supplier_id: s.id,
+                items: vec![make_po_item(&format!("CUR-{i}"), dec!(1), dec!(1))],
+                ..Default::default()
+            })
+            .expect("create po");
+        }
+
+        let base = PurchaseOrderFilter { supplier_id: Some(s.id), ..Default::default() };
+        let all = repo.list(base.clone()).expect("list all");
+        assert_eq!(all.len(), 3);
+
+        let first_page =
+            repo.list(PurchaseOrderFilter { limit: Some(2), ..base.clone() }).expect("page 1");
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].id, all[0].id);
+
+        let last = &first_page[1];
+        let second_page = repo
+            .list(PurchaseOrderFilter {
+                after_cursor: Some((last.order_date.to_rfc3339(), last.id.to_string())),
+                ..base
+            })
+            .expect("page 2");
+        assert_eq!(second_page.len(), 1);
+        assert_eq!(second_page[0].id, all[2].id);
     }
 }

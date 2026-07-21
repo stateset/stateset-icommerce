@@ -50,6 +50,7 @@ vi.mock('@heroicons/react/24/outline', () => {
     ArchiveBoxIcon: makeIcon('archive-box'),
     ServerStackIcon: makeIcon('server-stack'),
     ShieldCheckIcon: makeIcon('shield-check'),
+    BanknotesIcon: makeIcon('banknotes'),
   };
 });
 
@@ -76,12 +77,13 @@ describe('Sidebar', () => {
     'Returns',
     'Customers',
     'Subscriptions',
+    'Finance',
     'Analytics',
     'Gateway',
     'Settings',
   ];
 
-  it('renders all 11 navigation items', () => {
+  it('renders all navigation items', () => {
     render(React.createElement(Sidebar));
     for (const item of navItems) {
       expect(screen.getByText(item)).toBeDefined();
@@ -147,6 +149,7 @@ describe('Sidebar', () => {
       Returns: '/returns',
       Customers: '/customers',
       Subscriptions: '/subscriptions',
+      Finance: '/finance',
       Analytics: '/analytics',
       Gateway: '/gateway',
       Settings: '/settings',
@@ -160,7 +163,7 @@ describe('Sidebar', () => {
   it('renders an icon for each navigation item plus logo', () => {
     render(React.createElement(Sidebar));
     const svgs = screen.getAllByTestId(/^icon-/);
-    // 12 nav items + 1 logo sparkles icon = 13
-    expect(svgs.length).toBe(13);
+    // 13 nav items + 1 logo sparkles icon = 14
+    expect(svgs.length).toBe(14);
   });
 });

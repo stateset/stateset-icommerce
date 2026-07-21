@@ -244,6 +244,48 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
     },
   },
   {
+    name: 'create_gl_period',
+    description: 'Create an accounting period.',
+    inputSchema: {
+      periodName: z.string().min(1).describe('Period name, e.g. "January 2026"'),
+      fiscalYear: z.number().int().describe('Fiscal year'),
+      periodNumber: z.number().int().min(1).max(13).describe('Period number within the year'),
+      startDate: z.string().min(1).describe('Start date in ISO 8601'),
+      endDate: z.string().min(1).describe('End date in ISO 8601'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Create GL period', params);
+      }
+
+      const period = await commerce.generalLedger.createPeriod({
+        periodName: params.periodName,
+        fiscalYear: params.fiscalYear,
+        periodNumber: params.periodNumber,
+        startDate: params.startDate,
+        endDate: params.endDate,
+      });
+      return { success: true, message: 'Period created', period };
+    },
+  },
+  {
+    name: 'open_gl_period',
+    description: 'Open an accounting period so journal entries can be posted to it.',
+    inputSchema: {
+      periodId: z.string().min(1).describe('Accounting period ID'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Open GL period', params);
+      }
+
+      const period = await commerce.generalLedger.openPeriod(params.periodId);
+      return { success: true, message: 'Period opened', period };
+    },
+  },
+  {
     name: 'get_gl_account_balance',
     description: 'Get the balance of a general ledger account.',
     inputSchema: {

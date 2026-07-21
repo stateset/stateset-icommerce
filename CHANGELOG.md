@@ -6,6 +6,37 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-07-20
+
+### Added
+- **Admin Finance module** (six pages): Ledger (chart of accounts,
+  journal entries, trial balance), Bills (AP aging + status filter),
+  Close (dry-run per-step report with typed-confirmation real close),
+  Receivables (AR aging, DSO, per-customer buckets), Assets (register +
+  depreciation schedules), Revenue (contracts + obligations) — 42 new
+  admin tests (904 total).
+- **Domain events** (10): fixed-asset placed-in-service/disposed/
+  written-off, depreciation posted, revenue recognized, contract
+  completed, cycle count completed, 3-way-match variance detected, FX
+  revaluation posted, month-end close completed — webhook-subscribable.
+- **Cursor pagination** on fixed assets, revenue contracts, cycle
+  counts, work orders, purchase orders, and quality inspections
+  (`after` param + `next_cursor`/`has_more`), both backends, both
+  bindings.
+- **CLI**: `create_gl_period`/`open_gl_period` tools; API-coverage gate
+  extended to all 40 domains.
+
+### Security
+- **Fail-closed API auth**: non-loopback binds refuse to start without
+  configured bearer auth (explicit `allow_unauthenticated` opt-out via
+  builder or `STATESET_HTTP_ALLOW_UNAUTHENTICATED`); optional strict
+  authz mode denies unmapped `/api/v1` paths.
+- **Honest multi-tenancy**: requests carrying `x-tenant-id` on
+  deployments without tenant isolation now return 400 instead of
+  silently receiving shared data (escape hatch for proxy setups);
+  tenant ids reject dots/separators/traversal, with canonicalized
+  path-containment checks.
+
 ## [1.12.0] - 2026-07-20
 
 ### Added

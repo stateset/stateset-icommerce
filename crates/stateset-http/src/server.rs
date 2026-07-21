@@ -29,6 +29,7 @@ const METRICS_X_REAL_IP_HEADER_MAX_BYTES_ENV: &str = "STATESET_HTTP_METRICS_X_RE
 const METRICS_AUTHORIZATION_HEADER_MAX_BYTES_ENV: &str =
     "STATESET_HTTP_METRICS_AUTHORIZATION_MAX_BYTES";
 const REQUEST_BODY_MAX_BYTES_ENV: &str = "STATESET_HTTP_MAX_BODY_BYTES";
+const ALLOW_UNAUTHENTICATED_ENV: &str = "STATESET_HTTP_ALLOW_UNAUTHENTICATED";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct AdditionalApiBearerBinding {
@@ -95,6 +96,16 @@ fn parse_positive_usize_env(env_var: &str, value: &str) -> Result<usize, HttpErr
     Ok(parsed)
 }
 
+fn parse_bool_env(env_var: &str, value: &str) -> Result<bool, HttpError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => Ok(true),
+        "0" | "false" | "no" | "" => Ok(false),
+        other => Err(HttpError::BadRequest(format!(
+            "invalid value '{other}' in {env_var}: expected true/false"
+        ))),
+    }
+}
+
 /// Builder for configuring and launching the HTTP server.
 ///
 /// # Example
@@ -126,6 +137,8 @@ pub struct ServerBuilder {
     max_request_body_bytes: usize,
     authz_config: Option<AuthzConfig>,
     trust_actor_headers_for_authz: bool,
+    authz_strict: bool,
+    allow_unauthenticated: bool,
     rate_limit: Option<RateLimitConfig>,
 }
 
@@ -148,6 +161,8 @@ impl fmt::Debug for ServerBuilder {
             .field("max_request_body_bytes", &self.max_request_body_bytes)
             .field("authz_enabled", &self.authz_config.is_some())
             .field("trust_actor_headers_for_authz", &self.trust_actor_headers_for_authz)
+            .field("authz_strict", &self.authz_strict)
+            .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("rate_limit", &self.rate_limit)
             .finish()
     }
@@ -247,6 +262,8 @@ impl ServerBuilder {
             max_request_body_bytes: DEFAULT_REQUEST_BODY_LIMIT_BYTES,
             authz_config: None,
             trust_actor_headers_for_authz: false,
+            authz_strict: false,
+            allow_unauthenticated: false,
             rate_limit: None,
         }
     }
@@ -261,11 +278,24 @@ impl ServerBuilder {
     /// - `STATESET_HTTP_METRICS_X_FORWARDED_FOR_MAX_BYTES`
     /// - `STATESET_HTTP_METRICS_X_REAL_IP_MAX_BYTES`
     /// - `STATESET_HTTP_METRICS_AUTHORIZATION_MAX_BYTES`
+    /// - `STATESET_HTTP_ALLOW_UNAUTHENTICATED`
     pub fn new_from_env(commerce: Commerce) -> Result<Self, HttpError> {
         Self::new(commerce)
             .with_metrics_network_policy_from_env()?
             .with_metrics_header_limits_from_env()?
-            .with_request_body_limit_from_env()
+            .with_request_body_limit_from_env()?
+            .with_allow_unauthenticated_from_env()
+    }
+
+    /// Apply the unauthenticated opt-out from `STATESET_HTTP_ALLOW_UNAUTHENTICATED`.
+    ///
+    /// Accepts `true`/`false` (also `1`/`0`, `yes`/`no`). Unset or empty leaves
+    /// the secure default (`false`) in place.
+    pub fn with_allow_unauthenticated_from_env(mut self) -> Result<Self, HttpError> {
+        if let Ok(raw) = std::env::var(ALLOW_UNAUTHENTICATED_ENV) {
+            self.allow_unauthenticated = parse_bool_env(ALLOW_UNAUTHENTICATED_ENV, &raw)?;
+        }
+        Ok(self)
     }
 
     /// Set the bind address.
@@ -605,6 +635,18 @@ impl ServerBuilder {
         self
     }
 
+    /// Ignore `x-tenant-id` headers when per-tenant routing is disabled.
+    ///
+    /// By default such requests are rejected with `400` instead of silently
+    /// being served shared data. Use this escape hatch only for deployments
+    /// that intentionally front a multi-tenant proxy which handles tenant
+    /// isolation upstream.
+    #[must_use]
+    pub fn with_ignore_tenant_header(mut self) -> Self {
+        self.state = self.state.with_ignore_tenant_header();
+        self
+    }
+
     /// Set the maximum number of lazily created tenant databases kept in-memory.
     #[must_use]
     pub fn with_max_tenant_dbs(mut self, max_tenant_dbs: usize) -> Self {
@@ -638,6 +680,31 @@ impl ServerBuilder {
     #[must_use]
     pub const fn trust_actor_headers_for_authz(mut self) -> Self {
         self.trust_actor_headers_for_authz = true;
+        self
+    }
+
+    /// Explicitly opt out of the fail-closed authentication startup check.
+    ///
+    /// By default the server refuses to start on a non-loopback bind address
+    /// when no API bearer tokens are configured. Call this (or set
+    /// `STATESET_HTTP_ALLOW_UNAUTHENTICATED=true`) to acknowledge the risk and
+    /// serve unauthenticated API traffic anyway.
+    #[must_use]
+    pub const fn allow_unauthenticated(mut self) -> Self {
+        self.allow_unauthenticated = true;
+        self
+    }
+
+    /// Fail closed on authorization for unmapped API paths.
+    ///
+    /// By default, `/api/v1` paths that the authorization layer cannot map to
+    /// a resource/action pair bypass authorization (authentication still
+    /// applies). When strict mode is enabled, such requests are denied with
+    /// HTTP 403 instead. Only takes effect when authorization is configured
+    /// via [`Self::with_authz`].
+    #[must_use]
+    pub const fn with_strict_authz(mut self) -> Self {
+        self.authz_strict = true;
         self
     }
 
@@ -717,8 +784,14 @@ impl ServerBuilder {
             .collect::<Vec<_>>();
         let auth_config = if auth_bindings.is_empty() { None } else { Some(auth_bindings) };
         let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
+        let authz_strict = self.authz_strict;
         let authz_config = self.authz_config.map(|config| {
-            if trust_actor_headers_for_authz { config.with_trusted_actor_headers() } else { config }
+            let config = if trust_actor_headers_for_authz {
+                config.with_trusted_actor_headers()
+            } else {
+                config
+            };
+            if authz_strict { config.with_strict_path_mapping() } else { config }
         });
         let router =
             routes::api_router_with_body_limit(self.max_request_body_bytes).with_state(self.state);
@@ -750,10 +823,21 @@ impl ServerBuilder {
         let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
         let addr = self.addr;
 
-        if api_token_count == 0 && !addr.ip().is_loopback() {
-            return Err(HttpError::BadRequest(
-                "Refusing to start without API auth on a non-loopback address".to_string(),
-            ));
+        if api_token_count == 0 && !self.allow_unauthenticated {
+            if addr.ip().is_loopback() {
+                tracing::warn!(
+                    "No API authentication configured on a loopback bind. Configure a bearer \
+                     token with ServerBuilder::with_bearer_auth before exposing this server."
+                );
+            } else {
+                return Err(HttpError::BadRequest(format!(
+                    "Refusing to start without API authentication on non-loopback address \
+                     {addr}. Configure a bearer token with ServerBuilder::with_bearer_auth (or \
+                     add_bearer_auth_for_actor/add_bearer_auth_for_tenant), or explicitly opt \
+                     out with ServerBuilder::allow_unauthenticated() or \
+                     {ALLOW_UNAUTHENTICATED_ENV}=true."
+                )));
+            }
         }
 
         if let Some(message) = self.api_auth_error() {
@@ -1138,6 +1222,83 @@ mod tests {
     }
 
     #[test]
+    fn builder_allow_unauthenticated_flag() {
+        let builder = ServerBuilder::new(test_commerce());
+        assert!(!builder.allow_unauthenticated, "secure default must be false");
+        let builder = builder.allow_unauthenticated();
+        assert!(builder.allow_unauthenticated);
+    }
+
+    #[test]
+    fn builder_strict_authz_flag() {
+        let builder = ServerBuilder::new(test_commerce());
+        assert!(!builder.authz_strict, "default must preserve existing behavior");
+        let builder = builder.with_strict_authz();
+        assert!(builder.authz_strict);
+    }
+
+    #[test]
+    fn parse_bool_env_accepts_expected_values() {
+        for raw in ["1", "true", "TRUE", "yes"] {
+            assert!(matches!(parse_bool_env("TEST_ENV", raw), Ok(true)), "raw={raw}");
+        }
+        for raw in ["0", "false", "no", "", "  "] {
+            assert!(matches!(parse_bool_env("TEST_ENV", raw), Ok(false)), "raw={raw}");
+        }
+        assert!(parse_bool_env("TEST_ENV", "maybe").is_err());
+    }
+
+    #[tokio::test]
+    async fn serve_refuses_non_loopback_bind_without_auth() {
+        let err = ServerBuilder::new(test_commerce())
+            .without_auth()
+            .bind("192.0.2.1:0".parse().expect("socket addr"))
+            .serve()
+            .await
+            .expect_err("must refuse to start without auth on a non-loopback bind");
+        match err {
+            HttpError::BadRequest(message) => {
+                assert!(message.contains("Refusing to start"), "message: {message}");
+                assert!(message.contains("allow_unauthenticated"), "message: {message}");
+                assert!(message.contains("STATESET_HTTP_ALLOW_UNAUTHENTICATED"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn allow_unauthenticated_bypasses_non_loopback_refusal() {
+        // 192.0.2.1 (TEST-NET-1) is not locally assigned, so binding fails —
+        // reaching the bind step proves the fail-closed check was opted out of.
+        let err = ServerBuilder::new(test_commerce())
+            .without_auth()
+            .allow_unauthenticated()
+            .bind("192.0.2.1:0".parse().expect("socket addr"))
+            .serve()
+            .await
+            .expect_err("bind to TEST-NET-1 must fail");
+        match err {
+            HttpError::InternalError(message) => {
+                assert!(message.contains("Failed to bind"), "message: {message}");
+            }
+            other => panic!("expected bind failure, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_allows_loopback_bind_without_auth() {
+        let serve_future = ServerBuilder::new(test_commerce())
+            .without_auth()
+            .bind("127.0.0.1:0".parse().expect("socket addr"))
+            .serve();
+        // The server must start (and then block serving); a quick return would
+        // be a startup refusal.
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(500), serve_future).await;
+        assert!(result.is_err(), "loopback bind without auth must start and keep serving");
+    }
+
+    #[test]
     fn builder_without_metrics_auth() {
         let builder = ServerBuilder::new(test_commerce()).without_metrics_auth();
         assert!(builder.bearer_auth_token().is_some());
@@ -1415,7 +1576,9 @@ mod tests {
 
     #[tokio::test]
     async fn built_router_allows_api_with_token() {
-        let builder = ServerBuilder::new(test_commerce());
+        // Sends `x-tenant-id` without a tenant DB dir; opt into the explicit
+        // escape hatch now that silent fallthrough is rejected.
+        let builder = ServerBuilder::new(test_commerce()).with_ignore_tenant_header();
         let token =
             builder.bearer_auth_token().expect("default auth token should be present").to_string();
         let router = builder.build();

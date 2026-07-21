@@ -182,6 +182,35 @@ impl InMemoryEventStore {
             | CommerceEvent::LoyaltyPointsRedeemed { program_id, .. } => {
                 (Some("loyalty".to_string()), Some(program_id.to_string()))
             }
+            // Fixed asset events
+            CommerceEvent::FixedAssetPlacedInService { asset_id, .. }
+            | CommerceEvent::FixedAssetDisposed { asset_id, .. }
+            | CommerceEvent::FixedAssetWrittenOff { asset_id, .. }
+            | CommerceEvent::DepreciationPosted { asset_id, .. } => {
+                (Some("fixed_asset".to_string()), Some(asset_id.to_string()))
+            }
+            // Revenue recognition events
+            CommerceEvent::RevenueRecognized { obligation_id, .. } => {
+                (Some("performance_obligation".to_string()), Some(obligation_id.to_string()))
+            }
+            CommerceEvent::RevenueContractCompleted { contract_id, .. } => {
+                (Some("revenue_contract".to_string()), Some(contract_id.to_string()))
+            }
+            // Warehouse events
+            CommerceEvent::CycleCountCompleted { cycle_count_id, .. } => {
+                (Some("cycle_count".to_string()), Some(cycle_count_id.to_string()))
+            }
+            // Accounts payable events
+            CommerceEvent::ThreeWayMatchVarianceDetected { bill_id, .. } => {
+                (Some("bill".to_string()), Some(bill_id.to_string()))
+            }
+            // General ledger events
+            CommerceEvent::FxRevaluationPosted { as_of_date, .. } => {
+                (Some("fx_revaluation".to_string()), Some(as_of_date.to_string()))
+            }
+            CommerceEvent::MonthEndCloseCompleted { period_id, .. } => {
+                (Some("gl_period".to_string()), Some(period_id.to_string()))
+            }
         }
     }
 }

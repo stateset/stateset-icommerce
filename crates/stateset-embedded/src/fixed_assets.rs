@@ -22,9 +22,18 @@ use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use chrono::Utc;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 /// Fixed asset register operations.
 pub struct FixedAssets {
     db: Arc<dyn Database>,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl std::fmt::Debug for FixedAssets {
@@ -34,8 +43,19 @@ impl std::fmt::Debug for FixedAssets {
 }
 
 impl FixedAssets {
+    #[cfg(feature = "events")]
+    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
+        Self { db, event_system }
+    }
+
+    #[cfg(not(feature = "events"))]
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
     }
 
     /// Whether fixed assets are supported by the active backend.
@@ -75,7 +95,16 @@ impl FixedAssets {
     /// Place a draft asset in service.
     pub fn place_in_service(&self, id: Uuid, date: NaiveDate) -> Result<FixedAsset> {
         self.ensure()?;
-        self.db.fixed_assets().place_in_service(id, date)
+        let asset = self.db.fixed_assets().place_in_service(id, date)?;
+        #[cfg(feature = "events")]
+        self.emit(CommerceEvent::FixedAssetPlacedInService {
+            asset_id: asset.id,
+            asset_number: asset.asset_number.clone(),
+            in_service_date: asset.in_service_date.unwrap_or(date),
+            acquisition_cost: asset.acquisition_cost,
+            timestamp: Utc::now(),
+        });
+        Ok(asset)
     }
 
     /// Dispose of an asset for the given proceeds, recording gain/loss.
@@ -87,7 +116,17 @@ impl FixedAssets {
         notes: Option<String>,
     ) -> Result<FixedAsset> {
         self.ensure()?;
-        self.db.fixed_assets().dispose(id, date, proceeds, notes)
+        let asset = self.db.fixed_assets().dispose(id, date, proceeds, notes)?;
+        #[cfg(feature = "events")]
+        self.emit(CommerceEvent::FixedAssetDisposed {
+            asset_id: asset.id,
+            asset_number: asset.asset_number.clone(),
+            disposal_date: asset.disposal.as_ref().map_or(date, |d| d.disposal_date),
+            proceeds,
+            gain_loss: asset.disposal.as_ref().map_or(rust_decimal::Decimal::ZERO, |d| d.gain_loss),
+            timestamp: Utc::now(),
+        });
+        Ok(asset)
     }
 
     /// Write off an asset (disposal with zero proceeds).
@@ -98,7 +137,19 @@ impl FixedAssets {
         notes: Option<String>,
     ) -> Result<FixedAsset> {
         self.ensure()?;
-        self.db.fixed_assets().write_off(id, date, notes)
+        let asset = self.db.fixed_assets().write_off(id, date, notes)?;
+        #[cfg(feature = "events")]
+        self.emit(CommerceEvent::FixedAssetWrittenOff {
+            asset_id: asset.id,
+            asset_number: asset.asset_number.clone(),
+            write_off_date: asset.disposal.as_ref().map_or(date, |d| d.disposal_date),
+            loss: asset
+                .disposal
+                .as_ref()
+                .map_or(rust_decimal::Decimal::ZERO, |d| d.gain_loss.abs()),
+            timestamp: Utc::now(),
+        });
+        Ok(asset)
     }
 
     /// Generate and persist the depreciation schedule for an asset.
@@ -122,6 +173,23 @@ impl FixedAssets {
     /// posting accounts with the matching account sub-types.
     pub fn post_depreciation(&self, id: Uuid, periods: u32) -> Result<FixedAsset> {
         self.ensure()?;
-        self.db.fixed_assets().post_depreciation(id, periods)
+        #[cfg(feature = "events")]
+        let previous_accumulated = self
+            .db
+            .fixed_assets()
+            .get(id)?
+            .map(|a| a.accumulated_depreciation)
+            .unwrap_or(rust_decimal::Decimal::ZERO);
+        let asset = self.db.fixed_assets().post_depreciation(id, periods)?;
+        #[cfg(feature = "events")]
+        self.emit(CommerceEvent::DepreciationPosted {
+            asset_id: asset.id,
+            asset_number: asset.asset_number.clone(),
+            periods,
+            amount: asset.accumulated_depreciation - previous_accumulated,
+            accumulated_depreciation: asset.accumulated_depreciation,
+            timestamp: Utc::now(),
+        });
+        Ok(asset)
     }
 }

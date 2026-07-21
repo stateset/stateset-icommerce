@@ -83,15 +83,27 @@ struct AuthenticatedActorIdentity;
 pub(crate) struct AuthzConfig {
     engine: Arc<Mutex<AuthzEngine>>,
     trust_actor_headers: bool,
+    strict_path_mapping: bool,
 }
 
 impl AuthzConfig {
     pub(crate) fn new(engine: AuthzEngine) -> Self {
-        Self { engine: Arc::new(Mutex::new(engine)), trust_actor_headers: false }
+        Self {
+            engine: Arc::new(Mutex::new(engine)),
+            trust_actor_headers: false,
+            strict_path_mapping: false,
+        }
     }
 
     pub(crate) const fn with_trusted_actor_headers(mut self) -> Self {
         self.trust_actor_headers = true;
+        self
+    }
+
+    /// Deny `/api/v1` requests that cannot be mapped to a resource/action pair
+    /// instead of letting them bypass authorization.
+    pub(crate) const fn with_strict_path_mapping(mut self) -> Self {
+        self.strict_path_mapping = true;
         self
     }
 }
@@ -351,6 +363,12 @@ async fn require_authorization(
     next: Next,
 ) -> Response {
     let Some((resource, action)) = authz_target(&request) else {
+        if config.strict_path_mapping && request.uri().path().starts_with("/api/v1") {
+            return HttpError::Forbidden(
+                "request path is not mapped to an authorization target".to_string(),
+            )
+            .into_response();
+        }
         return next.run(request).await;
     };
 
@@ -1191,6 +1209,71 @@ mod tests {
         let response =
             app.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn strict_authz_denies_unmapped_api_paths() {
+        let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            Some(actor_bound_auth_bindings("secret", "viewer-1")),
+            Some(AuthzConfig::new(engine).with_strict_path_mapping()),
+            None,
+            None,
+        );
+
+        // HEAD requests have no authz_target mapping, so strict mode denies them.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::HEAD)
+                    .uri("/api/v1/orders")
+                    .header("authorization", "Bearer secret")
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn non_strict_authz_allows_unmapped_api_paths() {
+        let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            Some(actor_bound_auth_bindings("secret", "viewer-1")),
+            Some(AuthzConfig::new(engine)),
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::HEAD)
+                    .uri("/api/v1/orders")
+                    .header("authorization", "Bearer secret")
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

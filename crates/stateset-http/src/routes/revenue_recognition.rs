@@ -1,5 +1,6 @@
 //! Revenue recognition (ASC 606) endpoints.
 
+use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
@@ -66,6 +67,8 @@ pub(crate) struct RevenueContractFilterParams {
     pub status: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -98,6 +101,11 @@ pub(crate) struct RevenueContractResponse {
 pub(crate) struct RevenueContractListResponse {
     pub revenue_contracts: Vec<RevenueContractResponse>,
     pub total: usize,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -280,6 +288,12 @@ pub(crate) async fn list_contracts(
         Some(s) => Some(parse_id(s, "status")?),
         None => None,
     };
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
     let total = c
         .revenue_recognition()
         .list_contracts(stateset_core::RevenueContractFilter {
@@ -288,17 +302,27 @@ pub(crate) async fn list_contracts(
             ..Default::default()
         })?
         .len();
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let filter = stateset_core::RevenueContractFilter {
         customer_id,
         status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
+        limit: Some(overfetch_limit(limit)),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
+        after_cursor,
         ..Default::default()
     };
-    let contracts = c.revenue_recognition().list_contracts(filter)?;
+    let mut contracts = c.revenue_recognition().list_contracts(filter)?;
+    let has_more = finalize_page(&mut contracts, limit);
+    let next_cursor = if has_more {
+        contracts.last().map(|ct| encode_cursor(&ct.created_at.to_rfc3339(), &ct.id.to_string()))
+    } else {
+        None
+    };
     Ok(Json(RevenueContractListResponse {
         revenue_contracts: contracts.iter().map(to_resp).collect(),
         total,
+        next_cursor,
+        has_more,
     }))
 }
 
@@ -547,5 +571,74 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn list_revenue_contracts_has_more_and_next_cursor() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        for i in 0..3 {
+            let _ = i;
+            let body = serde_json::json!({
+                "customer_id": uuid::Uuid::new_v4().to_string(),
+                "transaction_price": "100",
+                "effective_date": "2026-01-01",
+                "obligations": [{
+                    "description": "One-time",
+                    "allocated_amount": "100",
+                    "recognition_method": "point_in_time"
+                }]
+            });
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::post("/revenue-contracts")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::CREATED);
+        }
+
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/revenue-contracts?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_of(resp).await;
+        assert_eq!(json["revenue_contracts"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], true);
+        let cursor = json["next_cursor"].as_str().expect("next_cursor").to_string();
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/revenue-contracts?limit=2&after={cursor}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_of(resp).await;
+        assert_eq!(json["revenue_contracts"].as_array().unwrap().len(), 1);
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none() || json["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_revenue_contracts_invalid_cursor_returns_400() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        let resp = app
+            .oneshot(
+                Request::get("/revenue-contracts?after=!!!invalid!!!").body(Body::empty()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

@@ -37,7 +37,10 @@ const {
   backorders: backorderTools,
   'general-ledger': generalLedgerTools,
 } = DOMAIN_TOOL_ARRAYS;
-export const COMMERCE_BINDING_INDEX_DTS = new URL('../../../bindings/node/index.d.ts', import.meta.url);
+export const COMMERCE_BINDING_INDEX_DTS = new URL(
+  '../../../bindings/node/index.d.ts',
+  import.meta.url,
+);
 
 export const COMMERCE_GETTER_TO_MODULE = Object.freeze({
   customers: 'customers',
@@ -72,6 +75,15 @@ export const COMMERCE_GETTER_TO_MODULE = Object.freeze({
   credit: 'credit',
   backorder: 'backorders',
   generalLedger: 'general-ledger',
+  cycleCounts: 'cycle-counts',
+  fixedAssets: 'fixed-assets',
+  giftCards: 'gift-cards',
+  loyalty: 'loyalty',
+  revenueRecognition: 'revenue-recognition',
+  reviews: 'reviews',
+  segments: 'segments',
+  storeCredits: 'store-credits',
+  wishlists: 'wishlists',
 });
 
 export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
@@ -191,6 +203,10 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getBalanceSheet: ['get_balance_sheet'],
       getIncomeStatement: ['get_income_statement'],
       getAccountBalance: ['get_gl_account_balance'],
+      revalue: ['revalue_gl'],
+      closeMonth: ['close_month'],
+      createPeriod: ['create_gl_period'],
+      openPeriod: ['open_gl_period'],
     },
   },
   AccountsPayable: {
@@ -207,6 +223,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getAgingSummary: ['get_accounts_payable_aging_summary'],
       getTotalOutstanding: ['get_accounts_payable_total_outstanding'],
       countBills: ['count_accounts_payable_bills'],
+      threeWayMatch: ['three_way_match_bill'],
     },
   },
   AccountsReceivable: {
@@ -605,9 +622,7 @@ export function getBindingClassMethodNames(source, className) {
     throw new Error(`Unable to locate Commerce binding class "${className}"`);
   }
 
-  return new Set(
-    [...classMatch[1].matchAll(/^\s+([A-Za-z0-9]+)\(/gm)].map((match) => match[1]),
-  );
+  return new Set([...classMatch[1].matchAll(/^\s+([A-Za-z0-9]+)\(/gm)].map((match) => match[1]));
 }
 
 export function buildMcpApiCoverage() {
@@ -619,16 +634,14 @@ export function buildMcpApiCoverage() {
   getterNames.delete('customStates');
   getterNames.delete('events');
 
-  const getters = [...getterNames]
-    .sort()
-    .map((getter) => {
-      const moduleName = COMMERCE_GETTER_TO_MODULE[getter] ?? null;
-      return {
-        getter,
-        module: moduleName,
-        toolCount: moduleName ? DOMAIN_TOOL_ARRAYS[moduleName].length : 0,
-      };
-    });
+  const getters = [...getterNames].sort().map((getter) => {
+    const moduleName = COMMERCE_GETTER_TO_MODULE[getter] ?? null;
+    return {
+      getter,
+      module: moduleName,
+      toolCount: moduleName ? DOMAIN_TOOL_ARRAYS[moduleName].length : 0,
+    };
+  });
 
   const uncoveredCommerceGetters = getters
     .filter((entry) => !entry.module)
@@ -668,7 +681,9 @@ export function buildMcpApiCoverage() {
   const staleAuditedMethodMappings = auditedClasses.flatMap((entry) =>
     entry.staleMappedMethods.map((method) => `${entry.className}.${method}`),
   );
-  const invalidAuditedToolReferences = auditedClasses.flatMap((entry) => entry.invalidToolReferences);
+  const invalidAuditedToolReferences = auditedClasses.flatMap(
+    (entry) => entry.invalidToolReferences,
+  );
 
   return {
     source: {

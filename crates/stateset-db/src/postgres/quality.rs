@@ -565,14 +565,25 @@ impl PgQualityRepository {
         }
         if filter.to_date.is_some() {
             sql.push_str(&format!(" AND created_at <= ${}", param_idx));
+            param_idx += 1;
+        }
+        let after_cursor = super::parse_after_cursor(filter.after_cursor.as_ref())?;
+        if after_cursor.is_some() {
+            // Keyset cursor: (created_at, id) for stable DESC ordering
+            sql.push_str(&format!(
+                " AND (created_at < ${param_idx} OR (created_at = ${param_idx} AND id < ${}))",
+                param_idx + 1
+            ));
         }
 
-        sql.push_str(" ORDER BY created_at DESC");
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
 
         if let Some(limit) = filter.limit {
             sql.push_str(&format!(" LIMIT {}", limit));
         }
-        if let Some(offset) = filter.offset {
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if after_cursor.is_none() { filter.offset } else { Some(0) };
+        if let Some(offset) = offset {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
 
@@ -598,6 +609,9 @@ impl PgQualityRepository {
         }
         if let Some(to_date) = filter.to_date {
             q = q.bind(to_date);
+        }
+        if let Some((cursor_created, cursor_id)) = after_cursor {
+            q = q.bind(cursor_created).bind(cursor_id);
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;

@@ -43,9 +43,18 @@ use stateset_db::Database;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use chrono::Utc;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 /// Accounts Payable management interface.
 pub struct AccountsPayable {
     db: Arc<dyn Database>,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl std::fmt::Debug for AccountsPayable {
@@ -55,8 +64,19 @@ impl std::fmt::Debug for AccountsPayable {
 }
 
 impl AccountsPayable {
+    #[cfg(feature = "events")]
+    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
+        Self { db, event_system }
+    }
+
+    #[cfg(not(feature = "events"))]
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
     }
 
     // ========================================================================
@@ -270,12 +290,23 @@ impl AccountsPayable {
             receipt_items.extend(self.db.receiving().get_receipt_items(receipt.id)?);
         }
 
-        Ok(stateset_core::perform_three_way_match(
+        let result = stateset_core::perform_three_way_match(
             &po_items,
             &receipt_items,
             &bill_lines,
             tolerance_percent.unwrap_or(Decimal::ZERO),
-        ))
+        );
+        #[cfg(feature = "events")]
+        if let stateset_core::MatchStatus::Variance { variance_line_count } = result.match_status {
+            self.emit(CommerceEvent::ThreeWayMatchVarianceDetected {
+                bill_id,
+                purchase_order_id: po_id,
+                variance_line_count,
+                tolerance_percent: result.tolerance_percent,
+                timestamp: Utc::now(),
+            });
+        }
+        Ok(result)
     }
 
     // ========================================================================

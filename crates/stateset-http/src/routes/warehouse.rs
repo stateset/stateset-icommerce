@@ -1,5 +1,6 @@
 //! Warehouse and location endpoints (warehouses, locations, location inventory).
 
+use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
@@ -226,6 +227,8 @@ pub(crate) struct CycleCountFilterParams {
     pub status: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -256,6 +259,11 @@ pub(crate) struct CycleCountResponse {
 pub(crate) struct CycleCountListResponse {
     pub cycle_counts: Vec<CycleCountResponse>,
     pub total: usize,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 // ============================================================================
@@ -748,16 +756,32 @@ pub(crate) async fn list_cycle_counts(
         Some(s) => Some(parse_id(s, "status")?),
         None => None,
     };
-    let cycle_counts = c.warehouse().list_cycle_counts(stateset_core::CycleCountFilter {
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
+    let mut cycle_counts = c.warehouse().list_cycle_counts(stateset_core::CycleCountFilter {
         warehouse_id: params.warehouse_id,
         location_id: params.location_id,
         status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
+        limit: Some(overfetch_limit(limit)),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
+        after_cursor,
     })?;
+    let has_more = finalize_page(&mut cycle_counts, limit);
+    let next_cursor = if has_more {
+        cycle_counts.last().map(|cc| encode_cursor(&cc.created_at.to_rfc3339(), &cc.id.to_string()))
+    } else {
+        None
+    };
     Ok(Json(CycleCountListResponse {
         total: cycle_counts.len(),
         cycle_counts: cycle_counts.iter().map(cycle_count_resp).collect(),
+        next_cursor,
+        has_more,
     }))
 }
 
@@ -1160,6 +1184,86 @@ mod tests {
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_cycle_counts_has_more_and_next_cursor() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        let body = serde_json::json!({
+            "code": "WH-CUR",
+            "name": "Cursor Warehouse",
+            "warehouse_type": "distribution",
+            "address": {"street1": "1 Main St", "city": "Newark", "state": "NJ",
+                        "postal_code": "07102", "country": "US"}
+        });
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post("/warehouses")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let warehouse_id = json_of(resp).await["id"].as_i64().unwrap();
+        for i in 0..3 {
+            let _ = i;
+            let body = serde_json::json!({
+                "warehouse_id": warehouse_id,
+                "lines": [{"sku": "CUR-SKU", "expected_quantity": "1"}]
+            });
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::post("/cycle-counts")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::CREATED);
+        }
+
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/cycle-counts?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_of(resp).await;
+        assert_eq!(json["cycle_counts"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], true);
+        let cursor = json["next_cursor"].as_str().expect("next_cursor").to_string();
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/cycle-counts?limit=2&after={cursor}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_of(resp).await;
+        assert_eq!(json["cycle_counts"].as_array().unwrap().len(), 1);
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none() || json["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_cycle_counts_invalid_cursor_returns_400() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        let resp = app
+            .oneshot(Request::get("/cycle-counts?after=!!!invalid!!!").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);

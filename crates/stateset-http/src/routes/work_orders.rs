@@ -1,5 +1,6 @@
 //! Work order endpoints (manufacturing execution).
 
+use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
@@ -80,6 +81,8 @@ pub(crate) struct WorkOrderFilterParams {
     pub work_center_id: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -100,6 +103,11 @@ pub(crate) struct WorkOrderResponse {
 pub(crate) struct WorkOrderListResponse {
     pub work_orders: Vec<WorkOrderResponse>,
     pub total: u64,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -262,14 +270,33 @@ pub(crate) async fn list(
         work_center_id: params.work_center_id.clone(),
         ..Default::default()
     };
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
     let total = c.work_orders().count(base.clone())?;
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let filter = stateset_core::WorkOrderFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
+        limit: Some(overfetch_limit(limit)),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
+        after_cursor,
         ..base
     };
-    let orders = c.work_orders().list(filter)?;
-    Ok(Json(WorkOrderListResponse { work_orders: orders.iter().map(to_resp).collect(), total }))
+    let mut orders = c.work_orders().list(filter)?;
+    let has_more = finalize_page(&mut orders, limit);
+    let next_cursor = if has_more {
+        orders.last().map(|wo| encode_cursor(&wo.created_at.to_rfc3339(), &wo.id.to_string()))
+    } else {
+        None
+    };
+    Ok(Json(WorkOrderListResponse {
+        work_orders: orders.iter().map(to_resp).collect(),
+        total,
+        next_cursor,
+        has_more,
+    }))
 }
 
 #[utoipa::path(get, operation_id = "work_orders_get_one", path = "/api/v1/work-orders/{id}", tag = "work_orders",
@@ -572,5 +599,66 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(json_body(resp).await["total"], 1);
+    }
+
+    #[tokio::test]
+    async fn list_work_orders_has_more_and_next_cursor() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        for i in 0..3 {
+            let _ = i;
+            let body = serde_json::json!({
+                "product_id": uuid::Uuid::new_v4().to_string(),
+                "quantity_to_build": "10"
+            });
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::post("/work-orders")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::CREATED);
+        }
+
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/work-orders?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_body(resp).await;
+        assert_eq!(json["work_orders"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], true);
+        let cursor = json["next_cursor"].as_str().expect("next_cursor").to_string();
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/work-orders?limit=2&after={cursor}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_body(resp).await;
+        assert_eq!(json["work_orders"].as_array().unwrap().len(), 1);
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none() || json["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_work_orders_invalid_cursor_returns_400() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        let resp = app
+            .oneshot(Request::get("/work-orders?after=!!!invalid!!!").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

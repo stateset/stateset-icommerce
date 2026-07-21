@@ -15848,6 +15848,7 @@ impl FixedAssets {
                     search: f.search,
                     limit: f.limit,
                     offset: f.offset,
+                    after_cursor: None,
                 })
             },
         )?;
@@ -16375,6 +16376,7 @@ impl RevenueRecognition {
                     search: f.search,
                     limit: f.limit,
                     offset: f.offset,
+                    after_cursor: None,
                 })
             },
         )?;
@@ -16671,6 +16673,7 @@ impl CycleCounts {
                         .transpose()?,
                     limit: f.limit,
                     offset: f.offset,
+                    after_cursor: None,
                 })
             },
         )?;

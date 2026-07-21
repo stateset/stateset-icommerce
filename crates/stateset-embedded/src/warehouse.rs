@@ -47,9 +47,18 @@ use stateset_db::Database;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use chrono::Utc;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 /// Warehouse and Location management interface.
 pub struct WarehouseOps {
     db: Arc<dyn Database>,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl std::fmt::Debug for WarehouseOps {
@@ -59,8 +68,19 @@ impl std::fmt::Debug for WarehouseOps {
 }
 
 impl WarehouseOps {
+    #[cfg(feature = "events")]
+    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
+        Self { db, event_system }
+    }
+
+    #[cfg(not(feature = "events"))]
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
     }
 
     // ========================================================================
@@ -488,7 +508,21 @@ impl WarehouseOps {
     /// inventory adjustments to `location_inventory`, recording `cycle_count`
     /// movements for the audit trail.
     pub fn complete_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
-        self.db.warehouse().complete_cycle_count(id)
+        let count = self.db.warehouse().complete_cycle_count(id)?;
+        #[cfg(feature = "events")]
+        self.emit(CommerceEvent::CycleCountCompleted {
+            cycle_count_id: count.id,
+            warehouse_id: count.warehouse_id,
+            line_count: count.lines.len(),
+            variance_line_count: count
+                .lines
+                .iter()
+                .filter(|l| l.variance.is_some_and(|v| !v.is_zero()))
+                .count(),
+            total_variance: count.lines.iter().filter_map(|l| l.variance).sum(),
+            timestamp: count.completed_at.unwrap_or_else(Utc::now),
+        });
+        Ok(count)
     }
 
     /// Cancel a draft or in-progress cycle count. No adjustments are applied.

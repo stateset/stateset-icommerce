@@ -1325,9 +1325,23 @@ impl PgWarehouseRepository {
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
-        builder.push(" ORDER BY created_at DESC");
+        let after_cursor = super::parse_after_cursor(filter.after_cursor.as_ref())?;
+        if let Some((cursor_created, cursor_id)) = after_cursor {
+            // Keyset cursor: (created_at, id) for stable DESC ordering
+            builder
+                .push(" AND (created_at < ")
+                .push_bind(cursor_created)
+                .push(" OR (created_at = ")
+                .push_bind(cursor_created)
+                .push(" AND id < ")
+                .push_bind(cursor_id)
+                .push("))");
+        }
+        builder.push(" ORDER BY created_at DESC, id DESC");
         builder.push(" LIMIT ").push_bind(i64::from(filter.limit.unwrap_or(50)));
-        builder.push(" OFFSET ").push_bind(i64::from(filter.offset.unwrap_or(0)));
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if after_cursor.is_none() { i64::from(filter.offset.unwrap_or(0)) } else { 0 };
+        builder.push(" OFFSET ").push_bind(offset);
 
         let rows = builder
             .build_query_as::<CycleCountRow>()

@@ -612,8 +612,10 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn list_async(&self, filter: PurchaseOrderFilter) -> Result<Vec<PurchaseOrder>> {
+        let after_cursor = super::parse_after_cursor(filter.after_cursor.as_ref())?;
         let limit = filter.limit.unwrap_or(100) as i64;
-        let offset = filter.offset.unwrap_or(0) as i64;
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if after_cursor.is_none() { filter.offset.unwrap_or(0) as i64 } else { 0 };
 
         let mut query = String::from("SELECT * FROM purchase_orders WHERE 1=1");
         let mut param_idx = 1;
@@ -627,8 +629,17 @@ impl PgPurchaseOrderRepository {
             param_idx += 1;
         }
 
+        if after_cursor.is_some() {
+            // Keyset cursor: (order_date, id) for stable DESC ordering
+            query.push_str(&format!(
+                " AND (order_date < ${param_idx} OR (order_date = ${param_idx} AND id < ${}))",
+                param_idx + 1
+            ));
+            param_idx += 2;
+        }
+
         query.push_str(&format!(
-            " ORDER BY order_date DESC LIMIT ${} OFFSET ${}",
+            " ORDER BY order_date DESC, id DESC LIMIT ${} OFFSET ${}",
             param_idx,
             param_idx + 1
         ));
@@ -640,6 +651,9 @@ impl PgPurchaseOrderRepository {
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());
+        }
+        if let Some((cursor_date, cursor_id)) = after_cursor {
+            q = q.bind(cursor_date).bind(cursor_id);
         }
 
         q = q.bind(limit).bind(offset);

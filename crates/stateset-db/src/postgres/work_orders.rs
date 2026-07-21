@@ -393,7 +393,9 @@ impl PgWorkOrderRepository {
             overdue_only,
             limit,
             offset,
+            after_cursor,
         } = filter;
+        let after_cursor = super::parse_after_cursor(after_cursor.as_ref())?;
 
         let mut builder = QueryBuilder::new("SELECT * FROM manufacturing_work_orders WHERE 1=1");
 
@@ -423,11 +425,25 @@ impl PgWorkOrderRepository {
                 .push(" AND status NOT IN ('completed', 'cancelled')");
         }
 
-        builder.push(" ORDER BY created_at DESC");
+        if let Some((cursor_created, cursor_id)) = after_cursor {
+            // Keyset cursor: (created_at, id) for stable DESC ordering
+            builder
+                .push(" AND (created_at < ")
+                .push_bind(cursor_created)
+                .push(" OR (created_at = ")
+                .push_bind(cursor_created)
+                .push(" AND id < ")
+                .push_bind(cursor_id)
+                .push("))");
+        }
+
+        builder.push(" ORDER BY created_at DESC, id DESC");
 
         if let Some(limit) = limit {
             builder.push(" LIMIT ").push_bind(limit as i64);
         }
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if after_cursor.is_none() { offset } else { Some(0) };
         if let Some(offset) = offset {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
@@ -760,6 +776,7 @@ impl PgWorkOrderRepository {
             overdue_only,
             limit: _,
             offset: _,
+            after_cursor: _,
         } = filter;
 
         let mut builder =

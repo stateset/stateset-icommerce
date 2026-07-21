@@ -805,7 +805,14 @@ impl Commerce {
     /// ```
     #[must_use]
     pub fn warehouse(&self) -> WarehouseOps {
-        WarehouseOps::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            WarehouseOps::new(self.db.clone(), self.event_system.clone())
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            WarehouseOps::new(self.db.clone())
+        }
     }
 
     /// Access receiving and goods receipt operations.
@@ -896,7 +903,14 @@ impl Commerce {
     /// ```
     #[must_use]
     pub fn accounts_payable(&self) -> AccountsPayable {
-        AccountsPayable::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            AccountsPayable::new(self.db.clone(), self.event_system.clone())
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            AccountsPayable::new(self.db.clone())
+        }
     }
 
     /// Access cost accounting operations.
@@ -1053,7 +1067,14 @@ impl Commerce {
     /// ```
     #[must_use]
     pub fn general_ledger(&self) -> GeneralLedger {
-        GeneralLedger::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            GeneralLedger::new(self.db.clone(), self.event_system.clone())
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            GeneralLedger::new(self.db.clone())
+        }
     }
 
     /// Access x402 payment protocol and agent card operations.
@@ -1187,13 +1208,27 @@ impl Commerce {
     /// Access fixed asset register operations.
     #[must_use]
     pub fn fixed_assets(&self) -> crate::FixedAssets {
-        crate::FixedAssets::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            crate::FixedAssets::new(self.db.clone(), self.event_system.clone())
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            crate::FixedAssets::new(self.db.clone())
+        }
     }
 
     /// Access revenue recognition (ASC 606) operations.
     #[must_use]
     pub fn revenue_recognition(&self) -> crate::RevenueRecognition {
-        crate::RevenueRecognition::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            crate::RevenueRecognition::new(self.db.clone(), self.event_system.clone())
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            crate::RevenueRecognition::new(self.db.clone())
+        }
     }
 
     /// Access vendor return operations.

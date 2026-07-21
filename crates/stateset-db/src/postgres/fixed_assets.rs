@@ -210,8 +210,10 @@ impl PgFixedAssetRepository {
 
     /// List fixed assets (async)
     pub async fn list_async(&self, filter: FixedAssetFilter) -> Result<Vec<FixedAsset>> {
+        let after_cursor = super::parse_after_cursor(filter.after_cursor.as_ref())?;
         let limit = i64::from(filter.limit.unwrap_or(100));
-        let offset = i64::from(filter.offset.unwrap_or(0));
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if after_cursor.is_none() { i64::from(filter.offset.unwrap_or(0)) } else { 0 };
         let mut query = String::from("SELECT * FROM fixed_assets WHERE 1=1");
         let mut idx = 1;
         if filter.category.is_some() {
@@ -238,7 +240,19 @@ impl PgFixedAssetRepository {
             query.push_str(&format!(" AND (name ILIKE ${idx} OR asset_number ILIKE ${idx})"));
             idx += 1;
         }
-        query.push_str(&format!(" ORDER BY created_at DESC LIMIT ${} OFFSET ${}", idx, idx + 1));
+        if after_cursor.is_some() {
+            // Keyset cursor: (created_at, id) for stable DESC ordering
+            query.push_str(&format!(
+                " AND (created_at < ${idx} OR (created_at = ${idx} AND id < ${}))",
+                idx + 1
+            ));
+            idx += 2;
+        }
+        query.push_str(&format!(
+            " ORDER BY created_at DESC, id DESC LIMIT ${} OFFSET ${}",
+            idx,
+            idx + 1
+        ));
 
         let mut q = sqlx::query_as::<_, FixedAssetRow>(&query);
         if let Some(category) = filter.category {
@@ -258,6 +272,9 @@ impl PgFixedAssetRepository {
         }
         if let Some(search) = filter.search {
             q = q.bind(format!("%{search}%"));
+        }
+        if let Some((cursor_created, cursor_id)) = after_cursor {
+            q = q.bind(cursor_created).bind(cursor_id);
         }
         let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
         rows.into_iter().map(Self::row_to_asset).collect()

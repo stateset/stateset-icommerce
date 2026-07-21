@@ -472,11 +472,20 @@ impl QualityRepository for SqliteQualityRepository {
             params.push(Box::new(inspector_id.clone()));
         }
 
+        // Keyset cursor: (created_at, id) for stable DESC ordering
+        if let Some((cursor_created, cursor_id)) = &filter.after_cursor {
+            conditions.push("(created_at < ? OR (created_at = ? AND id < ?))");
+            params.push(Box::new(cursor_created.clone()));
+            params.push(Box::new(cursor_created.clone()));
+            params.push(Box::new(cursor_id.clone()));
+        }
+
         let limit = filter.limit.unwrap_or(100);
-        let offset = filter.offset.unwrap_or(0);
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if filter.after_cursor.is_none() { filter.offset.unwrap_or(0) } else { 0 };
 
         let sql = format!(
-            "SELECT * FROM inspections WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM inspections WHERE {} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
             conditions.join(" AND ")
         );
 
@@ -1359,5 +1368,31 @@ mod tests {
     fn unknown_hold_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get_hold(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_inspections_after_cursor_paginates_without_overlap() {
+        let repo = fresh_repo();
+        for _ in 0..3 {
+            make_inspection(&repo);
+        }
+        let all = repo.list_inspections(InspectionFilter::default()).expect("list all");
+        assert_eq!(all.len(), 3);
+
+        let first_page = repo
+            .list_inspections(InspectionFilter { limit: Some(2), ..Default::default() })
+            .expect("page 1");
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].id, all[0].id);
+
+        let last = &first_page[1];
+        let second_page = repo
+            .list_inspections(InspectionFilter {
+                after_cursor: Some((last.created_at.to_rfc3339(), last.id.to_string())),
+                ..Default::default()
+            })
+            .expect("page 2");
+        assert_eq!(second_page.len(), 1);
+        assert_eq!(second_page[0].id, all[2].id);
     }
 }

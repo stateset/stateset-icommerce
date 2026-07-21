@@ -16,6 +16,7 @@ import {
   ArchiveBoxIcon,
   ServerStackIcon,
   ShieldCheckIcon,
+  BanknotesIcon,
 } from '@heroicons/react/24/outline';
 import { DashboardSidebarSection } from '@stateset/design';
 import { cn } from '@/lib/utils';
@@ -32,6 +33,9 @@ export const navigation = [
   { name: 'Returns', href: '/returns', icon: ArrowUturnLeftIcon },
   { name: 'Customers', href: '/customers', icon: UsersIcon },
   { name: 'Subscriptions', href: '/subscriptions', icon: CreditCardIcon },
+  // Finance section: /finance redirects to /finance/ledger; the ledger,
+  // bills, and close pages share an in-page tab nav (finance-nav.tsx).
+  { name: 'Finance', href: '/finance', icon: BanknotesIcon },
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
   { name: 'Gateway', href: '/gateway', icon: ServerStackIcon },
   { name: 'Build info', href: '/build-info', icon: ShieldCheckIcon },

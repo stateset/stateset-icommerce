@@ -15193,6 +15193,7 @@ impl FixedAssets {
             search,
             limit,
             offset,
+            after_cursor: None,
         };
         let assets = commerce
             .fixed_assets()
@@ -15789,6 +15790,7 @@ impl RevenueRecognition {
             search,
             limit,
             offset,
+            after_cursor: None,
         };
         let contracts = commerce.revenue_recognition().list_contracts(filter).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to list revenue contracts: {}", e))
@@ -16128,6 +16130,7 @@ impl CycleCounts {
                 status,
                 limit,
                 offset,
+                after_cursor: None,
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list cycle counts: {}", e)))?;
         Ok(counts.into_iter().map(Into::into).collect())

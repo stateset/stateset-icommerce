@@ -1,5 +1,6 @@
 //! Quality control endpoints (inspections, NCRs, quality holds).
 
+use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
@@ -56,6 +57,8 @@ pub(crate) struct InspectionFilterParams {
     pub reference_type: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -74,6 +77,11 @@ pub(crate) struct InspectionResponse {
 pub(crate) struct InspectionListResponse {
     pub inspections: Vec<InspectionResponse>,
     pub total: u64,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -315,16 +323,32 @@ pub(crate) async fn list_inspections(
         reference_type: params.reference_type.clone(),
         ..Default::default()
     };
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
     let total = c.quality().count_inspections(base.clone())?;
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let filter = stateset_core::InspectionFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
+        limit: Some(overfetch_limit(limit)),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
+        after_cursor,
         ..base
     };
-    let inspections = c.quality().list_inspections(filter)?;
+    let mut inspections = c.quality().list_inspections(filter)?;
+    let has_more = finalize_page(&mut inspections, limit);
+    let next_cursor = if has_more {
+        inspections.last().map(|i| encode_cursor(&i.created_at.to_rfc3339(), &i.id.to_string()))
+    } else {
+        None
+    };
     Ok(Json(InspectionListResponse {
         inspections: inspections.iter().map(inspection_to_resp).collect(),
         total,
+        next_cursor,
+        has_more,
     }))
 }
 
@@ -764,5 +788,72 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(json_body(resp).await["released_by"], "QA Manager");
+    }
+
+    #[tokio::test]
+    async fn list_inspections_has_more_and_next_cursor() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        for i in 0..3 {
+            let _ = i;
+            let body = serde_json::json!({
+                "inspection_type": "receiving",
+                "reference_type": "purchase_order",
+                "reference_id": uuid::Uuid::new_v4().to_string(),
+                "items": [{"sku": "SKU-CUR", "quantity_to_inspect": "1"}]
+            });
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::post("/quality/inspections")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::CREATED);
+        }
+
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/quality/inspections?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_body(resp).await;
+        assert_eq!(json["inspections"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], true);
+        let cursor = json["next_cursor"].as_str().expect("next_cursor").to_string();
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/quality/inspections?limit=2&after={cursor}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_body(resp).await;
+        assert_eq!(json["inspections"].as_array().unwrap().len(), 1);
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none() || json["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_inspections_invalid_cursor_returns_400() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let app = router().with_state(state);
+        let resp = app
+            .oneshot(
+                Request::get("/quality/inspections?after=!!!invalid!!!")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

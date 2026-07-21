@@ -1507,8 +1507,17 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             params_vec.push(Box::new(status.to_string()));
         }
 
-        sql.push_str(" ORDER BY created_at DESC");
-        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
+        // Keyset cursor: (created_at, id) for stable DESC ordering
+        if let Some((cursor_created, cursor_id)) = &filter.after_cursor {
+            sql.push_str(" AND (created_at < ? OR (created_at = ? AND id < ?))");
+            params_vec.push(Box::new(cursor_created.clone()));
+            params_vec.push(Box::new(cursor_created.clone()));
+            params_vec.push(Box::new(cursor_id.clone()));
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if filter.after_cursor.is_none() { filter.offset } else { None };
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, offset);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -2355,5 +2364,46 @@ mod tests {
             .map(|i| i.quantity_on_hand)
             .expect("dest row present");
         assert_eq!(on_hand, dec!(0.3));
+    }
+
+    #[test]
+    fn list_cycle_counts_after_cursor_paginates_without_overlap() {
+        use stateset_core::{CreateCycleCount, CreateCycleCountLine, CycleCountFilter};
+
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-CURSOR");
+        for i in 0..3 {
+            repo.create_cycle_count(CreateCycleCount {
+                warehouse_id: wh.id,
+                location_id: None,
+                scheduled_date: None,
+                counted_by: None,
+                lines: vec![CreateCycleCountLine {
+                    sku: format!("CUR-SKU-{i}"),
+                    lot_id: None,
+                    expected_quantity: dec!(1),
+                }],
+            })
+            .expect("create cycle count");
+        }
+
+        let all = repo.list_cycle_counts(CycleCountFilter::default()).expect("list all");
+        assert_eq!(all.len(), 3);
+
+        let first_page = repo
+            .list_cycle_counts(CycleCountFilter { limit: Some(2), ..Default::default() })
+            .expect("page 1");
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].id, all[0].id);
+
+        let last = &first_page[1];
+        let second_page = repo
+            .list_cycle_counts(CycleCountFilter {
+                after_cursor: Some((last.created_at.to_rfc3339(), last.id.to_string())),
+                ..Default::default()
+            })
+            .expect("page 2");
+        assert_eq!(second_page.len(), 1);
+        assert_eq!(second_page[0].id, all[2].id);
     }
 }

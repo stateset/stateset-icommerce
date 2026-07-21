@@ -42,9 +42,18 @@ use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use chrono::Utc;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 /// General Ledger interface.
 pub struct GeneralLedger {
     db: Arc<dyn Database>,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl std::fmt::Debug for GeneralLedger {
@@ -54,8 +63,19 @@ impl std::fmt::Debug for GeneralLedger {
 }
 
 impl GeneralLedger {
+    #[cfg(feature = "events")]
+    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
+        Self { db, event_system }
+    }
+
+    #[cfg(not(feature = "events"))]
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
     }
 
     // ========================================================================
@@ -470,7 +490,18 @@ impl GeneralLedger {
         as_of_date: NaiveDate,
         base_currency: Option<Currency>,
     ) -> Result<RevaluationResult> {
-        self.db.general_ledger().revalue(as_of_date, base_currency)
+        let result = self.db.general_ledger().revalue(as_of_date, base_currency)?;
+        #[cfg(feature = "events")]
+        if result.journal_entry.is_some() {
+            self.emit(CommerceEvent::FxRevaluationPosted {
+                as_of_date: result.as_of_date,
+                base_currency: result.base_currency,
+                total_unrealized_gain_loss: result.total_unrealized_gain_loss,
+                journal_entry_id: result.journal_entry.as_ref().map(|e| e.id),
+                timestamp: Utc::now(),
+            });
+        }
+        Ok(result)
     }
 
     /// Run period close process (generate closing entries, close period).
@@ -557,7 +588,7 @@ impl GeneralLedger {
             self.get_period(period_id)?.map_or(period.status, |p| p.status)
         };
 
-        Ok(CloseMonthReport {
+        let report = CloseMonthReport {
             period_id,
             period_name: period.period_name,
             dry_run: options.dry_run,
@@ -567,7 +598,20 @@ impl GeneralLedger {
             period_close,
             closing_entry,
             period_status,
-        })
+        };
+        #[cfg(feature = "events")]
+        if !report.dry_run {
+            self.emit(CommerceEvent::MonthEndCloseCompleted {
+                period_id: report.period_id,
+                period_name: report.period_name.clone(),
+                depreciation_total: report.depreciation.total_amount,
+                revenue_recognized_total: report.revenue_recognition.total_amount,
+                fx_unrealized_gain_loss: report.fx_revaluation.total_amount,
+                closing_entry_id: report.closing_entry.as_ref().map(|e| e.id),
+                timestamp: Utc::now(),
+            });
+        }
+        Ok(report)
     }
 
     /// Step 1: post scheduled depreciation due through period end.

@@ -756,4 +756,108 @@ mod event_roundtrip_tests {
             timestamp: Utc::now()
         }
     );
+    roundtrip!(
+        fixed_asset_placed_in_service,
+        CommerceEvent::FixedAssetPlacedInService {
+            asset_id: uuid::Uuid::new_v4(),
+            asset_number: "FA-0001".into(),
+            in_service_date: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            acquisition_cost: dec!(1200.00),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        fixed_asset_disposed,
+        CommerceEvent::FixedAssetDisposed {
+            asset_id: uuid::Uuid::new_v4(),
+            asset_number: "FA-0001".into(),
+            disposal_date: chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+            proceeds: dec!(900.00),
+            gain_loss: dec!(-100.00),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        fixed_asset_written_off,
+        CommerceEvent::FixedAssetWrittenOff {
+            asset_id: uuid::Uuid::new_v4(),
+            asset_number: "FA-0001".into(),
+            write_off_date: chrono::NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
+            loss: dec!(1200.00),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        depreciation_posted,
+        CommerceEvent::DepreciationPosted {
+            asset_id: uuid::Uuid::new_v4(),
+            asset_number: "FA-0001".into(),
+            periods: 2,
+            amount: dec!(200.00),
+            accumulated_depreciation: dec!(200.00),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        revenue_recognized,
+        CommerceEvent::RevenueRecognized {
+            obligation_id: uuid::Uuid::new_v4(),
+            amount: dec!(200.00),
+            total_recognized: dec!(400.00),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        revenue_contract_completed,
+        CommerceEvent::RevenueContractCompleted {
+            contract_id: uuid::Uuid::new_v4(),
+            contract_number: "RC-0001".into(),
+            transaction_price: dec!(600.00),
+            currency: CurrencyCode::USD,
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        cycle_count_completed,
+        CommerceEvent::CycleCountCompleted {
+            cycle_count_id: uuid::Uuid::new_v4(),
+            warehouse_id: 1,
+            line_count: 3,
+            variance_line_count: 1,
+            total_variance: dec!(-2),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        three_way_match_variance_detected,
+        CommerceEvent::ThreeWayMatchVarianceDetected {
+            bill_id: uuid::Uuid::new_v4(),
+            purchase_order_id: uuid::Uuid::new_v4(),
+            variance_line_count: 1,
+            tolerance_percent: dec!(5),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        fx_revaluation_posted,
+        CommerceEvent::FxRevaluationPosted {
+            as_of_date: chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+            base_currency: CurrencyCode::USD,
+            total_unrealized_gain_loss: dec!(100.00),
+            journal_entry_id: Some(uuid::Uuid::new_v4()),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        month_end_close_completed,
+        CommerceEvent::MonthEndCloseCompleted {
+            period_id: uuid::Uuid::new_v4(),
+            period_name: "January 2026".into(),
+            depreciation_total: dec!(100.00),
+            revenue_recognized_total: dec!(200.00),
+            fx_unrealized_gain_loss: dec!(0),
+            closing_entry_id: None,
+            timestamp: Utc::now()
+        }
+    );
 }

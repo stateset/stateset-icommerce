@@ -287,8 +287,17 @@ impl stateset_core::RevenueRecognitionRepository for SqliteRevenueRecognitionRep
             sql.push_str(" AND contract_number LIKE ? ESCAPE '\\'");
             params.push(Box::new(format!("%{}%", super::escape_like(search))));
         }
-        sql.push_str(" ORDER BY created_at DESC");
-        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
+        // Keyset cursor: (created_at, id) for stable DESC ordering
+        if let Some((cursor_created, cursor_id)) = &filter.after_cursor {
+            sql.push_str(" AND (created_at < ? OR (created_at = ? AND id < ?))");
+            params.push(Box::new(cursor_created.clone()));
+            params.push(Box::new(cursor_created.clone()));
+            params.push(Box::new(cursor_id.clone()));
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
+        // Offset pagination applies only in non-cursor mode.
+        let offset = if filter.after_cursor.is_none() { filter.offset } else { None };
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, offset);
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -899,5 +908,31 @@ mod tests {
         repo.generate_schedule(ratable.id).expect("generate");
         let s = repo.get_schedule(ratable.id).expect("get").expect("some");
         assert_eq!(s.total_amount, dec!(1000));
+    }
+
+    #[test]
+    fn list_contracts_after_cursor_paginates_without_overlap() {
+        let repo = test_repo();
+        for _ in 0..3 {
+            repo.create_contract(create_input()).expect("create");
+        }
+        let all = repo.list_contracts(RevenueContractFilter::default()).expect("list all");
+        assert_eq!(all.len(), 3);
+
+        let first_page = repo
+            .list_contracts(RevenueContractFilter { limit: Some(2), ..Default::default() })
+            .expect("page 1");
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].id, all[0].id);
+
+        let last = &first_page[1];
+        let second_page = repo
+            .list_contracts(RevenueContractFilter {
+                after_cursor: Some((last.created_at.to_rfc3339(), last.id.to_string())),
+                ..Default::default()
+            })
+            .expect("page 2");
+        assert_eq!(second_page.len(), 1);
+        assert_eq!(second_page[0].id, all[2].id);
     }
 }

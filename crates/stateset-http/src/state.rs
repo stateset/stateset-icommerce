@@ -289,6 +289,7 @@ impl FromStr for IpCidr {
 pub struct AppState {
     commerce: Arc<Commerce>,
     tenant_db_dir: Option<Arc<PathBuf>>,
+    ignore_tenant_header: bool,
     tenant_cache: Arc<RwLock<HashMap<String, TenantCacheEntry>>>,
     tenant_access_clock: Arc<AtomicU64>,
     tenant_cache_hits: Arc<AtomicU64>,
@@ -333,6 +334,7 @@ impl fmt::Debug for AppState {
                 "tenant_db_dir",
                 &self.tenant_db_dir.as_deref().map(|path| path.display().to_string()),
             )
+            .field("ignore_tenant_header", &self.ignore_tenant_header)
             .field(
                 "metrics_bearer_token",
                 &self.metrics_bearer_token.as_ref().map(|_| "<redacted>"),
@@ -441,7 +443,10 @@ fn is_valid_tenant_id(value: &str) -> bool {
     if trimmed.is_empty() || trimmed.len() > 64 {
         return false;
     }
-    trimmed.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+    // Reject anything with path semantics outright: `.` / `..` components,
+    // separators, and dots in general (a tenant id is an identifier, not a
+    // file name fragment).
+    trimmed.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
 /// Parse `x-tenant-id` from request headers.
@@ -468,6 +473,7 @@ impl AppState {
         Self {
             commerce: Arc::new(commerce),
             tenant_db_dir: tenant_db_dir.map(Arc::new),
+            ignore_tenant_header: false,
             tenant_cache: Arc::new(RwLock::new(HashMap::new())),
             tenant_access_clock: Arc::new(AtomicU64::new(0)),
             tenant_cache_hits: Arc::new(AtomicU64::new(0)),
@@ -510,6 +516,26 @@ impl AppState {
     pub fn with_tenant_db_dir(mut self, tenant_db_dir: impl Into<PathBuf>) -> Self {
         self.tenant_db_dir = Some(Arc::new(tenant_db_dir.into()));
         self
+    }
+
+    /// Ignore `x-tenant-id` headers when per-tenant routing is disabled.
+    ///
+    /// By default, a request that carries `x-tenant-id` while no tenant
+    /// database directory is configured is rejected with a `400` so that
+    /// callers are never silently served shared data. Deployments that
+    /// intentionally sit behind a multi-tenant proxy (which forwards the
+    /// header but handles isolation upstream) can opt back into the old
+    /// silent fallthrough behavior with this escape hatch.
+    #[must_use]
+    pub const fn with_ignore_tenant_header(mut self) -> Self {
+        self.ignore_tenant_header = true;
+        self
+    }
+
+    /// Whether `x-tenant-id` headers are ignored when tenant routing is disabled.
+    #[must_use]
+    pub const fn ignores_tenant_header(&self) -> bool {
+        self.ignore_tenant_header
     }
 
     /// Set the maximum number of per-tenant databases kept in the active cache.
@@ -920,9 +946,20 @@ impl AppState {
 
     /// Resolve the [`Commerce`] engine for a tenant.
     ///
-    /// When per-tenant routing is disabled, this always returns the default engine.
+    /// When per-tenant routing is disabled, requests without a tenant id get
+    /// the default engine. Requests that *do* carry a tenant id are rejected
+    /// (the backend cannot isolate them), unless
+    /// [`Self::with_ignore_tenant_header`] was configured.
     pub fn commerce_for_tenant(&self, tenant_id: Option<&str>) -> Result<Arc<Commerce>, HttpError> {
         let Some(base_dir) = self.tenant_db_dir.as_deref() else {
+            let carries_tenant = tenant_id.map(str::trim).is_some_and(|value| !value.is_empty());
+            if carries_tenant && !self.ignore_tenant_header {
+                return Err(HttpError::BadRequest(
+                    "tenant routing is not enabled on this deployment; remove the x-tenant-id \
+                     header or configure a tenant database directory"
+                        .to_string(),
+                ));
+            }
             return Ok(Arc::clone(&self.commerce));
         };
 
@@ -954,7 +991,21 @@ impl AppState {
             ))
         })?;
 
-        let db_path = base_dir.join(format!("{tenant_id}.db"));
+        let canonical_base = base_dir.canonicalize().map_err(|error| {
+            HttpError::InternalError(format!(
+                "failed to canonicalize tenant database directory {}: {error}",
+                base_dir.display()
+            ))
+        })?;
+        let db_path = canonical_base.join(format!("{tenant_id}.db"));
+        // Defense in depth: the validated tenant id cannot contain path
+        // separators or dot components, but verify the resolved path still
+        // lives directly inside the tenant database directory.
+        if db_path.parent() != Some(canonical_base.as_path())
+            || !db_path.starts_with(&canonical_base)
+        {
+            return Err(HttpError::BadRequest("invalid x-tenant-id header".to_string()));
+        }
         let db_path_str = db_path.to_string_lossy().into_owned();
         let created = Arc::new(Commerce::new(&db_path_str).map_err(|error| {
             HttpError::InternalError(format!(
@@ -1044,6 +1095,66 @@ mod tests {
 
     fn test_commerce() -> Commerce {
         Commerce::new(":memory:").expect("in-memory Commerce")
+    }
+
+    #[test]
+    fn tenant_id_validation_rejects_path_like_values() {
+        assert!(is_valid_tenant_id("tenant-1"));
+        assert!(is_valid_tenant_id("Tenant_2"));
+        assert!(is_valid_tenant_id(&"a".repeat(64)));
+
+        assert!(!is_valid_tenant_id(""));
+        assert!(!is_valid_tenant_id("   "));
+        assert!(!is_valid_tenant_id(&"a".repeat(65)));
+        assert!(!is_valid_tenant_id("."));
+        assert!(!is_valid_tenant_id(".."));
+        assert!(!is_valid_tenant_id("tenant.1"));
+        assert!(!is_valid_tenant_id("../etc/passwd"));
+        assert!(!is_valid_tenant_id("./tenant"));
+        assert!(!is_valid_tenant_id("a/b"));
+        assert!(!is_valid_tenant_id("a\\b"));
+        assert!(!is_valid_tenant_id("/absolute"));
+    }
+
+    #[test]
+    fn tenant_header_without_tenant_routing_is_rejected() {
+        let state = AppState::new(test_commerce());
+        let err = state.commerce_for_tenant(Some("tenant-1")).unwrap_err();
+        assert!(matches!(err, HttpError::BadRequest(_)));
+        assert!(err.to_string().contains("tenant routing is not enabled"));
+    }
+
+    #[test]
+    fn missing_tenant_header_without_tenant_routing_uses_shared_engine() {
+        let state = AppState::new(test_commerce());
+        let shared = state.commerce_for_tenant(None).expect("shared engine");
+        assert!(Arc::ptr_eq(&shared, &state.commerce));
+        // A blank header value is treated as absent.
+        let blank = state.commerce_for_tenant(Some("  ")).expect("shared engine");
+        assert!(Arc::ptr_eq(&blank, &state.commerce));
+    }
+
+    #[test]
+    fn ignore_tenant_header_escape_hatch_restores_fallthrough() {
+        let state = AppState::new(test_commerce()).with_ignore_tenant_header();
+        assert!(state.ignores_tenant_header());
+        let shared = state.commerce_for_tenant(Some("tenant-1")).expect("shared engine");
+        assert!(Arc::ptr_eq(&shared, &state.commerce));
+    }
+
+    #[test]
+    fn tenant_routing_rejects_traversal_attempts() {
+        let base = std::env::temp_dir().join(format!("stateset-state-tenant-{}", Uuid::new_v4()));
+        let state = AppState::new(test_commerce()).with_tenant_db_dir(&base);
+        for candidate in ["..", ".", "../other", "./x", "/etc/passwd", "a/b", "a\\b", "a.b"] {
+            let err = state.commerce_for_tenant(Some(candidate)).unwrap_err();
+            assert!(matches!(err, HttpError::BadRequest(_)), "{candidate} should be rejected");
+        }
+        // A valid tenant id still resolves and lands inside the base directory.
+        let engine = state.commerce_for_tenant(Some("tenant-ok")).expect("tenant engine");
+        assert!(!Arc::ptr_eq(&engine, &state.commerce));
+        assert!(base.join("tenant-ok.db").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
