@@ -264,8 +264,11 @@ impl SqlitePromotionRepository {
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
         };
 
+        // Batch-load conditions for all listed promotions on the same connection.
+        let ids: Vec<PromotionId> = promotions.iter().map(|p| p.id).collect();
+        let mut conditions_by_id = Self::load_conditions_batch(&conn, &ids)?;
         for promo in &mut promotions {
-            promo.conditions = self.get_conditions_with_conn(&conn, promo.id)?;
+            promo.conditions = conditions_by_id.remove(&promo.id).unwrap_or_default();
         }
 
         Ok(promotions)
@@ -387,6 +390,25 @@ impl SqlitePromotionRepository {
         })
     }
 
+    fn row_to_condition(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromotionCondition> {
+        Ok(PromotionCondition {
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "promotion_condition", "id")?,
+            promotion_id: PromotionId::from(parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "promotion_condition",
+                "promotion_id",
+            )?),
+            condition_type: parse_enum_row(
+                &row.get::<_, String>(2)?,
+                "promotion_condition",
+                "condition_type",
+            )?,
+            operator: parse_enum_row(&row.get::<_, String>(3)?, "promotion_condition", "operator")?,
+            value: row.get(4)?,
+            is_required: row.get::<_, i32>(5)? != 0,
+        })
+    }
+
     fn get_conditions_with_conn(
         &self,
         conn: &rusqlite::Connection,
@@ -400,32 +422,46 @@ impl SqlitePromotionRepository {
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let rows = stmt
-            .query_map([promotion_id.to_string()], |row| {
-                Ok(PromotionCondition {
-                    id: parse_uuid_row(&row.get::<_, String>(0)?, "promotion_condition", "id")?,
-                    promotion_id: PromotionId::from(parse_uuid_row(
-                        &row.get::<_, String>(1)?,
-                        "promotion_condition",
-                        "promotion_id",
-                    )?),
-                    condition_type: parse_enum_row(
-                        &row.get::<_, String>(2)?,
-                        "promotion_condition",
-                        "condition_type",
-                    )?,
-                    operator: parse_enum_row(
-                        &row.get::<_, String>(3)?,
-                        "promotion_condition",
-                        "operator",
-                    )?,
-                    value: row.get(4)?,
-                    is_required: row.get::<_, i32>(5)? != 0,
-                })
-            })
+            .query_map([promotion_id.to_string()], Self::row_to_condition)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
+    }
+
+    /// Batch-load conditions for many promotions in chunked `IN`-clause
+    /// queries, grouped by promotion id. Uses the caller's connection.
+    fn load_conditions_batch(
+        conn: &rusqlite::Connection,
+        ids: &[PromotionId],
+    ) -> Result<std::collections::HashMap<PromotionId, Vec<PromotionCondition>>> {
+        let mut map: std::collections::HashMap<PromotionId, Vec<PromotionCondition>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        let id_strings: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        for chunk in id_strings.chunks(500) {
+            let placeholders = crate::sqlite::build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT id, promotion_id, condition_type, operator, value, is_required
+                 FROM promotion_conditions WHERE promotion_id IN ({placeholders})"
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let cond = Self::row_to_condition(row)?;
+                    Ok((cond.promotion_id, cond))
+                })
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            for row in rows {
+                let (parent, cond) =
+                    row.map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+                map.entry(parent).or_default().push(cond);
+            }
+        }
+        Ok(map)
     }
 
     // ========================================================================
@@ -2209,5 +2245,44 @@ mod tests {
     fn get_unknown_coupon_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get_coupon(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_batched_condition_loading_preserves_per_promotion_conditions() {
+        let repo = fresh_repo();
+        let condition = |value: &str| stateset_core::CreatePromotionCondition {
+            condition_type: ConditionType::MinimumSubtotal,
+            operator: ConditionOperator::GreaterThanOrEqual,
+            value: value.into(),
+            is_required: true,
+        };
+        // Distinct condition counts/values per promotion so cross-wiring is caught.
+        for (code, values) in [
+            ("COND-A", vec!["10", "20"]),
+            ("COND-B", vec!["30"]),
+            ("COND-C", vec!["40", "50", "60"]),
+        ] {
+            let promo = make_pct_promo(&repo, code, dec!(0.10));
+            // make_pct_promo creates without conditions; add them individually.
+            for v in values {
+                repo.create_condition(promo.id, condition(v)).expect("add condition");
+            }
+        }
+
+        let listed = repo.list(PromotionFilter::default()).expect("list");
+        assert_eq!(listed.len(), 3);
+        for promo in &listed {
+            let direct = repo.get(promo.id).expect("get").expect("present").conditions;
+            let mut listed_values: Vec<_> =
+                promo.conditions.iter().map(|c| c.value.clone()).collect();
+            let mut direct_values: Vec<_> = direct.iter().map(|c| c.value.clone()).collect();
+            listed_values.sort();
+            direct_values.sort();
+            assert_eq!(listed_values, direct_values, "conditions must match for {}", promo.name);
+            assert!(
+                promo.conditions.iter().all(|c| c.promotion_id == promo.id),
+                "conditions must belong to their own promotion"
+            );
+        }
     }
 }

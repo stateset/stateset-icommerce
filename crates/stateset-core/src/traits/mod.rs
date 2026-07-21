@@ -137,7 +137,7 @@ use crate::models::{
     CreateContact, CreateProductionBatch, CreateTransferOrder, CreateUnitClass,
     CreateUnitConversionRule, CreateUnitOfMeasure, ProductionBatch, ProductionBatchFilter,
     TransferOrder, TransferOrderFilter, UnitClass, UnitConversionRule, UnitOfMeasure,
-    UpdateChannel, UpdateCompany, UpdateProductionBatch,
+    UnitOfMeasureFilter, UpdateChannel, UpdateCompany, UpdateProductionBatch,
 };
 use chrono::{DateTime, Utc};
 use stateset_primitives::{
@@ -4042,7 +4042,9 @@ pub trait UnitOfMeasureRepository: Send + Sync {
     fn create_uom(&self, input: CreateUnitOfMeasure) -> Result<UnitOfMeasure>;
 
     /// List units of measure, optionally scoped to a class.
-    fn list_uoms(&self, class_id: Option<UnitClassId>) -> Result<Vec<UnitOfMeasure>>;
+    ///
+    /// A server-side pagination policy applies when the filter has no limit.
+    fn list_uoms(&self, filter: UnitOfMeasureFilter) -> Result<Vec<UnitOfMeasure>>;
 
     /// Mark a UOM as the base unit for its class.
     fn set_base_uom(&self, id: UnitOfMeasureId) -> Result<UnitOfMeasure>;

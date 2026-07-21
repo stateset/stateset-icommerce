@@ -10,7 +10,7 @@ use sqlx::postgres::PgPool;
 use stateset_core::{
     CommerceError, ConversionRuleType, CreateUnitClass, CreateUnitConversionRule,
     CreateUnitOfMeasure, Result, UnitClass, UnitClassId, UnitConversionRule, UnitConversionRuleId,
-    UnitOfMeasure, UnitOfMeasureId, UnitOfMeasureRepository,
+    UnitOfMeasure, UnitOfMeasureFilter, UnitOfMeasureId, UnitOfMeasureRepository,
 };
 
 /// PostgreSQL-backed [`UnitOfMeasureRepository`].
@@ -186,23 +186,28 @@ impl PgUnitOfMeasureRepository {
     }
 
     /// List units of measure, optionally scoped to a class.
-    pub async fn list_uoms_async(
-        &self,
-        class_id: Option<UnitClassId>,
-    ) -> Result<Vec<UnitOfMeasure>> {
-        let rows = match class_id {
+    pub async fn list_uoms_async(&self, filter: UnitOfMeasureFilter) -> Result<Vec<UnitOfMeasure>> {
+        let limit = super::effective_limit(filter.limit);
+        let offset = i64::from(filter.offset.unwrap_or(0));
+        let rows = match filter.class_id {
             Some(class_id) => {
                 sqlx::query_as::<_, UomRow>(
-                    "SELECT * FROM units_of_measure WHERE unit_class_id = $1 ORDER BY name",
+                    "SELECT * FROM units_of_measure WHERE unit_class_id = $1 ORDER BY name LIMIT $2 OFFSET $3",
                 )
                 .bind(class_id)
+                .bind(limit)
+                .bind(offset)
                 .fetch_all(&self.pool)
                 .await
             }
             None => {
-                sqlx::query_as::<_, UomRow>("SELECT * FROM units_of_measure ORDER BY name")
-                    .fetch_all(&self.pool)
-                    .await
+                sqlx::query_as::<_, UomRow>(
+                    "SELECT * FROM units_of_measure ORDER BY name LIMIT $1 OFFSET $2",
+                )
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await
             }
         }
         .map_err(map_db_error)?;
@@ -353,8 +358,8 @@ impl UnitOfMeasureRepository for PgUnitOfMeasureRepository {
         block_on(self.create_uom_async(input))
     }
 
-    fn list_uoms(&self, class_id: Option<UnitClassId>) -> Result<Vec<UnitOfMeasure>> {
-        block_on(self.list_uoms_async(class_id))
+    fn list_uoms(&self, filter: UnitOfMeasureFilter) -> Result<Vec<UnitOfMeasure>> {
+        block_on(self.list_uoms_async(filter))
     }
 
     fn set_base_uom(&self, id: UnitOfMeasureId) -> Result<UnitOfMeasure> {

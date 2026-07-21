@@ -183,6 +183,7 @@ impl SqliteTaxRepository {
         // Deterministic, backend-identical order (COALESCE so a NULL state_code
         // sorts consistently with the Postgres backend). Must match Postgres.
         query.push_str(" ORDER BY country_code, COALESCE(state_code, ''), level, name");
+        crate::sqlite::append_limit_offset(&mut query, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
         let params: Vec<&dyn rusqlite::ToSql> =
@@ -370,6 +371,7 @@ impl SqliteTaxRepository {
         }
 
         query.push_str(" ORDER BY priority, name");
+        crate::sqlite::append_limit_offset(&mut query, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
         let params: Vec<&dyn rusqlite::ToSql> =
@@ -1332,6 +1334,52 @@ mod tests {
         let by_code = repo.get_jurisdiction_by_code("ZZ-CA").expect("ok").expect("found");
         assert_eq!(by_code.id, j.id);
         assert!(repo.get_jurisdiction_by_code("missing-xyz").expect("ok").is_none());
+    }
+
+    #[test]
+    fn list_jurisdictions_applies_limit_and_offset() {
+        let repo = fresh_repo();
+        make_state_jur(&repo, "AA");
+        make_state_jur(&repo, "BB");
+        make_state_jur(&repo, "CC");
+
+        let base =
+            || TaxJurisdictionFilter { country_code: Some("ZZ".into()), ..Default::default() };
+        let all = repo.list_jurisdictions(base()).expect("list all");
+        assert_eq!(all.len(), 3);
+
+        let page = repo
+            .list_jurisdictions(TaxJurisdictionFilter { limit: Some(2), ..base() })
+            .expect("limited");
+        assert_eq!(page.len(), 2, "limit must bound the result set");
+        assert_eq!(page[0].id, all[0].id);
+
+        let rest = repo
+            .list_jurisdictions(TaxJurisdictionFilter { limit: Some(2), offset: Some(2), ..base() })
+            .expect("offset");
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].id, all[2].id);
+    }
+
+    #[test]
+    fn list_rates_applies_limit_and_offset() {
+        let repo = fresh_repo();
+        let jur = make_state_jur(&repo, "LR");
+        for _ in 0..3 {
+            make_rate(&repo, jur.id, dec!(0.05));
+        }
+
+        let base = || TaxRateFilter { jurisdiction_id: Some(jur.id), ..Default::default() };
+        let all = repo.list_rates(base()).expect("list all");
+        assert_eq!(all.len(), 3);
+
+        let page = repo.list_rates(TaxRateFilter { limit: Some(2), ..base() }).expect("limited");
+        assert_eq!(page.len(), 2, "limit must bound the result set");
+
+        let rest = repo
+            .list_rates(TaxRateFilter { limit: Some(2), offset: Some(2), ..base() })
+            .expect("offset");
+        assert_eq!(rest.len(), 1);
     }
 
     #[test]

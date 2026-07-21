@@ -733,6 +733,10 @@ pub struct TaxRateFilter {
     pub product_category: Option<ProductTaxCategory>,
     pub active_only: bool,
     pub effective_date: Option<NaiveDate>,
+    /// Maximum number of rows to return (server default/cap applies when unset)
+    pub limit: Option<u32>,
+    /// Number of rows to skip
+    pub offset: Option<u32>,
 }
 
 /// Filter for querying jurisdictions
@@ -742,6 +746,10 @@ pub struct TaxJurisdictionFilter {
     pub state_code: Option<String>,
     pub level: Option<JurisdictionLevel>,
     pub active_only: bool,
+    /// Maximum number of rows to return (server default/cap applies when unset)
+    pub limit: Option<u32>,
+    /// Number of rows to skip
+    pub offset: Option<u32>,
 }
 
 // ============================================================================

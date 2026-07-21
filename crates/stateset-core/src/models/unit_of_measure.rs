@@ -50,6 +50,17 @@ pub struct UnitOfMeasure {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Filter for listing units of measure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UnitOfMeasureFilter {
+    /// Restrict to a single unit class.
+    pub class_id: Option<UnitClassId>,
+    /// Maximum number of rows to return (server default/cap applies when unset)
+    pub limit: Option<u32>,
+    /// Number of rows to skip
+    pub offset: Option<u32>,
+}
+
 /// The scope of a conversion rule.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,

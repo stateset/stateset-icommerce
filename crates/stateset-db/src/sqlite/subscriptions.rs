@@ -166,12 +166,11 @@ impl SqliteSubscriptionRepository {
     }
 
     pub fn list_plans(&self, filter: SubscriptionPlanFilter) -> Result<Vec<SubscriptionPlan>> {
-        // Query plans - connection scoped to this block
-        let mut plans: Vec<SubscriptionPlan> = {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        let conn = self.pool.get().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
+        })?;
 
+        let mut plans: Vec<SubscriptionPlan> = {
             let mut sql = "SELECT * FROM subscription_plans WHERE 1=1".to_string();
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -215,11 +214,13 @@ impl SqliteSubscriptionRepository {
                 result.push(plan);
             }
             result
-        }; // Connection dropped here
+        };
 
-        // Load items for each plan (each gets its own connection)
+        // Batch-load items for all listed plans on the same connection.
+        let ids: Vec<Uuid> = plans.iter().map(|p| p.id).collect();
+        let mut items_by_id = Self::load_plan_items_batch(&conn, &ids)?;
         for plan in &mut plans {
-            plan.items = self.get_plan_items(plan.id)?;
+            plan.items = items_by_id.remove(&plan.id).unwrap_or_default();
         }
 
         Ok(plans)
@@ -334,6 +335,38 @@ impl SqliteSubscriptionRepository {
         })
     }
 
+    fn row_to_plan_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<SubscriptionPlanItem> {
+        Ok(SubscriptionPlanItem {
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_plan_item", "id")?,
+            plan_id: parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "subscription_plan_item",
+                "plan_id",
+            )?,
+            product_id: ProductId::from(parse_uuid_row(
+                &row.get::<_, String>(2)?,
+                "subscription_plan_item",
+                "product_id",
+            )?),
+            variant_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(3)?,
+                "subscription_plan_item",
+                "variant_id",
+            )?,
+            sku: row.get(4)?,
+            name: row.get(5)?,
+            quantity: row.get(6)?,
+            min_quantity: row.get(7)?,
+            max_quantity: row.get(8)?,
+            is_required: row.get::<_, i32>(9)? != 0,
+            unit_price: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(10)?,
+                "subscription_plan_item",
+                "unit_price",
+            )?,
+        })
+    }
+
     fn get_plan_items(&self, plan_id: Uuid) -> Result<Vec<SubscriptionPlanItem>> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
@@ -345,41 +378,46 @@ impl SqliteSubscriptionRepository {
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let rows = stmt
-            .query_map([plan_id.to_string()], |row| {
-                Ok(SubscriptionPlanItem {
-                    id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_plan_item", "id")?,
-                    plan_id: parse_uuid_row(
-                        &row.get::<_, String>(1)?,
-                        "subscription_plan_item",
-                        "plan_id",
-                    )?,
-                    product_id: ProductId::from(parse_uuid_row(
-                        &row.get::<_, String>(2)?,
-                        "subscription_plan_item",
-                        "product_id",
-                    )?),
-                    variant_id: parse_uuid_opt_row(
-                        row.get::<_, Option<String>>(3)?,
-                        "subscription_plan_item",
-                        "variant_id",
-                    )?,
-                    sku: row.get(4)?,
-                    name: row.get(5)?,
-                    quantity: row.get(6)?,
-                    min_quantity: row.get(7)?,
-                    max_quantity: row.get(8)?,
-                    is_required: row.get::<_, i32>(9)? != 0,
-                    unit_price: parse_decimal_opt_row(
-                        row.get::<_, Option<String>>(10)?,
-                        "subscription_plan_item",
-                        "unit_price",
-                    )?,
-                })
-            })
+            .query_map([plan_id.to_string()], Self::row_to_plan_item)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
+    }
+
+    /// Batch-load plan items for many plans in chunked `IN`-clause queries,
+    /// grouped by plan id. Uses the caller's connection.
+    fn load_plan_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<SubscriptionPlanItem>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<SubscriptionPlanItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        let id_strings: Vec<String> = ids.iter().map(Uuid::to_string).collect();
+        for chunk in id_strings.chunks(500) {
+            let placeholders = crate::sqlite::build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT id, plan_id, product_id, variant_id, sku, name, quantity, min_quantity, max_quantity, is_required, unit_price
+                 FROM subscription_plan_items WHERE plan_id IN ({placeholders})"
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let item = Self::row_to_plan_item(row)?;
+                    Ok((item.plan_id, item))
+                })
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            for row in rows {
+                let (parent, item) =
+                    row.map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+                map.entry(parent).or_default().push(item);
+            }
+        }
+        Ok(map)
     }
 
     // ========================================================================
@@ -631,12 +669,11 @@ impl SqliteSubscriptionRepository {
     }
 
     pub fn list_subscriptions(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>> {
-        // Query subscriptions - connection scoped to this block
-        let mut subscriptions: Vec<Subscription> = {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        let conn = self.pool.get().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
+        })?;
 
+        let mut subscriptions: Vec<Subscription> = {
             let mut sql = "SELECT * FROM subscriptions WHERE 1=1".to_string();
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -694,11 +731,13 @@ impl SqliteSubscriptionRepository {
                 result.push(sub);
             }
             result
-        }; // Connection dropped here
+        };
 
-        // Load items for each subscription (each gets its own connection)
+        // Batch-load items for all listed subscriptions on the same connection.
+        let ids: Vec<SubscriptionId> = subscriptions.iter().map(|s| s.id).collect();
+        let mut items_by_id = Self::load_subscription_items_batch(&conn, &ids)?;
         for sub in &mut subscriptions {
-            sub.items = self.get_subscription_items(sub.id)?;
+            sub.items = items_by_id.remove(&sub.id).unwrap_or_default();
         }
 
         Ok(subscriptions)
@@ -1026,6 +1065,40 @@ impl SqliteSubscriptionRepository {
         })
     }
 
+    fn row_to_subscription_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<SubscriptionItem> {
+        Ok(SubscriptionItem {
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_item", "id")?,
+            subscription_id: SubscriptionId::from(parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "subscription_item",
+                "subscription_id",
+            )?),
+            product_id: ProductId::from(parse_uuid_row(
+                &row.get::<_, String>(2)?,
+                "subscription_item",
+                "product_id",
+            )?),
+            variant_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(3)?,
+                "subscription_item",
+                "variant_id",
+            )?,
+            sku: row.get(4)?,
+            name: row.get(5)?,
+            quantity: row.get(6)?,
+            unit_price: parse_decimal_row(
+                &row.get::<_, String>(7)?,
+                "subscription_item",
+                "unit_price",
+            )?,
+            line_total: parse_decimal_row(
+                &row.get::<_, String>(8)?,
+                "subscription_item",
+                "line_total",
+            )?,
+        })
+    }
+
     fn get_subscription_items(
         &self,
         subscription_id: SubscriptionId,
@@ -1040,43 +1113,46 @@ impl SqliteSubscriptionRepository {
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let rows = stmt
-            .query_map([subscription_id.to_string()], |row| {
-                Ok(SubscriptionItem {
-                    id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_item", "id")?,
-                    subscription_id: SubscriptionId::from(parse_uuid_row(
-                        &row.get::<_, String>(1)?,
-                        "subscription_item",
-                        "subscription_id",
-                    )?),
-                    product_id: ProductId::from(parse_uuid_row(
-                        &row.get::<_, String>(2)?,
-                        "subscription_item",
-                        "product_id",
-                    )?),
-                    variant_id: parse_uuid_opt_row(
-                        row.get::<_, Option<String>>(3)?,
-                        "subscription_item",
-                        "variant_id",
-                    )?,
-                    sku: row.get(4)?,
-                    name: row.get(5)?,
-                    quantity: row.get(6)?,
-                    unit_price: parse_decimal_row(
-                        &row.get::<_, String>(7)?,
-                        "subscription_item",
-                        "unit_price",
-                    )?,
-                    line_total: parse_decimal_row(
-                        &row.get::<_, String>(8)?,
-                        "subscription_item",
-                        "line_total",
-                    )?,
-                })
-            })
+            .query_map([subscription_id.to_string()], Self::row_to_subscription_item)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
+    }
+
+    /// Batch-load subscription items for many subscriptions in chunked
+    /// `IN`-clause queries, grouped by subscription id. Uses the caller's connection.
+    fn load_subscription_items_batch(
+        conn: &rusqlite::Connection,
+        ids: &[SubscriptionId],
+    ) -> Result<std::collections::HashMap<SubscriptionId, Vec<SubscriptionItem>>> {
+        let mut map: std::collections::HashMap<SubscriptionId, Vec<SubscriptionItem>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        let id_strings: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        for chunk in id_strings.chunks(500) {
+            let placeholders = crate::sqlite::build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT id, subscription_id, product_id, variant_id, sku, name, quantity, unit_price, line_total
+                 FROM subscription_items WHERE subscription_id IN ({placeholders})"
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let item = Self::row_to_subscription_item(row)?;
+                    Ok((item.subscription_id, item))
+                })
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            for row in rows {
+                let (parent, item) =
+                    row.map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+                map.entry(parent).or_default().push(item);
+            }
+        }
+        Ok(map)
     }
 
     // ========================================================================
@@ -1917,5 +1993,107 @@ mod tests {
             Some("UNIQUE constraint failed: subscriptions.subscription_number".to_string()),
         );
         assert!(SqliteSubscriptionRepository::is_subscription_number_unique_violation(&err));
+    }
+
+    fn seed_product(repo: &SqliteSubscriptionRepository) -> stateset_core::ProductId {
+        let id = stateset_core::ProductId::new();
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "INSERT INTO products (id, name, slug) VALUES (?1, ?2, ?3)",
+            rusqlite::params![id.to_string(), format!("Product {id}"), format!("product-{id}")],
+        )
+        .expect("seed product");
+        id
+    }
+
+    fn plan_item(
+        repo: &SqliteSubscriptionRepository,
+        sku: &str,
+    ) -> stateset_core::CreateSubscriptionPlanItem {
+        stateset_core::CreateSubscriptionPlanItem {
+            product_id: seed_product(repo),
+            variant_id: None,
+            sku: sku.into(),
+            name: sku.into(),
+            quantity: 1,
+            min_quantity: None,
+            max_quantity: None,
+            is_required: None,
+            unit_price: Some(dec!(5.00)),
+        }
+    }
+
+    #[test]
+    fn list_plans_batched_item_loading_preserves_per_plan_items() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        for (name, skus) in [
+            ("BatchPlan A", vec!["A-1", "A-2"]),
+            ("BatchPlan B", vec!["B-1"]),
+            ("BatchPlan C", vec!["C-1", "C-2", "C-3"]),
+        ] {
+            repo.create_plan(CreateSubscriptionPlan {
+                name: name.into(),
+                items: Some(skus.into_iter().map(|sku| plan_item(&repo, sku)).collect()),
+                ..plan_input()
+            })
+            .expect("create plan");
+        }
+
+        // The database may pre-seed plans; scope the list to the ones created here.
+        let plans = repo
+            .list_plans(stateset_core::SubscriptionPlanFilter {
+                search: Some("BatchPlan".into()),
+                ..Default::default()
+            })
+            .expect("list plans");
+        assert_eq!(plans.len(), 3);
+        for plan in &plans {
+            let fetched = repo.get_plan(plan.id).expect("get").expect("present");
+            let listed: Vec<_> = plan.items.iter().map(|i| i.sku.clone()).collect();
+            let direct: Vec<_> = fetched.items.iter().map(|i| i.sku.clone()).collect();
+            assert_eq!(listed, direct, "plan {} items must match", plan.name);
+            assert!(
+                plan.items.iter().all(|i| i.plan_id == plan.id),
+                "items must belong to their own plan"
+            );
+        }
+    }
+
+    #[test]
+    fn list_subscriptions_batched_item_loading_preserves_per_subscription_items() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let plan = repo
+            .create_plan(CreateSubscriptionPlan {
+                items: Some(vec![plan_item(&repo, "SUB-1"), plan_item(&repo, "SUB-2")]),
+                ..plan_input()
+            })
+            .expect("create plan");
+        repo.activate_plan(plan.id).expect("activate plan");
+
+        for _ in 0..3 {
+            let customer = CustomerId::new();
+            seed_customer(&repo, customer);
+            repo.create_subscription(create_subscription_input(customer, plan.id))
+                .expect("create subscription");
+        }
+
+        let subs = repo
+            .list_subscriptions(stateset_core::SubscriptionFilter::default())
+            .expect("list subscriptions");
+        assert_eq!(subs.len(), 3);
+        for sub in &subs {
+            assert_eq!(sub.items.len(), 2, "each subscription keeps its own two items");
+            assert!(
+                sub.items.iter().all(|i| i.subscription_id == sub.id),
+                "items must belong to their own subscription"
+            );
+            let direct =
+                repo.get_subscription(sub.id).expect("get subscription").expect("present").items;
+            let mut listed_skus: Vec<_> = sub.items.iter().map(|i| i.sku.clone()).collect();
+            let mut direct_skus: Vec<_> = direct.iter().map(|i| i.sku.clone()).collect();
+            listed_skus.sort();
+            direct_skus.sort();
+            assert_eq!(listed_skus, direct_skus);
+        }
     }
 }

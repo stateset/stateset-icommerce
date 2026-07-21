@@ -450,6 +450,11 @@ impl PgTaxRepository {
         // (COALESCE so a NULL state_code sorts consistently with SQLite), then
         // level and name. Must match the SQLite backend's ORDER BY.
         query.push_str(" ORDER BY country_code, COALESCE(state_code, ''), level, name");
+        {
+            let limit = super::effective_limit(filter.limit);
+            let offset = i64::from(filter.offset.unwrap_or(0));
+            query.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
+        }
 
         let mut q = sqlx::query_as::<_, TaxJurisdictionRow>(&query);
 
@@ -555,6 +560,11 @@ impl PgTaxRepository {
         }
 
         query.push_str(" ORDER BY priority, name");
+        {
+            let limit = super::effective_limit(filter.limit);
+            let offset = i64::from(filter.offset.unwrap_or(0));
+            query.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
+        }
 
         let mut q = sqlx::query_as::<_, TaxRateRow>(&query);
 

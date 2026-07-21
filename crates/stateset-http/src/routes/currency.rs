@@ -33,6 +33,8 @@ pub(crate) struct ConvertCurrencyRequest {
 #[into_params(parameter_in = Query)]
 pub(crate) struct RateFilterParams {
     pub base_currency: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -81,6 +83,8 @@ pub(crate) async fn list_rates(
     let c = state.commerce_for_tenant(tid.as_deref())?;
     let filter = stateset_core::ExchangeRateFilter {
         base_currency: params.base_currency.and_then(|s| s.parse().ok()),
+        limit: params.limit,
+        offset: params.offset,
         ..Default::default()
     };
     let rates = c.currency().list_rates(filter)?;

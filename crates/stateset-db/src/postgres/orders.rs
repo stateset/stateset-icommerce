@@ -872,7 +872,7 @@ impl PgOrderRepository {
             to_date,
             limit,
             offset,
-            after_cursor: _,
+            after_cursor,
         } = filter;
 
         let mut builder = QueryBuilder::new("SELECT * FROM orders WHERE 1=1");
@@ -896,10 +896,27 @@ impl PgOrderRepository {
             builder.push(" AND order_date <= ").push_bind(to);
         }
 
-        builder.push(" ORDER BY order_date DESC");
+        // Keyset cursor: (order_date, id) for stable DESC ordering; matches
+        // the SQLite backend's cursor semantics.
+        let after_cursor = super::parse_after_cursor(after_cursor.as_ref())?;
+        if let Some((cursor_date, cursor_id)) = after_cursor {
+            builder
+                .push(" AND (order_date < ")
+                .push_bind(cursor_date)
+                .push(" OR (order_date = ")
+                .push_bind(cursor_date)
+                .push(" AND id < ")
+                .push_bind(cursor_id)
+                .push("))");
+        }
+
+        builder.push(" ORDER BY order_date DESC, id DESC");
 
         builder.push(" LIMIT ").push_bind(super::effective_limit(limit));
-        if let Some(offset) = offset {
+        // Offset pagination applies only in non-cursor mode.
+        if after_cursor.is_none()
+            && let Some(offset) = offset
+        {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
 

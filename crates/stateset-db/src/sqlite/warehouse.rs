@@ -293,6 +293,38 @@ impl SqliteWarehouseRepository {
         Ok(lines)
     }
 
+    /// Batch-load cycle count lines for many cycle counts in chunked
+    /// `IN`-clause queries, grouped by parent cycle count id. Uses the caller's connection.
+    fn load_cycle_count_lines_batch(
+        conn: &rusqlite::Connection,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<CycleCountLine>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<CycleCountLine>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        let id_strings: Vec<String> = ids.iter().map(Uuid::to_string).collect();
+        for chunk in id_strings.chunks(500) {
+            let placeholders = crate::sqlite::build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT * FROM cycle_count_lines WHERE cycle_count_id IN ({placeholders})
+                 ORDER BY sku, lot_id"
+            );
+            let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let line = Self::row_to_cycle_count_line(row)?;
+                    Ok((line.cycle_count_id, line))
+                })
+                .map_err(map_db_error)?;
+            for row in rows {
+                let (parent, line) = row.map_err(map_db_error)?;
+                map.entry(parent).or_default().push(line);
+            }
+        }
+        Ok(map)
+    }
+
     fn get_cycle_count_on(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<CycleCount>> {
         let mut stmt =
             conn.prepare("SELECT * FROM cycle_counts WHERE id = ?1").map_err(map_db_error)?;
@@ -1531,8 +1563,11 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         drop(rows);
         drop(stmt);
 
+        // Batch-load lines for all listed cycle counts on the same connection.
+        let ids: Vec<Uuid> = counts.iter().map(|c| c.id).collect();
+        let mut lines_by_id = Self::load_cycle_count_lines_batch(&conn, &ids)?;
         for cc in &mut counts {
-            cc.lines = Self::load_cycle_count_lines(&conn, cc.id)?;
+            cc.lines = lines_by_id.remove(&cc.id).unwrap_or_default();
         }
         Ok(counts)
     }
@@ -2364,6 +2399,47 @@ mod tests {
             .map(|i| i.quantity_on_hand)
             .expect("dest row present");
         assert_eq!(on_hand, dec!(0.3));
+    }
+
+    #[test]
+    fn list_cycle_counts_batched_line_loading_preserves_per_count_lines() {
+        use stateset_core::{CreateCycleCount, CreateCycleCountLine, CycleCountFilter};
+
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-BATCH");
+        let line = |sku: &str| CreateCycleCountLine {
+            sku: sku.into(),
+            lot_id: None,
+            expected_quantity: dec!(1),
+        };
+        // Distinct line sets per parent so cross-wiring would be caught.
+        for lines in [
+            vec![line("BAT-A1"), line("BAT-A2")],
+            vec![line("BAT-B1")],
+            vec![line("BAT-C1"), line("BAT-C2"), line("BAT-C3")],
+        ] {
+            repo.create_cycle_count(CreateCycleCount {
+                warehouse_id: wh.id,
+                location_id: None,
+                scheduled_date: None,
+                counted_by: None,
+                lines,
+            })
+            .expect("create cycle count");
+        }
+
+        let listed = repo.list_cycle_counts(CycleCountFilter::default()).expect("list");
+        assert_eq!(listed.len(), 3);
+        for cc in &listed {
+            let direct = repo.get_cycle_count(cc.id).expect("get").expect("present").lines;
+            let listed_skus: Vec<_> = cc.lines.iter().map(|l| l.sku.clone()).collect();
+            let direct_skus: Vec<_> = direct.iter().map(|l| l.sku.clone()).collect();
+            assert_eq!(listed_skus, direct_skus, "lines must match for cycle count {}", cc.id);
+            assert!(
+                cc.lines.iter().all(|l| l.cycle_count_id == cc.id),
+                "lines must belong to their own cycle count"
+            );
+        }
     }
 
     #[test]

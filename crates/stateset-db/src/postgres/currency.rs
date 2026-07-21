@@ -170,6 +170,9 @@ impl PgCurrencyRepository {
             query.push_str(&format!(" AND rate_at >= ${}", param_idx));
         }
         query.push_str(" ORDER BY base_currency, quote_currency");
+        let limit = super::effective_limit(filter.limit);
+        let offset = i64::from(filter.offset.unwrap_or(0));
+        query.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         // Build query with bindings
         let mut q = sqlx::query_as::<_, ExchangeRateRow>(&query);

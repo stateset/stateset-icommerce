@@ -7907,6 +7907,7 @@ impl Tax {
             state_code: f.state_code,
             level: f.level.map(|s| parse_jurisdiction_level(&s)),
             active_only: f.active_only.unwrap_or(false),
+            ..Default::default()
         };
 
         let jurisdictions = commerce
@@ -7981,6 +7982,7 @@ impl Tax {
             effective_date: f
                 .effective_date
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            ..Default::default()
         };
 
         let rates = commerce

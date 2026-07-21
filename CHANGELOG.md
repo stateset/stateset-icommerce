@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-07-21
+
+### Changed
+- Final query-hygiene pass: the last four per-row child-loading N+1s
+  batched (BOM components, subscription plan/subscription items,
+  promotion conditions, cycle-count lines); the last unbounded lists
+  (units of measure, exchange rates, tax jurisdictions/rates) gained
+  limit/offset under the 500/1000 policy; PostgreSQL orders list now
+  supports `after` keyset cursors matching the other domains.
+- `UnitOfMeasureRepository::list_uoms` now takes a
+  `UnitOfMeasureFilter` (was a bare class-id option) — internal trait,
+  all implementations and callers updated.
+
 ## [1.15.0] - 2026-07-20
 
 ### Changed

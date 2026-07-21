@@ -8581,6 +8581,7 @@ impl TaxApi {
             state_code,
             level: level.map(|s| parse_jurisdiction_level(&s)),
             active_only: active_only.unwrap_or(false),
+            ..Default::default()
         };
 
         let jurisdictions = commerce
@@ -8685,6 +8686,7 @@ impl TaxApi {
             product_category: product_category.map(|s| parse_product_tax_category(&s)),
             active_only: active_only.unwrap_or(false),
             effective_date: None,
+            ..Default::default()
         };
 
         let rates = commerce

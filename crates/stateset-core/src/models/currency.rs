@@ -611,6 +611,10 @@ pub struct ExchangeRateFilter {
     pub quote_currency: Option<Currency>,
     /// Only rates newer than this
     pub since: Option<DateTime<Utc>>,
+    /// Maximum number of rows to return (server default/cap applies when unset)
+    pub limit: Option<u32>,
+    /// Number of rows to skip
+    pub offset: Option<u32>,
 }
 
 // ============================================================================

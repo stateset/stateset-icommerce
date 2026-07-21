@@ -130,3 +130,40 @@ async fn postgres_order_status_update_increments_version() {
     assert_eq!(updated.version, initial_version + 1);
     assert_eq!(updated.status, OrderStatus::Confirmed);
 }
+
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_order_list_after_cursor_paginates_without_overlap() {
+    use stateset_core::OrderFilter;
+
+    let Some(db) = setup_db().await else {
+        return;
+    };
+
+    let customer = create_customer(&db, &format!("cursor-{}@example.com", Uuid::new_v4())).await;
+    for _ in 0..3 {
+        create_order(&db, customer.id).await;
+    }
+
+    let base = || OrderFilter { customer_id: Some(customer.id), ..Default::default() };
+
+    let all = db.orders().list_async(base()).await.expect("list all");
+    assert_eq!(all.len(), 3);
+
+    let first_page =
+        db.orders().list_async(OrderFilter { limit: Some(2), ..base() }).await.expect("page 1");
+    assert_eq!(first_page.len(), 2);
+    assert_eq!(first_page[0].id, all[0].id);
+
+    let last = &first_page[1];
+    let second_page = db
+        .orders()
+        .list_async(OrderFilter {
+            after_cursor: Some((last.order_date.to_rfc3339(), last.id.to_string())),
+            ..base()
+        })
+        .await
+        .expect("page 2");
+    assert_eq!(second_page.len(), 1);
+    assert_eq!(second_page[0].id, all[2].id, "cursor page must not overlap the first page");
+}

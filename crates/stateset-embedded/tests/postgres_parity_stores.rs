@@ -178,7 +178,13 @@ async fn postgres_units_of_measure_smoke() {
 
     let base = store.set_base_uom_async(gram.id).await.expect("set base uom");
     assert!(base.is_base);
-    let uoms = store.list_uoms_async(Some(class.id)).await.expect("list uoms");
+    let uoms = store
+        .list_uoms_async(stateset_core::UnitOfMeasureFilter {
+            class_id: Some(class.id),
+            ..Default::default()
+        })
+        .await
+        .expect("list uoms");
     assert_eq!(uoms.len(), 2);
 
     let rule = store
@@ -197,7 +203,16 @@ async fn postgres_units_of_measure_smoke() {
     store.delete_uom_async(kilo.id).await.expect("delete kilogram");
     store.delete_uom_async(gram.id).await.expect("delete gram");
     store.delete_class_async(class.id).await.expect("delete class");
-    assert!(store.list_uoms_async(Some(class.id)).await.expect("list uoms").is_empty());
+    assert!(
+        store
+            .list_uoms_async(stateset_core::UnitOfMeasureFilter {
+                class_id: Some(class.id),
+                ..Default::default()
+            })
+            .await
+            .expect("list uoms")
+            .is_empty()
+    );
 }
 
 #[tokio::test]

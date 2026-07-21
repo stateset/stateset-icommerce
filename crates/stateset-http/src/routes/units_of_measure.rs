@@ -43,6 +43,8 @@ pub(crate) struct CreateConversionRuleRequest {
 #[into_params(parameter_in = Query)]
 pub(crate) struct UomFilterParams {
     pub class_id: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -183,7 +185,11 @@ pub(crate) async fn list_uoms(
         Some(s) => Some(parse_id::<UnitClassId>(s, "class_id")?),
         None => None,
     };
-    let uoms = c.units_of_measure().list_uoms(class_id)?;
+    let uoms = c.units_of_measure().list_uoms(stateset_core::UnitOfMeasureFilter {
+        class_id,
+        limit: params.limit,
+        offset: params.offset,
+    })?;
     Ok(Json(uoms.iter().map(uom_resp).collect()))
 }
 

@@ -1,8 +1,8 @@
 //! SQLite BOM (Bill of Materials) repository implementation
 
 use super::parse_helpers::{
-    parse_datetime, parse_datetime_row, parse_decimal_row, parse_uuid, parse_uuid_opt_row,
-    parse_uuid_row,
+    parse_datetime, parse_datetime_row, parse_decimal_row, parse_enum_row, parse_uuid,
+    parse_uuid_opt_row, parse_uuid_row,
 };
 use super::{build_in_clause, params_refs, uuid_params};
 use chrono::Utc;
@@ -33,6 +33,75 @@ impl SqliteBomRepository {
     fn parse_bom_status(s: &str) -> Result<BomStatus> {
         s.parse()
             .map_err(|e| CommerceError::DatabaseError(format!("Invalid bom.status '{s}': {e}")))
+    }
+
+    fn row_to_component(row: &rusqlite::Row<'_>) -> rusqlite::Result<BomComponent> {
+        Ok(BomComponent {
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "bom_component", "id")?,
+            bom_id: parse_uuid_row(&row.get::<_, String>("bom_id")?, "bom_component", "bom_id")?,
+            component_product_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("component_product_id")?,
+                "bom_component",
+                "component_product_id",
+            )?
+            .map(ProductId::from),
+            component_sku: row.get("component_sku")?,
+            name: row.get("name")?,
+            quantity: parse_decimal_row(
+                &row.get::<_, String>("quantity")?,
+                "bom_component",
+                "quantity",
+            )?,
+            unit_of_measure: row.get("unit_of_measure")?,
+            position: row.get("position")?,
+            notes: row.get("notes")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "bom_component",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "bom_component",
+                "updated_at",
+            )?,
+        })
+    }
+
+    /// Load components for a batch of BOM ids in chunked `IN`-clause queries,
+    /// grouped by parent BOM id. Uses the caller's connection.
+    fn load_components_batch(
+        conn: &rusqlite::Connection,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<BomComponent>>> {
+        let mut map: std::collections::HashMap<Uuid, Vec<BomComponent>> =
+            std::collections::HashMap::with_capacity(ids.len());
+        let id_strings: Vec<String> = ids.iter().map(Uuid::to_string).collect();
+        for chunk in id_strings.chunks(500) {
+            let placeholders = build_in_clause(chunk.len());
+            let sql = format!(
+                "SELECT id, bom_id, component_product_id, component_sku, name, quantity,
+                        unit_of_measure, position, notes, created_at, updated_at
+                 FROM manufacturing_bom_components WHERE bom_id IN ({placeholders})
+                 ORDER BY position, created_at"
+            );
+            let mut stmt =
+                conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let comp = Self::row_to_component(row)?;
+                    Ok((comp.bom_id, comp))
+                })
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            for row in rows {
+                let (parent, comp) =
+                    row.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                map.entry(parent).or_default().push(comp);
+            }
+        }
+        Ok(map)
     }
 
     fn load_components(&self, bom_id: Uuid) -> Result<Vec<BomComponent>> {
@@ -277,14 +346,16 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn list(&self, filter: BomFilter) -> Result<Vec<BillOfMaterials>> {
-        // Collect all IDs in a scoped block to release connection before calling self.get()
-        let ids = {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+        let mut boms = {
             let limit = i64::from(filter.limit.unwrap_or(100));
             let offset = i64::from(filter.offset.unwrap_or(0));
 
-            let mut sql = "SELECT id FROM manufacturing_boms WHERE 1=1".to_string();
+            let mut sql = "SELECT id, bom_number, product_id, name, description, revision, status,
+                        created_by, updated_by, created_at, updated_at
+                 FROM manufacturing_boms WHERE 1=1"
+                .to_string();
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
             if let Some(product_id) = filter.product_id {
@@ -315,23 +386,60 @@ impl BomRepository for SqliteBomRepository {
                 params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
-                .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))
+                .query_map(param_refs.as_slice(), |row| {
+                    let created_by: Option<String> = row.get("created_by")?;
+                    let updated_by: Option<String> = row.get("updated_by")?;
+                    Ok(BillOfMaterials {
+                        id: parse_uuid_row(&row.get::<_, String>("id")?, "bom", "id")?,
+                        bom_number: row.get("bom_number")?,
+                        product_id: ProductId::from(parse_uuid_row(
+                            &row.get::<_, String>("product_id")?,
+                            "bom",
+                            "product_id",
+                        )?),
+                        name: row.get("name")?,
+                        description: row.get("description")?,
+                        revision: row.get("revision")?,
+                        status: parse_enum_row(&row.get::<_, String>("status")?, "bom", "status")?,
+                        components: Vec::new(),
+                        created_by: match created_by {
+                            Some(ref s) if !s.is_empty() => {
+                                Some(parse_uuid_row(s, "bom", "created_by")?)
+                            }
+                            _ => None,
+                        },
+                        updated_by: match updated_by {
+                            Some(ref s) if !s.is_empty() => {
+                                Some(parse_uuid_row(s, "bom", "updated_by")?)
+                            }
+                            _ => None,
+                        },
+                        created_at: parse_datetime_row(
+                            &row.get::<_, String>("created_at")?,
+                            "bom",
+                            "created_at",
+                        )?,
+                        updated_at: parse_datetime_row(
+                            &row.get::<_, String>("updated_at")?,
+                            "bom",
+                            "updated_at",
+                        )?,
+                    })
+                })
                 .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let mut id_list = Vec::new();
+            let mut list = Vec::new();
             for row in rows {
-                let id_str = row.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                id_list.push(parse_uuid(&id_str, "bom", "id")?);
+                list.push(row.map_err(|e| CommerceError::DatabaseError(e.to_string()))?);
             }
-            id_list
-        }; // Connection released here
+            list
+        };
 
-        // Now fetch each BOM (each call gets its own connection)
-        let mut boms = Vec::new();
-        for id in ids {
-            if let Some(bom) = self.get(id)? {
-                boms.push(bom);
-            }
+        // Batch-load components for all listed BOMs on the same connection.
+        let ids: Vec<Uuid> = boms.iter().map(|b| b.id).collect();
+        let mut components_by_id = Self::load_components_batch(&conn, &ids)?;
+        for bom in &mut boms {
+            bom.components = components_by_id.remove(&bom.id).unwrap_or_default();
         }
 
         Ok(boms)
@@ -907,6 +1015,52 @@ mod tests {
             1,
             "count must apply the search filter and match the filtered list"
         );
+    }
+
+    #[test]
+    fn list_batched_component_loading_preserves_per_parent_components() {
+        let repo = fresh_repo();
+        let product = ProductId::new();
+        let component = |name: &str| CreateBomComponent {
+            component_product_id: None,
+            component_sku: Some(name.into()),
+            name: name.into(),
+            quantity: dec!(1),
+            unit_of_measure: None,
+            position: None,
+            notes: None,
+        };
+        // Distinct component sets per parent so cross-wiring would be caught.
+        make_bom(&repo, product, "BOM A", vec![component("A-1"), component("A-2")]);
+        make_bom(&repo, product, "BOM B", vec![component("B-1")]);
+        make_bom(
+            &repo,
+            product,
+            "BOM C",
+            vec![component("C-1"), component("C-2"), component("C-3")],
+        );
+
+        let listed = repo.list(BomFilter::default()).expect("list");
+        assert_eq!(listed.len(), 3);
+        for bom in &listed {
+            let fetched = repo.get(bom.id).expect("get").expect("present");
+            assert_eq!(
+                bom.components.len(),
+                fetched.components.len(),
+                "list must load the same components as get for {}",
+                bom.name
+            );
+            let listed_skus: Vec<_> =
+                bom.components.iter().map(|c| c.component_sku.clone()).collect();
+            let fetched_skus: Vec<_> =
+                fetched.components.iter().map(|c| c.component_sku.clone()).collect();
+            assert_eq!(listed_skus, fetched_skus, "component sets must match for {}", bom.name);
+            let prefix = bom.name.chars().next_back().unwrap();
+            assert!(
+                bom.components.iter().all(|c| c.name.starts_with(prefix)),
+                "components must belong to their own parent"
+            );
+        }
     }
 
     #[test]

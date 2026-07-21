@@ -12,7 +12,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
     CommerceError, ConversionRuleType, CreateUnitClass, CreateUnitConversionRule,
     CreateUnitOfMeasure, Result, UnitClass, UnitClassId, UnitConversionRule, UnitConversionRuleId,
-    UnitOfMeasure, UnitOfMeasureId, UnitOfMeasureRepository,
+    UnitOfMeasure, UnitOfMeasureFilter, UnitOfMeasureId, UnitOfMeasureRepository,
 };
 
 #[derive(Debug)]
@@ -191,16 +191,17 @@ impl UnitOfMeasureRepository for SqliteUnitOfMeasureRepository {
         })
     }
 
-    fn list_uoms(&self, class_id: Option<UnitClassId>) -> Result<Vec<UnitOfMeasure>> {
+    fn list_uoms(&self, filter: UnitOfMeasureFilter) -> Result<Vec<UnitOfMeasure>> {
         let conn = self.conn()?;
-        let (sql, param): (&str, Option<String>) = match class_id {
+        let (mut sql, param): (String, Option<String>) = match filter.class_id {
             Some(c) => (
-                "SELECT * FROM units_of_measure WHERE unit_class_id = ? ORDER BY name",
+                "SELECT * FROM units_of_measure WHERE unit_class_id = ? ORDER BY name".to_string(),
                 Some(c.to_string()),
             ),
-            None => ("SELECT * FROM units_of_measure ORDER BY name", None),
+            None => ("SELECT * FROM units_of_measure ORDER BY name".to_string(), None),
         };
-        let mut stmt = conn.prepare(sql).map_err(map_db_error)?;
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = if let Some(p) = param {
             stmt.query_map([p], Self::row_to_uom)
         } else {
@@ -355,13 +356,54 @@ mod tests {
             })
             .expect("uom2");
 
-        assert_eq!(repo.list_uoms(Some(class.id)).expect("list").len(), 2);
+        assert_eq!(
+            repo.list_uoms(UnitOfMeasureFilter { class_id: Some(class.id), ..Default::default() })
+                .expect("list")
+                .len(),
+            2
+        );
 
         let based = repo.set_base_uom(g.id).expect("base");
         assert!(based.is_base);
 
         // class can't be deleted while UOMs exist
         assert!(repo.delete_class(class.id).is_err());
+    }
+
+    #[test]
+    fn list_uoms_applies_limit_and_offset() {
+        let repo = test_repo();
+        let class = repo
+            .create_class(CreateUnitClass { name: "Length".into(), description: None })
+            .expect("class");
+        for (name, abbr) in [("Meter", "m"), ("Centimeter", "cm"), ("Kilometer", "km")] {
+            repo.create_uom(CreateUnitOfMeasure {
+                unit_class_id: class.id,
+                name: name.into(),
+                abbreviation: abbr.into(),
+                factor: dec!(1),
+            })
+            .expect("uom");
+        }
+
+        let all = repo.list_uoms(UnitOfMeasureFilter::default()).expect("list all");
+        assert_eq!(all.len(), 3);
+
+        let page = repo
+            .list_uoms(UnitOfMeasureFilter { limit: Some(2), ..Default::default() })
+            .expect("limited");
+        assert_eq!(page.len(), 2, "limit must bound the result set");
+        assert_eq!(page[0].name, all[0].name);
+
+        let rest = repo
+            .list_uoms(UnitOfMeasureFilter {
+                limit: Some(2),
+                offset: Some(2),
+                ..Default::default()
+            })
+            .expect("offset");
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].name, all[2].name);
     }
 
     #[test]

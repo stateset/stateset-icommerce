@@ -182,6 +182,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         }
 
         query.push_str(" ORDER BY base_currency, quote_currency");
+        crate::sqlite::append_limit_offset(&mut query, filter.limit, filter.offset);
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
         let params: Vec<&dyn rusqlite::ToSql> =
@@ -499,5 +500,53 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         }
 
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+    use stateset_core::{Currency, CurrencyRepository, ExchangeRateFilter};
+
+    fn fresh_repo() -> SqliteCurrencyRepository {
+        SqliteDatabase::in_memory().expect("in-memory").currency()
+    }
+
+    fn set(repo: &SqliteCurrencyRepository, base: Currency, quote: Currency) {
+        repo.set_rate(SetExchangeRate {
+            base_currency: base,
+            quote_currency: quote,
+            rate: dec!(1.5),
+            source: None,
+        })
+        .expect("set rate");
+    }
+
+    #[test]
+    fn list_rates_applies_limit_and_offset() {
+        let repo = fresh_repo();
+        set(&repo, Currency::USD, Currency::EUR);
+        set(&repo, Currency::USD, Currency::GBP);
+        set(&repo, Currency::USD, Currency::JPY);
+
+        // The database pre-seeds exchange rates, so assert relative to the
+        // unpaginated result rather than an absolute count.
+        let all = repo.list_rates(ExchangeRateFilter::default()).expect("list all");
+        assert!(all.len() >= 3, "expected at least the three inserted rates");
+
+        let page = repo
+            .list_rates(ExchangeRateFilter { limit: Some(2), ..Default::default() })
+            .expect("limited");
+        assert_eq!(page.len(), 2, "limit must bound the result set");
+        assert_eq!(page[0].id, all[0].id);
+        assert_eq!(page[1].id, all[1].id);
+
+        let rest = repo
+            .list_rates(ExchangeRateFilter { offset: Some(2), ..Default::default() })
+            .expect("offset");
+        assert_eq!(rest.len(), all.len() - 2, "offset must skip the first rows");
+        assert_eq!(rest[0].id, all[2].id);
     }
 }

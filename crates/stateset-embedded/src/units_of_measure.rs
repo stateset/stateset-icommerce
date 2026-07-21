@@ -58,9 +58,14 @@ impl UnitsOfMeasure {
     }
 
     /// List units of measure, optionally scoped to a class.
-    pub fn list_uoms(&self, class_id: Option<UnitClassId>) -> Result<Vec<UnitOfMeasure>> {
+    ///
+    /// A server-side pagination policy applies when the filter has no limit.
+    pub fn list_uoms(
+        &self,
+        filter: stateset_core::UnitOfMeasureFilter,
+    ) -> Result<Vec<UnitOfMeasure>> {
         self.ensure()?;
-        self.db.units_of_measure().list_uoms(class_id)
+        self.db.units_of_measure().list_uoms(filter)
     }
 
     /// Mark a UOM as the base unit for its class.

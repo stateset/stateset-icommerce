@@ -168,7 +168,7 @@ impl UnitOfMeasureRepository for UnsupportedUnitOfMeasureRepository {
     fn create_uom(&self, _input: CreateUnitOfMeasure) -> Result<UnitOfMeasure> {
         unsupported("units of measure")
     }
-    fn list_uoms(&self, _class_id: Option<UnitClassId>) -> Result<Vec<UnitOfMeasure>> {
+    fn list_uoms(&self, _filter: stateset_core::UnitOfMeasureFilter) -> Result<Vec<UnitOfMeasure>> {
         unsupported("units of measure")
     }
     fn set_base_uom(&self, _id: UnitOfMeasureId) -> Result<UnitOfMeasure> {
