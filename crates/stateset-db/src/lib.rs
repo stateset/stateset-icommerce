@@ -55,9 +55,6 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
-#[cfg(feature = "postgres")]
-mod unsupported_repositories;
-
 #[cfg(all(feature = "postgres", feature = "saga"))]
 pub mod saga;
 
@@ -757,87 +754,87 @@ impl NewDomainRepositoryFactory for PostgresDatabase {
     }
 
     fn channels_repo(&self) -> Box<dyn ChannelRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedChannelRepository)
+        Box::new(self.channels())
     }
 
     fn companies_repo(&self) -> Box<dyn CompanyRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedCompanyRepository)
+        Box::new(self.companies())
     }
 
     fn transfer_orders_repo(&self) -> Box<dyn TransferOrderRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedTransferOrderRepository)
+        Box::new(self.transfer_orders())
     }
 
     fn units_of_measure_repo(&self) -> Box<dyn UnitOfMeasureRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedUnitOfMeasureRepository)
+        Box::new(self.units_of_measure())
     }
 
     fn production_batches_repo(&self) -> Box<dyn ProductionBatchRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedProductionBatchRepository)
+        Box::new(self.production_batches())
     }
 
     fn supplier_skus_repo(&self) -> Box<dyn SupplierSkuRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedSupplierSkuRepository)
+        Box::new(self.supplier_skus())
     }
 
     fn vendor_returns_repo(&self) -> Box<dyn VendorReturnRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedVendorReturnRepository)
+        Box::new(self.vendor_returns())
     }
 
     fn vendor_credits_repo(&self) -> Box<dyn VendorCreditRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedVendorCreditRepository)
+        Box::new(self.vendor_credits())
     }
 
     fn payment_obligations_repo(&self) -> Box<dyn PaymentObligationRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedPaymentObligationRepository)
+        Box::new(self.payment_obligations())
     }
 
     fn price_levels_repo(&self) -> Box<dyn PriceLevelRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedPriceLevelRepository)
+        Box::new(self.price_levels())
     }
 
     fn prepayments_repo(&self) -> Box<dyn PrepaymentRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedPrepaymentRepository)
+        Box::new(self.prepayments())
     }
 
     fn price_schedules_repo(&self) -> Box<dyn PriceScheduleRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedPriceScheduleRepository)
+        Box::new(self.price_schedules())
     }
 
     fn activity_logs_repo(&self) -> Box<dyn ActivityLogRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedActivityLogRepository)
+        Box::new(self.activity_logs())
     }
 
     fn integration_mappings_repo(&self) -> Box<dyn IntegrationMappingRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedIntegrationMappingRepository)
+        Box::new(self.integration_mappings())
     }
 
     fn inbound_shipments_repo(&self) -> Box<dyn InboundShipmentRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedInboundShipmentRepository)
+        Box::new(self.inbound_shipments())
     }
 
     fn purgatory_repo(&self) -> Box<dyn PurgatoryRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedPurgatoryRepository)
+        Box::new(self.purgatory())
     }
 
     fn print_stations_repo(&self) -> Box<dyn PrintStationRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedPrintStationRepository)
+        Box::new(self.print_stations())
     }
 
     fn edi_documents_repo(&self) -> Box<dyn EdiDocumentRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedEdiDocumentRepository)
+        Box::new(self.edi_documents())
     }
 
     fn integration_field_mappings_repo(&self) -> Box<dyn IntegrationFieldMappingRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedIntegrationFieldMappingRepository)
+        Box::new(self.integration_field_mappings())
     }
 
     fn topology_snapshots_repo(&self) -> Box<dyn TopologySnapshotRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedTopologySnapshotRepository)
+        Box::new(self.topology_snapshots())
     }
 
     fn stock_snapshots_repo(&self) -> Box<dyn StockSnapshotRepository + '_> {
-        Box::new(crate::unsupported_repositories::UnsupportedStockSnapshotRepository)
+        Box::new(self.stock_snapshots())
     }
 
     fn fixed_assets_repo(&self) -> Box<dyn FixedAssetRepository + '_> {
@@ -1172,42 +1169,8 @@ macro_rules! impl_database_accessors {
         true
     }};
     (@supports_capability PostgresDatabase, $capability:expr) => {{
-        match $capability {
-            DatabaseCapability::Segments
-            | DatabaseCapability::ShippingZones
-            | DatabaseCapability::ZoneShippingMethods
-            | DatabaseCapability::Rewards
-            | DatabaseCapability::SearchConfigs
-            | DatabaseCapability::LoyaltyPrograms
-            | DatabaseCapability::Fraud
-            | DatabaseCapability::FixedAssets
-            | DatabaseCapability::RevenueRecognition => true,
-            DatabaseCapability::GiftCards
-            | DatabaseCapability::StoreCredits
-            | DatabaseCapability::Reviews
-            | DatabaseCapability::Wishlists
-            | DatabaseCapability::Channels
-            | DatabaseCapability::Companies
-            | DatabaseCapability::TransferOrders
-            | DatabaseCapability::UnitsOfMeasure
-            | DatabaseCapability::ProductionBatches
-            | DatabaseCapability::SupplierSkus
-            | DatabaseCapability::VendorReturns
-            | DatabaseCapability::VendorCredits
-            | DatabaseCapability::PaymentObligations
-            | DatabaseCapability::PriceLevels
-            | DatabaseCapability::Prepayments
-            | DatabaseCapability::PriceSchedules
-            | DatabaseCapability::ActivityLogs
-            | DatabaseCapability::IntegrationMappings
-            | DatabaseCapability::InboundShipments
-            | DatabaseCapability::Purgatory
-            | DatabaseCapability::PrintStations
-            | DatabaseCapability::EdiDocuments
-            | DatabaseCapability::IntegrationFieldMappings
-            | DatabaseCapability::TopologySnapshots
-            | DatabaseCapability::StockSnapshots => false,
-        }
+        let _ = $capability;
+        true
     }};
 }
 

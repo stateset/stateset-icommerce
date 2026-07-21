@@ -404,6 +404,54 @@ impl Commerce {
         CycleCounts { commerce: self.inner.clone() }
     }
 
+    /// Get the prepayments API (advance payments to suppliers).
+    #[getter]
+    fn prepayments(&self) -> Prepayments {
+        Prepayments { commerce: self.inner.clone() }
+    }
+
+    /// Get the vendor credits API (supplier-owed credits).
+    #[getter]
+    fn vendor_credits(&self) -> VendorCredits {
+        VendorCredits { commerce: self.inner.clone() }
+    }
+
+    /// Get the price schedules API (time-bounded pricing).
+    #[getter]
+    fn price_schedules(&self) -> PriceSchedules {
+        PriceSchedules { commerce: self.inner.clone() }
+    }
+
+    /// Get the price levels API (B2B pricing tiers).
+    #[getter]
+    fn price_levels(&self) -> PriceLevels {
+        PriceLevels { commerce: self.inner.clone() }
+    }
+
+    /// Get the transfer orders API (inter-warehouse stock movement).
+    #[getter]
+    fn transfer_orders(&self) -> TransferOrders {
+        TransferOrders { commerce: self.inner.clone() }
+    }
+
+    /// Get the production batches API (grouping manufacturing work orders).
+    #[getter]
+    fn production_batches(&self) -> ProductionBatches {
+        ProductionBatches { commerce: self.inner.clone() }
+    }
+
+    /// Get the supplier SKUs API (per-supplier SKU / unit-cost overrides).
+    #[getter]
+    fn supplier_skus(&self) -> SupplierSkus {
+        SupplierSkus { commerce: self.inner.clone() }
+    }
+
+    /// Get the inbound shipments API (advance ship notices).
+    #[getter]
+    fn inbound_shipments(&self) -> InboundShipments {
+        InboundShipments { commerce: self.inner.clone() }
+    }
+
     /// Get the vector search API for semantic search operations.
     ///
     /// Requires OPENAI_API_KEY environment variable to be set.
@@ -12754,6 +12802,47 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CycleCountLineInput>()?;
     m.add_class::<RecordCycleCountLineInput>()?;
 
+    // Prepayments
+    m.add_class::<Prepayments>()?;
+    m.add_class::<Prepayment>()?;
+    m.add_class::<PrepaymentApplication>()?;
+
+    // Vendor Credits
+    m.add_class::<VendorCredits>()?;
+    m.add_class::<VendorCredit>()?;
+    m.add_class::<VendorCreditApplication>()?;
+
+    // Price Schedules
+    m.add_class::<PriceSchedules>()?;
+    m.add_class::<PriceSchedule>()?;
+    m.add_class::<PriceScheduleEntry>()?;
+
+    // Price Levels
+    m.add_class::<PriceLevels>()?;
+    m.add_class::<PriceLevel>()?;
+    m.add_class::<PriceLevelEntry>()?;
+
+    // Transfer Orders
+    m.add_class::<TransferOrders>()?;
+    m.add_class::<TransferOrder>()?;
+    m.add_class::<TransferOrderItem>()?;
+    m.add_class::<TransferOrderItemInput>()?;
+
+    // Production Batches
+    m.add_class::<ProductionBatches>()?;
+    m.add_class::<ProductionBatch>()?;
+
+    // Supplier SKUs
+    m.add_class::<SupplierSkus>()?;
+    m.add_class::<SupplierSku>()?;
+    m.add_class::<SupplierSkuBulkItemInput>()?;
+
+    // Inbound Shipments
+    m.add_class::<InboundShipments>()?;
+    m.add_class::<InboundShipment>()?;
+    m.add_class::<InboundShipmentItem>()?;
+    m.add_class::<InboundShipmentItemInput>()?;
+
     // Vector Search
     m.add_class::<VectorSearch>()?;
     m.add_class::<ProductSearchResult>()?;
@@ -16508,5 +16597,2170 @@ impl From<stateset_core::CloseMonthReport> for CloseMonthReport {
             closing_entry: r.closing_entry.map(Into::into),
             period_status: r.period_status.to_string(),
         }
+    }
+}
+
+// ============================================================================
+// Shared helpers for the procurement / pricing / logistics domains below
+// (money as exact decimal STRINGS, timestamps as RFC 3339 strings,
+// enums as snake_case strings)
+// ============================================================================
+
+fn parse_rfc3339_opt_py(
+    s: Option<String>,
+    field: &str,
+) -> PyResult<Option<chrono::DateTime<chrono::Utc>>> {
+    s.as_deref()
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .map_err(|_| PyValueError::new_err(format!("Invalid {field} RFC 3339 timestamp")))
+        })
+        .transpose()
+}
+
+fn parse_currency_opt_py(s: Option<String>) -> PyResult<Option<CurrencyCode>> {
+    s.map(|s| s.parse::<CurrencyCode>().map_err(|_| PyValueError::new_err("Invalid currency code")))
+        .transpose()
+}
+
+fn parse_uuid_str_py(s: &str, field: &str) -> PyResult<uuid::Uuid> {
+    s.parse::<uuid::Uuid>().map_err(|_| PyValueError::new_err(format!("Invalid {field} UUID")))
+}
+
+fn parse_optional_decimal_py(s: Option<String>, field: &str) -> PyResult<Option<Decimal>> {
+    s.as_deref().map(|s| parse_decimal_py(s, field)).transpose()
+}
+
+// ============================================================================
+// Prepayments  (advance payments to suppliers)
+// ============================================================================
+
+/// Cash paid to a supplier in advance. Money values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct Prepayment {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    number: String,
+    #[pyo3(get)]
+    supplier_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    remaining: String,
+    #[pyo3(get)]
+    currency: String,
+    /// open, applied, refunded, cancelled
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    method: Option<String>,
+    #[pyo3(get)]
+    reference: Option<String>,
+    #[pyo3(get)]
+    memo: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Prepayment> for Prepayment {
+    fn from(p: stateset_core::Prepayment) -> Self {
+        Self {
+            id: p.id.to_string(),
+            number: p.number,
+            supplier_id: p.supplier_id.to_string(),
+            amount: p.amount.to_string(),
+            remaining: p.remaining.to_string(),
+            currency: p.currency.to_string(),
+            status: format!("{}", p.status),
+            method: p.method,
+            reference: p.reference,
+            memo: p.memo,
+            created_at: p.created_at.to_rfc3339(),
+            updated_at: p.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// An application of a prepayment against a bill or payment obligation.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PrepaymentApplication {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    prepayment_id: String,
+    /// bill or payment_obligation
+    #[pyo3(get)]
+    target_type: String,
+    #[pyo3(get)]
+    target_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount: String,
+    #[pyo3(get)]
+    reversed: bool,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::PrepaymentApplication> for PrepaymentApplication {
+    fn from(a: stateset_core::PrepaymentApplication) -> Self {
+        Self {
+            id: a.id.to_string(),
+            prepayment_id: a.prepayment_id.to_string(),
+            target_type: format!("{}", a.target_type),
+            target_id: a.target_id.to_string(),
+            amount: a.amount.to_string(),
+            reversed: a.reversed,
+            created_at: a.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Prepayment operations. Money is exchanged as exact decimal strings,
+/// enums as snake_case strings.
+#[pyclass]
+pub struct Prepayments {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Prepayments {
+    /// Whether the prepayments backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.prepayments().is_supported())
+    }
+
+    /// Create a prepayment.
+    #[pyo3(signature = (supplier_id, amount, currency=None, method=None, reference=None, memo=None))]
+    fn create(
+        &self,
+        supplier_id: String,
+        amount: String,
+        currency: Option<String>,
+        method: Option<String>,
+        reference: Option<String>,
+        memo: Option<String>,
+    ) -> PyResult<Prepayment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let prepayment = commerce
+            .prepayments()
+            .create(stateset_core::CreatePrepayment {
+                supplier_id: parse_uuid_str_py(&supplier_id, "supplier_id")?,
+                amount: parse_decimal_py(&amount, "amount")?,
+                currency: parse_currency_opt_py(currency)?,
+                method,
+                reference,
+                memo,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create prepayment: {}", e)))?;
+        Ok(prepayment.into())
+    }
+
+    /// Get a prepayment by ID.
+    fn get(&self, id: String) -> PyResult<Option<Prepayment>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "prepayment")?;
+        let prepayment = commerce
+            .prepayments()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get prepayment: {}", e)))?;
+        Ok(prepayment.map(Into::into))
+    }
+
+    /// List prepayments matching the filter.
+    #[pyo3(signature = (supplier_id=None, status=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        supplier_id: Option<String>,
+        status: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Prepayment>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::PrepaymentFilter {
+            supplier_id: parse_optional_uuid_py(supplier_id, "supplier_id")?,
+            status: status
+                .map(|s| {
+                    s.parse::<stateset_core::PrepaymentStatus>()
+                        .map_err(|_| PyValueError::new_err("Invalid prepayment status"))
+                })
+                .transpose()?,
+            limit,
+            offset,
+        };
+        let prepayments = commerce
+            .prepayments()
+            .list(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list prepayments: {}", e)))?;
+        Ok(prepayments.into_iter().map(Into::into).collect())
+    }
+
+    /// Apply a prepayment against a bill or payment obligation.
+    /// `target_type` is bill or payment_obligation.
+    fn apply(
+        &self,
+        id: String,
+        target_type: String,
+        target_id: String,
+        amount: String,
+    ) -> PyResult<Prepayment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "prepayment")?;
+        let target_type = target_type
+            .parse::<stateset_core::PrepaymentTargetType>()
+            .map_err(|_| PyValueError::new_err("Invalid prepayment target type"))?;
+        let prepayment = commerce
+            .prepayments()
+            .apply(
+                uuid.into(),
+                stateset_core::ApplyPrepayment {
+                    target_type,
+                    target_id: parse_uuid_str_py(&target_id, "target_id")?,
+                    amount: parse_decimal_py(&amount, "amount")?,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to apply prepayment: {}", e)))?;
+        Ok(prepayment.into())
+    }
+
+    /// List applications for a prepayment.
+    fn list_applications(&self, id: String) -> PyResult<Vec<PrepaymentApplication>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "prepayment")?;
+        let applications = commerce.prepayments().list_applications(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list prepayment applications: {}", e))
+        })?;
+        Ok(applications.into_iter().map(Into::into).collect())
+    }
+
+    /// Reverse a previously-recorded application.
+    fn reverse_application(&self, id: String, application_id: String) -> PyResult<Prepayment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "prepayment")?;
+        let app_uuid = parse_uuid_str_py(&application_id, "application")?;
+        let prepayment = commerce
+            .prepayments()
+            .reverse_application(uuid.into(), app_uuid.into())
+            .map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to reverse prepayment application: {}", e))
+        })?;
+        Ok(prepayment.into())
+    }
+
+    /// Refund the remaining balance, closing the prepayment.
+    fn refund(&self, id: String) -> PyResult<Prepayment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "prepayment")?;
+        let prepayment = commerce
+            .prepayments()
+            .refund(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to refund prepayment: {}", e)))?;
+        Ok(prepayment.into())
+    }
+}
+
+// ============================================================================
+// Vendor Credits  (supplier-owed credits)
+// ============================================================================
+
+/// A vendor credit balance owed by a supplier. Money values are exact decimal
+/// strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct VendorCredit {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    number: String,
+    #[pyo3(get)]
+    supplier_id: String,
+    #[pyo3(get)]
+    vendor_return_id: Option<String>,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    remaining: String,
+    #[pyo3(get)]
+    currency: String,
+    /// open, applied, cancelled
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    memo: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::VendorCredit> for VendorCredit {
+    fn from(c: stateset_core::VendorCredit) -> Self {
+        Self {
+            id: c.id.to_string(),
+            number: c.number,
+            supplier_id: c.supplier_id.to_string(),
+            vendor_return_id: c.vendor_return_id.map(|id| id.to_string()),
+            amount: c.amount.to_string(),
+            remaining: c.remaining.to_string(),
+            currency: c.currency.to_string(),
+            status: format!("{}", c.status),
+            memo: c.memo,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// An application of a vendor credit against a bill or payment obligation.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct VendorCreditApplication {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    vendor_credit_id: String,
+    /// bill or payment_obligation
+    #[pyo3(get)]
+    target_type: String,
+    #[pyo3(get)]
+    target_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    amount: String,
+    #[pyo3(get)]
+    reversed: bool,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::VendorCreditApplication> for VendorCreditApplication {
+    fn from(a: stateset_core::VendorCreditApplication) -> Self {
+        Self {
+            id: a.id.to_string(),
+            vendor_credit_id: a.vendor_credit_id.to_string(),
+            target_type: format!("{}", a.target_type),
+            target_id: a.target_id.to_string(),
+            amount: a.amount.to_string(),
+            reversed: a.reversed,
+            created_at: a.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Vendor credit operations. Money is exchanged as exact decimal strings,
+/// enums as snake_case strings.
+#[pyclass]
+pub struct VendorCredits {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl VendorCredits {
+    /// Whether the vendor-credits backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.vendor_credits().is_supported())
+    }
+
+    /// Create a vendor credit.
+    #[pyo3(signature = (supplier_id, amount, vendor_return_id=None, currency=None, memo=None))]
+    fn create(
+        &self,
+        supplier_id: String,
+        amount: String,
+        vendor_return_id: Option<String>,
+        currency: Option<String>,
+        memo: Option<String>,
+    ) -> PyResult<VendorCredit> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let credit = commerce
+            .vendor_credits()
+            .create(stateset_core::CreateVendorCredit {
+                supplier_id: parse_uuid_str_py(&supplier_id, "supplier_id")?,
+                vendor_return_id: parse_optional_uuid_py(vendor_return_id, "vendor_return_id")?,
+                amount: parse_decimal_py(&amount, "amount")?,
+                currency: parse_currency_opt_py(currency)?,
+                memo,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create vendor credit: {}", e))
+            })?;
+        Ok(credit.into())
+    }
+
+    /// Get a vendor credit by ID.
+    fn get(&self, id: String) -> PyResult<Option<VendorCredit>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor credit")?;
+        let credit = commerce
+            .vendor_credits()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get vendor credit: {}", e)))?;
+        Ok(credit.map(Into::into))
+    }
+
+    /// List vendor credits matching the filter.
+    #[pyo3(signature = (supplier_id=None, status=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        supplier_id: Option<String>,
+        status: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<VendorCredit>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::VendorCreditFilter {
+            supplier_id: parse_optional_uuid_py(supplier_id, "supplier_id")?,
+            status: status
+                .map(|s| {
+                    s.parse::<stateset_core::VendorCreditStatus>()
+                        .map_err(|_| PyValueError::new_err("Invalid vendor credit status"))
+                })
+                .transpose()?,
+            limit,
+            offset,
+        };
+        let credits = commerce.vendor_credits().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list vendor credits: {}", e))
+        })?;
+        Ok(credits.into_iter().map(Into::into).collect())
+    }
+
+    /// Apply a vendor credit against a bill or payment obligation.
+    /// `target_type` is bill or payment_obligation.
+    fn apply(
+        &self,
+        id: String,
+        target_type: String,
+        target_id: String,
+        amount: String,
+    ) -> PyResult<VendorCredit> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor credit")?;
+        let target_type = target_type
+            .parse::<stateset_core::VendorCreditTargetType>()
+            .map_err(|_| PyValueError::new_err("Invalid vendor credit target type"))?;
+        let credit = commerce
+            .vendor_credits()
+            .apply(
+                uuid.into(),
+                stateset_core::ApplyVendorCredit {
+                    target_type,
+                    target_id: parse_uuid_str_py(&target_id, "target_id")?,
+                    amount: parse_decimal_py(&amount, "amount")?,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to apply vendor credit: {}", e))
+            })?;
+        Ok(credit.into())
+    }
+
+    /// List applications for a vendor credit.
+    fn list_applications(&self, id: String) -> PyResult<Vec<VendorCreditApplication>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor credit")?;
+        let applications =
+            commerce.vendor_credits().list_applications(uuid.into()).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list vendor credit applications: {}", e))
+            })?;
+        Ok(applications.into_iter().map(Into::into).collect())
+    }
+
+    /// Reverse a previously-recorded application.
+    fn reverse_application(&self, id: String, application_id: String) -> PyResult<VendorCredit> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor credit")?;
+        let app_uuid = parse_uuid_str_py(&application_id, "application")?;
+        let credit = commerce
+            .vendor_credits()
+            .reverse_application(uuid.into(), app_uuid.into())
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!(
+                    "Failed to reverse vendor credit application: {}",
+                    e
+                ))
+            })?;
+        Ok(credit.into())
+    }
+
+    /// Cancel a vendor credit.
+    fn cancel(&self, id: String) -> PyResult<VendorCredit> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "vendor credit")?;
+        let credit = commerce.vendor_credits().cancel(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to cancel vendor credit: {}", e))
+        })?;
+        Ok(credit.into())
+    }
+}
+
+// ============================================================================
+// Price Schedules  (time-bounded pricing)
+// ============================================================================
+
+/// A time-bounded set of product price overrides.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PriceSchedule {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    code: Option<String>,
+    #[pyo3(get)]
+    currency: String,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    starts_at: Option<String>,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    ends_at: Option<String>,
+    #[pyo3(get)]
+    is_active: bool,
+    #[pyo3(get)]
+    priority: i32,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::PriceSchedule> for PriceSchedule {
+    fn from(s: stateset_core::PriceSchedule) -> Self {
+        Self {
+            id: s.id.to_string(),
+            name: s.name,
+            code: s.code,
+            currency: s.currency.to_string(),
+            starts_at: s.starts_at.map(|d| d.to_rfc3339()),
+            ends_at: s.ends_at.map(|d| d.to_rfc3339()),
+            is_active: s.is_active,
+            priority: s.priority,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A per-product fixed price within a schedule.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PriceScheduleEntry {
+    #[pyo3(get)]
+    price_schedule_id: String,
+    #[pyo3(get)]
+    product_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    price: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::PriceScheduleEntry> for PriceScheduleEntry {
+    fn from(e: stateset_core::PriceScheduleEntry) -> Self {
+        Self {
+            price_schedule_id: e.price_schedule_id.to_string(),
+            product_id: e.product_id.to_string(),
+            price: e.price.to_string(),
+            created_at: e.created_at.to_rfc3339(),
+            updated_at: e.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Price schedule operations. Money is exchanged as exact decimal strings,
+/// timestamps as RFC 3339 strings.
+#[pyclass]
+pub struct PriceSchedules {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl PriceSchedules {
+    /// Whether the price-schedules backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.price_schedules().is_supported())
+    }
+
+    /// Create a price schedule.
+    #[pyo3(signature = (name, code=None, currency=None, starts_at=None, ends_at=None, priority=0))]
+    fn create(
+        &self,
+        name: String,
+        code: Option<String>,
+        currency: Option<String>,
+        starts_at: Option<String>,
+        ends_at: Option<String>,
+        priority: i32,
+    ) -> PyResult<PriceSchedule> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let schedule = commerce
+            .price_schedules()
+            .create(stateset_core::CreatePriceSchedule {
+                name,
+                code,
+                currency: parse_currency_opt_py(currency)?,
+                starts_at: parse_rfc3339_opt_py(starts_at, "starts_at")?,
+                ends_at: parse_rfc3339_opt_py(ends_at, "ends_at")?,
+                priority,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create price schedule: {}", e))
+            })?;
+        Ok(schedule.into())
+    }
+
+    /// Get a price schedule by ID.
+    fn get(&self, id: String) -> PyResult<Option<PriceSchedule>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price schedule")?;
+        let schedule = commerce
+            .price_schedules()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get price schedule: {}", e)))?;
+        Ok(schedule.map(Into::into))
+    }
+
+    /// Update a price schedule (partial).
+    #[pyo3(signature = (id, name=None, code=None, starts_at=None, ends_at=None, is_active=None, priority=None))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        code: Option<String>,
+        starts_at: Option<String>,
+        ends_at: Option<String>,
+        is_active: Option<bool>,
+        priority: Option<i32>,
+    ) -> PyResult<PriceSchedule> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price schedule")?;
+        let schedule = commerce
+            .price_schedules()
+            .update(
+                uuid.into(),
+                stateset_core::UpdatePriceSchedule {
+                    name,
+                    code,
+                    starts_at: parse_rfc3339_opt_py(starts_at, "starts_at")?,
+                    ends_at: parse_rfc3339_opt_py(ends_at, "ends_at")?,
+                    is_active,
+                    priority,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update price schedule: {}", e))
+            })?;
+        Ok(schedule.into())
+    }
+
+    /// List price schedules matching the filter.
+    #[pyo3(signature = (is_active=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        is_active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PriceSchedule>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let schedules = commerce
+            .price_schedules()
+            .list(stateset_core::PriceScheduleFilter { is_active, limit, offset })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list price schedules: {}", e))
+            })?;
+        Ok(schedules.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a price schedule and its entries.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price schedule")?;
+        commerce.price_schedules().delete(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete price schedule: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// Upsert a per-product scheduled price (exact decimal string).
+    fn set_entry(
+        &self,
+        id: String,
+        product_id: String,
+        price: String,
+    ) -> PyResult<PriceScheduleEntry> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price schedule")?;
+        let product_uuid = parse_uuid_str_py(&product_id, "product")?;
+        let entry = commerce
+            .price_schedules()
+            .set_entry(uuid.into(), product_uuid.into(), parse_decimal_py(&price, "price")?)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to set price schedule entry: {}", e))
+            })?;
+        Ok(entry.into())
+    }
+
+    /// Remove a per-product entry.
+    fn delete_entry(&self, id: String, product_id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price schedule")?;
+        let product_uuid = parse_uuid_str_py(&product_id, "product")?;
+        commerce.price_schedules().delete_entry(uuid.into(), product_uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete price schedule entry: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// List per-product entries for a schedule.
+    fn list_entries(&self, id: String) -> PyResult<Vec<PriceScheduleEntry>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price schedule")?;
+        let entries = commerce.price_schedules().list_entries(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list price schedule entries: {}", e))
+        })?;
+        Ok(entries.into_iter().map(Into::into).collect())
+    }
+
+    /// Resolve the effective scheduled price for a product at an instant
+    /// (`at` is an RFC 3339 timestamp; defaults to now). Returns an exact
+    /// decimal string, or None when no schedule applies.
+    #[pyo3(signature = (product_id, at=None))]
+    fn resolve_price(&self, product_id: String, at: Option<String>) -> PyResult<Option<String>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let product_uuid = parse_uuid_str_py(&product_id, "product")?;
+        let at = parse_rfc3339_opt_py(at, "at")?.unwrap_or_else(chrono::Utc::now);
+        let price =
+            commerce.price_schedules().resolve_price(product_uuid.into(), at).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to resolve scheduled price: {}", e))
+            })?;
+        Ok(price.map(|p| p.to_string()))
+    }
+}
+
+// ============================================================================
+// Price Levels  (B2B pricing tiers)
+// ============================================================================
+
+/// A named B2B pricing tier.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PriceLevel {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    code: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    /// none, percentage_discount, percentage_markup
+    #[pyo3(get)]
+    adjustment_type: String,
+    /// Percentage as exact decimal string
+    #[pyo3(get)]
+    adjustment_value: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    is_active: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::PriceLevel> for PriceLevel {
+    fn from(l: stateset_core::PriceLevel) -> Self {
+        Self {
+            id: l.id.to_string(),
+            name: l.name,
+            code: l.code,
+            description: l.description,
+            adjustment_type: format!("{}", l.adjustment_type),
+            adjustment_value: l.adjustment_value.to_string(),
+            currency: l.currency.to_string(),
+            is_active: l.is_active,
+            created_at: l.created_at.to_rfc3339(),
+            updated_at: l.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// An explicit fixed price for a product within a price level.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct PriceLevelEntry {
+    #[pyo3(get)]
+    price_level_id: String,
+    #[pyo3(get)]
+    product_id: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    price: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::PriceLevelEntry> for PriceLevelEntry {
+    fn from(e: stateset_core::PriceLevelEntry) -> Self {
+        Self {
+            price_level_id: e.price_level_id.to_string(),
+            product_id: e.product_id.to_string(),
+            price: e.price.to_string(),
+            created_at: e.created_at.to_rfc3339(),
+            updated_at: e.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Price level operations. Money is exchanged as exact decimal strings,
+/// enums as snake_case strings.
+#[pyclass]
+pub struct PriceLevels {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl PriceLevels {
+    /// Whether the price-levels backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.price_levels().is_supported())
+    }
+
+    /// Create a price level. `adjustment_type` is none, percentage_discount,
+    /// or percentage_markup; `adjustment_value` is a percentage as an exact
+    /// decimal string (e.g. "10" for 10%).
+    #[pyo3(signature = (name, code, description=None, adjustment_type=None, adjustment_value=None, currency=None))]
+    fn create(
+        &self,
+        name: String,
+        code: String,
+        description: Option<String>,
+        adjustment_type: Option<String>,
+        adjustment_value: Option<String>,
+        currency: Option<String>,
+    ) -> PyResult<PriceLevel> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let adjustment_type = adjustment_type
+            .map(|s| {
+                s.parse::<stateset_core::PriceAdjustmentType>()
+                    .map_err(|_| PyValueError::new_err("Invalid price adjustment type"))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let adjustment_value = adjustment_value
+            .as_deref()
+            .map(|s| parse_decimal_py(s, "adjustment_value"))
+            .transpose()?
+            .unwrap_or(Decimal::ZERO);
+        let level = commerce
+            .price_levels()
+            .create(stateset_core::CreatePriceLevel {
+                name,
+                code,
+                description,
+                adjustment_type,
+                adjustment_value,
+                currency: parse_currency_opt_py(currency)?,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create price level: {}", e)))?;
+        Ok(level.into())
+    }
+
+    /// Get a price level by ID.
+    fn get(&self, id: String) -> PyResult<Option<PriceLevel>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price level")?;
+        let level = commerce
+            .price_levels()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get price level: {}", e)))?;
+        Ok(level.map(Into::into))
+    }
+
+    /// Update a price level (partial).
+    #[pyo3(signature = (id, name=None, description=None, adjustment_type=None, adjustment_value=None, is_active=None))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        description: Option<String>,
+        adjustment_type: Option<String>,
+        adjustment_value: Option<String>,
+        is_active: Option<bool>,
+    ) -> PyResult<PriceLevel> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price level")?;
+        let adjustment_type = adjustment_type
+            .map(|s| {
+                s.parse::<stateset_core::PriceAdjustmentType>()
+                    .map_err(|_| PyValueError::new_err("Invalid price adjustment type"))
+            })
+            .transpose()?;
+        let level = commerce
+            .price_levels()
+            .update(
+                uuid.into(),
+                stateset_core::UpdatePriceLevel {
+                    name,
+                    description,
+                    adjustment_type,
+                    adjustment_value: parse_optional_decimal_py(
+                        adjustment_value,
+                        "adjustment_value",
+                    )?,
+                    is_active,
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update price level: {}", e)))?;
+        Ok(level.into())
+    }
+
+    /// List price levels matching the filter.
+    #[pyo3(signature = (is_active=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        is_active: Option<bool>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PriceLevel>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let levels = commerce
+            .price_levels()
+            .list(stateset_core::PriceLevelFilter { is_active, limit, offset })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list price levels: {}", e)))?;
+        Ok(levels.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a price level and its entries.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price level")?;
+        commerce
+            .price_levels()
+            .delete(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete price level: {}", e)))?;
+        Ok(())
+    }
+
+    /// Upsert a per-product fixed price entry (exact decimal string).
+    fn set_entry(
+        &self,
+        id: String,
+        product_id: String,
+        price: String,
+    ) -> PyResult<PriceLevelEntry> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price level")?;
+        let product_uuid = parse_uuid_str_py(&product_id, "product")?;
+        let entry = commerce
+            .price_levels()
+            .set_entry(uuid.into(), product_uuid.into(), parse_decimal_py(&price, "price")?)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to set price level entry: {}", e))
+            })?;
+        Ok(entry.into())
+    }
+
+    /// Remove a per-product entry.
+    fn delete_entry(&self, id: String, product_id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price level")?;
+        let product_uuid = parse_uuid_str_py(&product_id, "product")?;
+        commerce.price_levels().delete_entry(uuid.into(), product_uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete price level entry: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// List per-product entries for a level.
+    fn list_entries(&self, id: String) -> PyResult<Vec<PriceLevelEntry>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "price level")?;
+        let entries = commerce.price_levels().list_entries(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list price level entries: {}", e))
+        })?;
+        Ok(entries.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Transfer Orders  (inter-warehouse stock movement)
+// ============================================================================
+
+/// A line on a create-transfer-order request. Quantities are exact decimal
+/// strings.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct TransferOrderItemInput {
+    #[pyo3(get, set)]
+    product_id: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    quantity: String,
+}
+
+#[pymethods]
+impl TransferOrderItemInput {
+    #[new]
+    fn new(product_id: String, quantity: String) -> Self {
+        Self { product_id, quantity }
+    }
+}
+
+/// A single line on a transfer order. Quantities are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct TransferOrderItem {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    transfer_order_id: String,
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity_shipped: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity_received: String,
+}
+
+impl From<stateset_core::TransferOrderItem> for TransferOrderItem {
+    fn from(i: stateset_core::TransferOrderItem) -> Self {
+        Self {
+            id: i.id.to_string(),
+            transfer_order_id: i.transfer_order_id.to_string(),
+            product_id: i.product_id.to_string(),
+            sku: i.sku,
+            quantity: i.quantity.to_string(),
+            quantity_shipped: i.quantity_shipped.to_string(),
+            quantity_received: i.quantity_received.to_string(),
+        }
+    }
+}
+
+/// A transfer order moving stock between two warehouses.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct TransferOrder {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    number: String,
+    #[pyo3(get)]
+    source_warehouse_id: String,
+    #[pyo3(get)]
+    destination_warehouse_id: String,
+    /// draft, pending, in_transit, partially_received, received, cancelled
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    items: Vec<TransferOrderItem>,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    expected_at: Option<String>,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    shipped_at: Option<String>,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    received_at: Option<String>,
+    #[pyo3(get)]
+    notes: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::TransferOrder> for TransferOrder {
+    fn from(o: stateset_core::TransferOrder) -> Self {
+        Self {
+            id: o.id.to_string(),
+            number: o.number,
+            source_warehouse_id: o.source_warehouse_id.to_string(),
+            destination_warehouse_id: o.destination_warehouse_id.to_string(),
+            status: format!("{}", o.status),
+            items: o.items.into_iter().map(Into::into).collect(),
+            expected_at: o.expected_at.map(|d| d.to_rfc3339()),
+            shipped_at: o.shipped_at.map(|d| d.to_rfc3339()),
+            received_at: o.received_at.map(|d| d.to_rfc3339()),
+            notes: o.notes,
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Transfer order operations. Quantities are exact decimal strings,
+/// timestamps RFC 3339 strings, enums snake_case strings.
+#[pyclass]
+pub struct TransferOrders {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl TransferOrders {
+    /// Whether the transfer-orders backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.transfer_orders().is_supported())
+    }
+
+    /// Create a transfer order. Source and destination warehouses must differ.
+    #[pyo3(signature = (source_warehouse_id, destination_warehouse_id, items, expected_at=None, notes=None))]
+    fn create(
+        &self,
+        source_warehouse_id: String,
+        destination_warehouse_id: String,
+        items: Vec<TransferOrderItemInput>,
+        expected_at: Option<String>,
+        notes: Option<String>,
+    ) -> PyResult<TransferOrder> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let items = items
+            .into_iter()
+            .map(|i| -> PyResult<stateset_core::CreateTransferOrderItem> {
+                Ok(stateset_core::CreateTransferOrderItem {
+                    product_id: parse_uuid_str_py(&i.product_id, "product")?.into(),
+                    quantity: parse_decimal_py(&i.quantity, "quantity")?,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let order = commerce
+            .transfer_orders()
+            .create(stateset_core::CreateTransferOrder {
+                source_warehouse_id: parse_uuid_str_py(
+                    &source_warehouse_id,
+                    "source_warehouse_id",
+                )?
+                .into(),
+                destination_warehouse_id: parse_uuid_str_py(
+                    &destination_warehouse_id,
+                    "destination_warehouse_id",
+                )?
+                .into(),
+                items,
+                expected_at: parse_rfc3339_opt_py(expected_at, "expected_at")?,
+                notes,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create transfer order: {}", e))
+            })?;
+        Ok(order.into())
+    }
+
+    /// Get a transfer order by ID.
+    fn get(&self, id: String) -> PyResult<Option<TransferOrder>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "transfer order")?;
+        let order = commerce
+            .transfer_orders()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get transfer order: {}", e)))?;
+        Ok(order.map(Into::into))
+    }
+
+    /// List transfer orders matching the filter.
+    #[pyo3(signature = (status=None, source_warehouse_id=None, destination_warehouse_id=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        status: Option<String>,
+        source_warehouse_id: Option<String>,
+        destination_warehouse_id: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<TransferOrder>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::TransferOrderFilter {
+            status: status
+                .map(|s| {
+                    s.parse::<stateset_core::TransferOrderStatus>()
+                        .map_err(|_| PyValueError::new_err("Invalid transfer order status"))
+                })
+                .transpose()?,
+            source_warehouse_id: parse_optional_uuid_py(
+                source_warehouse_id,
+                "source_warehouse_id",
+            )?
+            .map(Into::into),
+            destination_warehouse_id: parse_optional_uuid_py(
+                destination_warehouse_id,
+                "destination_warehouse_id",
+            )?
+            .map(Into::into),
+            limit,
+            offset,
+        };
+        let orders = commerce.transfer_orders().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list transfer orders: {}", e))
+        })?;
+        Ok(orders.into_iter().map(Into::into).collect())
+    }
+
+    /// Mark a transfer order as shipped from the source.
+    fn ship(&self, id: String) -> PyResult<TransferOrder> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "transfer order")?;
+        let order = commerce.transfer_orders().ship(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to ship transfer order: {}", e))
+        })?;
+        Ok(order.into())
+    }
+
+    /// Receive a quantity (exact decimal string) against a single line at the
+    /// destination.
+    fn receive_line(
+        &self,
+        id: String,
+        item_id: String,
+        quantity: String,
+    ) -> PyResult<TransferOrder> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "transfer order")?;
+        let item_uuid = parse_uuid_str_py(&item_id, "transfer order item")?;
+        let order = commerce
+            .transfer_orders()
+            .receive_line(uuid.into(), item_uuid.into(), parse_decimal_py(&quantity, "quantity")?)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to receive transfer order line: {}", e))
+            })?;
+        Ok(order.into())
+    }
+
+    /// Cancel a transfer order.
+    fn cancel(&self, id: String) -> PyResult<TransferOrder> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "transfer order")?;
+        let order = commerce.transfer_orders().cancel(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to cancel transfer order: {}", e))
+        })?;
+        Ok(order.into())
+    }
+}
+
+// ============================================================================
+// Production Batches  (grouping manufacturing work orders)
+// ============================================================================
+
+/// A batch grouping multiple work orders for coordinated production.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ProductionBatch {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    name: String,
+    /// planned, in_progress, completed, cancelled
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    vendor_id: Option<String>,
+    #[pyo3(get)]
+    work_order_ids: Vec<String>,
+    #[pyo3(get)]
+    notes: Option<String>,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    scheduled_start: Option<String>,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    scheduled_end: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::ProductionBatch> for ProductionBatch {
+    fn from(b: stateset_core::ProductionBatch) -> Self {
+        Self {
+            id: b.id.to_string(),
+            name: b.name,
+            status: format!("{}", b.status),
+            vendor_id: b.vendor_id.map(|id| id.to_string()),
+            work_order_ids: b.work_order_ids.iter().map(ToString::to_string).collect(),
+            notes: b.notes,
+            scheduled_start: b.scheduled_start.map(|d| d.to_rfc3339()),
+            scheduled_end: b.scheduled_end.map(|d| d.to_rfc3339()),
+            created_at: b.created_at.to_rfc3339(),
+            updated_at: b.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Production batch operations. Timestamps are RFC 3339 strings, enums
+/// snake_case strings.
+#[pyclass]
+pub struct ProductionBatches {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl ProductionBatches {
+    /// Whether the production-batches backend is available on this engine
+    /// build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.production_batches().is_supported())
+    }
+
+    /// Create a production batch.
+    #[pyo3(signature = (name, vendor_id=None, work_order_ids=None, notes=None, scheduled_start=None, scheduled_end=None))]
+    fn create(
+        &self,
+        name: String,
+        vendor_id: Option<String>,
+        work_order_ids: Option<Vec<String>>,
+        notes: Option<String>,
+        scheduled_start: Option<String>,
+        scheduled_end: Option<String>,
+    ) -> PyResult<ProductionBatch> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let work_order_ids = work_order_ids
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| parse_uuid_str_py(&s, "work_order"))
+            .collect::<PyResult<Vec<_>>>()?;
+        let batch = commerce
+            .production_batches()
+            .create(stateset_core::CreateProductionBatch {
+                name,
+                vendor_id: parse_optional_uuid_py(vendor_id, "vendor_id")?,
+                work_order_ids,
+                notes,
+                scheduled_start: parse_rfc3339_opt_py(scheduled_start, "scheduled_start")?,
+                scheduled_end: parse_rfc3339_opt_py(scheduled_end, "scheduled_end")?,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create production batch: {}", e))
+            })?;
+        Ok(batch.into())
+    }
+
+    /// Get a production batch by ID.
+    fn get(&self, id: String) -> PyResult<Option<ProductionBatch>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "production batch")?;
+        let batch = commerce.production_batches().get(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get production batch: {}", e))
+        })?;
+        Ok(batch.map(Into::into))
+    }
+
+    /// Update a production batch (partial). `status` is planned, in_progress,
+    /// completed, or cancelled.
+    #[pyo3(signature = (id, name=None, vendor_id=None, status=None, notes=None, scheduled_start=None, scheduled_end=None))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        vendor_id: Option<String>,
+        status: Option<String>,
+        notes: Option<String>,
+        scheduled_start: Option<String>,
+        scheduled_end: Option<String>,
+    ) -> PyResult<ProductionBatch> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "production batch")?;
+        let status = status
+            .map(|s| {
+                s.parse::<stateset_core::ProductionBatchStatus>()
+                    .map_err(|_| PyValueError::new_err("Invalid production batch status"))
+            })
+            .transpose()?;
+        let batch = commerce
+            .production_batches()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateProductionBatch {
+                    name,
+                    vendor_id: parse_optional_uuid_py(vendor_id, "vendor_id")?,
+                    status,
+                    notes,
+                    scheduled_start: parse_rfc3339_opt_py(scheduled_start, "scheduled_start")?,
+                    scheduled_end: parse_rfc3339_opt_py(scheduled_end, "scheduled_end")?,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update production batch: {}", e))
+            })?;
+        Ok(batch.into())
+    }
+
+    /// List production batches matching the filter.
+    #[pyo3(signature = (status=None, vendor_id=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        status: Option<String>,
+        vendor_id: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<ProductionBatch>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::ProductionBatchFilter {
+            status: status
+                .map(|s| {
+                    s.parse::<stateset_core::ProductionBatchStatus>()
+                        .map_err(|_| PyValueError::new_err("Invalid production batch status"))
+                })
+                .transpose()?,
+            vendor_id: parse_optional_uuid_py(vendor_id, "vendor_id")?,
+            limit,
+            offset,
+        };
+        let batches = commerce.production_batches().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list production batches: {}", e))
+        })?;
+        Ok(batches.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a production batch.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "production batch")?;
+        commerce.production_batches().delete(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete production batch: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// Link work orders to a batch.
+    fn add_work_orders(
+        &self,
+        id: String,
+        work_order_ids: Vec<String>,
+    ) -> PyResult<ProductionBatch> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "production batch")?;
+        let work_order_ids = work_order_ids
+            .into_iter()
+            .map(|s| parse_uuid_str_py(&s, "work_order"))
+            .collect::<PyResult<Vec<_>>>()?;
+        let batch = commerce
+            .production_batches()
+            .add_work_orders(uuid.into(), work_order_ids)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to add work orders: {}", e)))?;
+        Ok(batch.into())
+    }
+
+    /// Remove a work order from a batch.
+    fn remove_work_order(&self, id: String, work_order_id: String) -> PyResult<ProductionBatch> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "production batch")?;
+        let work_order_uuid = parse_uuid_str_py(&work_order_id, "work_order")?;
+        let batch =
+            commerce.production_batches().remove_work_order(uuid.into(), work_order_uuid).map_err(
+                |e| PyRuntimeError::new_err(format!("Failed to remove work order: {}", e)),
+            )?;
+        Ok(batch.into())
+    }
+}
+
+// ============================================================================
+// Supplier SKUs  (per-supplier SKU / unit-cost overrides)
+// ============================================================================
+
+/// A single item in a bulk supplier-SKU upsert, keyed by internal product.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct SupplierSkuBulkItemInput {
+    #[pyo3(get, set)]
+    product_id: String,
+    #[pyo3(get, set)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    unit_cost: Option<String>,
+}
+
+#[pymethods]
+impl SupplierSkuBulkItemInput {
+    #[new]
+    #[pyo3(signature = (product_id, sku, unit_cost=None))]
+    fn new(product_id: String, sku: String, unit_cost: Option<String>) -> Self {
+        Self { product_id, sku, unit_cost }
+    }
+}
+
+/// A supplier-specific SKU and optional unit-cost override for a product.
+/// Money values are exact decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct SupplierSku {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    supplier_id: String,
+    #[pyo3(get)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    unit_cost: Option<String>,
+    #[pyo3(get)]
+    currency: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    min_order_qty: Option<String>,
+    #[pyo3(get)]
+    lead_time_days: Option<i32>,
+    #[pyo3(get)]
+    is_preferred: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::SupplierSku> for SupplierSku {
+    fn from(s: stateset_core::SupplierSku) -> Self {
+        Self {
+            id: s.id.to_string(),
+            product_id: s.product_id.to_string(),
+            supplier_id: s.supplier_id.to_string(),
+            sku: s.sku,
+            unit_cost: s.unit_cost.map(|c| c.to_string()),
+            currency: s.currency.to_string(),
+            min_order_qty: s.min_order_qty.map(|q| q.to_string()),
+            lead_time_days: s.lead_time_days,
+            is_preferred: s.is_preferred,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Supplier SKU operations. Money is exchanged as exact decimal strings.
+#[pyclass]
+pub struct SupplierSkus {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl SupplierSkus {
+    /// Whether the supplier-SKUs backend is available on this engine build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.supplier_skus().is_supported())
+    }
+
+    /// Create a supplier SKU.
+    #[pyo3(signature = (product_id, supplier_id, sku, unit_cost=None, currency=None, min_order_qty=None, lead_time_days=None))]
+    fn create(
+        &self,
+        product_id: String,
+        supplier_id: String,
+        sku: String,
+        unit_cost: Option<String>,
+        currency: Option<String>,
+        min_order_qty: Option<String>,
+        lead_time_days: Option<i32>,
+    ) -> PyResult<SupplierSku> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let record = commerce
+            .supplier_skus()
+            .create(stateset_core::CreateSupplierSku {
+                product_id: parse_uuid_str_py(&product_id, "product")?.into(),
+                supplier_id: parse_uuid_str_py(&supplier_id, "supplier")?,
+                sku,
+                unit_cost: parse_optional_decimal_py(unit_cost, "unit_cost")?,
+                currency: parse_currency_opt_py(currency)?,
+                min_order_qty: parse_optional_decimal_py(min_order_qty, "min_order_qty")?,
+                lead_time_days,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create supplier SKU: {}", e))
+            })?;
+        Ok(record.into())
+    }
+
+    /// Get a supplier SKU by ID.
+    fn get(&self, id: String) -> PyResult<Option<SupplierSku>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "supplier SKU")?;
+        let record = commerce
+            .supplier_skus()
+            .get(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get supplier SKU: {}", e)))?;
+        Ok(record.map(Into::into))
+    }
+
+    /// Update a supplier SKU (partial).
+    #[pyo3(signature = (id, sku=None, unit_cost=None, currency=None, min_order_qty=None, lead_time_days=None, is_preferred=None))]
+    fn update(
+        &self,
+        id: String,
+        sku: Option<String>,
+        unit_cost: Option<String>,
+        currency: Option<String>,
+        min_order_qty: Option<String>,
+        lead_time_days: Option<i32>,
+        is_preferred: Option<bool>,
+    ) -> PyResult<SupplierSku> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "supplier SKU")?;
+        let record = commerce
+            .supplier_skus()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateSupplierSku {
+                    sku,
+                    unit_cost: parse_optional_decimal_py(unit_cost, "unit_cost")?,
+                    currency: parse_currency_opt_py(currency)?,
+                    min_order_qty: parse_optional_decimal_py(min_order_qty, "min_order_qty")?,
+                    lead_time_days,
+                    is_preferred,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update supplier SKU: {}", e))
+            })?;
+        Ok(record.into())
+    }
+
+    /// List supplier SKUs matching the filter.
+    #[pyo3(signature = (supplier_id=None, product_id=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        supplier_id: Option<String>,
+        product_id: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<SupplierSku>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::SupplierSkuFilter {
+            supplier_id: parse_optional_uuid_py(supplier_id, "supplier_id")?,
+            product_id: parse_optional_uuid_py(product_id, "product_id")?.map(Into::into),
+            limit,
+            offset,
+        };
+        let records = commerce
+            .supplier_skus()
+            .list(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list supplier SKUs: {}", e)))?;
+        Ok(records.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a supplier SKU.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "supplier SKU")?;
+        commerce.supplier_skus().delete(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete supplier SKU: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// Bulk upsert supplier SKUs for a supplier, keyed by internal product.
+    /// Returns the number of records upserted.
+    fn bulk_upsert(
+        &self,
+        supplier_id: String,
+        items: Vec<SupplierSkuBulkItemInput>,
+    ) -> PyResult<u64> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let supplier_uuid = parse_uuid_str_py(&supplier_id, "supplier")?;
+        let items = items
+            .into_iter()
+            .map(|i| -> PyResult<stateset_core::BulkSupplierSkuItem> {
+                Ok(stateset_core::BulkSupplierSkuItem {
+                    product_id: parse_uuid_str_py(&i.product_id, "product")?.into(),
+                    sku: i.sku,
+                    unit_cost: parse_optional_decimal_py(i.unit_cost, "unit_cost")?,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        commerce.supplier_skus().bulk_upsert(supplier_uuid, items).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to bulk upsert supplier SKUs: {}", e))
+        })
+    }
+}
+
+// ============================================================================
+// Inbound Shipments  (advance ship notices)
+// ============================================================================
+
+/// A line on a create-inbound-shipment request. Quantities are exact decimal
+/// strings.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct InboundShipmentItemInput {
+    #[pyo3(get, set)]
+    product_id: String,
+    #[pyo3(get, set)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get, set)]
+    quantity_expected: String,
+}
+
+#[pymethods]
+impl InboundShipmentItemInput {
+    #[new]
+    fn new(product_id: String, sku: String, quantity_expected: String) -> Self {
+        Self { product_id, sku, quantity_expected }
+    }
+}
+
+/// A single expected line on an inbound shipment. Quantities are exact
+/// decimal strings.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct InboundShipmentItem {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    inbound_shipment_id: String,
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    sku: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity_expected: String,
+    /// Exact decimal string
+    #[pyo3(get)]
+    quantity_received: String,
+}
+
+impl From<stateset_core::InboundShipmentItem> for InboundShipmentItem {
+    fn from(i: stateset_core::InboundShipmentItem) -> Self {
+        Self {
+            id: i.id.to_string(),
+            inbound_shipment_id: i.inbound_shipment_id.to_string(),
+            product_id: i.product_id.to_string(),
+            sku: i.sku,
+            quantity_expected: i.quantity_expected.to_string(),
+            quantity_received: i.quantity_received.to_string(),
+        }
+    }
+}
+
+/// Goods in transit from a supplier to a warehouse.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct InboundShipment {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    number: String,
+    #[pyo3(get)]
+    supplier_id: String,
+    #[pyo3(get)]
+    purchase_order_id: Option<String>,
+    #[pyo3(get)]
+    warehouse_id: Option<String>,
+    #[pyo3(get)]
+    carrier: Option<String>,
+    #[pyo3(get)]
+    tracking_number: Option<String>,
+    /// pending, in_transit, arrived, partially_received, received, cancelled
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    items: Vec<InboundShipmentItem>,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    expected_at: Option<String>,
+    /// RFC 3339 timestamp
+    #[pyo3(get)]
+    received_at: Option<String>,
+    #[pyo3(get)]
+    notes: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::InboundShipment> for InboundShipment {
+    fn from(s: stateset_core::InboundShipment) -> Self {
+        Self {
+            id: s.id.to_string(),
+            number: s.number,
+            supplier_id: s.supplier_id.to_string(),
+            purchase_order_id: s.purchase_order_id.map(|id| id.to_string()),
+            warehouse_id: s.warehouse_id.map(|id| id.to_string()),
+            carrier: s.carrier,
+            tracking_number: s.tracking_number,
+            status: format!("{}", s.status),
+            items: s.items.into_iter().map(Into::into).collect(),
+            expected_at: s.expected_at.map(|d| d.to_rfc3339()),
+            received_at: s.received_at.map(|d| d.to_rfc3339()),
+            notes: s.notes,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Inbound shipment (ASN) operations. Quantities are exact decimal strings,
+/// timestamps RFC 3339 strings, enums snake_case strings.
+#[pyclass]
+pub struct InboundShipments {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl InboundShipments {
+    /// Whether the inbound-shipments backend is available on this engine
+    /// build.
+    fn is_supported(&self) -> PyResult<bool> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        Ok(commerce.inbound_shipments().is_supported())
+    }
+
+    /// Create an inbound shipment (advance ship notice).
+    #[pyo3(signature = (supplier_id, items, purchase_order_id=None, warehouse_id=None, carrier=None, tracking_number=None, expected_at=None, notes=None))]
+    fn create(
+        &self,
+        supplier_id: String,
+        items: Vec<InboundShipmentItemInput>,
+        purchase_order_id: Option<String>,
+        warehouse_id: Option<String>,
+        carrier: Option<String>,
+        tracking_number: Option<String>,
+        expected_at: Option<String>,
+        notes: Option<String>,
+    ) -> PyResult<InboundShipment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let items = items
+            .into_iter()
+            .map(|i| -> PyResult<stateset_core::CreateInboundShipmentItem> {
+                Ok(stateset_core::CreateInboundShipmentItem {
+                    product_id: parse_uuid_str_py(&i.product_id, "product")?.into(),
+                    sku: i.sku,
+                    quantity_expected: parse_decimal_py(&i.quantity_expected, "quantity_expected")?,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let shipment = commerce
+            .inbound_shipments()
+            .create(stateset_core::CreateInboundShipment {
+                supplier_id: parse_uuid_str_py(&supplier_id, "supplier")?,
+                purchase_order_id: parse_optional_uuid_py(purchase_order_id, "purchase_order_id")?,
+                warehouse_id: parse_optional_uuid_py(warehouse_id, "warehouse_id")?.map(Into::into),
+                carrier,
+                tracking_number,
+                expected_at: parse_rfc3339_opt_py(expected_at, "expected_at")?,
+                items,
+                notes,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create inbound shipment: {}", e))
+            })?;
+        Ok(shipment.into())
+    }
+
+    /// Get an inbound shipment by ID.
+    fn get(&self, id: String) -> PyResult<Option<InboundShipment>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "inbound shipment")?;
+        let shipment = commerce.inbound_shipments().get(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get inbound shipment: {}", e))
+        })?;
+        Ok(shipment.map(Into::into))
+    }
+
+    /// List inbound shipments matching the filter.
+    #[pyo3(signature = (supplier_id=None, warehouse_id=None, status=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        supplier_id: Option<String>,
+        warehouse_id: Option<String>,
+        status: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<InboundShipment>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let filter = stateset_core::InboundShipmentFilter {
+            supplier_id: parse_optional_uuid_py(supplier_id, "supplier_id")?,
+            warehouse_id: parse_optional_uuid_py(warehouse_id, "warehouse_id")?.map(Into::into),
+            status: status
+                .map(|s| {
+                    s.parse::<stateset_core::InboundShipmentStatus>()
+                        .map_err(|_| PyValueError::new_err("Invalid inbound shipment status"))
+                })
+                .transpose()?,
+            limit,
+            offset,
+        };
+        let shipments = commerce.inbound_shipments().list(filter).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list inbound shipments: {}", e))
+        })?;
+        Ok(shipments.into_iter().map(Into::into).collect())
+    }
+
+    /// Mark a shipment as in transit.
+    fn mark_in_transit(&self, id: String) -> PyResult<InboundShipment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "inbound shipment")?;
+        let shipment = commerce.inbound_shipments().mark_in_transit(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to mark inbound shipment in transit: {}", e))
+        })?;
+        Ok(shipment.into())
+    }
+
+    /// Mark a shipment as arrived.
+    fn mark_arrived(&self, id: String) -> PyResult<InboundShipment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "inbound shipment")?;
+        let shipment = commerce.inbound_shipments().mark_arrived(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to mark inbound shipment arrived: {}", e))
+        })?;
+        Ok(shipment.into())
+    }
+
+    /// Receive a quantity (exact decimal string) against a single line.
+    fn receive_line(
+        &self,
+        id: String,
+        item_id: String,
+        quantity: String,
+    ) -> PyResult<InboundShipment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "inbound shipment")?;
+        let item_uuid = parse_uuid_str_py(&item_id, "inbound shipment item")?;
+        let shipment = commerce
+            .inbound_shipments()
+            .receive_line(uuid.into(), item_uuid.into(), parse_decimal_py(&quantity, "quantity")?)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to receive inbound shipment line: {}", e))
+            })?;
+        Ok(shipment.into())
+    }
+
+    /// Cancel an inbound shipment.
+    fn cancel(&self, id: String) -> PyResult<InboundShipment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = parse_uuid_str_py(&id, "inbound shipment")?;
+        let shipment = commerce.inbound_shipments().cancel(uuid.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to cancel inbound shipment: {}", e))
+        })?;
+        Ok(shipment.into())
     }
 }

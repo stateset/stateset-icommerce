@@ -266,14 +266,14 @@ pub mod payments {
     use super::*;
 
     /// Track a payment processing operation
-    pub fn track_payment_processing(_order_id: &str, _amount: f64) {
+    pub fn track_payment_processing(_order_id: &str, _amount: rust_decimal::Decimal) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
             metric.with_label_values(&["payments.process", "payments"]).inc();
         }
     }
 
     /// Track a payment refund operation
-    pub fn track_refund(_payment_id: &str, _amount: f64) {
+    pub fn track_refund(_payment_id: &str, _amount: rust_decimal::Decimal) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
             metric.with_label_values(&["payments.refund", "payments"]).inc();
         }

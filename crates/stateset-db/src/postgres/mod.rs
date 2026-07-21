@@ -5,6 +5,7 @@
 mod a2a;
 mod accounts_payable;
 mod accounts_receivable;
+mod activity_logs;
 mod agent_cards;
 mod agent_identities;
 mod agent_reputation;
@@ -13,11 +14,14 @@ mod analytics;
 mod backorder;
 mod bom;
 mod carts;
+mod channels;
+mod companies;
 mod cost_accounting;
 mod credit;
 mod currency;
 mod custom_objects;
 mod customers;
+mod edi_documents;
 mod fixed_assets;
 mod fraud;
 mod fulfillment;
@@ -25,17 +29,24 @@ mod general_ledger;
 mod gift_cards;
 mod http_idempotency;
 mod inbound_shipments;
+mod integration_field_mappings;
+mod integration_mappings;
 mod inventory;
 mod invoices;
 mod lots;
 mod loyalty;
 mod orders;
+mod payment_obligations;
 mod payments;
+mod prepayments;
+mod price_levels;
+mod price_schedules;
 mod print_stations;
 mod production_batches;
 mod products;
 mod promotions;
 mod purchase_orders;
+mod purgatory;
 mod quality;
 mod receiving;
 mod returns;
@@ -52,6 +63,7 @@ mod store_credits;
 mod subscriptions;
 mod supplier_skus;
 mod tax;
+mod topology_snapshots;
 mod transfer_orders;
 mod units_of_measure;
 mod vendor_credits;
@@ -67,6 +79,7 @@ mod zone_shipping_methods;
 pub use a2a::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
+pub use activity_logs::*;
 pub use agent_cards::*;
 pub use agent_identities::*;
 pub use agent_reputation::*;
@@ -75,11 +88,14 @@ pub use analytics::*;
 pub use backorder::*;
 pub use bom::*;
 pub use carts::*;
+pub use channels::*;
+pub use companies::*;
 pub use cost_accounting::*;
 pub use credit::*;
 pub use currency::*;
 pub use custom_objects::*;
 pub use customers::*;
+pub use edi_documents::*;
 pub use fixed_assets::*;
 pub use fraud::*;
 pub use fulfillment::*;
@@ -87,17 +103,24 @@ pub use general_ledger::*;
 pub use gift_cards::*;
 pub use http_idempotency::*;
 pub use inbound_shipments::*;
+pub use integration_field_mappings::*;
+pub use integration_mappings::*;
 pub use inventory::*;
 pub use invoices::*;
 pub use lots::*;
 pub use loyalty::*;
 pub use orders::*;
+pub use payment_obligations::*;
 pub use payments::*;
+pub use prepayments::*;
+pub use price_levels::*;
+pub use price_schedules::*;
 pub use print_stations::*;
 pub use production_batches::*;
 pub use products::*;
 pub use promotions::*;
 pub use purchase_orders::*;
+pub use purgatory::*;
 pub use quality::*;
 pub use receiving::*;
 pub use returns::*;
@@ -114,6 +137,7 @@ pub use store_credits::*;
 pub use subscriptions::*;
 pub use supplier_skus::*;
 pub use tax::*;
+pub use topology_snapshots::*;
 pub use transfer_orders::*;
 pub use units_of_measure::*;
 pub use vendor_credits::*;
@@ -349,6 +373,31 @@ impl PostgresDatabase {
             .push(("058_gl_fx_revaluation", include_str!("migrations/058_gl_fx_revaluation.sql")));
         migrations
             .push(("059_http_idempotency", include_str!("migrations/059_http_idempotency.sql")));
+        migrations.push(("060_channels", include_str!("migrations/060_channels.sql")));
+        migrations.push(("061_companies", include_str!("migrations/061_companies.sql")));
+        migrations.push(("062_activity_logs", include_str!("migrations/062_activity_logs.sql")));
+        migrations.push((
+            "063_payment_obligations",
+            include_str!("migrations/063_payment_obligations.sql"),
+        ));
+        migrations.push(("064_prepayments", include_str!("migrations/064_prepayments.sql")));
+        migrations.push(("065_price_levels", include_str!("migrations/065_price_levels.sql")));
+        migrations
+            .push(("066_price_schedules", include_str!("migrations/066_price_schedules.sql")));
+        migrations.push(("067_purgatory", include_str!("migrations/067_purgatory.sql")));
+        migrations.push(("068_edi_documents", include_str!("migrations/068_edi_documents.sql")));
+        migrations.push((
+            "069_integration_mappings",
+            include_str!("migrations/069_integration_mappings.sql"),
+        ));
+        migrations.push((
+            "070_integration_field_mappings",
+            include_str!("migrations/070_integration_field_mappings.sql"),
+        ));
+        migrations.push((
+            "071_topology_snapshots",
+            include_str!("migrations/071_topology_snapshots.sql"),
+        ));
 
         for (name, sql) in migrations {
             let mut tx =
@@ -676,6 +725,91 @@ impl PostgresDatabase {
     /// Get zone shipping method repository
     pub fn zone_shipping_methods(&self) -> PgZoneShippingMethodRepository {
         PgZoneShippingMethodRepository::new(self.pool.clone())
+    }
+
+    /// Get transfer order repository
+    pub fn transfer_orders(&self) -> PgTransferOrderRepository {
+        PgTransferOrderRepository::new(self.pool.clone())
+    }
+
+    /// Get unit of measure repository
+    pub fn units_of_measure(&self) -> PgUnitOfMeasureRepository {
+        PgUnitOfMeasureRepository::new(self.pool.clone())
+    }
+
+    /// Get inbound shipment repository
+    pub fn inbound_shipments(&self) -> PgInboundShipmentRepository {
+        PgInboundShipmentRepository::new(self.pool.clone())
+    }
+
+    /// Get print station repository
+    pub fn print_stations(&self) -> PgPrintStationRepository {
+        PgPrintStationRepository::new(self.pool.clone())
+    }
+
+    /// Get stock snapshot repository
+    pub fn stock_snapshots(&self) -> PgStockSnapshotRepository {
+        PgStockSnapshotRepository::new(self.pool.clone())
+    }
+
+    /// Get channel repository
+    pub fn channels(&self) -> PgChannelRepository {
+        PgChannelRepository::new(self.pool.clone())
+    }
+
+    /// Get company repository
+    pub fn companies(&self) -> PgCompanyRepository {
+        PgCompanyRepository::new(self.pool.clone())
+    }
+
+    /// Get payment obligation repository
+    pub fn payment_obligations(&self) -> PgPaymentObligationRepository {
+        PgPaymentObligationRepository::new(self.pool.clone())
+    }
+
+    /// Get price level repository
+    pub fn price_levels(&self) -> PgPriceLevelRepository {
+        PgPriceLevelRepository::new(self.pool.clone())
+    }
+
+    /// Get prepayment repository
+    pub fn prepayments(&self) -> PgPrepaymentRepository {
+        PgPrepaymentRepository::new(self.pool.clone())
+    }
+
+    /// Get price schedule repository
+    pub fn price_schedules(&self) -> PgPriceScheduleRepository {
+        PgPriceScheduleRepository::new(self.pool.clone())
+    }
+
+    /// Get activity log repository
+    pub fn activity_logs(&self) -> PgActivityLogRepository {
+        PgActivityLogRepository::new(self.pool.clone())
+    }
+
+    /// Get integration mapping repository
+    pub fn integration_mappings(&self) -> PgIntegrationMappingRepository {
+        PgIntegrationMappingRepository::new(self.pool.clone())
+    }
+
+    /// Get integration field mapping repository
+    pub fn integration_field_mappings(&self) -> PgIntegrationFieldMappingRepository {
+        PgIntegrationFieldMappingRepository::new(self.pool.clone())
+    }
+
+    /// Get purgatory repository
+    pub fn purgatory(&self) -> PgPurgatoryRepository {
+        PgPurgatoryRepository::new(self.pool.clone())
+    }
+
+    /// Get EDI document repository
+    pub fn edi_documents(&self) -> PgEdiDocumentRepository {
+        PgEdiDocumentRepository::new(self.pool.clone())
+    }
+
+    /// Get topology snapshot repository
+    pub fn topology_snapshots(&self) -> PgTopologySnapshotRepository {
+        PgTopologySnapshotRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

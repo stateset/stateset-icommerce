@@ -348,6 +348,54 @@ impl Commerce {
         EdiDocuments { commerce: self.inner.clone() }
     }
 
+    /// Get the prepayments API (advance payments to suppliers)
+    #[napi(getter)]
+    pub fn prepayments(&self) -> Prepayments {
+        Prepayments { commerce: self.inner.clone() }
+    }
+
+    /// Get the vendor credits API (supplier-owed credits)
+    #[napi(getter)]
+    pub fn vendor_credits(&self) -> VendorCredits {
+        VendorCredits { commerce: self.inner.clone() }
+    }
+
+    /// Get the price schedules API (time-bounded pricing)
+    #[napi(getter)]
+    pub fn price_schedules(&self) -> PriceSchedules {
+        PriceSchedules { commerce: self.inner.clone() }
+    }
+
+    /// Get the price levels API (B2B pricing tiers)
+    #[napi(getter)]
+    pub fn price_levels(&self) -> PriceLevels {
+        PriceLevels { commerce: self.inner.clone() }
+    }
+
+    /// Get the transfer orders API (inter-warehouse stock movement)
+    #[napi(getter)]
+    pub fn transfer_orders(&self) -> TransferOrders {
+        TransferOrders { commerce: self.inner.clone() }
+    }
+
+    /// Get the production batches API (grouping manufacturing work orders)
+    #[napi(getter)]
+    pub fn production_batches(&self) -> ProductionBatches {
+        ProductionBatches { commerce: self.inner.clone() }
+    }
+
+    /// Get the supplier SKUs API (per-supplier SKU / unit-cost overrides)
+    #[napi(getter)]
+    pub fn supplier_skus(&self) -> SupplierSkus {
+        SupplierSkus { commerce: self.inner.clone() }
+    }
+
+    /// Get the inbound shipments API (advance ship notices)
+    #[napi(getter)]
+    pub fn inbound_shipments(&self) -> InboundShipments {
+        InboundShipments { commerce: self.inner.clone() }
+    }
+
     /// Get the events API (pub/sub and webhook management)
     #[napi(getter)]
     pub fn events(&self) -> Events {
@@ -17013,5 +17061,2004 @@ impl EdiDocuments {
             .summary()
             .map_err(|e| Error::from_reason(format!("Failed to get EDI summary: {}", e)))?;
         Ok(summary.into())
+    }
+}
+
+// ============================================================================
+// Shared helpers for the procurement / pricing / logistics domains below
+// (money as exact decimal STRINGS, timestamps as RFC 3339 strings,
+// enums as snake_case strings)
+// ============================================================================
+
+fn parse_rfc3339_opt(
+    s: Option<String>,
+    field: &str,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    s.as_deref()
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .map_err(|_| Error::from_reason(format!("Invalid {field} RFC 3339 timestamp")))
+        })
+        .transpose()
+}
+
+fn parse_currency_opt(s: Option<String>) -> Result<Option<CurrencyCode>> {
+    s.map(|s| s.parse::<CurrencyCode>().map_err(|_| Error::from_reason("Invalid currency code")))
+        .transpose()
+}
+
+fn parse_uuid_str(s: &str, field: &str) -> Result<uuid::Uuid> {
+    s.parse::<uuid::Uuid>().map_err(|_| Error::from_reason(format!("Invalid {field} UUID")))
+}
+
+fn parse_optional_decimal_str(s: Option<String>, field: &str) -> Result<Option<Decimal>> {
+    s.as_deref().map(|s| parse_decimal_str(s, field)).transpose()
+}
+
+// ============================================================================
+// Prepayments  (advance payments to suppliers)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatePrepaymentInput {
+    pub supplier_id: String,
+    /// Exact decimal string, e.g. "1000.00"
+    pub amount: String,
+    /// Currency code, e.g. "USD"
+    pub currency: Option<String>,
+    /// Payment method (e.g. "wire", "ach")
+    pub method: Option<String>,
+    pub reference: Option<String>,
+    pub memo: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ApplyPrepaymentInput {
+    /// bill or payment_obligation
+    pub target_type: String,
+    pub target_id: String,
+    /// Exact decimal string
+    pub amount: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PrepaymentFilterInput {
+    pub supplier_id: Option<String>,
+    /// open, applied, refunded, cancelled
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PrepaymentOutput {
+    pub id: String,
+    pub number: String,
+    pub supplier_id: String,
+    /// Exact decimal string
+    pub amount: String,
+    /// Exact decimal string
+    pub remaining: String,
+    pub currency: String,
+    /// open, applied, refunded, cancelled
+    pub status: String,
+    pub method: Option<String>,
+    pub reference: Option<String>,
+    pub memo: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Prepayment> for PrepaymentOutput {
+    fn from(p: stateset_core::Prepayment) -> Self {
+        Self {
+            id: p.id.to_string(),
+            number: p.number,
+            supplier_id: p.supplier_id.to_string(),
+            amount: p.amount.to_string(),
+            remaining: p.remaining.to_string(),
+            currency: p.currency.to_string(),
+            status: format!("{}", p.status),
+            method: p.method,
+            reference: p.reference,
+            memo: p.memo,
+            created_at: p.created_at.to_rfc3339(),
+            updated_at: p.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PrepaymentApplicationOutput {
+    pub id: String,
+    pub prepayment_id: String,
+    /// bill or payment_obligation
+    pub target_type: String,
+    pub target_id: String,
+    /// Exact decimal string
+    pub amount: String,
+    pub reversed: bool,
+    pub created_at: String,
+}
+
+impl From<stateset_core::PrepaymentApplication> for PrepaymentApplicationOutput {
+    fn from(a: stateset_core::PrepaymentApplication) -> Self {
+        Self {
+            id: a.id.to_string(),
+            prepayment_id: a.prepayment_id.to_string(),
+            target_type: format!("{}", a.target_type),
+            target_id: a.target_id.to_string(),
+            amount: a.amount.to_string(),
+            reversed: a.reversed,
+            created_at: a.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct Prepayments {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Prepayments {
+    /// Whether the prepayments backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.prepayments().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreatePrepaymentInput) -> Result<PrepaymentOutput> {
+        let commerce = self.commerce.lock().await;
+        let prepayment = commerce
+            .prepayments()
+            .create(stateset_core::CreatePrepayment {
+                supplier_id: parse_uuid_str(&input.supplier_id, "supplier_id")?,
+                amount: parse_decimal_str(&input.amount, "amount")?,
+                currency: parse_currency_opt(input.currency)?,
+                method: input.method,
+                reference: input.reference,
+                memo: input.memo,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create prepayment: {}", e)))?;
+        Ok(prepayment.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<PrepaymentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "prepayment")?;
+        let prepayment = commerce
+            .prepayments()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get prepayment: {}", e)))?;
+        Ok(prepayment.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<PrepaymentFilterInput>,
+    ) -> Result<Vec<PrepaymentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::PrepaymentFilter::default()),
+            |f| -> Result<stateset_core::PrepaymentFilter> {
+                Ok(stateset_core::PrepaymentFilter {
+                    supplier_id: parse_optional_uuid(f.supplier_id, "supplier_id")?,
+                    status: f
+                        .status
+                        .map(|s| {
+                            s.parse::<stateset_core::PrepaymentStatus>()
+                                .map_err(|_| Error::from_reason("Invalid prepayment status"))
+                        })
+                        .transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let prepayments = commerce
+            .prepayments()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list prepayments: {}", e)))?;
+        Ok(prepayments.into_iter().map(Into::into).collect())
+    }
+
+    /// Apply a prepayment against a bill or payment obligation.
+    #[napi]
+    pub async fn apply(&self, id: String, input: ApplyPrepaymentInput) -> Result<PrepaymentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "prepayment")?;
+        let target_type = input
+            .target_type
+            .parse::<stateset_core::PrepaymentTargetType>()
+            .map_err(|_| Error::from_reason("Invalid prepayment target type"))?;
+        let prepayment = commerce
+            .prepayments()
+            .apply(
+                uuid.into(),
+                stateset_core::ApplyPrepayment {
+                    target_type,
+                    target_id: parse_uuid_str(&input.target_id, "target_id")?,
+                    amount: parse_decimal_str(&input.amount, "amount")?,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to apply prepayment: {}", e)))?;
+        Ok(prepayment.into())
+    }
+
+    /// List applications for a prepayment.
+    #[napi]
+    pub async fn list_applications(&self, id: String) -> Result<Vec<PrepaymentApplicationOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "prepayment")?;
+        let applications = commerce.prepayments().list_applications(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to list prepayment applications: {}", e))
+        })?;
+        Ok(applications.into_iter().map(Into::into).collect())
+    }
+
+    /// Reverse a previously-recorded application.
+    #[napi]
+    pub async fn reverse_application(
+        &self,
+        id: String,
+        application_id: String,
+    ) -> Result<PrepaymentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "prepayment")?;
+        let app_uuid = parse_uuid_str(&application_id, "application")?;
+        let prepayment =
+            commerce.prepayments().reverse_application(uuid.into(), app_uuid.into()).map_err(
+                |e| Error::from_reason(format!("Failed to reverse prepayment application: {}", e)),
+            )?;
+        Ok(prepayment.into())
+    }
+
+    /// Refund the remaining balance, closing the prepayment.
+    #[napi]
+    pub async fn refund(&self, id: String) -> Result<PrepaymentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "prepayment")?;
+        let prepayment = commerce
+            .prepayments()
+            .refund(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to refund prepayment: {}", e)))?;
+        Ok(prepayment.into())
+    }
+}
+
+// ============================================================================
+// Vendor Credits  (supplier-owed credits)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateVendorCreditInput {
+    pub supplier_id: String,
+    pub vendor_return_id: Option<String>,
+    /// Exact decimal string
+    pub amount: String,
+    /// Currency code, e.g. "USD"
+    pub currency: Option<String>,
+    pub memo: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ApplyVendorCreditInput {
+    /// bill or payment_obligation
+    pub target_type: String,
+    pub target_id: String,
+    /// Exact decimal string
+    pub amount: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct VendorCreditFilterInput {
+    pub supplier_id: Option<String>,
+    /// open, applied, cancelled
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct VendorCreditOutput {
+    pub id: String,
+    pub number: String,
+    pub supplier_id: String,
+    pub vendor_return_id: Option<String>,
+    /// Exact decimal string
+    pub amount: String,
+    /// Exact decimal string
+    pub remaining: String,
+    pub currency: String,
+    /// open, applied, cancelled
+    pub status: String,
+    pub memo: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::VendorCredit> for VendorCreditOutput {
+    fn from(c: stateset_core::VendorCredit) -> Self {
+        Self {
+            id: c.id.to_string(),
+            number: c.number,
+            supplier_id: c.supplier_id.to_string(),
+            vendor_return_id: c.vendor_return_id.map(|id| id.to_string()),
+            amount: c.amount.to_string(),
+            remaining: c.remaining.to_string(),
+            currency: c.currency.to_string(),
+            status: format!("{}", c.status),
+            memo: c.memo,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct VendorCreditApplicationOutput {
+    pub id: String,
+    pub vendor_credit_id: String,
+    /// bill or payment_obligation
+    pub target_type: String,
+    pub target_id: String,
+    /// Exact decimal string
+    pub amount: String,
+    pub reversed: bool,
+    pub created_at: String,
+}
+
+impl From<stateset_core::VendorCreditApplication> for VendorCreditApplicationOutput {
+    fn from(a: stateset_core::VendorCreditApplication) -> Self {
+        Self {
+            id: a.id.to_string(),
+            vendor_credit_id: a.vendor_credit_id.to_string(),
+            target_type: format!("{}", a.target_type),
+            target_id: a.target_id.to_string(),
+            amount: a.amount.to_string(),
+            reversed: a.reversed,
+            created_at: a.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct VendorCredits {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl VendorCredits {
+    /// Whether the vendor-credits backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.vendor_credits().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateVendorCreditInput) -> Result<VendorCreditOutput> {
+        let commerce = self.commerce.lock().await;
+        let credit = commerce
+            .vendor_credits()
+            .create(stateset_core::CreateVendorCredit {
+                supplier_id: parse_uuid_str(&input.supplier_id, "supplier_id")?,
+                vendor_return_id: parse_optional_uuid(input.vendor_return_id, "vendor_return_id")?,
+                amount: parse_decimal_str(&input.amount, "amount")?,
+                currency: parse_currency_opt(input.currency)?,
+                memo: input.memo,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create vendor credit: {}", e)))?;
+        Ok(credit.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<VendorCreditOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor credit")?;
+        let credit = commerce
+            .vendor_credits()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get vendor credit: {}", e)))?;
+        Ok(credit.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<VendorCreditFilterInput>,
+    ) -> Result<Vec<VendorCreditOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::VendorCreditFilter::default()),
+            |f| -> Result<stateset_core::VendorCreditFilter> {
+                Ok(stateset_core::VendorCreditFilter {
+                    supplier_id: parse_optional_uuid(f.supplier_id, "supplier_id")?,
+                    status: f
+                        .status
+                        .map(|s| {
+                            s.parse::<stateset_core::VendorCreditStatus>()
+                                .map_err(|_| Error::from_reason("Invalid vendor credit status"))
+                        })
+                        .transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let credits = commerce
+            .vendor_credits()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list vendor credits: {}", e)))?;
+        Ok(credits.into_iter().map(Into::into).collect())
+    }
+
+    /// Apply a vendor credit against a bill or payment obligation.
+    #[napi]
+    pub async fn apply(
+        &self,
+        id: String,
+        input: ApplyVendorCreditInput,
+    ) -> Result<VendorCreditOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor credit")?;
+        let target_type = input
+            .target_type
+            .parse::<stateset_core::VendorCreditTargetType>()
+            .map_err(|_| Error::from_reason("Invalid vendor credit target type"))?;
+        let credit = commerce
+            .vendor_credits()
+            .apply(
+                uuid.into(),
+                stateset_core::ApplyVendorCredit {
+                    target_type,
+                    target_id: parse_uuid_str(&input.target_id, "target_id")?,
+                    amount: parse_decimal_str(&input.amount, "amount")?,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to apply vendor credit: {}", e)))?;
+        Ok(credit.into())
+    }
+
+    /// List applications for a vendor credit.
+    #[napi]
+    pub async fn list_applications(
+        &self,
+        id: String,
+    ) -> Result<Vec<VendorCreditApplicationOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor credit")?;
+        let applications =
+            commerce.vendor_credits().list_applications(uuid.into()).map_err(|e| {
+                Error::from_reason(format!("Failed to list vendor credit applications: {}", e))
+            })?;
+        Ok(applications.into_iter().map(Into::into).collect())
+    }
+
+    /// Reverse a previously-recorded application.
+    #[napi]
+    pub async fn reverse_application(
+        &self,
+        id: String,
+        application_id: String,
+    ) -> Result<VendorCreditOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor credit")?;
+        let app_uuid = parse_uuid_str(&application_id, "application")?;
+        let credit = commerce
+            .vendor_credits()
+            .reverse_application(uuid.into(), app_uuid.into())
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to reverse vendor credit application: {}", e))
+            })?;
+        Ok(credit.into())
+    }
+
+    /// Cancel a vendor credit.
+    #[napi]
+    pub async fn cancel(&self, id: String) -> Result<VendorCreditOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "vendor credit")?;
+        let credit = commerce
+            .vendor_credits()
+            .cancel(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to cancel vendor credit: {}", e)))?;
+        Ok(credit.into())
+    }
+}
+
+// ============================================================================
+// Price Schedules  (time-bounded pricing)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatePriceScheduleInput {
+    pub name: String,
+    pub code: Option<String>,
+    /// Currency code, e.g. "USD"
+    pub currency: Option<String>,
+    /// RFC 3339 timestamp
+    pub starts_at: Option<String>,
+    /// RFC 3339 timestamp
+    pub ends_at: Option<String>,
+    /// Priority used to break ties (higher wins); default 0
+    pub priority: Option<i32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdatePriceScheduleInput {
+    pub name: Option<String>,
+    pub code: Option<String>,
+    /// RFC 3339 timestamp
+    pub starts_at: Option<String>,
+    /// RFC 3339 timestamp
+    pub ends_at: Option<String>,
+    pub is_active: Option<bool>,
+    pub priority: Option<i32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PriceScheduleFilterInput {
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PriceScheduleOutput {
+    pub id: String,
+    pub name: String,
+    pub code: Option<String>,
+    pub currency: String,
+    /// RFC 3339 timestamp
+    pub starts_at: Option<String>,
+    /// RFC 3339 timestamp
+    pub ends_at: Option<String>,
+    pub is_active: bool,
+    pub priority: i32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::PriceSchedule> for PriceScheduleOutput {
+    fn from(s: stateset_core::PriceSchedule) -> Self {
+        Self {
+            id: s.id.to_string(),
+            name: s.name,
+            code: s.code,
+            currency: s.currency.to_string(),
+            starts_at: s.starts_at.map(|d| d.to_rfc3339()),
+            ends_at: s.ends_at.map(|d| d.to_rfc3339()),
+            is_active: s.is_active,
+            priority: s.priority,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PriceScheduleEntryOutput {
+    pub price_schedule_id: String,
+    pub product_id: String,
+    /// Exact decimal string
+    pub price: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::PriceScheduleEntry> for PriceScheduleEntryOutput {
+    fn from(e: stateset_core::PriceScheduleEntry) -> Self {
+        Self {
+            price_schedule_id: e.price_schedule_id.to_string(),
+            product_id: e.product_id.to_string(),
+            price: e.price.to_string(),
+            created_at: e.created_at.to_rfc3339(),
+            updated_at: e.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct PriceSchedules {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl PriceSchedules {
+    /// Whether the price-schedules backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.price_schedules().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreatePriceScheduleInput) -> Result<PriceScheduleOutput> {
+        let commerce = self.commerce.lock().await;
+        let schedule = commerce
+            .price_schedules()
+            .create(stateset_core::CreatePriceSchedule {
+                name: input.name,
+                code: input.code,
+                currency: parse_currency_opt(input.currency)?,
+                starts_at: parse_rfc3339_opt(input.starts_at, "starts_at")?,
+                ends_at: parse_rfc3339_opt(input.ends_at, "ends_at")?,
+                priority: input.priority.unwrap_or(0),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create price schedule: {}", e)))?;
+        Ok(schedule.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<PriceScheduleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price schedule")?;
+        let schedule = commerce
+            .price_schedules()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get price schedule: {}", e)))?;
+        Ok(schedule.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdatePriceScheduleInput,
+    ) -> Result<PriceScheduleOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price schedule")?;
+        let schedule = commerce
+            .price_schedules()
+            .update(
+                uuid.into(),
+                stateset_core::UpdatePriceSchedule {
+                    name: input.name,
+                    code: input.code,
+                    starts_at: parse_rfc3339_opt(input.starts_at, "starts_at")?,
+                    ends_at: parse_rfc3339_opt(input.ends_at, "ends_at")?,
+                    is_active: input.is_active,
+                    priority: input.priority,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update price schedule: {}", e)))?;
+        Ok(schedule.into())
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<PriceScheduleFilterInput>,
+    ) -> Result<Vec<PriceScheduleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(stateset_core::PriceScheduleFilter::default, |f| {
+            stateset_core::PriceScheduleFilter {
+                is_active: f.is_active,
+                limit: f.limit,
+                offset: f.offset,
+            }
+        });
+        let schedules = commerce
+            .price_schedules()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list price schedules: {}", e)))?;
+        Ok(schedules.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a price schedule and its entries.
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price schedule")?;
+        commerce
+            .price_schedules()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete price schedule: {}", e)))?;
+        Ok(())
+    }
+
+    /// Upsert a per-product scheduled price (exact decimal string).
+    #[napi]
+    pub async fn set_entry(
+        &self,
+        id: String,
+        product_id: String,
+        price: String,
+    ) -> Result<PriceScheduleEntryOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price schedule")?;
+        let product_uuid = parse_uuid_str(&product_id, "product")?;
+        let entry = commerce
+            .price_schedules()
+            .set_entry(uuid.into(), product_uuid.into(), parse_decimal_str(&price, "price")?)
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to set price schedule entry: {}", e))
+            })?;
+        Ok(entry.into())
+    }
+
+    /// Remove a per-product entry.
+    #[napi]
+    pub async fn delete_entry(&self, id: String, product_id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price schedule")?;
+        let product_uuid = parse_uuid_str(&product_id, "product")?;
+        commerce.price_schedules().delete_entry(uuid.into(), product_uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to delete price schedule entry: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// List per-product entries for a schedule.
+    #[napi]
+    pub async fn list_entries(&self, id: String) -> Result<Vec<PriceScheduleEntryOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price schedule")?;
+        let entries = commerce.price_schedules().list_entries(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to list price schedule entries: {}", e))
+        })?;
+        Ok(entries.into_iter().map(Into::into).collect())
+    }
+
+    /// Resolve the effective scheduled price for a product at an instant
+    /// (`at` is an RFC 3339 timestamp; defaults to now). Returns an exact
+    /// decimal string, or null when no schedule applies.
+    #[napi]
+    pub async fn resolve_price(
+        &self,
+        product_id: String,
+        at: Option<String>,
+    ) -> Result<Option<String>> {
+        let commerce = self.commerce.lock().await;
+        let product_uuid = parse_uuid_str(&product_id, "product")?;
+        let at = parse_rfc3339_opt(at, "at")?.unwrap_or_else(chrono::Utc::now);
+        let price = commerce
+            .price_schedules()
+            .resolve_price(product_uuid.into(), at)
+            .map_err(|e| Error::from_reason(format!("Failed to resolve scheduled price: {}", e)))?;
+        Ok(price.map(|p| p.to_string()))
+    }
+}
+
+// ============================================================================
+// Price Levels  (B2B pricing tiers)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatePriceLevelInput {
+    pub name: String,
+    pub code: String,
+    pub description: Option<String>,
+    /// none, percentage_discount, percentage_markup (default none)
+    pub adjustment_type: Option<String>,
+    /// Percentage as exact decimal string (e.g. "10" for 10%); default "0"
+    pub adjustment_value: Option<String>,
+    /// Currency code, e.g. "USD"
+    pub currency: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdatePriceLevelInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// none, percentage_discount, percentage_markup
+    pub adjustment_type: Option<String>,
+    /// Percentage as exact decimal string
+    pub adjustment_value: Option<String>,
+    pub is_active: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PriceLevelFilterInput {
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PriceLevelOutput {
+    pub id: String,
+    pub name: String,
+    pub code: String,
+    pub description: Option<String>,
+    /// none, percentage_discount, percentage_markup
+    pub adjustment_type: String,
+    /// Percentage as exact decimal string
+    pub adjustment_value: String,
+    pub currency: String,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::PriceLevel> for PriceLevelOutput {
+    fn from(l: stateset_core::PriceLevel) -> Self {
+        Self {
+            id: l.id.to_string(),
+            name: l.name,
+            code: l.code,
+            description: l.description,
+            adjustment_type: format!("{}", l.adjustment_type),
+            adjustment_value: l.adjustment_value.to_string(),
+            currency: l.currency.to_string(),
+            is_active: l.is_active,
+            created_at: l.created_at.to_rfc3339(),
+            updated_at: l.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PriceLevelEntryOutput {
+    pub price_level_id: String,
+    pub product_id: String,
+    /// Exact decimal string
+    pub price: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::PriceLevelEntry> for PriceLevelEntryOutput {
+    fn from(e: stateset_core::PriceLevelEntry) -> Self {
+        Self {
+            price_level_id: e.price_level_id.to_string(),
+            product_id: e.product_id.to_string(),
+            price: e.price.to_string(),
+            created_at: e.created_at.to_rfc3339(),
+            updated_at: e.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct PriceLevels {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl PriceLevels {
+    /// Whether the price-levels backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.price_levels().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreatePriceLevelInput) -> Result<PriceLevelOutput> {
+        let commerce = self.commerce.lock().await;
+        let adjustment_type = input
+            .adjustment_type
+            .map(|s| {
+                s.parse::<stateset_core::PriceAdjustmentType>()
+                    .map_err(|_| Error::from_reason("Invalid price adjustment type"))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let adjustment_value = input
+            .adjustment_value
+            .as_deref()
+            .map(|s| parse_decimal_str(s, "adjustment_value"))
+            .transpose()?
+            .unwrap_or(Decimal::ZERO);
+        let level = commerce
+            .price_levels()
+            .create(stateset_core::CreatePriceLevel {
+                name: input.name,
+                code: input.code,
+                description: input.description,
+                adjustment_type,
+                adjustment_value,
+                currency: parse_currency_opt(input.currency)?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create price level: {}", e)))?;
+        Ok(level.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<PriceLevelOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price level")?;
+        let level = commerce
+            .price_levels()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get price level: {}", e)))?;
+        Ok(level.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdatePriceLevelInput,
+    ) -> Result<PriceLevelOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price level")?;
+        let adjustment_type = input
+            .adjustment_type
+            .map(|s| {
+                s.parse::<stateset_core::PriceAdjustmentType>()
+                    .map_err(|_| Error::from_reason("Invalid price adjustment type"))
+            })
+            .transpose()?;
+        let level = commerce
+            .price_levels()
+            .update(
+                uuid.into(),
+                stateset_core::UpdatePriceLevel {
+                    name: input.name,
+                    description: input.description,
+                    adjustment_type,
+                    adjustment_value: parse_optional_decimal_str(
+                        input.adjustment_value,
+                        "adjustment_value",
+                    )?,
+                    is_active: input.is_active,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update price level: {}", e)))?;
+        Ok(level.into())
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<PriceLevelFilterInput>,
+    ) -> Result<Vec<PriceLevelOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(stateset_core::PriceLevelFilter::default, |f| {
+            stateset_core::PriceLevelFilter {
+                is_active: f.is_active,
+                limit: f.limit,
+                offset: f.offset,
+            }
+        });
+        let levels = commerce
+            .price_levels()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list price levels: {}", e)))?;
+        Ok(levels.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a price level and its entries.
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price level")?;
+        commerce
+            .price_levels()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete price level: {}", e)))?;
+        Ok(())
+    }
+
+    /// Upsert a per-product fixed price entry (exact decimal string).
+    #[napi]
+    pub async fn set_entry(
+        &self,
+        id: String,
+        product_id: String,
+        price: String,
+    ) -> Result<PriceLevelEntryOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price level")?;
+        let product_uuid = parse_uuid_str(&product_id, "product")?;
+        let entry = commerce
+            .price_levels()
+            .set_entry(uuid.into(), product_uuid.into(), parse_decimal_str(&price, "price")?)
+            .map_err(|e| Error::from_reason(format!("Failed to set price level entry: {}", e)))?;
+        Ok(entry.into())
+    }
+
+    /// Remove a per-product entry.
+    #[napi]
+    pub async fn delete_entry(&self, id: String, product_id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price level")?;
+        let product_uuid = parse_uuid_str(&product_id, "product")?;
+        commerce.price_levels().delete_entry(uuid.into(), product_uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to delete price level entry: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// List per-product entries for a level.
+    #[napi]
+    pub async fn list_entries(&self, id: String) -> Result<Vec<PriceLevelEntryOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "price level")?;
+        let entries = commerce.price_levels().list_entries(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to list price level entries: {}", e))
+        })?;
+        Ok(entries.into_iter().map(Into::into).collect())
+    }
+}
+
+// ============================================================================
+// Transfer Orders  (inter-warehouse stock movement)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateTransferOrderItemInput {
+    pub product_id: String,
+    /// Exact decimal string
+    pub quantity: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateTransferOrderInput {
+    pub source_warehouse_id: String,
+    pub destination_warehouse_id: String,
+    pub items: Vec<CreateTransferOrderItemInput>,
+    /// RFC 3339 timestamp
+    pub expected_at: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransferOrderFilterInput {
+    /// draft, pending, in_transit, partially_received, received, cancelled
+    pub status: Option<String>,
+    pub source_warehouse_id: Option<String>,
+    pub destination_warehouse_id: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransferOrderItemOutput {
+    pub id: String,
+    pub transfer_order_id: String,
+    pub product_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub quantity: String,
+    /// Exact decimal string
+    pub quantity_shipped: String,
+    /// Exact decimal string
+    pub quantity_received: String,
+}
+
+impl From<stateset_core::TransferOrderItem> for TransferOrderItemOutput {
+    fn from(i: stateset_core::TransferOrderItem) -> Self {
+        Self {
+            id: i.id.to_string(),
+            transfer_order_id: i.transfer_order_id.to_string(),
+            product_id: i.product_id.to_string(),
+            sku: i.sku,
+            quantity: i.quantity.to_string(),
+            quantity_shipped: i.quantity_shipped.to_string(),
+            quantity_received: i.quantity_received.to_string(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransferOrderOutput {
+    pub id: String,
+    pub number: String,
+    pub source_warehouse_id: String,
+    pub destination_warehouse_id: String,
+    /// draft, pending, in_transit, partially_received, received, cancelled
+    pub status: String,
+    pub items: Vec<TransferOrderItemOutput>,
+    /// RFC 3339 timestamp
+    pub expected_at: Option<String>,
+    /// RFC 3339 timestamp
+    pub shipped_at: Option<String>,
+    /// RFC 3339 timestamp
+    pub received_at: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::TransferOrder> for TransferOrderOutput {
+    fn from(o: stateset_core::TransferOrder) -> Self {
+        Self {
+            id: o.id.to_string(),
+            number: o.number,
+            source_warehouse_id: o.source_warehouse_id.to_string(),
+            destination_warehouse_id: o.destination_warehouse_id.to_string(),
+            status: format!("{}", o.status),
+            items: o.items.into_iter().map(Into::into).collect(),
+            expected_at: o.expected_at.map(|d| d.to_rfc3339()),
+            shipped_at: o.shipped_at.map(|d| d.to_rfc3339()),
+            received_at: o.received_at.map(|d| d.to_rfc3339()),
+            notes: o.notes,
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct TransferOrders {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl TransferOrders {
+    /// Whether the transfer-orders backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.transfer_orders().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateTransferOrderInput) -> Result<TransferOrderOutput> {
+        let commerce = self.commerce.lock().await;
+        let items = input
+            .items
+            .into_iter()
+            .map(|i| -> Result<stateset_core::CreateTransferOrderItem> {
+                Ok(stateset_core::CreateTransferOrderItem {
+                    product_id: parse_uuid_str(&i.product_id, "product")?.into(),
+                    quantity: parse_decimal_str(&i.quantity, "quantity")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let order = commerce
+            .transfer_orders()
+            .create(stateset_core::CreateTransferOrder {
+                source_warehouse_id: parse_uuid_str(
+                    &input.source_warehouse_id,
+                    "source_warehouse_id",
+                )?
+                .into(),
+                destination_warehouse_id: parse_uuid_str(
+                    &input.destination_warehouse_id,
+                    "destination_warehouse_id",
+                )?
+                .into(),
+                items,
+                expected_at: parse_rfc3339_opt(input.expected_at, "expected_at")?,
+                notes: input.notes,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create transfer order: {}", e)))?;
+        Ok(order.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<TransferOrderOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "transfer order")?;
+        let order = commerce
+            .transfer_orders()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get transfer order: {}", e)))?;
+        Ok(order.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<TransferOrderFilterInput>,
+    ) -> Result<Vec<TransferOrderOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::TransferOrderFilter::default()),
+            |f| -> Result<stateset_core::TransferOrderFilter> {
+                Ok(stateset_core::TransferOrderFilter {
+                    status: f
+                        .status
+                        .map(|s| {
+                            s.parse::<stateset_core::TransferOrderStatus>()
+                                .map_err(|_| Error::from_reason("Invalid transfer order status"))
+                        })
+                        .transpose()?,
+                    source_warehouse_id: parse_optional_uuid(
+                        f.source_warehouse_id,
+                        "source_warehouse_id",
+                    )?
+                    .map(Into::into),
+                    destination_warehouse_id: parse_optional_uuid(
+                        f.destination_warehouse_id,
+                        "destination_warehouse_id",
+                    )?
+                    .map(Into::into),
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let orders = commerce
+            .transfer_orders()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list transfer orders: {}", e)))?;
+        Ok(orders.into_iter().map(Into::into).collect())
+    }
+
+    /// Mark a transfer order as shipped from the source.
+    #[napi]
+    pub async fn ship(&self, id: String) -> Result<TransferOrderOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "transfer order")?;
+        let order = commerce
+            .transfer_orders()
+            .ship(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to ship transfer order: {}", e)))?;
+        Ok(order.into())
+    }
+
+    /// Receive a quantity (exact decimal string) against a single line at the
+    /// destination.
+    #[napi]
+    pub async fn receive_line(
+        &self,
+        id: String,
+        item_id: String,
+        quantity: String,
+    ) -> Result<TransferOrderOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "transfer order")?;
+        let item_uuid = parse_uuid_str(&item_id, "transfer order item")?;
+        let order = commerce
+            .transfer_orders()
+            .receive_line(uuid.into(), item_uuid.into(), parse_decimal_str(&quantity, "quantity")?)
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to receive transfer order line: {}", e))
+            })?;
+        Ok(order.into())
+    }
+
+    /// Cancel a transfer order.
+    #[napi]
+    pub async fn cancel(&self, id: String) -> Result<TransferOrderOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "transfer order")?;
+        let order = commerce
+            .transfer_orders()
+            .cancel(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to cancel transfer order: {}", e)))?;
+        Ok(order.into())
+    }
+}
+
+// ============================================================================
+// Production Batches  (grouping manufacturing work orders)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateProductionBatchInput {
+    pub name: String,
+    pub vendor_id: Option<String>,
+    /// Work order UUIDs to link at creation
+    pub work_order_ids: Option<Vec<String>>,
+    pub notes: Option<String>,
+    /// RFC 3339 timestamp
+    pub scheduled_start: Option<String>,
+    /// RFC 3339 timestamp
+    pub scheduled_end: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateProductionBatchInput {
+    pub name: Option<String>,
+    pub vendor_id: Option<String>,
+    /// planned, in_progress, completed, cancelled
+    pub status: Option<String>,
+    pub notes: Option<String>,
+    /// RFC 3339 timestamp
+    pub scheduled_start: Option<String>,
+    /// RFC 3339 timestamp
+    pub scheduled_end: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProductionBatchFilterInput {
+    /// planned, in_progress, completed, cancelled
+    pub status: Option<String>,
+    pub vendor_id: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProductionBatchOutput {
+    pub id: String,
+    pub name: String,
+    /// planned, in_progress, completed, cancelled
+    pub status: String,
+    pub vendor_id: Option<String>,
+    pub work_order_ids: Vec<String>,
+    pub notes: Option<String>,
+    /// RFC 3339 timestamp
+    pub scheduled_start: Option<String>,
+    /// RFC 3339 timestamp
+    pub scheduled_end: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::ProductionBatch> for ProductionBatchOutput {
+    fn from(b: stateset_core::ProductionBatch) -> Self {
+        Self {
+            id: b.id.to_string(),
+            name: b.name,
+            status: format!("{}", b.status),
+            vendor_id: b.vendor_id.map(|id| id.to_string()),
+            work_order_ids: b.work_order_ids.iter().map(ToString::to_string).collect(),
+            notes: b.notes,
+            scheduled_start: b.scheduled_start.map(|d| d.to_rfc3339()),
+            scheduled_end: b.scheduled_end.map(|d| d.to_rfc3339()),
+            created_at: b.created_at.to_rfc3339(),
+            updated_at: b.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct ProductionBatches {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl ProductionBatches {
+    /// Whether the production-batches backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.production_batches().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateProductionBatchInput) -> Result<ProductionBatchOutput> {
+        let commerce = self.commerce.lock().await;
+        let work_order_ids = input
+            .work_order_ids
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| parse_uuid_str(&s, "work_order"))
+            .collect::<Result<Vec<_>>>()?;
+        let batch = commerce
+            .production_batches()
+            .create(stateset_core::CreateProductionBatch {
+                name: input.name,
+                vendor_id: parse_optional_uuid(input.vendor_id, "vendor_id")?,
+                work_order_ids,
+                notes: input.notes,
+                scheduled_start: parse_rfc3339_opt(input.scheduled_start, "scheduled_start")?,
+                scheduled_end: parse_rfc3339_opt(input.scheduled_end, "scheduled_end")?,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create production batch: {}", e)))?;
+        Ok(batch.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<ProductionBatchOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "production batch")?;
+        let batch = commerce
+            .production_batches()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get production batch: {}", e)))?;
+        Ok(batch.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdateProductionBatchInput,
+    ) -> Result<ProductionBatchOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "production batch")?;
+        let status = input
+            .status
+            .map(|s| {
+                s.parse::<stateset_core::ProductionBatchStatus>()
+                    .map_err(|_| Error::from_reason("Invalid production batch status"))
+            })
+            .transpose()?;
+        let batch = commerce
+            .production_batches()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateProductionBatch {
+                    name: input.name,
+                    vendor_id: parse_optional_uuid(input.vendor_id, "vendor_id")?,
+                    status,
+                    notes: input.notes,
+                    scheduled_start: parse_rfc3339_opt(input.scheduled_start, "scheduled_start")?,
+                    scheduled_end: parse_rfc3339_opt(input.scheduled_end, "scheduled_end")?,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update production batch: {}", e)))?;
+        Ok(batch.into())
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<ProductionBatchFilterInput>,
+    ) -> Result<Vec<ProductionBatchOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::ProductionBatchFilter::default()),
+            |f| -> Result<stateset_core::ProductionBatchFilter> {
+                Ok(stateset_core::ProductionBatchFilter {
+                    status: f
+                        .status
+                        .map(|s| {
+                            s.parse::<stateset_core::ProductionBatchStatus>()
+                                .map_err(|_| Error::from_reason("Invalid production batch status"))
+                        })
+                        .transpose()?,
+                    vendor_id: parse_optional_uuid(f.vendor_id, "vendor_id")?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let batches = commerce
+            .production_batches()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list production batches: {}", e)))?;
+        Ok(batches.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a production batch.
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "production batch")?;
+        commerce
+            .production_batches()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete production batch: {}", e)))?;
+        Ok(())
+    }
+
+    /// Link work orders to a batch.
+    #[napi]
+    pub async fn add_work_orders(
+        &self,
+        id: String,
+        work_order_ids: Vec<String>,
+    ) -> Result<ProductionBatchOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "production batch")?;
+        let work_order_ids = work_order_ids
+            .into_iter()
+            .map(|s| parse_uuid_str(&s, "work_order"))
+            .collect::<Result<Vec<_>>>()?;
+        let batch = commerce
+            .production_batches()
+            .add_work_orders(uuid.into(), work_order_ids)
+            .map_err(|e| Error::from_reason(format!("Failed to add work orders: {}", e)))?;
+        Ok(batch.into())
+    }
+
+    /// Remove a work order from a batch.
+    #[napi]
+    pub async fn remove_work_order(
+        &self,
+        id: String,
+        work_order_id: String,
+    ) -> Result<ProductionBatchOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "production batch")?;
+        let work_order_uuid = parse_uuid_str(&work_order_id, "work_order")?;
+        let batch =
+            commerce
+                .production_batches()
+                .remove_work_order(uuid.into(), work_order_uuid)
+                .map_err(|e| Error::from_reason(format!("Failed to remove work order: {}", e)))?;
+        Ok(batch.into())
+    }
+}
+
+// ============================================================================
+// Supplier SKUs  (per-supplier SKU / unit-cost overrides)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateSupplierSkuInput {
+    pub product_id: String,
+    pub supplier_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub unit_cost: Option<String>,
+    /// Currency code, e.g. "USD"
+    pub currency: Option<String>,
+    /// Exact decimal string
+    pub min_order_qty: Option<String>,
+    pub lead_time_days: Option<i32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateSupplierSkuInput {
+    pub sku: Option<String>,
+    /// Exact decimal string
+    pub unit_cost: Option<String>,
+    /// Currency code, e.g. "USD"
+    pub currency: Option<String>,
+    /// Exact decimal string
+    pub min_order_qty: Option<String>,
+    pub lead_time_days: Option<i32>,
+    pub is_preferred: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SupplierSkuFilterInput {
+    pub supplier_id: Option<String>,
+    pub product_id: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BulkSupplierSkuItemInput {
+    pub product_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub unit_cost: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SupplierSkuOutput {
+    pub id: String,
+    pub product_id: String,
+    pub supplier_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub unit_cost: Option<String>,
+    pub currency: String,
+    /// Exact decimal string
+    pub min_order_qty: Option<String>,
+    pub lead_time_days: Option<i32>,
+    pub is_preferred: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::SupplierSku> for SupplierSkuOutput {
+    fn from(s: stateset_core::SupplierSku) -> Self {
+        Self {
+            id: s.id.to_string(),
+            product_id: s.product_id.to_string(),
+            supplier_id: s.supplier_id.to_string(),
+            sku: s.sku,
+            unit_cost: s.unit_cost.map(|c| c.to_string()),
+            currency: s.currency.to_string(),
+            min_order_qty: s.min_order_qty.map(|q| q.to_string()),
+            lead_time_days: s.lead_time_days,
+            is_preferred: s.is_preferred,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct SupplierSkus {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl SupplierSkus {
+    /// Whether the supplier-SKUs backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.supplier_skus().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateSupplierSkuInput) -> Result<SupplierSkuOutput> {
+        let commerce = self.commerce.lock().await;
+        let record = commerce
+            .supplier_skus()
+            .create(stateset_core::CreateSupplierSku {
+                product_id: parse_uuid_str(&input.product_id, "product")?.into(),
+                supplier_id: parse_uuid_str(&input.supplier_id, "supplier")?,
+                sku: input.sku,
+                unit_cost: parse_optional_decimal_str(input.unit_cost, "unit_cost")?,
+                currency: parse_currency_opt(input.currency)?,
+                min_order_qty: parse_optional_decimal_str(input.min_order_qty, "min_order_qty")?,
+                lead_time_days: input.lead_time_days,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create supplier SKU: {}", e)))?;
+        Ok(record.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<SupplierSkuOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "supplier SKU")?;
+        let record = commerce
+            .supplier_skus()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get supplier SKU: {}", e)))?;
+        Ok(record.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdateSupplierSkuInput,
+    ) -> Result<SupplierSkuOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "supplier SKU")?;
+        let record = commerce
+            .supplier_skus()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateSupplierSku {
+                    sku: input.sku,
+                    unit_cost: parse_optional_decimal_str(input.unit_cost, "unit_cost")?,
+                    currency: parse_currency_opt(input.currency)?,
+                    min_order_qty: parse_optional_decimal_str(
+                        input.min_order_qty,
+                        "min_order_qty",
+                    )?,
+                    lead_time_days: input.lead_time_days,
+                    is_preferred: input.is_preferred,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update supplier SKU: {}", e)))?;
+        Ok(record.into())
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<SupplierSkuFilterInput>,
+    ) -> Result<Vec<SupplierSkuOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::SupplierSkuFilter::default()),
+            |f| -> Result<stateset_core::SupplierSkuFilter> {
+                Ok(stateset_core::SupplierSkuFilter {
+                    supplier_id: parse_optional_uuid(f.supplier_id, "supplier_id")?,
+                    product_id: parse_optional_uuid(f.product_id, "product_id")?.map(Into::into),
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let records = commerce
+            .supplier_skus()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list supplier SKUs: {}", e)))?;
+        Ok(records.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete a supplier SKU.
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "supplier SKU")?;
+        commerce
+            .supplier_skus()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete supplier SKU: {}", e)))?;
+        Ok(())
+    }
+
+    /// Bulk upsert supplier SKUs for a supplier, keyed by internal product.
+    /// Returns the number of records upserted.
+    #[napi]
+    pub async fn bulk_upsert(
+        &self,
+        supplier_id: String,
+        items: Vec<BulkSupplierSkuItemInput>,
+    ) -> Result<i64> {
+        let commerce = self.commerce.lock().await;
+        let supplier_uuid = parse_uuid_str(&supplier_id, "supplier")?;
+        let items = items
+            .into_iter()
+            .map(|i| -> Result<stateset_core::BulkSupplierSkuItem> {
+                Ok(stateset_core::BulkSupplierSkuItem {
+                    product_id: parse_uuid_str(&i.product_id, "product")?.into(),
+                    sku: i.sku,
+                    unit_cost: parse_optional_decimal_str(i.unit_cost, "unit_cost")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let count = commerce.supplier_skus().bulk_upsert(supplier_uuid, items).map_err(|e| {
+            Error::from_reason(format!("Failed to bulk upsert supplier SKUs: {}", e))
+        })?;
+        i64::try_from(count).map_err(|_| Error::from_reason("Bulk upsert count exceeds i64 range"))
+    }
+}
+
+// ============================================================================
+// Inbound Shipments  (advance ship notices)
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateInboundShipmentItemInput {
+    pub product_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub quantity_expected: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateInboundShipmentInput {
+    pub supplier_id: String,
+    pub purchase_order_id: Option<String>,
+    pub warehouse_id: Option<String>,
+    pub carrier: Option<String>,
+    pub tracking_number: Option<String>,
+    /// RFC 3339 timestamp
+    pub expected_at: Option<String>,
+    pub items: Vec<CreateInboundShipmentItemInput>,
+    pub notes: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct InboundShipmentFilterInput {
+    pub supplier_id: Option<String>,
+    pub warehouse_id: Option<String>,
+    /// pending, in_transit, arrived, partially_received, received, cancelled
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct InboundShipmentItemOutput {
+    pub id: String,
+    pub inbound_shipment_id: String,
+    pub product_id: String,
+    pub sku: String,
+    /// Exact decimal string
+    pub quantity_expected: String,
+    /// Exact decimal string
+    pub quantity_received: String,
+}
+
+impl From<stateset_core::InboundShipmentItem> for InboundShipmentItemOutput {
+    fn from(i: stateset_core::InboundShipmentItem) -> Self {
+        Self {
+            id: i.id.to_string(),
+            inbound_shipment_id: i.inbound_shipment_id.to_string(),
+            product_id: i.product_id.to_string(),
+            sku: i.sku,
+            quantity_expected: i.quantity_expected.to_string(),
+            quantity_received: i.quantity_received.to_string(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct InboundShipmentOutput {
+    pub id: String,
+    pub number: String,
+    pub supplier_id: String,
+    pub purchase_order_id: Option<String>,
+    pub warehouse_id: Option<String>,
+    pub carrier: Option<String>,
+    pub tracking_number: Option<String>,
+    /// pending, in_transit, arrived, partially_received, received, cancelled
+    pub status: String,
+    pub items: Vec<InboundShipmentItemOutput>,
+    /// RFC 3339 timestamp
+    pub expected_at: Option<String>,
+    /// RFC 3339 timestamp
+    pub received_at: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::InboundShipment> for InboundShipmentOutput {
+    fn from(s: stateset_core::InboundShipment) -> Self {
+        Self {
+            id: s.id.to_string(),
+            number: s.number,
+            supplier_id: s.supplier_id.to_string(),
+            purchase_order_id: s.purchase_order_id.map(|id| id.to_string()),
+            warehouse_id: s.warehouse_id.map(|id| id.to_string()),
+            carrier: s.carrier,
+            tracking_number: s.tracking_number,
+            status: format!("{}", s.status),
+            items: s.items.into_iter().map(Into::into).collect(),
+            expected_at: s.expected_at.map(|d| d.to_rfc3339()),
+            received_at: s.received_at.map(|d| d.to_rfc3339()),
+            notes: s.notes,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct InboundShipments {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl InboundShipments {
+    /// Whether the inbound-shipments backend is available on this engine build.
+    #[napi]
+    pub async fn is_supported(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        Ok(commerce.inbound_shipments().is_supported())
+    }
+
+    #[napi]
+    pub async fn create(&self, input: CreateInboundShipmentInput) -> Result<InboundShipmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let items = input
+            .items
+            .into_iter()
+            .map(|i| -> Result<stateset_core::CreateInboundShipmentItem> {
+                Ok(stateset_core::CreateInboundShipmentItem {
+                    product_id: parse_uuid_str(&i.product_id, "product")?.into(),
+                    sku: i.sku,
+                    quantity_expected: parse_decimal_str(
+                        &i.quantity_expected,
+                        "quantity_expected",
+                    )?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let shipment = commerce
+            .inbound_shipments()
+            .create(stateset_core::CreateInboundShipment {
+                supplier_id: parse_uuid_str(&input.supplier_id, "supplier")?,
+                purchase_order_id: parse_optional_uuid(
+                    input.purchase_order_id,
+                    "purchase_order_id",
+                )?,
+                warehouse_id: parse_optional_uuid(input.warehouse_id, "warehouse_id")?
+                    .map(Into::into),
+                carrier: input.carrier,
+                tracking_number: input.tracking_number,
+                expected_at: parse_rfc3339_opt(input.expected_at, "expected_at")?,
+                items,
+                notes: input.notes,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create inbound shipment: {}", e)))?;
+        Ok(shipment.into())
+    }
+
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<InboundShipmentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "inbound shipment")?;
+        let shipment = commerce
+            .inbound_shipments()
+            .get(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get inbound shipment: {}", e)))?;
+        Ok(shipment.map(Into::into))
+    }
+
+    #[napi]
+    pub async fn list(
+        &self,
+        filter: Option<InboundShipmentFilterInput>,
+    ) -> Result<Vec<InboundShipmentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.map_or_else(
+            || Ok(stateset_core::InboundShipmentFilter::default()),
+            |f| -> Result<stateset_core::InboundShipmentFilter> {
+                Ok(stateset_core::InboundShipmentFilter {
+                    supplier_id: parse_optional_uuid(f.supplier_id, "supplier_id")?,
+                    warehouse_id: parse_optional_uuid(f.warehouse_id, "warehouse_id")?
+                        .map(Into::into),
+                    status: f
+                        .status
+                        .map(|s| {
+                            s.parse::<stateset_core::InboundShipmentStatus>()
+                                .map_err(|_| Error::from_reason("Invalid inbound shipment status"))
+                        })
+                        .transpose()?,
+                    limit: f.limit,
+                    offset: f.offset,
+                })
+            },
+        )?;
+        let shipments = commerce
+            .inbound_shipments()
+            .list(filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list inbound shipments: {}", e)))?;
+        Ok(shipments.into_iter().map(Into::into).collect())
+    }
+
+    /// Mark a shipment as in transit.
+    #[napi]
+    pub async fn mark_in_transit(&self, id: String) -> Result<InboundShipmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "inbound shipment")?;
+        let shipment = commerce.inbound_shipments().mark_in_transit(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to mark inbound shipment in transit: {}", e))
+        })?;
+        Ok(shipment.into())
+    }
+
+    /// Mark a shipment as arrived.
+    #[napi]
+    pub async fn mark_arrived(&self, id: String) -> Result<InboundShipmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "inbound shipment")?;
+        let shipment = commerce.inbound_shipments().mark_arrived(uuid.into()).map_err(|e| {
+            Error::from_reason(format!("Failed to mark inbound shipment arrived: {}", e))
+        })?;
+        Ok(shipment.into())
+    }
+
+    /// Receive a quantity (exact decimal string) against a single line.
+    #[napi]
+    pub async fn receive_line(
+        &self,
+        id: String,
+        item_id: String,
+        quantity: String,
+    ) -> Result<InboundShipmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "inbound shipment")?;
+        let item_uuid = parse_uuid_str(&item_id, "inbound shipment item")?;
+        let shipment = commerce
+            .inbound_shipments()
+            .receive_line(uuid.into(), item_uuid.into(), parse_decimal_str(&quantity, "quantity")?)
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to receive inbound shipment line: {}", e))
+            })?;
+        Ok(shipment.into())
+    }
+
+    /// Cancel an inbound shipment.
+    #[napi]
+    pub async fn cancel(&self, id: String) -> Result<InboundShipmentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = parse_uuid_str(&id, "inbound shipment")?;
+        let shipment = commerce
+            .inbound_shipments()
+            .cancel(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to cancel inbound shipment: {}", e)))?;
+        Ok(shipment.into())
     }
 }

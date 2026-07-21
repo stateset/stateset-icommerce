@@ -2932,6 +2932,404 @@ export interface EdiSummaryOutput {
   /** Counts grouped by document type */
   byType: Array<EdiCountOutput>
 }
+export interface CreatePrepaymentInput {
+  supplierId: string
+  /** Exact decimal string, e.g. "1000.00" */
+  amount: string
+  /** Currency code, e.g. "USD" */
+  currency?: string
+  /** Payment method (e.g. "wire", "ach") */
+  method?: string
+  reference?: string
+  memo?: string
+}
+export interface ApplyPrepaymentInput {
+  /** bill or payment_obligation */
+  targetType: string
+  targetId: string
+  /** Exact decimal string */
+  amount: string
+}
+export interface PrepaymentFilterInput {
+  supplierId?: string
+  /** open, applied, refunded, cancelled */
+  status?: string
+  limit?: number
+  offset?: number
+}
+export interface PrepaymentOutput {
+  id: string
+  number: string
+  supplierId: string
+  /** Exact decimal string */
+  amount: string
+  /** Exact decimal string */
+  remaining: string
+  currency: string
+  /** open, applied, refunded, cancelled */
+  status: string
+  method?: string
+  reference?: string
+  memo?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface PrepaymentApplicationOutput {
+  id: string
+  prepaymentId: string
+  /** bill or payment_obligation */
+  targetType: string
+  targetId: string
+  /** Exact decimal string */
+  amount: string
+  reversed: boolean
+  createdAt: string
+}
+export interface CreateVendorCreditInput {
+  supplierId: string
+  vendorReturnId?: string
+  /** Exact decimal string */
+  amount: string
+  /** Currency code, e.g. "USD" */
+  currency?: string
+  memo?: string
+}
+export interface ApplyVendorCreditInput {
+  /** bill or payment_obligation */
+  targetType: string
+  targetId: string
+  /** Exact decimal string */
+  amount: string
+}
+export interface VendorCreditFilterInput {
+  supplierId?: string
+  /** open, applied, cancelled */
+  status?: string
+  limit?: number
+  offset?: number
+}
+export interface VendorCreditOutput {
+  id: string
+  number: string
+  supplierId: string
+  vendorReturnId?: string
+  /** Exact decimal string */
+  amount: string
+  /** Exact decimal string */
+  remaining: string
+  currency: string
+  /** open, applied, cancelled */
+  status: string
+  memo?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface VendorCreditApplicationOutput {
+  id: string
+  vendorCreditId: string
+  /** bill or payment_obligation */
+  targetType: string
+  targetId: string
+  /** Exact decimal string */
+  amount: string
+  reversed: boolean
+  createdAt: string
+}
+export interface CreatePriceScheduleInput {
+  name: string
+  code?: string
+  /** Currency code, e.g. "USD" */
+  currency?: string
+  /** RFC 3339 timestamp */
+  startsAt?: string
+  /** RFC 3339 timestamp */
+  endsAt?: string
+  /** Priority used to break ties (higher wins); default 0 */
+  priority?: number
+}
+export interface UpdatePriceScheduleInput {
+  name?: string
+  code?: string
+  /** RFC 3339 timestamp */
+  startsAt?: string
+  /** RFC 3339 timestamp */
+  endsAt?: string
+  isActive?: boolean
+  priority?: number
+}
+export interface PriceScheduleFilterInput {
+  isActive?: boolean
+  limit?: number
+  offset?: number
+}
+export interface PriceScheduleOutput {
+  id: string
+  name: string
+  code?: string
+  currency: string
+  /** RFC 3339 timestamp */
+  startsAt?: string
+  /** RFC 3339 timestamp */
+  endsAt?: string
+  isActive: boolean
+  priority: number
+  createdAt: string
+  updatedAt: string
+}
+export interface PriceScheduleEntryOutput {
+  priceScheduleId: string
+  productId: string
+  /** Exact decimal string */
+  price: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CreatePriceLevelInput {
+  name: string
+  code: string
+  description?: string
+  /** none, percentage_discount, percentage_markup (default none) */
+  adjustmentType?: string
+  /** Percentage as exact decimal string (e.g. "10" for 10%); default "0" */
+  adjustmentValue?: string
+  /** Currency code, e.g. "USD" */
+  currency?: string
+}
+export interface UpdatePriceLevelInput {
+  name?: string
+  description?: string
+  /** none, percentage_discount, percentage_markup */
+  adjustmentType?: string
+  /** Percentage as exact decimal string */
+  adjustmentValue?: string
+  isActive?: boolean
+}
+export interface PriceLevelFilterInput {
+  isActive?: boolean
+  limit?: number
+  offset?: number
+}
+export interface PriceLevelOutput {
+  id: string
+  name: string
+  code: string
+  description?: string
+  /** none, percentage_discount, percentage_markup */
+  adjustmentType: string
+  /** Percentage as exact decimal string */
+  adjustmentValue: string
+  currency: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface PriceLevelEntryOutput {
+  priceLevelId: string
+  productId: string
+  /** Exact decimal string */
+  price: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateTransferOrderItemInput {
+  productId: string
+  /** Exact decimal string */
+  quantity: string
+}
+export interface CreateTransferOrderInput {
+  sourceWarehouseId: string
+  destinationWarehouseId: string
+  items: Array<CreateTransferOrderItemInput>
+  /** RFC 3339 timestamp */
+  expectedAt?: string
+  notes?: string
+}
+export interface TransferOrderFilterInput {
+  /** draft, pending, in_transit, partially_received, received, cancelled */
+  status?: string
+  sourceWarehouseId?: string
+  destinationWarehouseId?: string
+  limit?: number
+  offset?: number
+}
+export interface TransferOrderItemOutput {
+  id: string
+  transferOrderId: string
+  productId: string
+  sku: string
+  /** Exact decimal string */
+  quantity: string
+  /** Exact decimal string */
+  quantityShipped: string
+  /** Exact decimal string */
+  quantityReceived: string
+}
+export interface TransferOrderOutput {
+  id: string
+  number: string
+  sourceWarehouseId: string
+  destinationWarehouseId: string
+  /** draft, pending, in_transit, partially_received, received, cancelled */
+  status: string
+  items: Array<TransferOrderItemOutput>
+  /** RFC 3339 timestamp */
+  expectedAt?: string
+  /** RFC 3339 timestamp */
+  shippedAt?: string
+  /** RFC 3339 timestamp */
+  receivedAt?: string
+  notes?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateProductionBatchInput {
+  name: string
+  vendorId?: string
+  /** Work order UUIDs to link at creation */
+  workOrderIds?: Array<string>
+  notes?: string
+  /** RFC 3339 timestamp */
+  scheduledStart?: string
+  /** RFC 3339 timestamp */
+  scheduledEnd?: string
+}
+export interface UpdateProductionBatchInput {
+  name?: string
+  vendorId?: string
+  /** planned, in_progress, completed, cancelled */
+  status?: string
+  notes?: string
+  /** RFC 3339 timestamp */
+  scheduledStart?: string
+  /** RFC 3339 timestamp */
+  scheduledEnd?: string
+}
+export interface ProductionBatchFilterInput {
+  /** planned, in_progress, completed, cancelled */
+  status?: string
+  vendorId?: string
+  limit?: number
+  offset?: number
+}
+export interface ProductionBatchOutput {
+  id: string
+  name: string
+  /** planned, in_progress, completed, cancelled */
+  status: string
+  vendorId?: string
+  workOrderIds: Array<string>
+  notes?: string
+  /** RFC 3339 timestamp */
+  scheduledStart?: string
+  /** RFC 3339 timestamp */
+  scheduledEnd?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateSupplierSkuInput {
+  productId: string
+  supplierId: string
+  sku: string
+  /** Exact decimal string */
+  unitCost?: string
+  /** Currency code, e.g. "USD" */
+  currency?: string
+  /** Exact decimal string */
+  minOrderQty?: string
+  leadTimeDays?: number
+}
+export interface UpdateSupplierSkuInput {
+  sku?: string
+  /** Exact decimal string */
+  unitCost?: string
+  /** Currency code, e.g. "USD" */
+  currency?: string
+  /** Exact decimal string */
+  minOrderQty?: string
+  leadTimeDays?: number
+  isPreferred?: boolean
+}
+export interface SupplierSkuFilterInput {
+  supplierId?: string
+  productId?: string
+  limit?: number
+  offset?: number
+}
+export interface BulkSupplierSkuItemInput {
+  productId: string
+  sku: string
+  /** Exact decimal string */
+  unitCost?: string
+}
+export interface SupplierSkuOutput {
+  id: string
+  productId: string
+  supplierId: string
+  sku: string
+  /** Exact decimal string */
+  unitCost?: string
+  currency: string
+  /** Exact decimal string */
+  minOrderQty?: string
+  leadTimeDays?: number
+  isPreferred: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateInboundShipmentItemInput {
+  productId: string
+  sku: string
+  /** Exact decimal string */
+  quantityExpected: string
+}
+export interface CreateInboundShipmentInput {
+  supplierId: string
+  purchaseOrderId?: string
+  warehouseId?: string
+  carrier?: string
+  trackingNumber?: string
+  /** RFC 3339 timestamp */
+  expectedAt?: string
+  items: Array<CreateInboundShipmentItemInput>
+  notes?: string
+}
+export interface InboundShipmentFilterInput {
+  supplierId?: string
+  warehouseId?: string
+  /** pending, in_transit, arrived, partially_received, received, cancelled */
+  status?: string
+  limit?: number
+  offset?: number
+}
+export interface InboundShipmentItemOutput {
+  id: string
+  inboundShipmentId: string
+  productId: string
+  sku: string
+  /** Exact decimal string */
+  quantityExpected: string
+  /** Exact decimal string */
+  quantityReceived: string
+}
+export interface InboundShipmentOutput {
+  id: string
+  number: string
+  supplierId: string
+  purchaseOrderId?: string
+  warehouseId?: string
+  carrier?: string
+  trackingNumber?: string
+  /** pending, in_transit, arrived, partially_received, received, cancelled */
+  status: string
+  items: Array<InboundShipmentItemOutput>
+  /** RFC 3339 timestamp */
+  expectedAt?: string
+  /** RFC 3339 timestamp */
+  receivedAt?: string
+  notes?: string
+  createdAt: string
+  updatedAt: string
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -3025,6 +3423,22 @@ export declare class Commerce {
   get cycleCounts(): CycleCounts
   /** Get the EDI documents API (trading-partner document tracking) */
   get ediDocuments(): EdiDocuments
+  /** Get the prepayments API (advance payments to suppliers) */
+  get prepayments(): Prepayments
+  /** Get the vendor credits API (supplier-owed credits) */
+  get vendorCredits(): VendorCredits
+  /** Get the price schedules API (time-bounded pricing) */
+  get priceSchedules(): PriceSchedules
+  /** Get the price levels API (B2B pricing tiers) */
+  get priceLevels(): PriceLevels
+  /** Get the transfer orders API (inter-warehouse stock movement) */
+  get transferOrders(): TransferOrders
+  /** Get the production batches API (grouping manufacturing work orders) */
+  get productionBatches(): ProductionBatches
+  /** Get the supplier SKUs API (per-supplier SKU / unit-cost overrides) */
+  get supplierSkus(): SupplierSkus
+  /** Get the inbound shipments API (advance ship notices) */
+  get inboundShipments(): InboundShipments
   /** Get the events API (pub/sub and webhook management) */
   get events(): Events
   /**
@@ -3948,4 +4362,132 @@ export declare class EdiDocuments {
   setStatus(id: string, status: string, errorMessage?: string | undefined | null): Promise<EdiDocumentOutput>
   /** Aggregate summary across all EDI documents (counts by status and type). */
   summary(): Promise<EdiSummaryOutput>
+}
+export declare class Prepayments {
+  /** Whether the prepayments backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreatePrepaymentInput): Promise<PrepaymentOutput>
+  get(id: string): Promise<PrepaymentOutput | null>
+  list(filter?: PrepaymentFilterInput | undefined | null): Promise<Array<PrepaymentOutput>>
+  /** Apply a prepayment against a bill or payment obligation. */
+  apply(id: string, input: ApplyPrepaymentInput): Promise<PrepaymentOutput>
+  /** List applications for a prepayment. */
+  listApplications(id: string): Promise<Array<PrepaymentApplicationOutput>>
+  /** Reverse a previously-recorded application. */
+  reverseApplication(id: string, applicationId: string): Promise<PrepaymentOutput>
+  /** Refund the remaining balance, closing the prepayment. */
+  refund(id: string): Promise<PrepaymentOutput>
+}
+export declare class VendorCredits {
+  /** Whether the vendor-credits backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateVendorCreditInput): Promise<VendorCreditOutput>
+  get(id: string): Promise<VendorCreditOutput | null>
+  list(filter?: VendorCreditFilterInput | undefined | null): Promise<Array<VendorCreditOutput>>
+  /** Apply a vendor credit against a bill or payment obligation. */
+  apply(id: string, input: ApplyVendorCreditInput): Promise<VendorCreditOutput>
+  /** List applications for a vendor credit. */
+  listApplications(id: string): Promise<Array<VendorCreditApplicationOutput>>
+  /** Reverse a previously-recorded application. */
+  reverseApplication(id: string, applicationId: string): Promise<VendorCreditOutput>
+  /** Cancel a vendor credit. */
+  cancel(id: string): Promise<VendorCreditOutput>
+}
+export declare class PriceSchedules {
+  /** Whether the price-schedules backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreatePriceScheduleInput): Promise<PriceScheduleOutput>
+  get(id: string): Promise<PriceScheduleOutput | null>
+  update(id: string, input: UpdatePriceScheduleInput): Promise<PriceScheduleOutput>
+  list(filter?: PriceScheduleFilterInput | undefined | null): Promise<Array<PriceScheduleOutput>>
+  /** Delete a price schedule and its entries. */
+  delete(id: string): Promise<void>
+  /** Upsert a per-product scheduled price (exact decimal string). */
+  setEntry(id: string, productId: string, price: string): Promise<PriceScheduleEntryOutput>
+  /** Remove a per-product entry. */
+  deleteEntry(id: string, productId: string): Promise<void>
+  /** List per-product entries for a schedule. */
+  listEntries(id: string): Promise<Array<PriceScheduleEntryOutput>>
+  /**
+   * Resolve the effective scheduled price for a product at an instant
+   * (`at` is an RFC 3339 timestamp; defaults to now). Returns an exact
+   * decimal string, or null when no schedule applies.
+   */
+  resolvePrice(productId: string, at?: string | undefined | null): Promise<string | null>
+}
+export declare class PriceLevels {
+  /** Whether the price-levels backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreatePriceLevelInput): Promise<PriceLevelOutput>
+  get(id: string): Promise<PriceLevelOutput | null>
+  update(id: string, input: UpdatePriceLevelInput): Promise<PriceLevelOutput>
+  list(filter?: PriceLevelFilterInput | undefined | null): Promise<Array<PriceLevelOutput>>
+  /** Delete a price level and its entries. */
+  delete(id: string): Promise<void>
+  /** Upsert a per-product fixed price entry (exact decimal string). */
+  setEntry(id: string, productId: string, price: string): Promise<PriceLevelEntryOutput>
+  /** Remove a per-product entry. */
+  deleteEntry(id: string, productId: string): Promise<void>
+  /** List per-product entries for a level. */
+  listEntries(id: string): Promise<Array<PriceLevelEntryOutput>>
+}
+export declare class TransferOrders {
+  /** Whether the transfer-orders backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateTransferOrderInput): Promise<TransferOrderOutput>
+  get(id: string): Promise<TransferOrderOutput | null>
+  list(filter?: TransferOrderFilterInput | undefined | null): Promise<Array<TransferOrderOutput>>
+  /** Mark a transfer order as shipped from the source. */
+  ship(id: string): Promise<TransferOrderOutput>
+  /**
+   * Receive a quantity (exact decimal string) against a single line at the
+   * destination.
+   */
+  receiveLine(id: string, itemId: string, quantity: string): Promise<TransferOrderOutput>
+  /** Cancel a transfer order. */
+  cancel(id: string): Promise<TransferOrderOutput>
+}
+export declare class ProductionBatches {
+  /** Whether the production-batches backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateProductionBatchInput): Promise<ProductionBatchOutput>
+  get(id: string): Promise<ProductionBatchOutput | null>
+  update(id: string, input: UpdateProductionBatchInput): Promise<ProductionBatchOutput>
+  list(filter?: ProductionBatchFilterInput | undefined | null): Promise<Array<ProductionBatchOutput>>
+  /** Delete a production batch. */
+  delete(id: string): Promise<void>
+  /** Link work orders to a batch. */
+  addWorkOrders(id: string, workOrderIds: Array<string>): Promise<ProductionBatchOutput>
+  /** Remove a work order from a batch. */
+  removeWorkOrder(id: string, workOrderId: string): Promise<ProductionBatchOutput>
+}
+export declare class SupplierSkus {
+  /** Whether the supplier-SKUs backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateSupplierSkuInput): Promise<SupplierSkuOutput>
+  get(id: string): Promise<SupplierSkuOutput | null>
+  update(id: string, input: UpdateSupplierSkuInput): Promise<SupplierSkuOutput>
+  list(filter?: SupplierSkuFilterInput | undefined | null): Promise<Array<SupplierSkuOutput>>
+  /** Delete a supplier SKU. */
+  delete(id: string): Promise<void>
+  /**
+   * Bulk upsert supplier SKUs for a supplier, keyed by internal product.
+   * Returns the number of records upserted.
+   */
+  bulkUpsert(supplierId: string, items: Array<BulkSupplierSkuItemInput>): Promise<number>
+}
+export declare class InboundShipments {
+  /** Whether the inbound-shipments backend is available on this engine build. */
+  isSupported(): Promise<boolean>
+  create(input: CreateInboundShipmentInput): Promise<InboundShipmentOutput>
+  get(id: string): Promise<InboundShipmentOutput | null>
+  list(filter?: InboundShipmentFilterInput | undefined | null): Promise<Array<InboundShipmentOutput>>
+  /** Mark a shipment as in transit. */
+  markInTransit(id: string): Promise<InboundShipmentOutput>
+  /** Mark a shipment as arrived. */
+  markArrived(id: string): Promise<InboundShipmentOutput>
+  /** Receive a quantity (exact decimal string) against a single line. */
+  receiveLine(id: string, itemId: string, quantity: string): Promise<InboundShipmentOutput>
+  /** Cancel an inbound shipment. */
+  cancel(id: string): Promise<InboundShipmentOutput>
 }

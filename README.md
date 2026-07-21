@@ -30,10 +30,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.7.0     # Python
-npm install @stateset/embedded@1.7.0     # Node.js
-npm install -g @stateset/cli@1.7.0       # CLI
-gem install stateset_embedded -v 1.7.0   # Ruby
+pip install stateset-embedded==1.16.0     # Python
+npm install @stateset/embedded@1.16.0     # Node.js
+npm install -g @stateset/cli@1.16.0       # CLI
+gem install stateset_embedded -v 1.16.0   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -72,7 +72,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.7.0](#whats-new-in-v170)
+- [What's New in v1.16.0](#whats-new-in-v1160)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -107,9 +107,11 @@ autonomous agents actually need to transact safely:
 - **📜 [Policy DSL](./crates/stateset-policy/)** — declarative, deny-overrides
   rules with explainable denials. Block agents from writes when limits are
   exceeded; record the reason for every decision.
-- **🛠️ [700+ MCP Tools](./docs/whitepaper.md#mcp-tools) across 63 domain modules** —
-  the largest known domain-specific MCP surface. Discoverable, payable per call
-  via Machine Payments Protocol, replayable, audit-logged.
+- **🛠️ [731 MCP Tools](./docs/whitepaper.md#mcp-tools) across 64 domain modules** —
+  the largest known domain-specific MCP surface, generated from the domain
+  registry ([`cli/docs/TOOLS.md`](./cli/docs/TOOLS.md) is the source of truth).
+  Discoverable, payable per call via Machine Payments Protocol, replayable,
+  audit-logged.
 - **🔐 [Verifiable Encrypted Signatures (VES v1.0)](./docs/PQC_INITIAL_SPEC.md)**
   — Merkle-anchored event log with Ed25519 + ML-DSA-65 hybrid signatures and
   X25519 + ML-KEM-768 hybrid encryption. Every state change is signed and
@@ -168,7 +170,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.7.0 @stateset/cli@1.7.0
+npm install @stateset/embedded@1.16.0 @stateset/cli@1.16.0
 ```
 
 ```javascript
@@ -297,7 +299,7 @@ Use `--verify-strict` in CI to fail setup if any readiness warnings are present.
 }
 ```
 
-This gives your AI assistant access to the full commerce stack: orders, inventory, customers, products, payments, returns, subscriptions, analytics, promotions, manufacturing, A2A commerce, stablecoin payments, and more.
+This gives your AI assistant access to the full commerce stack: orders, inventory, customers, products, payments, returns, subscriptions, analytics, promotions, manufacturing, warehouse/fulfillment, general ledger, AP/AR, fixed assets, revenue recognition, A2A commerce, stablecoin payments, and more.
 
 ---
 
@@ -318,32 +320,65 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.7.0
+## What's New in v1.16.0
 
-**v1.7.0 is a correctness and hardening release.**
+**The v1.8.0 → v1.16.0 series turns the engine into a full back-office
+platform: a complete finance suite, full warehouse-management exposure,
+~180 new REST endpoints, and a hardening pass across auth, idempotency,
+observability, and query discipline.**
 
-- **BREAKING: safe-by-default checkout.** `carts().complete()` now mints
-  orders as `Confirmed` with payment `Pending`; record payment through the
-  payments API. Out-of-band settlement (ACP, external PSPs) opts in
-  explicitly via the new `complete_settled_externally()` — on both
-  backends, `Commerce`, and `AsyncCommerce`. x402 checkout is unchanged.
-- **Exact-decimal money end to end.** Payment, refund, and invoice-payment
-  request amounts are `Decimal` on the wire (string or number), closing the
-  last IEEE-754 float path into the engine.
-- **Inventory reservation accounting fixes.** Committed
-  reserve/release/confirm operations can no longer surface as caller
-  errors under lock contention (previously a retrying caller could
-  double-release); found by the repaired oversell property test.
-- **Atomic checkout on Postgres.** Order promotion and cart completion
-  commit in a single transaction on both the standard and x402 paths.
-- **Security hardening.** Per-client HTTP rate limiting (keyed token
-  buckets, bounded memory), production-baseline startup warnings for
-  missing authz/rate-limit on non-loopback binds, and a fail-closed ICP
-  replay guard that never evicts live nonces under flood.
-- **Tighter CI.** `stateset-db` gains a ratcheting coverage floor and the
-  Postgres parity matrix auto-discovers its test files.
+- **Complete finance suite.** General ledger with journals
+  (post/void/reverse), trial balance, balance sheet, income statement,
+  period open/close/lock/reopen, idempotent FX revaluation
+  (`POST /gl/revalue`), and one-shot month-end close orchestration
+  (`POST /gl/close-month`: depreciation → revenue recognition → FX
+  revaluation → period close, with dry-run and per-step reports).
+  Accounts payable with 3-way match (PO ↔ receipt ↔ bill), payment runs,
+  and aging. Accounts receivable with collections, dunning queues,
+  credit memos, write-offs, and statements. A fixed-asset register with
+  straight-line and declining-balance depreciation and disposal
+  gain/loss. ASC 606-style revenue recognition (contracts, performance
+  obligations, ratable / point-in-time / milestone schedules).
+- **Full WMS exposure.** Fulfillment waves with pick/pack/ship and
+  cartons, receiving and put-away, warehouse locations with adjust/move,
+  and cycle counts with transactional variance application.
+- **~180 new REST endpoints**, all documented in OpenAPI with tags and
+  validated by the spec test suite — the finance and WMS backends above
+  plus purchase orders + suppliers, work orders, quality (inspections,
+  NCRs, holds), BOMs, lots, serials, carts/checkout, and backorders.
+- **Admin Finance + EDI operations UI.** Six finance pages (Ledger,
+  Bills, Close, Receivables, Assets, Revenue) and a read-only
+  `/operations/edi` page (850/855/856/810 summaries).
+- **Security hardening.** Fail-closed API auth on non-loopback binds,
+  honest tenant isolation (`x-tenant-id` on non-tenant deployments is
+  rejected instead of silently sharing data), and durable DB-backed
+  idempotency with `Idempotency-Key` required by default on money
+  mutations (428 when missing, 422 on fingerprint conflicts).
+- **Operability.** Per-route Prometheus RED metrics (request/error
+  counts + latency histograms per method/route), cursor pagination
+  across list-heavy domains, server-side LIMIT policy on every list
+  query, `BEGIN IMMEDIATE` on all SQLite write transactions, and 10 new
+  webhook-subscribable domain events.
+- **Test infrastructure.** Property-based tests (proptest) over
+  depreciation/revenue schedule math and 3-way-match tolerances, plus a
+  seeded 200-operation randomized ledger simulation asserting the trial
+  balance after every operation — which found and fixed real
+  close-period and revenue-schedule bugs.
+- **Binding parity.** Node and Python expose the new domains
+  (fixed assets, revenue recognition, cycle counts, 3-way match,
+  GL revalue/close-month), with async API parity in Rust
+  (`AsyncCommerce`) and a generated tool catalog
+  ([`cli/docs/TOOLS.md`](./cli/docs/TOOLS.md), 731 tools across 64
+  domains) kept fresh by a regenerate-and-diff test.
 
-See [`CHANGELOG.md`](./CHANGELOG.md) for the full entry.
+See [`CHANGELOG.md`](./CHANGELOG.md) for the full per-release entries
+(v1.8.0 – v1.16.0).
+
+**v1.7.0** was a correctness and hardening release: safe-by-default
+checkout (`carts().complete()` mints `Confirmed` orders with payment
+`Pending`; out-of-band settlement via `complete_settled_externally()`),
+exact-decimal money end to end, inventory reservation accounting fixes,
+atomic checkout on Postgres, and per-client HTTP rate limiting.
 
 **v1.6.0** completed three-language SDK symmetry on the ICP trust
 primitives: the Rust and Python SDKs gained `verify_settlement_receipt`
@@ -1088,10 +1123,13 @@ Operational notes:
 
 ## Domain Models
 
-20 first-class domains: Orders, Customers, Products, Inventory, Carts,
-Payments, Returns, Shipments, Manufacturing, Purchase Orders, Warranties,
-Invoices, Currency, Analytics, Tax, Promotions, Subscriptions, Stablecoin,
-x402, A2A Commerce.
+40 first-class domains, including: Orders, Customers, Products, Inventory,
+Carts, Payments, Returns, Shipments, Manufacturing, Purchase Orders,
+Warranties, Invoices, Currency, Analytics, Tax, Promotions, Subscriptions,
+Stablecoin, x402, A2A Commerce — plus the finance suite (General Ledger,
+Accounts Payable, Accounts Receivable, Fixed Assets, Revenue Recognition)
+and the warehouse suite (Warehouse, Fulfillment, Receiving, Cycle Counts,
+Work Orders, Quality, BOMs, Lots, Serials, Backorders).
 
 Each domain ships with strongly-typed Rust models, generated language
 bindings, MCP tool descriptors, and OpenAPI schemas. The authoritative
@@ -1136,17 +1174,17 @@ A capability matrix — what ships in v1.0.x, with depth links. The agentic
 primitives that distinguish iCommerce from a generic commerce engine
 ([A2A](./AGENTIC_COMMERCE.md), [x402](./docs/src/payments/x402.md),
 [VES v1.0](./docs/PQC_INITIAL_SPEC.md), [Policy DSL](./crates/stateset-policy/),
-[700+ MCP tools](./docs/whitepaper.md#mcp-tools)) are summarized in
+[731 MCP tools](./docs/whitepaper.md#mcp-tools)) are summarized in
 [Why iCommerce](#why-icommerce) and not duplicated here.
 
 | Domain | Capabilities |
 | --- | --- |
 | **Commerce** | Order lifecycle (create → confirm → ship → deliver) · multi-location inventory with reservations · customer profiles · product catalog with variants/attributes |
-| **Financial** | 35+ currencies (BTC, ETH, USDC included) · multi-method payments + refunds · invoice generation · supplier purchase orders |
+| **Financial** | 35+ currencies (BTC, ETH, USDC included) · multi-method payments + refunds · invoice generation · supplier purchase orders · general ledger (journals, statements, period close, FX revaluation, month-end close) · AP (3-way match, payment runs, aging) · AR (collections, dunning, statements) · fixed-asset register with depreciation · ASC 606 revenue recognition |
 | **Tax** | US/EU/Canada multi-jurisdiction calc · state/province auto-lookup · exemptions & certificates · EU VAT · CA GST/HST/PST |
 | **Promotions** | %/fixed discounts · coupon codes with usage limits · BXGY · free shipping · time-limited campaigns |
 | **Subscriptions** | Daily/weekly/monthly/annual plans · trial periods · pause/resume/cancel/skip · billing cycle management |
-| **Supply chain** | Manufacturing BOMs · work orders with task tracking · carrier shipment tracking · RMA processing |
+| **Supply chain / WMS** | Manufacturing BOMs · work orders with task tracking · carrier shipment tracking · RMA processing · fulfillment waves with pick/pack/ship · receiving + put-away · warehouse locations · cycle counts with variance application · lots + serials |
 | **Analytics** | Sales summaries · demand forecast per SKU · revenue projections (with confidence intervals) · inventory health · customer LTV |
 | **A2A commerce** | Direct agent-to-agent payments (USDC/USDT/ssUSD/DAI on SET Chain, Base, Ethereum, Arbitrum) · quote/negotiate · recurring subscriptions · split payments · escrow with conditional release · HMAC-signed webhooks · SSE event streaming · agent discovery + reputation. See [`AGENTIC_COMMERCE.md`](./AGENTIC_COMMERCE.md). |
 | **VES v1.0** | Local-first with sequencer sync · Ed25519 + ML-DSA-65 hybrid signatures · X25519 + ML-KEM-768 hybrid encryption · key rotation · encryption groups · Merkle proofs · conflict resolution (remote-wins/local-wins/merge). See [`PQC_INITIAL_SPEC.md`](./docs/PQC_INITIAL_SPEC.md). |
@@ -1175,7 +1213,7 @@ Platform-specific notes that don't fit either:
   <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.7.0</version>
+    <version>1.16.0</version>
   </dependency>
   ```
 
@@ -1185,7 +1223,7 @@ Platform-specific notes that don't fit either:
   the autoloaded stubs throw at runtime.
 
 - **Swift** — Swift Package Manager is the supported path. CocoaPods is
-  community-maintained at `pod 'StateSet', '~> 1.7.0'`.
+  community-maintained at `pod 'StateSet', '~> 1.16.0'`.
 
 - **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
   that, `stateset --help` works anywhere.
@@ -1198,16 +1236,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.7.0"` | [docs.rs](https://docs.rs/stateset-sdk) |
-| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.7.0` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.16.0"` | [docs.rs](https://docs.rs/stateset-sdk) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.16.0` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
-| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.7.0'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
-| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.7.0")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
-| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.7.0")` | [GitHub](https://github.com/stateset/stateset-swift) |
-| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.7.0` / `<PackageReference Include="StateSet.Embedded" Version="1.7.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
-| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.7.0` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.16.0'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.16.0")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.16.0")` | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.16.0` / `<PackageReference Include="StateSet.Embedded" Version="1.16.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.16.0` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use

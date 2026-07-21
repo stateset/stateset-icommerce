@@ -6,6 +6,27 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-07-21
+
+### Added
+- **Full PostgreSQL domain parity**: all 34 repository capabilities now
+  return real stores — 12 new implementations (channels, companies,
+  activity logs, payment obligations, prepayments, price levels, price
+  schedules, purgatory, EDI documents, integration mappings/field
+  mappings, topology snapshots; migrations 060–071) and 13 previously
+  built-but-unreachable stores wired into the `Database` factory. The
+  `NotPermitted` shim layer is deleted. 22 live-PG parity tests.
+- **Full binding parity**: prepayments, vendor credits, price
+  schedules/levels, transfer orders, production batches, supplier SKUs,
+  and inbound shipments added to both Node and Python bindings
+  (~4,900 lines; Node 139 and Python 103 binding tests green).
+
+### Changed
+- README refreshed to the v1.16 series (version pins, real tool counts,
+  thematic What's New); admin/CLI/binding package versions aligned with
+  the workspace; payment-metrics signatures take `Decimal` instead of
+  `f64`.
+
 ## [1.16.0] - 2026-07-21
 
 ### Changed

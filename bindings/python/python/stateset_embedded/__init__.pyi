@@ -86,6 +86,46 @@ class Commerce:
         ...
 
     @property
+    def prepayments(self) -> Prepayments:
+        """Get the prepayments API (advance payments to suppliers)."""
+        ...
+
+    @property
+    def vendor_credits(self) -> VendorCredits:
+        """Get the vendor credits API (supplier-owed credits)."""
+        ...
+
+    @property
+    def price_schedules(self) -> PriceSchedules:
+        """Get the price schedules API (time-bounded pricing)."""
+        ...
+
+    @property
+    def price_levels(self) -> PriceLevels:
+        """Get the price levels API (B2B pricing tiers)."""
+        ...
+
+    @property
+    def transfer_orders(self) -> TransferOrders:
+        """Get the transfer orders API (inter-warehouse stock movement)."""
+        ...
+
+    @property
+    def production_batches(self) -> ProductionBatches:
+        """Get the production batches API (grouping manufacturing work orders)."""
+        ...
+
+    @property
+    def supplier_skus(self) -> SupplierSkus:
+        """Get the supplier SKUs API (per-supplier SKU / unit-cost overrides)."""
+        ...
+
+    @property
+    def inbound_shipments(self) -> InboundShipments:
+        """Get the inbound shipments API (advance ship notices)."""
+        ...
+
+    @property
     def loyalty(self) -> Loyalty:
         """Get the loyalty API."""
         ...
@@ -3039,3 +3079,570 @@ class CycleCounts:
     def cancel(self, id: str) -> CycleCount:
         """Cancel a draft or in-progress cycle count."""
         ...
+
+class Prepayment:
+    """Cash paid to a supplier in advance. Money values are exact decimal
+    strings."""
+
+    id: str
+    number: str
+    supplier_id: str
+    amount: str
+    remaining: str
+    currency: str
+    status: str
+    method: Optional[str]
+    reference: Optional[str]
+    memo: Optional[str]
+    created_at: str
+    updated_at: str
+
+class PrepaymentApplication:
+    """An application of a prepayment against a bill or payment obligation."""
+
+    id: str
+    prepayment_id: str
+    target_type: str
+    target_id: str
+    amount: str
+    reversed: bool
+    created_at: str
+
+class Prepayments:
+    """Prepayment operations. Money is exchanged as exact decimal strings,
+    enums as snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        supplier_id: str,
+        amount: str,
+        currency: Optional[str] = None,
+        method: Optional[str] = None,
+        reference: Optional[str] = None,
+        memo: Optional[str] = None,
+    ) -> Prepayment: ...
+
+    def get(self, id: str) -> Optional[Prepayment]: ...
+
+    def list(
+        self,
+        supplier_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Prepayment]: ...
+
+    def apply(
+        self,
+        id: str,
+        target_type: str,
+        target_id: str,
+        amount: str,
+    ) -> Prepayment:
+        """Apply a prepayment against a bill or payment obligation."""
+        ...
+
+    def list_applications(self, id: str) -> List[PrepaymentApplication]: ...
+
+    def reverse_application(self, id: str, application_id: str) -> Prepayment: ...
+
+    def refund(self, id: str) -> Prepayment:
+        """Refund the remaining balance, closing the prepayment."""
+        ...
+
+class VendorCredit:
+    """A vendor credit balance owed by a supplier. Money values are exact
+    decimal strings."""
+
+    id: str
+    number: str
+    supplier_id: str
+    vendor_return_id: Optional[str]
+    amount: str
+    remaining: str
+    currency: str
+    status: str
+    memo: Optional[str]
+    created_at: str
+    updated_at: str
+
+class VendorCreditApplication:
+    """An application of a vendor credit against a bill or payment
+    obligation."""
+
+    id: str
+    vendor_credit_id: str
+    target_type: str
+    target_id: str
+    amount: str
+    reversed: bool
+    created_at: str
+
+class VendorCredits:
+    """Vendor credit operations. Money is exchanged as exact decimal strings,
+    enums as snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        supplier_id: str,
+        amount: str,
+        vendor_return_id: Optional[str] = None,
+        currency: Optional[str] = None,
+        memo: Optional[str] = None,
+    ) -> VendorCredit: ...
+
+    def get(self, id: str) -> Optional[VendorCredit]: ...
+
+    def list(
+        self,
+        supplier_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[VendorCredit]: ...
+
+    def apply(
+        self,
+        id: str,
+        target_type: str,
+        target_id: str,
+        amount: str,
+    ) -> VendorCredit:
+        """Apply a vendor credit against a bill or payment obligation."""
+        ...
+
+    def list_applications(self, id: str) -> List[VendorCreditApplication]: ...
+
+    def reverse_application(self, id: str, application_id: str) -> VendorCredit: ...
+
+    def cancel(self, id: str) -> VendorCredit: ...
+
+class PriceSchedule:
+    """A time-bounded set of product price overrides."""
+
+    id: str
+    name: str
+    code: Optional[str]
+    currency: str
+    starts_at: Optional[str]
+    ends_at: Optional[str]
+    is_active: bool
+    priority: int
+    created_at: str
+    updated_at: str
+
+class PriceScheduleEntry:
+    """A per-product fixed price within a schedule."""
+
+    price_schedule_id: str
+    product_id: str
+    price: str
+    created_at: str
+    updated_at: str
+
+class PriceSchedules:
+    """Price schedule operations. Money is exchanged as exact decimal
+    strings, timestamps as RFC 3339 strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        name: str,
+        code: Optional[str] = None,
+        currency: Optional[str] = None,
+        starts_at: Optional[str] = None,
+        ends_at: Optional[str] = None,
+        priority: int = 0,
+    ) -> PriceSchedule: ...
+
+    def get(self, id: str) -> Optional[PriceSchedule]: ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        code: Optional[str] = None,
+        starts_at: Optional[str] = None,
+        ends_at: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        priority: Optional[int] = None,
+    ) -> PriceSchedule: ...
+
+    def list(
+        self,
+        is_active: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[PriceSchedule]: ...
+
+    def delete(self, id: str) -> None: ...
+
+    def set_entry(self, id: str, product_id: str, price: str) -> PriceScheduleEntry: ...
+
+    def delete_entry(self, id: str, product_id: str) -> None: ...
+
+    def list_entries(self, id: str) -> List[PriceScheduleEntry]: ...
+
+    def resolve_price(self, product_id: str, at: Optional[str] = None) -> Optional[str]:
+        """Resolve the effective scheduled price for a product at an instant
+        (RFC 3339; defaults to now)."""
+        ...
+
+class PriceLevel:
+    """A named B2B pricing tier."""
+
+    id: str
+    name: str
+    code: str
+    description: Optional[str]
+    adjustment_type: str
+    adjustment_value: str
+    currency: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+class PriceLevelEntry:
+    """An explicit fixed price for a product within a price level."""
+
+    price_level_id: str
+    product_id: str
+    price: str
+    created_at: str
+    updated_at: str
+
+class PriceLevels:
+    """Price level operations. Money is exchanged as exact decimal strings,
+    enums as snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        name: str,
+        code: str,
+        description: Optional[str] = None,
+        adjustment_type: Optional[str] = None,
+        adjustment_value: Optional[str] = None,
+        currency: Optional[str] = None,
+    ) -> PriceLevel: ...
+
+    def get(self, id: str) -> Optional[PriceLevel]: ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        adjustment_type: Optional[str] = None,
+        adjustment_value: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> PriceLevel: ...
+
+    def list(
+        self,
+        is_active: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[PriceLevel]: ...
+
+    def delete(self, id: str) -> None: ...
+
+    def set_entry(self, id: str, product_id: str, price: str) -> PriceLevelEntry: ...
+
+    def delete_entry(self, id: str, product_id: str) -> None: ...
+
+    def list_entries(self, id: str) -> List[PriceLevelEntry]: ...
+
+class TransferOrderItemInput:
+    """A line on a create-transfer-order request."""
+
+    product_id: str
+    quantity: str
+
+    def __init__(self, product_id: str, quantity: str) -> None: ...
+
+class TransferOrderItem:
+    """A single line on a transfer order. Quantities are exact decimal
+    strings."""
+
+    id: str
+    transfer_order_id: str
+    product_id: str
+    sku: str
+    quantity: str
+    quantity_shipped: str
+    quantity_received: str
+
+class TransferOrder:
+    """A transfer order moving stock between two warehouses."""
+
+    id: str
+    number: str
+    source_warehouse_id: str
+    destination_warehouse_id: str
+    status: str
+    items: List[TransferOrderItem]
+    expected_at: Optional[str]
+    shipped_at: Optional[str]
+    received_at: Optional[str]
+    notes: Optional[str]
+    created_at: str
+    updated_at: str
+
+class TransferOrders:
+    """Transfer order operations. Quantities are exact decimal strings,
+    timestamps RFC 3339 strings, enums snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        source_warehouse_id: str,
+        destination_warehouse_id: str,
+        items: List[TransferOrderItemInput],
+        expected_at: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> TransferOrder: ...
+
+    def get(self, id: str) -> Optional[TransferOrder]: ...
+
+    def list(
+        self,
+        status: Optional[str] = None,
+        source_warehouse_id: Optional[str] = None,
+        destination_warehouse_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[TransferOrder]: ...
+
+    def ship(self, id: str) -> TransferOrder:
+        """Mark a transfer order as shipped from the source."""
+        ...
+
+    def receive_line(self, id: str, item_id: str, quantity: str) -> TransferOrder:
+        """Receive a quantity against a single line at the destination."""
+        ...
+
+    def cancel(self, id: str) -> TransferOrder: ...
+
+class ProductionBatch:
+    """A batch grouping multiple work orders for coordinated production."""
+
+    id: str
+    name: str
+    status: str
+    vendor_id: Optional[str]
+    work_order_ids: List[str]
+    notes: Optional[str]
+    scheduled_start: Optional[str]
+    scheduled_end: Optional[str]
+    created_at: str
+    updated_at: str
+
+class ProductionBatches:
+    """Production batch operations. Timestamps are RFC 3339 strings, enums
+    snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        name: str,
+        vendor_id: Optional[str] = None,
+        work_order_ids: Optional[List[str]] = None,
+        notes: Optional[str] = None,
+        scheduled_start: Optional[str] = None,
+        scheduled_end: Optional[str] = None,
+    ) -> ProductionBatch: ...
+
+    def get(self, id: str) -> Optional[ProductionBatch]: ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        vendor_id: Optional[str] = None,
+        status: Optional[str] = None,
+        notes: Optional[str] = None,
+        scheduled_start: Optional[str] = None,
+        scheduled_end: Optional[str] = None,
+    ) -> ProductionBatch: ...
+
+    def list(
+        self,
+        status: Optional[str] = None,
+        vendor_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[ProductionBatch]: ...
+
+    def delete(self, id: str) -> None: ...
+
+    def add_work_orders(self, id: str, work_order_ids: List[str]) -> ProductionBatch:
+        """Link work orders to a batch."""
+        ...
+
+    def remove_work_order(self, id: str, work_order_id: str) -> ProductionBatch:
+        """Remove a work order from a batch."""
+        ...
+
+class SupplierSkuBulkItemInput:
+    """A single item in a bulk supplier-SKU upsert."""
+
+    product_id: str
+    sku: str
+    unit_cost: Optional[str]
+
+    def __init__(
+        self,
+        product_id: str,
+        sku: str,
+        unit_cost: Optional[str] = None,
+    ) -> None: ...
+
+class SupplierSku:
+    """A supplier-specific SKU and optional unit-cost override for a
+    product. Money values are exact decimal strings."""
+
+    id: str
+    product_id: str
+    supplier_id: str
+    sku: str
+    unit_cost: Optional[str]
+    currency: str
+    min_order_qty: Optional[str]
+    lead_time_days: Optional[int]
+    is_preferred: bool
+    created_at: str
+    updated_at: str
+
+class SupplierSkus:
+    """Supplier SKU operations. Money is exchanged as exact decimal
+    strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        product_id: str,
+        supplier_id: str,
+        sku: str,
+        unit_cost: Optional[str] = None,
+        currency: Optional[str] = None,
+        min_order_qty: Optional[str] = None,
+        lead_time_days: Optional[int] = None,
+    ) -> SupplierSku: ...
+
+    def get(self, id: str) -> Optional[SupplierSku]: ...
+
+    def update(
+        self,
+        id: str,
+        sku: Optional[str] = None,
+        unit_cost: Optional[str] = None,
+        currency: Optional[str] = None,
+        min_order_qty: Optional[str] = None,
+        lead_time_days: Optional[int] = None,
+        is_preferred: Optional[bool] = None,
+    ) -> SupplierSku: ...
+
+    def list(
+        self,
+        supplier_id: Optional[str] = None,
+        product_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[SupplierSku]: ...
+
+    def delete(self, id: str) -> None: ...
+
+    def bulk_upsert(
+        self,
+        supplier_id: str,
+        items: List[SupplierSkuBulkItemInput],
+    ) -> int:
+        """Bulk upsert supplier SKUs for a supplier; returns the count."""
+        ...
+
+class InboundShipmentItemInput:
+    """A line on a create-inbound-shipment request."""
+
+    product_id: str
+    sku: str
+    quantity_expected: str
+
+    def __init__(self, product_id: str, sku: str, quantity_expected: str) -> None: ...
+
+class InboundShipmentItem:
+    """A single expected line on an inbound shipment. Quantities are exact
+    decimal strings."""
+
+    id: str
+    inbound_shipment_id: str
+    product_id: str
+    sku: str
+    quantity_expected: str
+    quantity_received: str
+
+class InboundShipment:
+    """Goods in transit from a supplier to a warehouse."""
+
+    id: str
+    number: str
+    supplier_id: str
+    purchase_order_id: Optional[str]
+    warehouse_id: Optional[str]
+    carrier: Optional[str]
+    tracking_number: Optional[str]
+    status: str
+    items: List[InboundShipmentItem]
+    expected_at: Optional[str]
+    received_at: Optional[str]
+    notes: Optional[str]
+    created_at: str
+    updated_at: str
+
+class InboundShipments:
+    """Inbound shipment (ASN) operations. Quantities are exact decimal
+    strings, timestamps RFC 3339 strings, enums snake_case strings."""
+
+    def is_supported(self) -> bool: ...
+
+    def create(
+        self,
+        supplier_id: str,
+        items: List[InboundShipmentItemInput],
+        purchase_order_id: Optional[str] = None,
+        warehouse_id: Optional[str] = None,
+        carrier: Optional[str] = None,
+        tracking_number: Optional[str] = None,
+        expected_at: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> InboundShipment: ...
+
+    def get(self, id: str) -> Optional[InboundShipment]: ...
+
+    def list(
+        self,
+        supplier_id: Optional[str] = None,
+        warehouse_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[InboundShipment]: ...
+
+    def mark_in_transit(self, id: str) -> InboundShipment: ...
+
+    def mark_arrived(self, id: str) -> InboundShipment: ...
+
+    def receive_line(self, id: str, item_id: str, quantity: str) -> InboundShipment:
+        """Receive a quantity against a single line."""
+        ...
+
+    def cancel(self, id: str) -> InboundShipment: ...
