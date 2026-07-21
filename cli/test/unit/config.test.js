@@ -10,7 +10,7 @@ import {
   CLI_DEFAULTS,
   FEATURES,
   getModelForAgent,
-  getParseArgsOptions
+  getParseArgsOptions,
 } from '../../src/config.js';
 
 describe('config', () => {
@@ -32,7 +32,10 @@ describe('config', () => {
   describe('DEFAULT_MODEL', () => {
     it('should be a valid model', () => {
       assert.ok(DEFAULT_MODEL, 'DEFAULT_MODEL should be defined');
-      assert.ok(Object.values(MODELS).includes(DEFAULT_MODEL), 'DEFAULT_MODEL should be one of MODELS');
+      assert.ok(
+        Object.values(MODELS).includes(DEFAULT_MODEL),
+        'DEFAULT_MODEL should be one of MODELS',
+      );
     });
   });
 
@@ -86,7 +89,7 @@ describe('config', () => {
 
     it('should allow overrides', () => {
       const options = getParseArgsOptions({
-        custom: { type: 'boolean', default: true }
+        custom: { type: 'boolean', default: true },
       });
 
       assert.ok(options.custom, 'custom option should be merged');

@@ -344,9 +344,7 @@ describe('Webhook Dead Letter Queue', () => {
       store.quarantineFailedNotifications();
 
       // Manually backdate the quarantined_at to simulate old entries
-      store.db
-        .prepare("UPDATE a2a_webhook_dlq SET quarantined_at = '2025-01-01T00:00:00Z'")
-        .run();
+      store.db.prepare("UPDATE a2a_webhook_dlq SET quarantined_at = '2025-01-01T00:00:00Z'").run();
 
       const result = store.purgeDLQ({ olderThanDays: 30 });
       assert.equal(result.purged, 2);
@@ -369,9 +367,7 @@ describe('Webhook Dead Letter Queue', () => {
 
       // Backdate by 31 days
       const past = new Date(Date.now() - 31 * 86400000).toISOString();
-      store.db
-        .prepare('UPDATE a2a_webhook_dlq SET quarantined_at = ?')
-        .run(past);
+      store.db.prepare('UPDATE a2a_webhook_dlq SET quarantined_at = ?').run(past);
 
       const result = store.purgeDLQ();
       assert.equal(result.purged, 1);
@@ -417,9 +413,7 @@ describe('Webhook Dead Letter Queue', () => {
 
       // Backdate
       const oldDate = new Date(Date.now() - 60 * 86400000).toISOString();
-      store.db
-        .prepare('UPDATE a2a_webhook_dlq SET quarantined_at = ?')
-        .run(oldDate);
+      store.db.prepare('UPDATE a2a_webhook_dlq SET quarantined_at = ?').run(oldDate);
 
       const result = store.purgeDLQ({ olderThanDays: 30 });
       assert.equal(result.purged, 1);

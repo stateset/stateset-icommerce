@@ -8,7 +8,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, unlinkSync } from 'node:fs';
 import { runAgentLoop } from '../../src/claude-harness.js';
-import { ModelProvider, resetProviderRegistry, getProviderRegistry } from '../../src/providers/base.js';
+import {
+  ModelProvider,
+  resetProviderRegistry,
+  getProviderRegistry,
+} from '../../src/providers/base.js';
 
 function newDbPath() {
   return join(

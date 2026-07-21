@@ -160,10 +160,10 @@ describe('SessionPersistence', () => {
     await sp.saveSession({ id: 'sess-newest', operations: [] });
 
     const remaining = await sp.listSessions();
-    assert.deepStrictEqual(
-      remaining.map((session) => session.id).sort(),
-      ['sess-middle', 'sess-newest'],
-    );
+    assert.deepStrictEqual(remaining.map((session) => session.id).sort(), [
+      'sess-middle',
+      'sess-newest',
+    ]);
     assert.strictEqual(fs.existsSync(path.join(sp.sessionDir, 'sess-oldest.json')), false);
   });
 

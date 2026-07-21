@@ -251,8 +251,7 @@ describe('summarizer.js _parseResponse — ReDoS mitigation', () => {
   });
 
   it('parses multiline SUMMARY correctly', () => {
-    const text =
-      'SUMMARY: Line one.\nLine two of summary.\nFACTS: ["fact1"]';
+    const text = 'SUMMARY: Line one.\nLine two of summary.\nFACTS: ["fact1"]';
     const result = summarizer._parseResponse(text, 10);
 
     assert.ok(result.summary.includes('Line one.'));
@@ -399,11 +398,7 @@ describe('SSH tunnel host validation pattern', () => {
 
     for (const host of maliciousHosts) {
       it(`rejects: ${host.replace(/\n/g, '\\n').replace(/\t/g, '\\t')}`, () => {
-        assert.equal(
-          SSH_HOST_PATTERN.test(host),
-          false,
-          `Expected "${host}" to be rejected`,
-        );
+        assert.equal(SSH_HOST_PATTERN.test(host), false, `Expected "${host}" to be rejected`);
       });
     }
   });

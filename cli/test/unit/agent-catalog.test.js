@@ -37,7 +37,8 @@ function makeCatalog() {
 /** Publish a product with sensible defaults; override any field. */
 function publishDefault(catalog, overrides = {}) {
   return catalog.publishProduct({
-    productId: overrides.productId || `prod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    productId:
+      overrides.productId || `prod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name: overrides.name || 'Test Widget',
     description: overrides.description || 'A test widget for agents',
     capabilities: overrides.capabilities || ['buy', 'fulfill'],
@@ -60,7 +61,9 @@ function publishDefault(catalog, overrides = {}) {
 
 describe('publishProduct', () => {
   let catalog;
-  beforeEach(() => { ({ catalog } = makeCatalog()); });
+  beforeEach(() => {
+    ({ catalog } = makeCatalog());
+  });
 
   it('creates a catalog entry and returns catalogEntryId', () => {
     const result = publishDefault(catalog);
@@ -74,7 +77,10 @@ describe('publishProduct', () => {
     const r2 = publishDefault(catalog);
     assert.notEqual(r1.catalogEntryId, r2.catalogEntryId);
     // UUID v4 format
-    assert.match(r1.catalogEntryId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.match(
+      r1.catalogEntryId,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
   });
 
   it('stores capabilities as JSON string', () => {
@@ -145,7 +151,7 @@ describe('publishProduct', () => {
       capabilities: ['buy', 'fulfill', 'ship'],
       fulfillmentChains: ['set_chain', 'base'],
       minTrustLevel: 'verified',
-      maxPrice: 250.50,
+      maxPrice: 250.5,
       currency: 'EUR',
       machineSpec: { endpoint: '/api/v1' },
       tags: ['premium', 'fast'],
@@ -159,7 +165,7 @@ describe('publishProduct', () => {
     assert.deepEqual(e.capabilities, ['buy', 'fulfill', 'ship']);
     assert.deepEqual(e.fulfillment_chains, ['set_chain', 'base']);
     assert.equal(e.min_trust_level, 'verified');
-    assert.equal(e.max_price, 250.50);
+    assert.equal(e.max_price, 250.5);
     assert.equal(e.currency, 'EUR');
     assert.deepEqual(e.machine_spec, { endpoint: '/api/v1' });
     assert.deepEqual(e.tags, ['premium', 'fast']);
@@ -193,10 +199,41 @@ describe('queryProducts', () => {
   beforeEach(() => {
     ({ catalog } = makeCatalog());
     // Seed catalog
-    publishDefault(catalog, { productId: 'p1', name: 'Widget A', capabilities: ['buy', 'ship'], category: 'widgets', maxPrice: 50, minTrustLevel: 'sandbox', fulfillmentChains: ['set_chain'] });
-    publishDefault(catalog, { productId: 'p2', name: 'Widget B', capabilities: ['buy', 'fulfill'], category: 'widgets', maxPrice: 100, minTrustLevel: 'verified', fulfillmentChains: ['base'] });
-    publishDefault(catalog, { productId: 'p3', name: 'Service C', capabilities: ['compute', 'fulfill'], category: 'services', maxPrice: 200, minTrustLevel: 'enterprise', fulfillmentChains: ['set_chain', 'base'] });
-    publishDefault(catalog, { productId: 'p4', name: 'Premium D', capabilities: ['admin-op'], category: 'admin', maxPrice: 500, minTrustLevel: 'admin' });
+    publishDefault(catalog, {
+      productId: 'p1',
+      name: 'Widget A',
+      capabilities: ['buy', 'ship'],
+      category: 'widgets',
+      maxPrice: 50,
+      minTrustLevel: 'sandbox',
+      fulfillmentChains: ['set_chain'],
+    });
+    publishDefault(catalog, {
+      productId: 'p2',
+      name: 'Widget B',
+      capabilities: ['buy', 'fulfill'],
+      category: 'widgets',
+      maxPrice: 100,
+      minTrustLevel: 'verified',
+      fulfillmentChains: ['base'],
+    });
+    publishDefault(catalog, {
+      productId: 'p3',
+      name: 'Service C',
+      capabilities: ['compute', 'fulfill'],
+      category: 'services',
+      maxPrice: 200,
+      minTrustLevel: 'enterprise',
+      fulfillmentChains: ['set_chain', 'base'],
+    });
+    publishDefault(catalog, {
+      productId: 'p4',
+      name: 'Premium D',
+      capabilities: ['admin-op'],
+      category: 'admin',
+      maxPrice: 500,
+      minTrustLevel: 'admin',
+    });
   });
 
   it('returns all active products by default', () => {
@@ -250,7 +287,10 @@ describe('queryProducts', () => {
   });
 
   it('combines multiple filters', () => {
-    const { products } = catalog.queryProducts({ capability: 'fulfill', agentTrustLevel: 'enterprise' });
+    const { products } = catalog.queryProducts({
+      capability: 'fulfill',
+      agentTrustLevel: 'enterprise',
+    });
     assert.equal(products.length, 2); // Widget B (verified) + Service C (enterprise)
   });
 
@@ -285,7 +325,12 @@ describe('queryProducts', () => {
   });
 
   it('handles null max_price (no price limit) — included when maxPrice filter used', () => {
-    publishDefault(catalog, { productId: 'p-noprice', name: 'No Price Limit', capabilities: ['buy'], maxPrice: undefined });
+    publishDefault(catalog, {
+      productId: 'p-noprice',
+      name: 'No Price Limit',
+      capabilities: ['buy'],
+      maxPrice: undefined,
+    });
     const { products } = catalog.queryProducts({ maxPrice: 50 });
     const names = products.map((p) => p.name);
     assert.ok(names.includes('No Price Limit'), 'null max_price should be included');
@@ -310,7 +355,9 @@ describe('queryProducts', () => {
 
 describe('getProductSpec', () => {
   let catalog;
-  beforeEach(() => { ({ catalog } = makeCatalog()); });
+  beforeEach(() => {
+    ({ catalog } = makeCatalog());
+  });
 
   it('returns entry by catalog ID', () => {
     const { catalogEntryId } = publishDefault(catalog);
@@ -405,7 +452,9 @@ describe('getProductSpec', () => {
 
 describe('updateProduct', () => {
   let catalog;
-  beforeEach(() => { ({ catalog } = makeCatalog()); });
+  beforeEach(() => {
+    ({ catalog } = makeCatalog());
+  });
 
   it('updates a field', () => {
     const { catalogEntryId } = publishDefault(catalog, { name: 'Before' });
@@ -479,10 +528,26 @@ describe('matchAgentToProducts', () => {
 
   beforeEach(() => {
     ({ catalog } = makeCatalog());
-    publishDefault(catalog, { productId: 'm1', capabilities: ['buy', 'ship'], minTrustLevel: 'sandbox' });
-    publishDefault(catalog, { productId: 'm2', capabilities: ['buy', 'fulfill', 'invoice'], minTrustLevel: 'verified' });
-    publishDefault(catalog, { productId: 'm3', capabilities: ['compute'], minTrustLevel: 'enterprise' });
-    publishDefault(catalog, { productId: 'm4', capabilities: ['admin-op'], minTrustLevel: 'admin' });
+    publishDefault(catalog, {
+      productId: 'm1',
+      capabilities: ['buy', 'ship'],
+      minTrustLevel: 'sandbox',
+    });
+    publishDefault(catalog, {
+      productId: 'm2',
+      capabilities: ['buy', 'fulfill', 'invoice'],
+      minTrustLevel: 'verified',
+    });
+    publishDefault(catalog, {
+      productId: 'm3',
+      capabilities: ['compute'],
+      minTrustLevel: 'enterprise',
+    });
+    publishDefault(catalog, {
+      productId: 'm4',
+      capabilities: ['admin-op'],
+      minTrustLevel: 'admin',
+    });
   });
 
   it('matches by capability overlap', () => {
@@ -497,7 +562,10 @@ describe('matchAgentToProducts', () => {
   });
 
   it('sorts by relevance (match score descending)', () => {
-    const { compatibleProducts } = catalog.matchAgentToProducts(['buy', 'fulfill', 'invoice'], 'admin');
+    const { compatibleProducts } = catalog.matchAgentToProducts(
+      ['buy', 'fulfill', 'invoice'],
+      'admin',
+    );
     assert.ok(compatibleProducts.length >= 2);
     // m2 has 3 matching caps, m1 has 1
     assert.ok(
@@ -665,7 +733,9 @@ describe('exportCatalog', () => {
 describe('delistProduct', () => {
   let catalog;
 
-  beforeEach(() => { ({ catalog } = makeCatalog()); });
+  beforeEach(() => {
+    ({ catalog } = makeCatalog());
+  });
 
   it('sets status to delisted', () => {
     const { catalogEntryId } = publishDefault(catalog);
@@ -704,7 +774,9 @@ describe('delistProduct', () => {
 describe('edge cases', () => {
   let catalog;
 
-  beforeEach(() => { ({ catalog } = makeCatalog()); });
+  beforeEach(() => {
+    ({ catalog } = makeCatalog());
+  });
 
   it('handles Unicode in names and descriptions', () => {
     const { catalogEntryId } = publishDefault(catalog, {
@@ -713,7 +785,10 @@ describe('edge cases', () => {
     });
     const spec = catalog.getProductSpec(catalogEntryId);
     assert.equal(spec.entry.name, 'Widget \u00fcber-\u00e9l\u00e8gant \ud83d\ude80');
-    assert.equal(spec.entry.description, '\u65e5\u672c\u8a9e\u306e\u8aac\u660e \u4e2d\u6587\u63cf\u8ff0');
+    assert.equal(
+      spec.entry.description,
+      '\u65e5\u672c\u8a9e\u306e\u8aac\u660e \u4e2d\u6587\u63cf\u8ff0',
+    );
   });
 
   it('handles large capability arrays', () => {

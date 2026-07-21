@@ -383,7 +383,11 @@ describe('erc8004Tools — apply-guard preview shapes', () => {
 // ============================================================================
 
 describe('erc8004Tools — error paths (missing dbPath)', () => {
-  const readToolNames = ['erc8004_get_identity', 'erc8004_get_by_wallet', 'erc8004_list_identities'];
+  const readToolNames = [
+    'erc8004_get_identity',
+    'erc8004_get_by_wallet',
+    'erc8004_list_identities',
+  ];
 
   for (const toolName of readToolNames) {
     it(`${toolName} throws or returns error when dbPath is undefined`, async () => {

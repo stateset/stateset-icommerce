@@ -131,9 +131,12 @@ describe('emitEvent', () => {
 
   it('invokes callback with event payload', () => {
     let received = null;
-    emitEvent((event) => {
-      received = event;
-    }, { type: 'event', value: 42 });
+    emitEvent(
+      (event) => {
+        received = event;
+      },
+      { type: 'event', value: 42 },
+    );
     assert.deepStrictEqual(received, { type: 'event', value: 42 });
   });
 
@@ -143,9 +146,12 @@ describe('emitEvent', () => {
     console.error = (...args) => calls.push(args);
     try {
       assert.doesNotThrow(() => {
-        emitEvent(() => {
-          throw new Error('boom');
-        }, { type: 'sync-fail' });
+        emitEvent(
+          () => {
+            throw new Error('boom');
+          },
+          { type: 'sync-fail' },
+        );
       });
       assert.ok(calls.length >= 1);
     } finally {
@@ -158,9 +164,12 @@ describe('emitEvent', () => {
     const calls = [];
     console.error = (...args) => calls.push(args);
     try {
-      emitEvent(async () => {
-        throw new Error('async-boom');
-      }, { type: 'async-fail' });
+      emitEvent(
+        async () => {
+          throw new Error('async-boom');
+        },
+        { type: 'async-fail' },
+      );
       await new Promise((resolve) => setImmediate(resolve));
       assert.ok(calls.length >= 1);
     } finally {

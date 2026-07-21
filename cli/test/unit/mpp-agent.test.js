@@ -144,7 +144,10 @@ describe('mpp HTTP agent', () => {
       },
     });
 
-    assert.equal((await extractHttpPaymentChallenge(challengeResponse)).challengeId, challenge.challengeId);
+    assert.equal(
+      (await extractHttpPaymentChallenge(challengeResponse)).challengeId,
+      challenge.challengeId,
+    );
     assert.equal((await extractHttpPaymentReceipt(receiptResponse)).receiptId, receipt.receiptId);
   });
 

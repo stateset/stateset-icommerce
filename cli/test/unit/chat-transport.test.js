@@ -1,4 +1,3 @@
-
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -256,7 +255,10 @@ describe('createChatTransport', () => {
     assert.equal(second.sessionRefresh.previousSessionId, 'sess-1');
     assert.equal(second.sessionRefresh.replayedMessages, 2);
     assert.equal(second.sessionRefresh.sessionId, 'sess-2');
-    assert.equal(second.sessionRefresh.recordedAt, factory.created[1].options.sessionRefresh.recordedAt);
+    assert.equal(
+      second.sessionRefresh.recordedAt,
+      factory.created[1].options.sessionRefresh.recordedAt,
+    );
     assert.deepEqual(partials, ['delta:first']);
     assert.deepEqual(thinking, ['Thinking first']);
     assert.deepEqual(tools, ['mcp__stateset-commerce__list_orders']);

@@ -88,7 +88,11 @@ describe('agent-receipt — resolveSigningKey gating', () => {
   it('treats non-truthy STATESET_ALLOW_DEMO_KEYS values as disabled', () => {
     for (const value of ['', '0', 'false', 'no', 'off', 'nope']) {
       process.env.STATESET_ALLOW_DEMO_KEYS = value;
-      assert.throws(() => resolveSigningKey('seller'), /No signing key configured/, `value=${value}`);
+      assert.throws(
+        () => resolveSigningKey('seller'),
+        /No signing key configured/,
+        `value=${value}`,
+      );
     }
   });
 

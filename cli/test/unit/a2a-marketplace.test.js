@@ -360,10 +360,7 @@ describe('Marketplace Service — collectRFQResponses', () => {
   });
 
   it('throws when RFQ does not exist', () => {
-    assert.throws(
-      () => mp.collectRFQResponses('nonexistent-rfq'),
-      /RFQ nonexistent-rfq not found/,
-    );
+    assert.throws(() => mp.collectRFQResponses('nonexistent-rfq'), /RFQ nonexistent-rfq not found/);
   });
 
   it('returns empty ranked for RFQ with no responses', () => {
@@ -392,8 +389,18 @@ describe('Marketplace Service — collectRFQResponses', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 100 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
 
@@ -414,9 +421,24 @@ describe('Marketplace Service — collectRFQResponses', () => {
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 50 });
     const q3 = createQuote(store, { seller_address: '0xS3', total_decimal: 100 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS3', quote_id: q3.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS3',
+      quote_id: q3.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
 
@@ -437,7 +459,12 @@ describe('Marketplace Service — collectRFQResponses', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 0 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     assert.strictEqual(result.ranked[0].score, 0);
@@ -471,8 +498,18 @@ describe('Marketplace Service — collectRFQResponses', () => {
       trust_tier: 'sandbox',
     });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
 
@@ -494,7 +531,12 @@ describe('Marketplace Service — collectRFQResponses', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xNewSeller', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xNewSeller', quote_id: q1.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xNewSeller',
+      quote_id: q1.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     // rep defaults to 3 when not found
@@ -530,8 +572,18 @@ describe('Marketplace Service — collectRFQResponses', () => {
       quoted_at: new Date(now - 5000).toISOString(), // 5s response
     });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     assert.strictEqual(result.ranked[0].seller_address, '0xS1'); // faster response
@@ -562,8 +614,18 @@ describe('Marketplace Service — collectRFQResponses', () => {
       quoted_at: new Date(now - 5000).toISOString(), // 5s
     });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     // Both time and price matter; assert both are scored
@@ -581,11 +643,25 @@ describe('Marketplace Service — collectRFQResponses', () => {
     });
 
     // Quote still in "requested" state — not yet provided
-    const q1 = createQuote(store, { seller_address: '0xS1', status: 'requested', total_decimal: 0 });
+    const q1 = createQuote(store, {
+      seller_address: '0xS1',
+      status: 'requested',
+      total_decimal: 0,
+    });
     const q2 = createQuote(store, { seller_address: '0xS2', status: 'quoted', total_decimal: 100 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
 
@@ -604,7 +680,12 @@ describe('Marketplace Service — collectRFQResponses', () => {
     });
 
     // quote_id that doesn't exist in the store
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: 'nonexistent-quote', status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: 'nonexistent-quote',
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     assert.strictEqual(result.unscored.length, 1);
@@ -619,7 +700,12 @@ describe('Marketplace Service — collectRFQResponses', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    const resp = store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
+    const resp = store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
 
     mp.collectRFQResponses(rfq.id);
 
@@ -638,8 +724,18 @@ describe('Marketplace Service — collectRFQResponses', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 100 });
 
-    const r1 = store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    const r2 = store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    const r1 = store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    const r2 = store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     mp.collectRFQResponses(rfq.id);
 
@@ -660,8 +756,18 @@ describe('Marketplace Service — collectRFQResponses', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 200 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     // Falls back to cheapest — S1 should rank first
@@ -676,7 +782,12 @@ describe('Marketplace Service — collectRFQResponses', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     assert.ok(result.ranked[0].quote);
@@ -698,7 +809,12 @@ describe('Marketplace Service — collectRFQResponses', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     assert.ok(result.ranked[0].reputation);
@@ -732,10 +848,7 @@ describe('Marketplace Service — awardRFQ', () => {
 
   it('throws when RFQ does not exist', async () => {
     const mp = createMarketplaceService(store, NULL_A2A);
-    await assert.rejects(
-      () => mp.awardRFQ('nonexistent'),
-      /RFQ nonexistent not found/,
-    );
+    await assert.rejects(() => mp.awardRFQ('nonexistent'), /RFQ nonexistent not found/);
   });
 
   it('throws when RFQ is not open', async () => {
@@ -747,10 +860,7 @@ describe('Marketplace Service — awardRFQ', () => {
     });
     store.updateRFQ(rfq.id, { status: 'awarded' });
 
-    await assert.rejects(
-      () => mp.awardRFQ(rfq.id),
-      /is awarded, not open/,
-    );
+    await assert.rejects(() => mp.awardRFQ(rfq.id), /is awarded, not open/);
   });
 
   it('throws when RFQ is expired', async () => {
@@ -762,10 +872,7 @@ describe('Marketplace Service — awardRFQ', () => {
     });
     store.updateRFQ(rfq.id, { status: 'expired' });
 
-    await assert.rejects(
-      () => mp.awardRFQ(rfq.id),
-      /is expired, not open/,
-    );
+    await assert.rejects(() => mp.awardRFQ(rfq.id), /is expired, not open/);
   });
 
   it('throws when no scored responses exist', async () => {
@@ -776,10 +883,7 @@ describe('Marketplace Service — awardRFQ', () => {
       deadline: new Date(Date.now() + 3600000).toISOString(),
     });
 
-    await assert.rejects(
-      () => mp.awardRFQ(rfq.id),
-      /No scored responses to award/,
-    );
+    await assert.rejects(() => mp.awardRFQ(rfq.id), /No scored responses to award/);
   });
 
   it('awards the highest-scored response by default', async () => {
@@ -793,8 +897,20 @@ describe('Marketplace Service — awardRFQ', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 200 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.02 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'scored', score: 0.005 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.02,
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'scored',
+      score: 0.005,
+    });
 
     const result = await mp.awardRFQ(rfq.id);
 
@@ -812,7 +928,13 @@ describe('Marketplace Service — awardRFQ', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.01 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.01,
+    });
 
     await mp.awardRFQ(rfq.id);
 
@@ -833,8 +955,20 @@ describe('Marketplace Service — awardRFQ', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 200 });
 
-    const r1 = store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.02 });
-    const r2 = store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'scored', score: 0.005 });
+    const r1 = store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.02,
+    });
+    const r2 = store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'scored',
+      score: 0.005,
+    });
 
     await mp.awardRFQ(rfq.id);
 
@@ -853,8 +987,20 @@ describe('Marketplace Service — awardRFQ', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 200 });
 
-    const r1 = store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.02 });
-    const r2 = store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'scored', score: 0.005 });
+    const r1 = store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.02,
+    });
+    const r2 = store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'scored',
+      score: 0.005,
+    });
 
     // Force S2 as winner despite lower score
     const result = await mp.awardRFQ(rfq.id, r2.id);
@@ -876,8 +1022,20 @@ describe('Marketplace Service — awardRFQ', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 200 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.02 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'scored', score: 0.005 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.02,
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'scored',
+      score: 0.005,
+    });
 
     // Use quote_id to override
     const result = await mp.awardRFQ(rfq.id, q2.id);
@@ -894,7 +1052,13 @@ describe('Marketplace Service — awardRFQ', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.02 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.02,
+    });
 
     await assert.rejects(
       () => mp.awardRFQ(rfq.id, 'nonexistent-winner'),
@@ -912,7 +1076,13 @@ describe('Marketplace Service — awardRFQ', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.01 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.01,
+    });
 
     await mp.awardRFQ(rfq.id);
 
@@ -933,9 +1103,27 @@ describe('Marketplace Service — awardRFQ', () => {
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 200 });
     const q3 = createQuote(store, { seller_address: '0xS3', total_decimal: 300 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.02 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'scored', score: 0.005 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS3', quote_id: q3.id, status: 'scored', score: 0.003 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.02,
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'scored',
+      score: 0.005,
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS3',
+      quote_id: q3.id,
+      status: 'scored',
+      score: 0.003,
+    });
 
     await mp.awardRFQ(rfq.id);
 
@@ -955,7 +1143,13 @@ describe('Marketplace Service — awardRFQ', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.01 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.01,
+    });
 
     // Should not throw
     const result = await mp.awardRFQ(rfq.id);
@@ -974,8 +1168,20 @@ describe('Marketplace Service — awardRFQ', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 50 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 200 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.02 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'scored', score: 0.005 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.02,
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'scored',
+      score: 0.005,
+    });
 
     // Should not throw — decline failure is logged but doesn't block award
     const result = await mp.awardRFQ(rfq.id);
@@ -991,7 +1197,13 @@ describe('Marketplace Service — awardRFQ', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.01 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.01,
+    });
 
     const result = await mp.awardRFQ(rfq.id);
 
@@ -1014,8 +1226,19 @@ describe('Marketplace Service — awardRFQ', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 50 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.01 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' }); // no score
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.01,
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    }); // no score
 
     const result = await mp.awardRFQ(rfq.id);
     assert.strictEqual(result.winnerAddress, '0xS1');
@@ -1142,10 +1365,7 @@ describe('Marketplace Service — getServiceMetrics', () => {
   });
 
   it('throws when service does not exist', () => {
-    assert.throws(
-      () => mp.getServiceMetrics('nonexistent'),
-      /Service nonexistent not found/,
-    );
+    assert.throws(() => mp.getServiceMetrics('nonexistent'), /Service nonexistent not found/);
   });
 
   it('returns correct totals for a service with no quotes', () => {
@@ -1310,7 +1530,11 @@ describe('Marketplace Service — getAgentStatus', () => {
   });
 
   it('returns service details (id, name, category)', () => {
-    const svc = createSeller(store, { agent_address: '0xAgent1', name: 'Test Svc', category: 'analytics' });
+    const svc = createSeller(store, {
+      agent_address: '0xAgent1',
+      name: 'Test Svc',
+      category: 'analytics',
+    });
 
     const status = mp.getAgentStatus('0xAgent1');
 
@@ -1349,9 +1573,24 @@ describe('Marketplace Service — getAgentStatus', () => {
       deadline: new Date(Date.now() + 3600000).toISOString(),
     });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xAgent1', quote_id: randomUUID(), status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xAgent1', quote_id: randomUUID(), status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xAgent1', quote_id: randomUUID(), status: 'scored' }); // not pending
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xAgent1',
+      quote_id: randomUUID(),
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xAgent1',
+      quote_id: randomUUID(),
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xAgent1',
+      quote_id: randomUUID(),
+      status: 'scored',
+    }); // not pending
 
     const status = mp.getAgentStatus('0xAgent1');
     assert.strictEqual(status.pendingRFQs, 2);
@@ -1364,7 +1603,12 @@ describe('Marketplace Service — getAgentStatus', () => {
       deadline: new Date(Date.now() + 3600000).toISOString(),
     });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xOther', quote_id: randomUUID(), status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xOther',
+      quote_id: randomUUID(),
+      status: 'pending',
+    });
 
     const status = mp.getAgentStatus('0xAgent1');
     assert.strictEqual(status.pendingRFQs, 0);
@@ -1403,8 +1647,18 @@ describe('Marketplace Service — Edge cases', () => {
       deadline: new Date(Date.now() + 3600000).toISOString(),
     });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: 'missing-1', status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: 'missing-2', status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: 'missing-1',
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: 'missing-2',
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
 
@@ -1423,7 +1677,13 @@ describe('Marketplace Service — Edge cases', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.01 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.01,
+    });
 
     const result = await mp.awardRFQ(rfq.id);
     assert.strictEqual(result.losersDeclined, 0);
@@ -1512,16 +1772,19 @@ describe('Marketplace Service — Edge cases', () => {
     });
 
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'scored', score: 0.01 });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'scored',
+      score: 0.01,
+    });
 
     // First award succeeds
     await mp.awardRFQ(rfq.id);
 
     // Second award fails — RFQ is now 'awarded'
-    await assert.rejects(
-      () => mp.awardRFQ(rfq.id),
-      /is awarded, not open/,
-    );
+    await assert.rejects(() => mp.awardRFQ(rfq.id), /is awarded, not open/);
   });
 
   it('getServiceMetrics counts only quotes for the specific service agent', () => {
@@ -1548,11 +1811,30 @@ describe('Marketplace Service — Edge cases', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100, status: 'quoted' });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 50, status: 'quoted' });
     // S3 has a quote in 'requested' state — will be unscored
-    const q3 = createQuote(store, { seller_address: '0xS3', total_decimal: 0, status: 'requested' });
+    const q3 = createQuote(store, {
+      seller_address: '0xS3',
+      total_decimal: 0,
+      status: 'requested',
+    });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS3', quote_id: q3.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS3',
+      quote_id: q3.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
 
@@ -1589,8 +1871,18 @@ describe('Marketplace Service — Edge cases', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total_decimal: 100 });
     const q2 = createQuote(store, { seller_address: '0xS2', total_decimal: 100 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     assert.strictEqual(result.ranked[0].score, result.ranked[1].score);
@@ -1609,8 +1901,18 @@ describe('Marketplace Service — Edge cases', () => {
     const q1 = createQuote(store, { seller_address: '0xS1', total: 1000, total_decimal: 10 });
     const q2 = createQuote(store, { seller_address: '0xS2', total: 500, total_decimal: 50 });
 
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS1', quote_id: q1.id, status: 'pending' });
-    store.createRFQResponse({ rfq_id: rfq.id, seller_address: '0xS2', quote_id: q2.id, status: 'pending' });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS1',
+      quote_id: q1.id,
+      status: 'pending',
+    });
+    store.createRFQResponse({
+      rfq_id: rfq.id,
+      seller_address: '0xS2',
+      quote_id: q2.id,
+      status: 'pending',
+    });
 
     const result = mp.collectRFQResponses(rfq.id);
     // total_decimal: S1=10 cheaper than S2=50

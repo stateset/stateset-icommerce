@@ -44,23 +44,20 @@ function makeWooCommerceSignature(body, secret) {
  */
 function request(port, { method = 'POST', path = '/', headers = {}, body = '' } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request(
-      { hostname: '127.0.0.1', port, method, path, headers },
-      (res) => {
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => {
-          const raw = Buffer.concat(chunks).toString();
-          let json;
-          try {
-            json = JSON.parse(raw);
-          } catch {
-            json = null;
-          }
-          resolve({ statusCode: res.statusCode, headers: res.headers, body: raw, json });
-        });
-      },
-    );
+    const req = http.request({ hostname: '127.0.0.1', port, method, path, headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString();
+        let json;
+        try {
+          json = JSON.parse(raw);
+        } catch {
+          json = null;
+        }
+        resolve({ statusCode: res.statusCode, headers: res.headers, body: raw, json });
+      });
+    });
     req.on('error', reject);
     if (body) req.write(body);
     req.end();
@@ -472,7 +469,10 @@ describe('WebhookServer — Stripe end-to-end via HTTP', () => {
     const header = makeStripeSignatureHeader(originalBody, TEST_SECRET);
 
     // Tamper with the body after signing
-    const tamperedBody = JSON.stringify({ type: 'charge.succeeded', data: { object: { tampered: true } } });
+    const tamperedBody = JSON.stringify({
+      type: 'charge.succeeded',
+      data: { object: { tampered: true } },
+    });
 
     const res = await request(port, {
       path: '/webhooks/stripe',

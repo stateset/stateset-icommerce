@@ -6,6 +6,24 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-07-21
+
+### Added
+- **Core-commerce surface completion**: the customers, products, and
+  returns domains exposed only 5–6 methods to the Node binding (and
+  3–5 MCP tools) over 13–17-method engine accessors — the everyday
+  operations were the thinnest-tooled in the catalog. Added 26 napi
+  binding methods and 25 MCP tools so an agent can now update a
+  customer and manage its address book, search products and manage
+  variants and lifecycle (activate/archive), and run the full RMA
+  return workflow (mark received, complete, cancel, add tracking, list
+  by order/customer/pending). 923 tools across 87 domains.
+
+### Notes
+- `update_return` is intentionally not exposed as a single tool (its
+  `UpdateReturn` input is complex and unbound); the status-transition
+  tools cover the practical paths.
+
 ## [1.21.0] - 2026-07-21
 
 ### Fixed

@@ -7,7 +7,12 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { SessionManager, CommandHistory, createSessionManager, createCommandHistory } from '../../src/session.js';
+import {
+  SessionManager,
+  CommandHistory,
+  createSessionManager,
+  createCommandHistory,
+} from '../../src/session.js';
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -70,10 +70,7 @@ describe('cross-lang: JCS canonicalization', () => {
   });
 
   it('handles nested objects with sorted keys', () => {
-    assert.equal(
-      canonicalizeJson({ z: { b: 2, a: 1 }, a: [] }),
-      '{"a":[],"z":{"a":1,"b":2}}',
-    );
+    assert.equal(canonicalizeJson({ z: { b: 2, a: 1 }, a: [] }), '{"a":[],"z":{"a":1,"b":2}}');
   });
 
   it('canonicalizes {key: "value"}', () => {
@@ -122,10 +119,7 @@ describe('cross-lang: encoding helpers', () => {
   });
 
   it('uuidToBytes — standard UUID', () => {
-    assert.equal(
-      bufferToHex(uuidToBytes(TEST_UUID)),
-      '0x550e8400e29b41d4a716446655440000',
-    );
+    assert.equal(bufferToHex(uuidToBytes(TEST_UUID)), '0x550e8400e29b41d4a716446655440000');
   });
 });
 

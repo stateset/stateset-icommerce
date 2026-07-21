@@ -647,7 +647,10 @@ d('computeBackoff', () => {
     const ceiling = RECONNECT_POLICY.maxMs * (1 + RECONNECT_POLICY.jitter);
     for (let attempt = 1; attempt <= 20; attempt++) {
       const delay = computeBackoff(RECONNECT_POLICY, attempt);
-      assert.ok(delay <= ceiling + 1, `attempt ${attempt}: delay ${delay} exceeds ceiling ${ceiling}`);
+      assert.ok(
+        delay <= ceiling + 1,
+        `attempt ${attempt}: delay ${delay} exceeds ceiling ${ceiling}`,
+      );
     }
   });
 

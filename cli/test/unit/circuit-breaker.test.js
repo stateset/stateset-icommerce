@@ -29,29 +29,29 @@ function makeStore() {
 }
 
 function countEvents(db, agentName) {
-  const row = db.prepare(
-    'SELECT COUNT(*) AS cnt FROM a2a_circuit_breaker_events WHERE agent_name = ?'
-  ).get(agentName);
+  const row = db
+    .prepare('SELECT COUNT(*) AS cnt FROM a2a_circuit_breaker_events WHERE agent_name = ?')
+    .get(agentName);
   return row.cnt;
 }
 
 function countLedger(db, agentName) {
-  const row = db.prepare(
-    'SELECT COUNT(*) AS cnt FROM a2a_spending_ledger WHERE agent_name = ?'
-  ).get(agentName);
+  const row = db
+    .prepare('SELECT COUNT(*) AS cnt FROM a2a_spending_ledger WHERE agent_name = ?')
+    .get(agentName);
   return row.cnt;
 }
 
 function getEvents(db, agentName) {
-  return db.prepare(
-    'SELECT * FROM a2a_circuit_breaker_events WHERE agent_name = ? ORDER BY created_at'
-  ).all(agentName);
+  return db
+    .prepare('SELECT * FROM a2a_circuit_breaker_events WHERE agent_name = ? ORDER BY created_at')
+    .all(agentName);
 }
 
 function getLedgerEntries(db, agentName) {
-  return db.prepare(
-    'SELECT * FROM a2a_spending_ledger WHERE agent_name = ? ORDER BY created_at'
-  ).all(agentName);
+  return db
+    .prepare('SELECT * FROM a2a_spending_ledger WHERE agent_name = ? ORDER BY created_at')
+    .all(agentName);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,9 +99,10 @@ describe('Circuit Breaker', () => {
     });
 
     it('should create SQLite tables on construction', () => {
-      const tables = store.db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'a2a_%'"
-      ).all().map(r => r.name);
+      const tables = store.db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'a2a_%'")
+        .all()
+        .map((r) => r.name);
       assert.ok(tables.includes('a2a_circuit_breaker_events'));
       assert.ok(tables.includes('a2a_spending_ledger'));
     });
@@ -264,7 +265,7 @@ describe('Circuit Breaker', () => {
       breaker.trip('agent-1', 'test');
       assert.equal(breaker.getState('agent-1').state, 'open');
       // Wait for cooldown
-      await new Promise(r => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 80));
       const result = breaker.checkTransaction('agent-1', 10);
       assert.equal(result.allowed, true);
       assert.equal(result.state, 'half_open');
@@ -274,7 +275,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 50 });
       breaker.trip('agent-1', 'test');
-      await new Promise(r => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 80));
       const result = breaker.checkTransaction('agent-1', 10);
       assert.equal(result.allowed, true);
     });
@@ -304,7 +305,7 @@ describe('Circuit Breaker', () => {
     it('should create an audit event', () => {
       cb.recordSuccess('agent-1', 50);
       const events = getEvents(store.db, 'agent-1');
-      const successEvents = events.filter(e => e.event_type === 'transaction_success');
+      const successEvents = events.filter((e) => e.event_type === 'transaction_success');
       assert.equal(successEvents.length, 1);
     });
 
@@ -312,7 +313,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10, halfOpenMaxTxns: 3 });
       breaker.trip('agent-1', 'test');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       // Force half_open via getState
       breaker.getState('agent-1');
       assert.equal(breaker.getState('agent-1').state, 'half_open');
@@ -329,7 +330,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10, halfOpenMaxTxns: 5 });
       breaker.trip('agent-1', 'test');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1');
 
       breaker.recordSuccess('agent-1', 10);
@@ -355,7 +356,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10, halfOpenMaxTxns: 1 });
       breaker.trip('agent-1', 'test reason');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1');
       breaker.recordSuccess('agent-1', 10);
       const state = breaker.getState('agent-1');
@@ -389,7 +390,7 @@ describe('Circuit Breaker', () => {
     it('should create an audit event', () => {
       cb.recordFailure('agent-1', 50, 'err');
       const events = getEvents(store.db, 'agent-1');
-      const failEvents = events.filter(e => e.event_type === 'transaction_failure');
+      const failEvents = events.filter((e) => e.event_type === 'transaction_failure');
       assert.equal(failEvents.length, 1);
     });
 
@@ -421,7 +422,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10, halfOpenMaxTxns: 3 });
       breaker.trip('agent-1', 'test');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1');
       assert.equal(breaker.getState('agent-1').state, 'half_open');
 
@@ -439,7 +440,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10 });
       breaker.trip('agent-1', 'initial');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1');
       breaker.recordFailure('agent-1', 10, 'still failing');
       const state = breaker.getState('agent-1');
@@ -478,7 +479,7 @@ describe('Circuit Breaker', () => {
     it('should create a trip audit event', () => {
       cb.trip('agent-1', 'manual');
       const events = getEvents(store.db, 'agent-1');
-      const tripEvents = events.filter(e => e.event_type === 'trip');
+      const tripEvents = events.filter((e) => e.event_type === 'trip');
       assert.equal(tripEvents.length, 1);
       assert.equal(tripEvents[0].reason, 'manual');
     });
@@ -496,7 +497,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10 });
       breaker.trip('agent-1', 'first');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1');
       assert.equal(breaker.getState('agent-1').state, 'half_open');
       breaker.trip('agent-1', 'again');
@@ -541,7 +542,7 @@ describe('Circuit Breaker', () => {
     it('should create a global kill switch event', () => {
       cb.tripAll('emergency stop');
       const events = getEvents(store.db, '__global__');
-      const killEvents = events.filter(e => e.event_type === 'kill_switch_activated');
+      const killEvents = events.filter((e) => e.event_type === 'kill_switch_activated');
       assert.equal(killEvents.length, 1);
     });
 
@@ -583,7 +584,7 @@ describe('Circuit Breaker', () => {
       cb.trip('agent-1', 'test');
       cb.reset('agent-1');
       const events = getEvents(store.db, 'agent-1');
-      const resetEvents = events.filter(e => e.event_type === 'reset');
+      const resetEvents = events.filter((e) => e.event_type === 'reset');
       assert.equal(resetEvents.length, 1);
     });
 
@@ -623,15 +624,15 @@ describe('Circuit Breaker', () => {
       cb.resetAll();
       const events1 = getEvents(store.db, 'agent-1');
       const events2 = getEvents(store.db, 'agent-2');
-      assert.ok(events1.some(e => e.event_type === 'reset_all'));
-      assert.ok(events2.some(e => e.event_type === 'reset_all'));
+      assert.ok(events1.some((e) => e.event_type === 'reset_all'));
+      assert.ok(events2.some((e) => e.event_type === 'reset_all'));
     });
 
     it('should create a global kill switch deactivated event', () => {
       cb.tripAll('emergency');
       cb.resetAll();
       const events = getEvents(store.db, '__global__');
-      const deactivated = events.filter(e => e.event_type === 'kill_switch_deactivated');
+      const deactivated = events.filter((e) => e.event_type === 'kill_switch_deactivated');
       assert.equal(deactivated.length, 1);
     });
 
@@ -736,7 +737,7 @@ describe('Circuit Breaker', () => {
     it('should transition open→half_open after cooldown', async () => {
       cb.trip('agent-1', 'test');
       assert.equal(cb.getState('agent-1').state, 'open');
-      await new Promise(r => setTimeout(r, 150)); // cooldownMs=100
+      await new Promise((r) => setTimeout(r, 150)); // cooldownMs=100
       assert.equal(cb.getState('agent-1').state, 'half_open');
     });
 
@@ -744,7 +745,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10, halfOpenMaxTxns: 2 });
       breaker.trip('agent-1', 'test');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1');
       assert.equal(breaker.getState('agent-1').state, 'half_open');
 
@@ -757,7 +758,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10 });
       breaker.trip('agent-1', 'test');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1');
       assert.equal(breaker.getState('agent-1').state, 'half_open');
 
@@ -773,7 +774,7 @@ describe('Circuit Breaker', () => {
       breaker.trip('agent-1', 'test');
       assert.equal(breaker.getState('agent-1').state, 'open');
 
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       assert.equal(breaker.getState('agent-1').state, 'half_open');
 
       breaker.recordSuccess('agent-1', 10);
@@ -791,7 +792,7 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10, halfOpenMaxTxns: 5 });
       breaker.trip('agent-1', 'test');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1');
 
       breaker.recordSuccess('agent-1', 10);
@@ -806,13 +807,13 @@ describe('Circuit Breaker', () => {
       const s = makeStore();
       const breaker = createCircuitBreaker(s, { cooldownMs: 10 });
       breaker.trip('agent-1', 'test');
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 30));
       breaker.getState('agent-1'); // triggers open→half_open
 
       const events = getEvents(s.db, 'agent-1');
-      const stateChanges = events.filter(e => e.event_type === 'state_change');
+      const stateChanges = events.filter((e) => e.event_type === 'state_change');
       assert.ok(stateChanges.length >= 1);
-      assert.ok(stateChanges.some(e => e.state_after === 'half_open'));
+      assert.ok(stateChanges.some((e) => e.state_after === 'half_open'));
     });
 
     it('should handle multiple trip→reset cycles', () => {
@@ -846,7 +847,7 @@ describe('Circuit Breaker', () => {
       cb.getState('alpha');
       cb.getState('beta');
       const states = cb.getAllStates();
-      const names = states.map(s => s.agentName);
+      const names = states.map((s) => s.agentName);
       assert.ok(names.includes('alpha'));
       assert.ok(names.includes('beta'));
     });
@@ -855,8 +856,8 @@ describe('Circuit Breaker', () => {
       cb.getState('agent-1');
       cb.trip('agent-2', 'test');
       const states = cb.getAllStates();
-      const s1 = states.find(s => s.agentName === 'agent-1');
-      const s2 = states.find(s => s.agentName === 'agent-2');
+      const s1 = states.find((s) => s.agentName === 'agent-1');
+      const s2 = states.find((s) => s.agentName === 'agent-2');
       assert.equal(s1.state, 'closed');
       assert.equal(s2.state, 'open');
     });
@@ -1083,7 +1084,7 @@ describe('Circuit Breaker', () => {
     it('should record trip events with state_before and state_after', () => {
       cb.trip('agent-1', 'test');
       const events = getEvents(store.db, 'agent-1');
-      const tripEvent = events.find(e => e.event_type === 'trip');
+      const tripEvent = events.find((e) => e.event_type === 'trip');
       assert.equal(tripEvent.state_before, 'closed');
       assert.equal(tripEvent.state_after, 'open');
     });
@@ -1092,7 +1093,7 @@ describe('Circuit Breaker', () => {
       cb.trip('agent-1', 'test');
       cb.reset('agent-1');
       const events = getEvents(store.db, 'agent-1');
-      const resetEvent = events.find(e => e.event_type === 'reset');
+      const resetEvent = events.find((e) => e.event_type === 'reset');
       assert.equal(resetEvent.state_before, 'open');
       assert.equal(resetEvent.state_after, 'closed');
     });
@@ -1103,7 +1104,7 @@ describe('Circuit Breaker', () => {
       cb.trip('agent-1', 'b');
       cb.reset('agent-1');
       const events = getEvents(store.db, 'agent-1');
-      const ids = events.map(e => e.id);
+      const ids = events.map((e) => e.id);
       const uniqueIds = new Set(ids);
       assert.equal(ids.length, uniqueIds.size);
     });
@@ -1120,14 +1121,14 @@ describe('Circuit Breaker', () => {
     it('should record transaction success events with amount', () => {
       cb.recordSuccess('agent-1', 42.5);
       const events = getEvents(store.db, 'agent-1');
-      const successEvent = events.find(e => e.event_type === 'transaction_success');
+      const successEvent = events.find((e) => e.event_type === 'transaction_success');
       assert.equal(successEvent.amount, 42.5);
     });
 
     it('should record transaction failure events with reason', () => {
       cb.recordFailure('agent-1', 10, 'timeout error');
       const events = getEvents(store.db, 'agent-1');
-      const failEvent = events.find(e => e.event_type === 'transaction_failure');
+      const failEvent = events.find((e) => e.event_type === 'transaction_failure');
       assert.equal(failEvent.reason, 'timeout error');
     });
   });
@@ -1141,7 +1142,7 @@ describe('Circuit Breaker', () => {
       cb.recordSuccess('agent-1', 20);
       cb.recordFailure('agent-1', 30, 'err');
       const entries = getLedgerEntries(store.db, 'agent-1');
-      const ids = new Set(entries.map(e => e.id));
+      const ids = new Set(entries.map((e) => e.id));
       assert.equal(ids.size, 3);
     });
 

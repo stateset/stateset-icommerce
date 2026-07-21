@@ -32,11 +32,11 @@ function findTool(name) {
 }
 
 async function createTempSyncEnv(securityProfile) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `sync-entity-history-${securityProfile}-`));
+  const tempDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), `sync-entity-history-${securityProfile}-`),
+  );
   const sequencerUrl =
-    securityProfile === 'legacy'
-      ? 'http://localhost:50051'
-      : 'https://sequencer.example.com';
+    securityProfile === 'legacy' ? 'http://localhost:50051' : 'https://sequencer.example.com';
   const config = createSyncConfig({
     sequencerUrl,
     tenantId: TENANT_ID,
@@ -134,7 +134,9 @@ describe('sync_entity_history — Local Handler', () => {
         vesVersion: 1,
         payloadKind: 0,
         payloadEncrypted: null,
-        payloadPlainHash: bufferToHex(computePayloadPlainHash({ orderId: 'ord-other-entity', status: 'ignored' })),
+        payloadPlainHash: bufferToHex(
+          computePayloadPlainHash({ orderId: 'ord-other-entity', status: 'ignored' }),
+        ),
         payloadCipherHash: bufferToHex(ZERO_HASH),
         agentKeyId: 7,
         agentSignature: '0x',

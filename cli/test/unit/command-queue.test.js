@@ -391,10 +391,12 @@ describe('CommandQueue - Warnings', () => {
     });
 
     let release;
-    const blocker = queue.enqueueParallel('bg', async () =>
-      new Promise((resolve) => {
-        release = resolve;
-      }),
+    const blocker = queue.enqueueParallel(
+      'bg',
+      async () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
     );
 
     await sleep(60);

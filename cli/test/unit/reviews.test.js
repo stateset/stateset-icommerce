@@ -67,9 +67,19 @@ function makeReviewCommerce(overrides = {}) {
       list: async () => [mockReview],
       count: async () => 1,
       approve: async (id) => ({ ...mockReview, id, status: 'approved' }),
-      reject: async (id, reason) => ({ ...mockReview, id, status: 'rejected', rejectionReason: reason }),
+      reject: async (id, reason) => ({
+        ...mockReview,
+        id,
+        status: 'rejected',
+        rejectionReason: reason,
+      }),
       getSummary: async (productId) => (productId === 'prod_001' ? mockSummary : null),
-      flag: async (id, flagData) => ({ ...mockReview, id, flagged: true, flagReason: flagData.reason }),
+      flag: async (id, flagData) => ({
+        ...mockReview,
+        id,
+        flagged: true,
+        flagReason: flagData.reason,
+      }),
       ...overrides,
     },
   };
@@ -123,7 +133,12 @@ describe('create_review', () => {
   it('returns preview (success: false) without --apply', async () => {
     const result = await tool.handler({
       commerce: makeReviewCommerce(),
-      params: { productId: 'prod_001', customerId: 'cust_001', rating: 4, body: 'Really enjoyed this' },
+      params: {
+        productId: 'prod_001',
+        customerId: 'cust_001',
+        rating: 4,
+        body: 'Really enjoyed this',
+      },
       allowApply: false,
     });
     assert.equal(result.success, false);
@@ -134,7 +149,13 @@ describe('create_review', () => {
   it('creates review with --apply and returns success: true', async () => {
     const result = await tool.handler({
       commerce: makeReviewCommerce(),
-      params: { productId: 'prod_001', customerId: 'cust_001', rating: 5, body: 'Excellent!', title: 'Top notch' },
+      params: {
+        productId: 'prod_001',
+        customerId: 'cust_001',
+        rating: 5,
+        body: 'Excellent!',
+        title: 'Top notch',
+      },
       allowApply: true,
     });
     assert.equal(result.success, true);
@@ -172,10 +193,17 @@ describe('create_review', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      create: async () => { throw new Error('DB error'); },
+      create: async () => {
+        throw new Error('DB error');
+      },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { productId: 'p', customerId: 'c', rating: 4, body: 'text' }, allowApply: true }),
+      () =>
+        tool.handler({
+          commerce,
+          params: { productId: 'p', customerId: 'c', rating: 4, body: 'text' },
+          allowApply: true,
+        }),
       /DB error/,
     );
   });
@@ -211,7 +239,9 @@ describe('get_review', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      get: async () => { throw new Error('connection lost'); },
+      get: async () => {
+        throw new Error('connection lost');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { reviewId: 'rev_001' } }),
@@ -272,12 +302,11 @@ describe('list_reviews', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      list: async () => { throw new Error('query failed'); },
+      list: async () => {
+        throw new Error('query failed');
+      },
     });
-    await assert.rejects(
-      () => tool.handler({ commerce, params: {} }),
-      /query failed/,
-    );
+    await assert.rejects(() => tool.handler({ commerce, params: {} }), /query failed/);
   });
 });
 
@@ -311,7 +340,9 @@ describe('approve_review', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      approve: async () => { throw new Error('review not found'); },
+      approve: async () => {
+        throw new Error('review not found');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { reviewId: 'rev_nope' }, allowApply: true }),
@@ -359,7 +390,9 @@ describe('reject_review', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      reject: async () => { throw new Error('reject failed'); },
+      reject: async () => {
+        throw new Error('reject failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { reviewId: 'r', reason: 'bad' }, allowApply: true }),
@@ -400,7 +433,9 @@ describe('get_review_summary', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      getSummary: async () => { throw new Error('summary query failed'); },
+      getSummary: async () => {
+        throw new Error('summary query failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { productId: 'prod_001' } }),
@@ -459,10 +494,17 @@ describe('flag_review', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      flag: async () => { throw new Error('flag operation failed'); },
+      flag: async () => {
+        throw new Error('flag operation failed');
+      },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { reviewId: 'rev_001', reason: 'spam' }, allowApply: true }),
+      () =>
+        tool.handler({
+          commerce,
+          params: { reviewId: 'rev_001', reason: 'spam' },
+          allowApply: true,
+        }),
       /flag operation failed/,
     );
   });

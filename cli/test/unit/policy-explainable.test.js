@@ -67,7 +67,13 @@ describe('PolicyExplanation', () => {
       reason: 'Too many orders in 24h',
       remediation: 'Wait 24 hours before placing another order',
       conditions: [
-        { field: 'customer.ordersLast24h', operator: 'gt', expectedValue: 3, actualValue: 5, matched: true },
+        {
+          field: 'customer.ordersLast24h',
+          operator: 'gt',
+          expectedValue: 3,
+          actualValue: 5,
+          matched: true,
+        },
       ],
     });
 
@@ -92,7 +98,9 @@ describe('PolicyExplanation', () => {
       actionType: 'notify',
       reason: 'Stock below threshold',
       remediation: 'Reorder from supplier',
-      conditions: [{ field: 'stock', operator: 'lt', expectedValue: 10, actualValue: 3, matched: true }],
+      conditions: [
+        { field: 'stock', operator: 'lt', expectedValue: 10, actualValue: 3, matched: true },
+      ],
     });
 
     const json = explanation.toJSON();

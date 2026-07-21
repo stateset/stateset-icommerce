@@ -49,8 +49,16 @@ function setup() {
 }
 
 function teardown() {
-  try { store.close(); } catch { /* ignore */ }
-  try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+  try {
+    store.close();
+  } catch {
+    /* ignore */
+  }
+  try {
+    fs.unlinkSync(dbPath);
+  } catch {
+    /* ignore */
+  }
 }
 
 // ===========================================================================
@@ -108,7 +116,7 @@ describe('Supply Chain — Full Pipeline', () => {
         budget: { daily: 500, perTransaction: 200 },
         strategy: a.strategy,
         logger: () => {},
-      })
+      }),
     );
 
     // Step 1: Register services
@@ -164,7 +172,10 @@ describe('Supply Chain — Full Pipeline', () => {
 
       // Current discovers next service
       const nextServices = runtimes[i].discoverServices({ category: current.nextCategory });
-      assert.ok(nextServices.length >= 1, `${current.name} should find ${current.nextCategory} service`);
+      assert.ok(
+        nextServices.length >= 1,
+        `${current.name} should find ${current.nextCategory} service`,
+      );
 
       // Request quote from next agent
       const quote = await runtimes[i].a2a.requestQuote({
@@ -202,7 +213,7 @@ describe('Supply Chain — Full Pipeline', () => {
     for (let i = 1; i < payments.length; i++) {
       assert.ok(
         payments[i].amount <= payments[i - 1].amount,
-        `${payments[i].from} should pay less than what it received`
+        `${payments[i].from} should pay less than what it received`,
       );
     }
   });

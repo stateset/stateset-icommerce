@@ -23,10 +23,7 @@ import { createProofGenerator } from '../../src/sync/proof-generator.js';
 function makeEvent(index, payload = { idx: index }) {
   const id = `evt-${index}`;
   const payloadHash = cryptoMod.computePayloadPlainHash(payload).toString('hex');
-  const eventSigningHash = crypto
-    .createHash('sha256')
-    .update(`event-${index}`)
-    .digest();
+  const eventSigningHash = crypto.createHash('sha256').update(`event-${index}`).digest();
   return {
     id,
     index,
@@ -212,13 +209,7 @@ describe('proof-generator', () => {
     it('works with hex-string inputs', () => {
       const leaves = [crypto.randomBytes(32), crypto.randomBytes(32)];
       const { proof, root } = pg.buildMerkleProof(leaves, 0);
-      assert.ok(
-        pg.verifyMerkleProof(
-          leaves[0].toString('hex'),
-          proof,
-          root.toString('hex'),
-        ),
-      );
+      assert.ok(pg.verifyMerkleProof(leaves[0].toString('hex'), proof, root.toString('hex')));
     });
 
     it('round-trip for 3 leaves (non-power-of-2)', () => {
@@ -307,10 +298,7 @@ describe('proof-generator', () => {
 
     it('throws when event not found', () => {
       const events = makeEvents(3);
-      assert.throws(
-        () => pg.generateInclusionProof('nonexistent', events),
-        /not found/i,
-      );
+      assert.throws(() => pg.generateInclusionProof('nonexistent', events), /not found/i);
     });
 
     it('round-trip generate then verify', () => {
@@ -350,9 +338,7 @@ describe('proof-generator', () => {
 
     it('all events in a batch share the same root', () => {
       const events = makeEvents(5);
-      const roots = events.map(
-        (e) => pg.generateInclusionProof(e.id, events).root,
-      );
+      const roots = events.map((e) => pg.generateInclusionProof(e.id, events).root);
       for (let i = 1; i < roots.length; i++) {
         assert.equal(roots[i], roots[0]);
       }
@@ -415,9 +401,7 @@ describe('proof-generator', () => {
       const result = pg.verifyReceiptBundle(bundle);
       assert.ok(result.valid);
       assert.ok(result.checks.length >= 1);
-      const inclusionCheck = result.checks.find(
-        (c) => c.check === 'inclusion_proof',
-      );
+      const inclusionCheck = result.checks.find((c) => c.check === 'inclusion_proof');
       assert.ok(inclusionCheck.passed);
     });
 
@@ -425,9 +409,7 @@ describe('proof-generator', () => {
       const events = makeEvents(3);
       const bundle = pg.generateReceiptBundle(events[0], events);
       const result = pg.verifyReceiptBundle(bundle);
-      const payloadCheck = result.checks.find(
-        (c) => c.check === 'payload_hash',
-      );
+      const payloadCheck = result.checks.find((c) => c.check === 'payload_hash');
       assert.ok(payloadCheck);
       assert.ok(payloadCheck.passed);
     });
@@ -446,9 +428,7 @@ describe('proof-generator', () => {
       const bundle = pg.generateReceiptBundle(events[0], events);
       bundle.event.payload = { tampered: true };
       const result = pg.verifyReceiptBundle(bundle);
-      const payloadCheck = result.checks.find(
-        (c) => c.check === 'payload_hash',
-      );
+      const payloadCheck = result.checks.find((c) => c.check === 'payload_hash');
       assert.ok(payloadCheck);
       assert.equal(payloadCheck.passed, false);
     });
@@ -505,9 +485,7 @@ describe('proof-generator', () => {
       const summary = pg.generateBatchSummary('batch-3', events);
       assert.ok(summary.timeRange.start);
       assert.ok(summary.timeRange.end);
-      assert.ok(
-        new Date(summary.timeRange.start) <= new Date(summary.timeRange.end),
-      );
+      assert.ok(new Date(summary.timeRange.start) <= new Date(summary.timeRange.end));
     });
 
     it('handles empty batch', () => {
@@ -703,12 +681,8 @@ describe('proof-generator', () => {
     it('event with valid Ed25519 signature passes', () => {
       // Generate a real Ed25519 key pair
       const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-      const privRaw = privateKey
-        .export({ type: 'pkcs8', format: 'der' })
-        .subarray(-32);
-      const pubRaw = publicKey
-        .export({ type: 'spki', format: 'der' })
-        .subarray(-32);
+      const privRaw = privateKey.export({ type: 'pkcs8', format: 'der' }).subarray(-32);
+      const pubRaw = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
 
       const event = makeEvent(0);
       // Sign the eventSigningHash
@@ -723,12 +697,8 @@ describe('proof-generator', () => {
     it('event with wrong public key fails signature', () => {
       const { privateKey } = crypto.generateKeyPairSync('ed25519');
       const { publicKey: wrongPub } = crypto.generateKeyPairSync('ed25519');
-      const privRaw = privateKey
-        .export({ type: 'pkcs8', format: 'der' })
-        .subarray(-32);
-      const wrongPubRaw = wrongPub
-        .export({ type: 'spki', format: 'der' })
-        .subarray(-32);
+      const privRaw = privateKey.export({ type: 'pkcs8', format: 'der' }).subarray(-32);
+      const wrongPubRaw = wrongPub.export({ type: 'spki', format: 'der' }).subarray(-32);
 
       const event = makeEvent(0);
       const sig = cryptoMod.signEventHash(event.eventSigningHash, privRaw);
@@ -749,17 +719,11 @@ describe('proof-generator', () => {
 
     it('works with Buffer publicKey', () => {
       const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-      const privRaw = privateKey
-        .export({ type: 'pkcs8', format: 'der' })
-        .subarray(-32);
-      const pubBuf = publicKey
-        .export({ type: 'spki', format: 'der' })
-        .subarray(-32);
+      const privRaw = privateKey.export({ type: 'pkcs8', format: 'der' }).subarray(-32);
+      const pubBuf = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
 
       const event = makeEvent(0);
-      event.signature = cryptoMod
-        .signEventHash(event.eventSigningHash, privRaw)
-        .toString('hex');
+      event.signature = cryptoMod.signEventHash(event.eventSigningHash, privRaw).toString('hex');
 
       const result = pg.verifyEvent(event, pubBuf);
       assert.ok(result.signatureValid);

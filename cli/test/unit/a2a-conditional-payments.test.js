@@ -180,18 +180,14 @@ describe('A2A Conditional Payments', () => {
 
       assert.equal(result.success, true);
       const escrowArg = store.createEscrow.mock.calls[0].arguments[0];
-      const sellerCond = escrowArg.release_conditions.find(
-        (c) => c.type === 'seller_fulfilled',
-      );
+      const sellerCond = escrowArg.release_conditions.find((c) => c.type === 'seller_fulfilled');
       assert.ok(sellerCond, 'should auto-add seller_fulfilled condition');
       assert.equal(sellerCond.quoteId, 'quote-abc');
       assert.equal(escrowArg.quote_id, 'quote-abc');
     });
 
     it('does not duplicate seller_fulfilled when already in conditions', async () => {
-      const conditions = [
-        { type: 'seller_fulfilled', quoteId: 'quote-abc' },
-      ];
+      const conditions = [{ type: 'seller_fulfilled', quoteId: 'quote-abc' }];
 
       await service.createConditionalPayment({
         sellerAddress: '0xSeller',
@@ -201,17 +197,14 @@ describe('A2A Conditional Payments', () => {
       });
 
       const escrowArg = store.createEscrow.mock.calls[0].arguments[0];
-      const sellerConds = escrowArg.release_conditions.filter(
-        (c) => c.type === 'seller_fulfilled',
-      );
+      const sellerConds = escrowArg.release_conditions.filter((c) => c.type === 'seller_fulfilled');
       assert.equal(sellerConds.length, 1, 'should not duplicate seller_fulfilled');
     });
 
     it('throws when sellerAddress is missing', async () => {
-      await assert.rejects(
-        () => service.createConditionalPayment({ amount: 100 }),
-        { message: 'sellerAddress is required' },
-      );
+      await assert.rejects(() => service.createConditionalPayment({ amount: 100 }), {
+        message: 'sellerAddress is required',
+      });
     });
 
     it('throws when amount is zero', async () => {
@@ -286,9 +279,7 @@ describe('A2A Conditional Payments', () => {
       assert.equal(x402.createIntent.mock.calls.length, 1);
 
       // Should link intent to escrow via updateEscrow
-      const intentLinkCall = store.updateEscrow.mock.calls.find(
-        (c) => c.arguments[1].intent_id,
-      );
+      const intentLinkCall = store.updateEscrow.mock.calls.find((c) => c.arguments[1].intent_id);
       assert.ok(intentLinkCall, 'should link intent to escrow');
       assert.equal(intentLinkCall.arguments[1].intent_id, 'intent-1');
     });
@@ -337,17 +328,15 @@ describe('A2A Conditional Payments', () => {
   // ===========================================================================
   describe('checkPaymentConditions', () => {
     it('throws when escrowId is missing', async () => {
-      await assert.rejects(
-        () => service.checkPaymentConditions(undefined),
-        { message: 'escrowId is required' },
-      );
+      await assert.rejects(() => service.checkPaymentConditions(undefined), {
+        message: 'escrowId is required',
+      });
     });
 
     it('throws when escrow is not found', async () => {
-      await assert.rejects(
-        () => service.checkPaymentConditions('nonexistent'),
-        { message: 'Escrow not found' },
-      );
+      await assert.rejects(() => service.checkPaymentConditions('nonexistent'), {
+        message: 'Escrow not found',
+      });
     });
 
     it('returns allMet=true when there are no conditions', async () => {
@@ -490,9 +479,7 @@ describe('A2A Conditional Payments', () => {
       store._escrows.set('esc-9', {
         id: 'esc-9',
         status: 'funded',
-        release_conditions: [
-          { type: 'milestone', description: 'Phase 1', completed: true },
-        ],
+        release_conditions: [{ type: 'milestone', description: 'Phase 1', completed: true }],
         intent_id: null,
       });
 
@@ -505,9 +492,7 @@ describe('A2A Conditional Payments', () => {
       store._escrows.set('esc-10', {
         id: 'esc-10',
         status: 'funded',
-        release_conditions: [
-          { type: 'milestone', description: 'Phase 2', completed: false },
-        ],
+        release_conditions: [{ type: 'milestone', description: 'Phase 2', completed: false }],
         intent_id: null,
       });
 
@@ -576,9 +561,7 @@ describe('A2A Conditional Payments', () => {
       store._escrows.set('esc-json', {
         id: 'esc-json',
         status: 'funded',
-        release_conditions: JSON.stringify([
-          { type: 'buyer_confirmed', completed: true },
-        ]),
+        release_conditions: JSON.stringify([{ type: 'buyer_confirmed', completed: true }]),
         intent_id: null,
       });
 
@@ -594,10 +577,9 @@ describe('A2A Conditional Payments', () => {
   // ===========================================================================
   describe('settleConditionalPayment', () => {
     it('throws when escrowId is missing', async () => {
-      await assert.rejects(
-        () => service.settleConditionalPayment(undefined),
-        { message: 'escrowId is required' },
-      );
+      await assert.rejects(() => service.settleConditionalPayment(undefined), {
+        message: 'escrowId is required',
+      });
     });
 
     it('releases escrow when all conditions are met and status is funded', async () => {
@@ -681,10 +663,9 @@ describe('A2A Conditional Payments', () => {
         intent_id: null,
       });
 
-      await assert.rejects(
-        () => service.settleConditionalPayment('esc-released'),
-        { message: 'Cannot settle escrow in status: released' },
-      );
+      await assert.rejects(() => service.settleConditionalPayment('esc-released'), {
+        message: 'Cannot settle escrow in status: released',
+      });
     });
 
     it('throws for escrow in created status (not yet funded)', async () => {
@@ -698,10 +679,9 @@ describe('A2A Conditional Payments', () => {
         intent_id: null,
       });
 
-      await assert.rejects(
-        () => service.settleConditionalPayment('esc-created'),
-        { message: 'Cannot settle escrow in status: created' },
-      );
+      await assert.rejects(() => service.settleConditionalPayment('esc-created'), {
+        message: 'Cannot settle escrow in status: created',
+      });
     });
 
     it('settles linked x402 intent when sequencerClient is present', async () => {
@@ -798,10 +778,9 @@ describe('A2A Conditional Payments', () => {
     });
 
     it('throws when escrow not found (via checkPaymentConditions)', async () => {
-      await assert.rejects(
-        () => service.settleConditionalPayment('does-not-exist'),
-        { message: 'Escrow not found' },
-      );
+      await assert.rejects(() => service.settleConditionalPayment('does-not-exist'), {
+        message: 'Escrow not found',
+      });
     });
   });
 });

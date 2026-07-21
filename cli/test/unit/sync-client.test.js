@@ -196,17 +196,11 @@ describe('SequencerClient — constructor', () => {
   });
 
   it('throws when URL is empty string', () => {
-    assert.throws(
-      () => new SequencerClient(makeConfig({ url: '' })),
-      /non-empty string/,
-    );
+    assert.throws(() => new SequencerClient(makeConfig({ url: '' })), /non-empty string/);
   });
 
   it('throws when URL is whitespace only', () => {
-    assert.throws(
-      () => new SequencerClient(makeConfig({ url: '   ' })),
-      /non-empty string/,
-    );
+    assert.throws(() => new SequencerClient(makeConfig({ url: '   ' })), /non-empty string/);
   });
 
   it('throws on unsupported protocol (ftp://)', () => {
@@ -225,14 +219,20 @@ describe('SequencerClient — constructor', () => {
 
   it('rejects insecure transport for hybrid profile', () => {
     assert.throws(
-      () => new SequencerClient(makeConfig({ url: 'http://seq.example.com', securityProfile: 'hybrid' })),
+      () =>
+        new SequencerClient(
+          makeConfig({ url: 'http://seq.example.com', securityProfile: 'hybrid' }),
+        ),
       /must use TLS for hybrid sync profile/,
     );
   });
 
   it('rejects insecure transport for legacy without explicit allow flag', () => {
     assert.throws(
-      () => new SequencerClient(makeConfig({ url: 'http://seq.example.com', securityProfile: 'legacy' })),
+      () =>
+        new SequencerClient(
+          makeConfig({ url: 'http://seq.example.com', securityProfile: 'legacy' }),
+        ),
       /explicitly allowed/,
     );
   });
@@ -365,20 +365,14 @@ describe('SequencerClient — _request', () => {
     mockFetch(() => errorResponse(404, 'Not Found'));
 
     const client = new SequencerClient(makeConfig());
-    await assert.rejects(
-      () => client._request('GET', '/api/v1/missing'),
-      /404/,
-    );
+    await assert.rejects(() => client._request('GET', '/api/v1/missing'), /404/);
   });
 
   it('throws on 5xx response with status code in message', async () => {
     mockFetch(() => errorResponse(503, 'Service Unavailable'));
 
     const client = new SequencerClient(makeConfig());
-    await assert.rejects(
-      () => client._request('GET', '/api/v1/test'),
-      /503/,
-    );
+    await assert.rejects(() => client._request('GET', '/api/v1/test'), /503/);
   });
 
   it('includes auth header in request', async () => {
@@ -643,9 +637,7 @@ describe('SequencerClient — push', () => {
   });
 
   it('defaults eventsRejected to 0 when missing from response', async () => {
-    mockFetch(() =>
-      okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 }),
-    );
+    mockFetch(() => okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 }));
 
     const client = new SequencerClient(makeConfig());
     const receipt = await client.push({ agentId: UUID1, events: [makeEnvelope()] });
@@ -653,9 +645,7 @@ describe('SequencerClient — push', () => {
   });
 
   it('defaults rejections to [] when missing from response', async () => {
-    mockFetch(() =>
-      okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 }),
-    );
+    mockFetch(() => okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 }));
 
     const client = new SequencerClient(makeConfig());
     const receipt = await client.push({ agentId: UUID1, events: [makeEnvelope()] });
@@ -681,10 +671,7 @@ describe('SequencerClient — push', () => {
     mockFetch(() => errorResponse(422, 'Validation failed'));
 
     const client = new SequencerClient(makeConfig());
-    await assert.rejects(
-      () => client.push({ agentId: UUID1, events: [makeEnvelope()] }),
-      /422/,
-    );
+    await assert.rejects(() => client.push({ agentId: UUID1, events: [makeEnvelope()] }), /422/);
   });
 });
 
@@ -696,9 +683,7 @@ describe('SequencerClient — pushWithRetry', () => {
   afterEach(() => restoreFetch());
 
   it('returns receipt immediately on first success', async () => {
-    mockFetch(() =>
-      okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 }),
-    );
+    mockFetch(() => okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 }));
 
     const client = new SequencerClient(makeConfig());
     const receipt = await client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }, 3);
@@ -713,13 +698,8 @@ describe('SequencerClient — pushWithRetry', () => {
       return okResponse({ batchId: 'B-retry', eventsAccepted: 1, headSequence: 3 });
     });
 
-    const client = new SequencerClient(
-      makeConfig({ maxRetries: 3, baseDelay: 1, maxDelay: 10 }),
-    );
-    const receipt = await client.pushWithRetry(
-      { agentId: UUID1, events: [makeEnvelope()] },
-      3,
-    );
+    const client = new SequencerClient(makeConfig({ maxRetries: 3, baseDelay: 1, maxDelay: 10 }));
+    const receipt = await client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }, 3);
     assert.strictEqual(receipt.batchId, 'B-retry');
     assert.strictEqual(attempts, 3);
   });
@@ -729,9 +709,7 @@ describe('SequencerClient — pushWithRetry', () => {
       throw new Error('permanent failure');
     });
 
-    const client = new SequencerClient(
-      makeConfig({ maxRetries: 2, baseDelay: 1, maxDelay: 10 }),
-    );
+    const client = new SequencerClient(makeConfig({ maxRetries: 2, baseDelay: 1, maxDelay: 10 }));
     await assert.rejects(
       () => client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }, 2),
       /permanent failure/,
@@ -745,11 +723,9 @@ describe('SequencerClient — pushWithRetry', () => {
       throw new Error('always fails');
     });
 
-    const client = new SequencerClient(
-      makeConfig({ maxRetries: 2, baseDelay: 1, maxDelay: 5 }),
-    );
-    await assert.rejects(
-      () => client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }, 2),
+    const client = new SequencerClient(makeConfig({ maxRetries: 2, baseDelay: 1, maxDelay: 5 }));
+    await assert.rejects(() =>
+      client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }, 2),
     );
     assert.strictEqual(attempts, 3); // attempt 0, 1, 2
   });
@@ -1038,9 +1014,7 @@ describe('SequencerClient — getCommitment', () => {
       });
     });
 
-    const client = new SequencerClient(
-      makeConfig({ url: 'https://seq.example.com' }),
-    );
+    const client = new SequencerClient(makeConfig({ url: 'https://seq.example.com' }));
     await client.getCommitment('BATCH-1');
     assert.ok(capturedUrl.endsWith('/api/v1/commitments/BATCH-1'));
   });
@@ -1098,9 +1072,7 @@ describe('SequencerClient — getEntityHistory', () => {
       return okResponse({ events: [] });
     });
 
-    const client = new SequencerClient(
-      makeConfig({ url: 'https://seq.example.com' }),
-    );
+    const client = new SequencerClient(makeConfig({ url: 'https://seq.example.com' }));
     await client.getEntityHistory('order', 'ORD-99');
     assert.ok(capturedUrl.includes('/api/v1/entities/order/ORD-99'));
   });
@@ -1190,9 +1162,7 @@ describe('SequencerClient — registerAgentKey', () => {
       return okResponse({ success: true });
     });
 
-    const client = new SequencerClient(
-      makeConfig({ url: 'https://seq.example.com' }),
-    );
+    const client = new SequencerClient(makeConfig({ url: 'https://seq.example.com' }));
     await client.registerAgentKey({
       agentId: UUID1,
       keyId: 1,

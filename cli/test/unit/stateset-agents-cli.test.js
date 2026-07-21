@@ -186,12 +186,7 @@ describe('stateset-agents CLI', () => {
 
   describe('discover command', () => {
     it('discovers agents in empty db', async () => {
-      const { stdout, exitCode } = await runCli([
-        'discover',
-        '--db',
-        ':memory:',
-        '--json',
-      ]);
+      const { stdout, exitCode } = await runCli(['discover', '--db', ':memory:', '--json']);
       assert.strictEqual(exitCode, 0);
       const result = JSON.parse(stdout);
       assert.strictEqual(result.agentCount, 0);

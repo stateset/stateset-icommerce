@@ -484,7 +484,10 @@ describe('mcp-server', () => {
         assert.equal(payload.code, -32042);
         assert.equal(payload.paymentRequired, true);
         assert.equal(payload.paymentChallenge.tool, 'list_customers');
-        assert.equal(payload._meta.payment.challenge.challengeId, payload.paymentChallenge.challengeId);
+        assert.equal(
+          payload._meta.payment.challenge.challengeId,
+          payload.paymentChallenge.challengeId,
+        );
       });
     });
 
@@ -548,13 +551,17 @@ describe('mcp-server', () => {
           },
         });
 
-        const result = await server.executeToolWithPayment('list_customers', {}, {
-          payment: {
-            payer: 'buyer-agent',
-            acceptedMethods: ['bitcoin'],
-            maxAmountSmallest: '10000',
+        const result = await server.executeToolWithPayment(
+          'list_customers',
+          {},
+          {
+            payment: {
+              payer: 'buyer-agent',
+              acceptedMethods: ['bitcoin'],
+              maxAmountSmallest: '10000',
+            },
           },
-        });
+        );
 
         assert.equal(result.success, true);
         assert.equal(result.status, 'success');
@@ -668,7 +675,10 @@ describe('mcp-server', () => {
         mcpEventStream: customStream,
       });
       const tool = server.instance._registeredTools.agentic_subscribe_events;
-      const res = await tool.handler({ sessionId: 'session-123', eventTypes: ['success', 'error'] });
+      const res = await tool.handler({
+        sessionId: 'session-123',
+        eventTypes: ['success', 'error'],
+      });
       const payload = JSON.parse(res.content[0].text);
 
       assert.equal(payload.success, true);
@@ -953,22 +963,34 @@ describe('mcp-server', () => {
   describe('Tool count verification', () => {
     it('should have tools from customers module', () => {
       const customerTools = TOOL_NAMES.filter((name) => name.includes('customer'));
-      assert.ok(customerTools.length >= 2, `Expected at least 2 customer tools, got ${customerTools.length}`);
+      assert.ok(
+        customerTools.length >= 2,
+        `Expected at least 2 customer tools, got ${customerTools.length}`,
+      );
     });
 
     it('should have tools from orders module', () => {
       const orderTools = TOOL_NAMES.filter((name) => name.includes('order'));
-      assert.ok(orderTools.length >= 2, `Expected at least 2 order tools, got ${orderTools.length}`);
+      assert.ok(
+        orderTools.length >= 2,
+        `Expected at least 2 order tools, got ${orderTools.length}`,
+      );
     });
 
     it('should have tools from products module', () => {
       const productTools = TOOL_NAMES.filter((name) => name.includes('product'));
-      assert.ok(productTools.length >= 2, `Expected at least 2 product tools, got ${productTools.length}`);
+      assert.ok(
+        productTools.length >= 2,
+        `Expected at least 2 product tools, got ${productTools.length}`,
+      );
     });
 
     it('should have tools from inventory module', () => {
       const inventoryTools = TOOL_NAMES.filter((name) => name.includes('inventory'));
-      assert.ok(inventoryTools.length >= 1, `Expected at least 1 inventory tool, got ${inventoryTools.length}`);
+      assert.ok(
+        inventoryTools.length >= 1,
+        `Expected at least 1 inventory tool, got ${inventoryTools.length}`,
+      );
     });
 
     it('should have tools from carts module', () => {
@@ -978,36 +1000,54 @@ describe('mcp-server', () => {
 
     it('should have tools from returns module', () => {
       const returnTools = TOOL_NAMES.filter((name) => name.includes('return'));
-      assert.ok(returnTools.length >= 1, `Expected at least 1 return tool, got ${returnTools.length}`);
+      assert.ok(
+        returnTools.length >= 1,
+        `Expected at least 1 return tool, got ${returnTools.length}`,
+      );
     });
 
     it('should have tools from analytics module', () => {
       const analyticsTools = TOOL_NAMES.filter(
         (name) => name.includes('analytics') || name.includes('sales') || name.includes('forecast'),
       );
-      assert.ok(analyticsTools.length >= 1, `Expected at least 1 analytics tool, got ${analyticsTools.length}`);
+      assert.ok(
+        analyticsTools.length >= 1,
+        `Expected at least 1 analytics tool, got ${analyticsTools.length}`,
+      );
     });
 
     it('should have tools from payments module', () => {
       const paymentTools = TOOL_NAMES.filter((name) => name.includes('payment'));
-      assert.ok(paymentTools.length >= 1, `Expected at least 1 payment tool, got ${paymentTools.length}`);
+      assert.ok(
+        paymentTools.length >= 1,
+        `Expected at least 1 payment tool, got ${paymentTools.length}`,
+      );
     });
 
     it('should have tools from promotions module', () => {
       const promotionTools = TOOL_NAMES.filter(
         (name) => name.includes('promotion') || name.includes('coupon'),
       );
-      assert.ok(promotionTools.length >= 1, `Expected at least 1 promotion tool, got ${promotionTools.length}`);
+      assert.ok(
+        promotionTools.length >= 1,
+        `Expected at least 1 promotion tool, got ${promotionTools.length}`,
+      );
     });
 
     it('should have tools from subscriptions module', () => {
       const subscriptionTools = TOOL_NAMES.filter((name) => name.includes('subscription'));
-      assert.ok(subscriptionTools.length >= 1, `Expected at least 1 subscription tool, got ${subscriptionTools.length}`);
+      assert.ok(
+        subscriptionTools.length >= 1,
+        `Expected at least 1 subscription tool, got ${subscriptionTools.length}`,
+      );
     });
 
     it('should include event stream agentic tools', () => {
       const eventTools = TOOL_NAMES.filter((name) => name.includes('agentic_subscribe_events'));
-      assert.ok(eventTools.length >= 1, `Expected event subscription tool, got ${eventTools.length}`);
+      assert.ok(
+        eventTools.length >= 1,
+        `Expected event subscription tool, got ${eventTools.length}`,
+      );
       assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_unsubscribe_events'));
       assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_list_event_subscriptions'));
       assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_get_event_history'));

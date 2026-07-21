@@ -333,8 +333,15 @@ describe('reviewTools -- list_reviews handler', () => {
     });
     const r = result.reviews[0];
     const expectedKeys = [
-      'id', 'productId', 'customerId', 'rating', 'title',
-      'status', 'verifiedPurchase', 'flagged', 'createdAt',
+      'id',
+      'productId',
+      'customerId',
+      'rating',
+      'title',
+      'status',
+      'verifiedPurchase',
+      'flagged',
+      'createdAt',
     ];
     for (const key of expectedKeys) {
       assert.ok(key in r, `missing key: ${key}`);

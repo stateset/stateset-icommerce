@@ -47,7 +47,7 @@ describe('WhatsApp Gateway', () => {
 
     it('source imports createSessionManager from channels/base', () => {
       assert.ok(source.includes('createSessionManager'));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
@@ -71,7 +71,7 @@ describe('WhatsApp Gateway', () => {
 
     it('source imports getNotifier from channels/notifier', () => {
       assert.ok(source.includes('getNotifier'));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('source imports richMessageToPlainText for fallback', () => {
@@ -79,7 +79,7 @@ describe('WhatsApp Gateway', () => {
     });
 
     it('re-exports SESSION_TTL_MS from channels/base', () => {
-      assert.ok(source.includes("export { SESSION_TTL_MS }"));
+      assert.ok(source.includes('export { SESSION_TTL_MS }'));
     });
   });
 
@@ -124,7 +124,7 @@ describe('WhatsApp Gateway', () => {
     });
 
     it('skips status@broadcast messages', () => {
-      assert.ok(source.includes("status@broadcast"));
+      assert.ok(source.includes('status@broadcast'));
     });
 
     it('skips group messages when allowGroups is false', () => {
@@ -161,7 +161,7 @@ describe('WhatsApp Gateway', () => {
     });
 
     it('converts markdown headers to bold', () => {
-      assert.ok(source.includes("replace(/^#{1,6}"));
+      assert.ok(source.includes('replace(/^#{1,6}'));
     });
 
     it('converts **bold** to *bold*', () => {

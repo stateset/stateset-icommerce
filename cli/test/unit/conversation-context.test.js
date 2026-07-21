@@ -92,7 +92,9 @@ describe('ConversationContext', () => {
 
     it('emits session:created event with the session', () => {
       let emitted = null;
-      ctx.on('session:created', (s) => { emitted = s; });
+      ctx.on('session:created', (s) => {
+        emitted = s;
+      });
       const session = ctx.createSession();
       assert.strictEqual(emitted, session);
     });
@@ -162,12 +164,17 @@ describe('ConversationContext', () => {
 
     it('stores optional duration, context, enrollmentId, and rollbackFn', () => {
       const rollbackFn = () => {};
-      const tc = ctx.recordToolCall('get_stock', {}, { success: true }, {
-        duration: 42,
-        context: 'inventory check',
-        enrollmentId: 'ENR-1',
-        rollbackFn,
-      });
+      const tc = ctx.recordToolCall(
+        'get_stock',
+        {},
+        { success: true },
+        {
+          duration: 42,
+          context: 'inventory check',
+          enrollmentId: 'ENR-1',
+          rollbackFn,
+        },
+      );
       assert.strictEqual(tc.duration, 42);
       assert.strictEqual(tc.context, 'inventory check');
       assert.strictEqual(tc.enrollmentId, 'ENR-1');
@@ -198,7 +205,9 @@ describe('ConversationContext', () => {
 
     it('emits tool:succeeded for successful calls', () => {
       let emitted = null;
-      ctx.on('tool:succeeded', (e) => { emitted = e; });
+      ctx.on('tool:succeeded', (e) => {
+        emitted = e;
+      });
       ctx.recordToolCall('get_stock', {}, { success: true });
       assert.ok(emitted);
       assert.strictEqual(emitted.toolCall.tool, 'get_stock');
@@ -206,7 +215,9 @@ describe('ConversationContext', () => {
 
     it('emits tool:failed with error for failed calls', () => {
       let emitted = null;
-      ctx.on('tool:failed', (e) => { emitted = e; });
+      ctx.on('tool:failed', (e) => {
+        emitted = e;
+      });
       ctx.recordToolCall('create_order', {}, { success: false, error: 'oops' });
       assert.ok(emitted);
       assert.strictEqual(emitted.error, 'oops');
@@ -241,7 +252,9 @@ describe('ConversationContext', () => {
 
     it('emits operation:recorded with the operation', () => {
       let emitted = null;
-      ctx.on('operation:recorded', (e) => { emitted = e; });
+      ctx.on('operation:recorded', (e) => {
+        emitted = e;
+      });
       ctx.recordOperation({ type: 'delete', resource: 'cart' });
       assert.ok(emitted);
       assert.strictEqual(emitted.operation.type, 'delete');
@@ -300,7 +313,9 @@ describe('ConversationContext', () => {
 
     it('emits resource:tracked with type and id', () => {
       let emitted = null;
-      ctx.on('resource:tracked', (e) => { emitted = e; });
+      ctx.on('resource:tracked', (e) => {
+        emitted = e;
+      });
       ctx.trackResource('product', 'PROD-1', () => {});
       assert.ok(emitted);
       assert.strictEqual(emitted.resourceType, 'product');
@@ -324,7 +339,10 @@ describe('ConversationContext', () => {
     it('calls rollback functions and reports success results', async () => {
       ctx.createSession();
       let called = false;
-      ctx.trackResource('order', 'ORD-1', async () => { called = true; return 'cancelled'; });
+      ctx.trackResource('order', 'ORD-1', async () => {
+        called = true;
+        return 'cancelled';
+      });
       const result = await ctx.rollbackSession();
       assert.strictEqual(called, true);
       assert.strictEqual(result.success, true);
@@ -350,7 +368,9 @@ describe('ConversationContext', () => {
 
     it('reports failed rollbacks and sets success to false', async () => {
       ctx.createSession();
-      ctx.trackResource('order', 'ORD-BAD', async () => { throw new Error('cannot cancel'); });
+      ctx.trackResource('order', 'ORD-BAD', async () => {
+        throw new Error('cannot cancel');
+      });
       const result = await ctx.rollbackSession();
       assert.strictEqual(result.success, false);
       assert.strictEqual(result.results[0].status, 'failed');
@@ -360,7 +380,9 @@ describe('ConversationContext', () => {
     it('handles mix of successful and failed rollbacks', async () => {
       ctx.createSession();
       ctx.trackResource('order', 'ORD-OK', async () => 'done');
-      ctx.trackResource('payment', 'PAY-BAD', async () => { throw new Error('fail'); });
+      ctx.trackResource('payment', 'PAY-BAD', async () => {
+        throw new Error('fail');
+      });
       const result = await ctx.rollbackSession();
       assert.strictEqual(result.success, false);
       assert.strictEqual(result.results.length, 2);
@@ -395,9 +417,13 @@ describe('ConversationContext', () => {
 
     it('emits rollback:failed when a rollback throws', async () => {
       let failEvent = null;
-      ctx.on('rollback:failed', (e) => { failEvent = e; });
+      ctx.on('rollback:failed', (e) => {
+        failEvent = e;
+      });
       ctx.createSession();
-      ctx.trackResource('order', 'ORD-BAD', async () => { throw new Error('boom'); });
+      ctx.trackResource('order', 'ORD-BAD', async () => {
+        throw new Error('boom');
+      });
       await ctx.rollbackSession();
       assert.ok(failEvent);
       assert.strictEqual(failEvent.resourceId, 'ORD-BAD');
@@ -405,7 +431,9 @@ describe('ConversationContext', () => {
 
     it('includes resourceCount in rollback:started event', async () => {
       let startEvent = null;
-      ctx.on('rollback:started', (e) => { startEvent = e; });
+      ctx.on('rollback:started', (e) => {
+        startEvent = e;
+      });
       ctx.createSession();
       ctx.trackResource('order', 'ORD-1', async () => {});
       ctx.trackResource('payment', 'PAY-1', async () => {});
@@ -437,7 +465,10 @@ describe('ConversationContext', () => {
     it('calls rollback, removes from map, and returns success', async () => {
       ctx.createSession();
       let called = false;
-      ctx.trackResource('order', 'ORD-1', async () => { called = true; return 'rolled-back'; });
+      ctx.trackResource('order', 'ORD-1', async () => {
+        called = true;
+        return 'rolled-back';
+      });
       const result = await ctx.rollbackResource('ORD-1');
       assert.strictEqual(called, true);
       assert.strictEqual(result.success, true);
@@ -469,7 +500,9 @@ describe('ConversationContext', () => {
 
     it('returns failure with error message when rollback throws', async () => {
       ctx.createSession();
-      ctx.trackResource('order', 'ORD-BAD', async () => { throw new Error('cannot undo'); });
+      ctx.trackResource('order', 'ORD-BAD', async () => {
+        throw new Error('cannot undo');
+      });
       const result = await ctx.rollbackResource('ORD-BAD');
       assert.strictEqual(result.success, false);
       assert.strictEqual(result.error, 'cannot undo');
@@ -478,7 +511,9 @@ describe('ConversationContext', () => {
 
     it('emits rollback:success on success', async () => {
       let emitted = null;
-      ctx.on('rollback:success', (e) => { emitted = e; });
+      ctx.on('rollback:success', (e) => {
+        emitted = e;
+      });
       ctx.createSession();
       ctx.trackResource('order', 'ORD-1', async () => {});
       await ctx.rollbackResource('ORD-1');
@@ -488,9 +523,13 @@ describe('ConversationContext', () => {
 
     it('emits rollback:failed on error', async () => {
       let emitted = null;
-      ctx.on('rollback:failed', (e) => { emitted = e; });
+      ctx.on('rollback:failed', (e) => {
+        emitted = e;
+      });
       ctx.createSession();
-      ctx.trackResource('order', 'ORD-BAD', async () => { throw new Error('x'); });
+      ctx.trackResource('order', 'ORD-BAD', async () => {
+        throw new Error('x');
+      });
       await ctx.rollbackResource('ORD-BAD');
       assert.ok(emitted);
       assert.strictEqual(emitted.resourceId, 'ORD-BAD');
@@ -523,10 +562,7 @@ describe('ConversationContext', () => {
 
     it('adds context when recent get_stock call exists for insufficient stock', () => {
       ctx.recordToolCall('get_stock', { sku: 'SKU-1' }, { success: true });
-      const analysis = ctx.getErrorContext(
-        new Error('insufficient stock'),
-        'reserve_inventory',
-      );
+      const analysis = ctx.getErrorContext(new Error('insufficient stock'), 'reserve_inventory');
       assert.ok(analysis.context);
       assert.ok(analysis.context.includes('stock') || analysis.context.includes('inventory'));
     });
@@ -539,10 +575,7 @@ describe('ConversationContext', () => {
 
     it('adds context mentioning recent order IDs for "order not found"', () => {
       ctx.recordToolCall('create_order', { orderId: 'ORD-1' }, { success: true });
-      const analysis = ctx.getErrorContext(
-        new Error('order not found'),
-        'update_order_status',
-      );
+      const analysis = ctx.getErrorContext(new Error('order not found'), 'update_order_status');
       assert.ok(analysis.context);
       assert.ok(analysis.context.includes('ORD-1'));
     });
@@ -558,19 +591,17 @@ describe('ConversationContext', () => {
     });
 
     it('suggests customer lookup for "customer not found" error', () => {
-      const analysis = ctx.getErrorContext(
-        new Error('customer not found'),
-        'create_order',
+      const analysis = ctx.getErrorContext(new Error('customer not found'), 'create_order');
+      assert.ok(
+        analysis.suggestions.some(
+          (s) => s.includes('get_customer') || s.includes('list_customers'),
+        ),
       );
-      assert.ok(analysis.suggestions.some((s) => s.includes('get_customer') || s.includes('list_customers')));
     });
 
     it('adds recommendation when "Create order" goal is set and customer not found', () => {
       ctx.addGoal('Create order');
-      const analysis = ctx.getErrorContext(
-        new Error('customer not found'),
-        'create_order',
-      );
+      const analysis = ctx.getErrorContext(new Error('customer not found'), 'create_order');
       assert.ok(analysis.recommendation);
       assert.ok(analysis.recommendation.includes('create_customer'));
     });
@@ -675,7 +706,9 @@ describe('ConversationContext', () => {
     it('suggests create_payment after create_order without payment', () => {
       ctx.recordToolCall('create_order', {}, { success: true });
       const suggestions = ctx.suggestNextActions();
-      assert.ok(suggestions.some((s) => s.action === 'create_payment' && s.reason.includes('payment')));
+      assert.ok(
+        suggestions.some((s) => s.action === 'create_payment' && s.reason.includes('payment')),
+      );
     });
   });
 
@@ -741,7 +774,9 @@ describe('ConversationContext', () => {
 
     it('emits context:updated event', () => {
       let emitted = null;
-      ctx.on('context:updated', (e) => { emitted = e; });
+      ctx.on('context:updated', (e) => {
+        emitted = e;
+      });
       ctx.createSession();
       ctx.setContext({ currentTask: 'browse' });
       assert.ok(emitted);
@@ -778,7 +813,9 @@ describe('ConversationContext', () => {
 
     it('emits goal:added with sessionId and goal', () => {
       let emitted = null;
-      ctx.on('goal:added', (e) => { emitted = e; });
+      ctx.on('goal:added', (e) => {
+        emitted = e;
+      });
       ctx.createSession();
       ctx.addGoal('Create order');
       assert.strictEqual(emitted.goal, 'Create order');
@@ -797,7 +834,9 @@ describe('ConversationContext', () => {
 
     it('emits goal:completed with sessionId and goal', () => {
       let emitted = null;
-      ctx.on('goal:completed', (e) => { emitted = e; });
+      ctx.on('goal:completed', (e) => {
+        emitted = e;
+      });
       ctx.createSession();
       ctx.addGoal('Ship order');
       ctx.completeGoal('Ship order');
@@ -844,7 +883,9 @@ describe('ConversationContext', () => {
 
     it('emits session:ended with session and summary', () => {
       let emitted = null;
-      ctx.on('session:ended', (e) => { emitted = e; });
+      ctx.on('session:ended', (e) => {
+        emitted = e;
+      });
       ctx.createSession();
       ctx.endSession();
       assert.ok(emitted);
@@ -917,15 +958,16 @@ describe('ConversationContext', () => {
 
     it('throws for non-existent session', () => {
       ctx.createSession();
-      assert.throws(
-        () => ctx.switchSession('session-nonexistent'),
-        { message: /session-nonexistent not found/ },
-      );
+      assert.throws(() => ctx.switchSession('session-nonexistent'), {
+        message: /session-nonexistent not found/,
+      });
     });
 
     it('emits session:switched with sessionId', () => {
       let emitted = null;
-      ctx.on('session:switched', (e) => { emitted = e; });
+      ctx.on('session:switched', (e) => {
+        emitted = e;
+      });
       const s1 = ctx.createSession();
       ctx.createSession();
       ctx.switchSession(s1.id);

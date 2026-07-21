@@ -7,7 +7,10 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { SUPPORTED_AGENT_NAMES, SUPPORTED_AGENT_NAMES_DESCRIPTION } from '../../src/agent-catalog.js';
+import {
+  SUPPORTED_AGENT_NAMES,
+  SUPPORTED_AGENT_NAMES_DESCRIPTION,
+} from '../../src/agent-catalog.js';
 import { createStatesetMcpServer } from '../../src/mcp-server.js';
 import { createToolInputSchema } from '../../src/tool-schema.js';
 
@@ -137,9 +140,9 @@ describe('delegate_to_agent', () => {
 
     it('returns success with delegation result', async () => {
       const result = await registeredTool.handler({
-          agent_name: 'inventory',
-          task_description: 'Check stock for SKU-100',
-          context: {},
+        agent_name: 'inventory',
+        task_description: 'Check stock for SKU-100',
+        context: {},
       });
       const payload = JSON.parse(result.content[0].text);
 
@@ -166,8 +169,8 @@ describe('delegate_to_agent', () => {
       });
       const tool = server.instance._registeredTools.delegate_to_agent;
       await tool.handler({
-          agent_name: 'returns',
-          task_description: 'Process return RMA-42',
+        agent_name: 'returns',
+        task_description: 'Process return RMA-42',
       });
 
       assert.deepEqual(capturedContext, {});
@@ -183,8 +186,8 @@ describe('delegate_to_agent', () => {
       });
       const tool = server.instance._registeredTools.delegate_to_agent;
       const result = await tool.handler({
-          agent_name: 'orders',
-          task_description: 'Do something',
+        agent_name: 'orders',
+        task_description: 'Do something',
       });
       const payload = JSON.parse(result.content[0].text);
 
@@ -206,9 +209,9 @@ describe('delegate_to_agent', () => {
       });
       const tool = server.instance._registeredTools.delegate_to_agent;
       const result = await tool.handler({
-          agent_name: 'orders',
-          task_description: 'Do something impossible',
-          context: {},
+        agent_name: 'orders',
+        task_description: 'Do something impossible',
+        context: {},
       });
       const payload = JSON.parse(result.content[0].text);
 

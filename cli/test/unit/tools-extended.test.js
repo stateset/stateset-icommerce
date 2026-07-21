@@ -290,7 +290,14 @@ describe('Tax Tools', () => {
         calculate: async () => mockTaxResult,
         getEffectiveRate: async () => 0.0725,
         listJurisdictions: async () => [
-          { id: 'j1', code: 'US-CA', name: 'California', level: 'state', countryCode: 'US', stateCode: 'CA' },
+          {
+            id: 'j1',
+            code: 'US-CA',
+            name: 'California',
+            level: 'state',
+            countryCode: 'US',
+            stateCode: 'CA',
+          },
         ],
         listRates: async () => [
           {
@@ -334,12 +341,8 @@ describe('Tax Tools', () => {
         totalTax: 3.63,
         total: 53.63,
         taxInclusive: false,
-        taxBreakdown: [
-          { jurisdictionName: 'California', rate: 0.0725, taxAmount: 3.63 },
-        ],
-        lineItemTaxes: [
-          { lineItemId: 'li-1', subtotal: 50, taxAmount: 3.63, total: 53.63 },
-        ],
+        taxBreakdown: [{ jurisdictionName: 'California', rate: 0.0725, taxAmount: 3.63 }],
+        lineItemTaxes: [{ lineItemId: 'li-1', subtotal: 50, taxAmount: 3.63, total: 53.63 }],
       }),
     };
   }
@@ -534,9 +537,7 @@ describe('Manufacturing Tools', () => {
         list: async () => [mockBom],
         count: async () => 1,
         get: async (id) => (id === 'bom-1' ? mockBom : null),
-        getComponents: async () => [
-          { id: 'comp-1', name: 'Screw', quantity: 4, unit: 'piece' },
-        ],
+        getComponents: async () => [{ id: 'comp-1', name: 'Screw', quantity: 4, unit: 'piece' }],
         create: async (data) => ({ id: 'bom-2', bomNumber: 'BOM-002', status: 'draft', ...data }),
         addComponent: async (bomId, data) => ({ id: 'comp-2', bomId, ...data }),
         activate: async (id) => ({ id, status: 'active' }),
@@ -570,14 +571,20 @@ describe('Manufacturing Tools', () => {
     const tool = findTool(manufacturingTools, 'get_bom');
 
     it('returns BOM with components', async () => {
-      const result = await tool.handler({ commerce: makeMfgCommerce(), params: { bomId: 'bom-1' } });
+      const result = await tool.handler({
+        commerce: makeMfgCommerce(),
+        params: { bomId: 'bom-1' },
+      });
       assert.equal(result.success, true);
       assert.equal(result.bom.name, 'Widget Assembly');
       assert.equal(result.bom.components.length, 1);
     });
 
     it('returns error for missing BOM', async () => {
-      const result = await tool.handler({ commerce: makeMfgCommerce(), params: { bomId: 'nonexistent' } });
+      const result = await tool.handler({
+        commerce: makeMfgCommerce(),
+        params: { bomId: 'nonexistent' },
+      });
       assert.ok(result.error);
     });
   });
@@ -665,13 +672,19 @@ describe('Manufacturing Tools', () => {
     const tool = findTool(manufacturingTools, 'get_work_order');
 
     it('returns work order', async () => {
-      const result = await tool.handler({ commerce: makeMfgCommerce(), params: { workOrderId: 'wo-1' } });
+      const result = await tool.handler({
+        commerce: makeMfgCommerce(),
+        params: { workOrderId: 'wo-1' },
+      });
       assert.equal(result.success, true);
       assert.equal(result.workOrder.status, 'draft');
     });
 
     it('returns error for missing', async () => {
-      const result = await tool.handler({ commerce: makeMfgCommerce(), params: { workOrderId: 'nope' } });
+      const result = await tool.handler({
+        commerce: makeMfgCommerce(),
+        params: { workOrderId: 'nope' },
+      });
       assert.ok(result.error);
     });
   });
@@ -787,7 +800,9 @@ describe('Promotion Tools', () => {
         discountType: 'percentage_off',
         value: 25,
       }),
-      listCoupons: async () => [{ id: 'coupon-1', code: 'SAVE25', promotionId: 'promo-1', usageCount: 5 }],
+      listCoupons: async () => [
+        { id: 'coupon-1', code: 'SAVE25', promotionId: 'promo-1', usageCount: 5 },
+      ],
       getActive: async () => [mockPromo],
       applyToCart: async (cartId) => ({
         cartId,
@@ -980,7 +995,12 @@ describe('Subscription Tools', () => {
     return {
       listSubscriptionPlans: async () => [mockPlan],
       getSubscriptionPlan: async (id) => (id === 'plan-1' ? mockPlan : null),
-      createSubscriptionPlan: async (data) => ({ id: 'plan-2', status: 'draft', code: 'NEW', ...data }),
+      createSubscriptionPlan: async (data) => ({
+        id: 'plan-2',
+        status: 'draft',
+        code: 'NEW',
+        ...data,
+      }),
       activateSubscriptionPlan: async (id) => ({ ...mockPlan, id, status: 'active' }),
       archiveSubscriptionPlan: async (id) => ({ ...mockPlan, id, status: 'archived' }),
       listSubscriptions: async () => [mockSub],
@@ -1024,13 +1044,19 @@ describe('Subscription Tools', () => {
     const tool = findTool(subscriptionTools, 'get_subscription_plan');
 
     it('returns plan by ID', async () => {
-      const result = await tool.handler({ commerce: makeSubCommerce(), params: { planId: 'plan-1' } });
+      const result = await tool.handler({
+        commerce: makeSubCommerce(),
+        params: { planId: 'plan-1' },
+      });
       assert.strictEqual(result.success, true);
       assert.equal(result.plan.name, 'Coffee Club');
     });
 
     it('returns error for unknown plan', async () => {
-      const result = await tool.handler({ commerce: makeSubCommerce(), params: { planId: 'nope' } });
+      const result = await tool.handler({
+        commerce: makeSubCommerce(),
+        params: { planId: 'nope' },
+      });
       assert.strictEqual(result.success, false);
       assert.ok(result.error);
     });
@@ -1243,7 +1269,10 @@ describe('Tool module structure', () => {
   for (const { name, tools, expectedMin } of modules) {
     it(`${name} exports at least ${expectedMin} tools`, () => {
       assert.ok(Array.isArray(tools), `${name} should export an array`);
-      assert.ok(tools.length >= expectedMin, `${name} has ${tools.length} tools, expected >= ${expectedMin}`);
+      assert.ok(
+        tools.length >= expectedMin,
+        `${name} has ${tools.length} tools, expected >= ${expectedMin}`,
+      );
     });
 
     it(`${name} tools have name, handler, permission`, () => {

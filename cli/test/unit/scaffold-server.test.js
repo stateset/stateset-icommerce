@@ -54,9 +54,7 @@ try {
 // Source reading for security pattern verification
 // ---------------------------------------------------------------------------
 
-const SRC_PATH = path.resolve(
-  new URL('../../src/scaffold-server.js', import.meta.url).pathname,
-);
+const SRC_PATH = path.resolve(new URL('../../src/scaffold-server.js', import.meta.url).pathname);
 const source = fs.readFileSync(SRC_PATH, 'utf8');
 
 const TEMPLATES_SRC_PATH = path.resolve(
@@ -151,10 +149,7 @@ describe('scaffold-server source security patterns', () => {
   });
 
   it('uses execFileSync (not exec or execSync with shell)', () => {
-    assert.ok(
-      source.includes('execFileSync'),
-      'Must use execFileSync for command execution',
-    );
+    assert.ok(source.includes('execFileSync'), 'Must use execFileSync for command execution');
   });
 
   it('does not use shell: true for command execution', () => {
@@ -164,23 +159,30 @@ describe('scaffold-server source security patterns', () => {
   });
 
   it('defines ALLOWED_EXECUTABLES allowlist', () => {
-    assert.ok(
-      source.includes('ALLOWED_EXECUTABLES'),
-      'Must define ALLOWED_EXECUTABLES set',
-    );
+    assert.ok(source.includes('ALLOWED_EXECUTABLES'), 'Must define ALLOWED_EXECUTABLES set');
   });
 
   it('allowlist contains npm and git only', () => {
     for (const cmd of ['npm', 'git']) {
-      assert.ok(
-        source.includes(`'${cmd}'`),
-        `ALLOWED_EXECUTABLES must include '${cmd}'`,
-      );
+      assert.ok(source.includes(`'${cmd}'`), `ALLOWED_EXECUTABLES must include '${cmd}'`);
     }
   });
 
   it('allowlist does NOT contain dangerous or general-purpose runtimes', () => {
-    for (const cmd of ['sh', 'bash', 'curl', 'wget', 'rm', 'sudo', 'eval', 'node', 'npx', 'cat', 'ls', 'mkdir']) {
+    for (const cmd of [
+      'sh',
+      'bash',
+      'curl',
+      'wget',
+      'rm',
+      'sudo',
+      'eval',
+      'node',
+      'npx',
+      'cat',
+      'ls',
+      'mkdir',
+    ]) {
       // Check that they are not in the Set(...) definition
       const setMatch = source.match(/ALLOWED_EXECUTABLES\s*=\s*new Set\(\[([^\]]+)\]\)/);
       if (setMatch) {
@@ -193,10 +195,7 @@ describe('scaffold-server source security patterns', () => {
   });
 
   it('defines SHELL_METACHAR_RE regex for metacharacter rejection', () => {
-    assert.ok(
-      source.includes('SHELL_METACHAR_RE'),
-      'Must define SHELL_METACHAR_RE regex',
-    );
+    assert.ok(source.includes('SHELL_METACHAR_RE'), 'Must define SHELL_METACHAR_RE regex');
   });
 
   it('SHELL_METACHAR_RE covers semicolons, pipes, backticks, and $', () => {
@@ -225,10 +224,7 @@ describe('scaffold-server source security patterns', () => {
   });
 
   it('sets timeout on execFileSync', () => {
-    assert.ok(
-      source.includes('timeout: 120000'),
-      'execFileSync must have a 120s timeout',
-    );
+    assert.ok(source.includes('timeout: 120000'), 'execFileSync must have a 120s timeout');
   });
 
   it('truncates command output to 5000 chars', () => {
@@ -259,8 +255,10 @@ describe('scaffold-server source security patterns', () => {
     const topImport = source.match(/import\s*\{([^}]+)\}\s*from\s*'node:child_process'/);
     if (topImport) {
       const imported = topImport[1];
-      assert.ok(!imported.includes('exec ') && !imported.includes('execSync'),
-        'Top-level import should not include exec or execSync');
+      assert.ok(
+        !imported.includes('exec ') && !imported.includes('execSync'),
+        'Top-level import should not include exec or execSync',
+      );
     }
   });
 });
@@ -284,24 +282,15 @@ describe('safePath()', () => {
   });
 
   it('throws on .. escape attempt', () => {
-    assert.throws(
-      () => safePath(tmpDir, '../../../etc/passwd'),
-      /Path traversal detected/,
-    );
+    assert.throws(() => safePath(tmpDir, '../../../etc/passwd'), /Path traversal detected/);
   });
 
   it('throws on absolute path outside base', () => {
-    assert.throws(
-      () => safePath(tmpDir, '/etc/passwd'),
-      /Path traversal detected/,
-    );
+    assert.throws(() => safePath(tmpDir, '/etc/passwd'), /Path traversal detected/);
   });
 
   it('throws on encoded traversal with nested ..', () => {
-    assert.throws(
-      () => safePath(tmpDir, 'foo/../../..'),
-      /Path traversal detected/,
-    );
+    assert.throws(() => safePath(tmpDir, 'foo/../../..'), /Path traversal detected/);
   });
 
   it('allows deeply nested paths within base', () => {
@@ -310,10 +299,7 @@ describe('safePath()', () => {
   });
 
   it('throws when traversal is disguised via intermediate dirs', () => {
-    assert.throws(
-      () => safePath(tmpDir, 'valid/../../../escape'),
-      /Path traversal detected/,
-    );
+    assert.throws(() => safePath(tmpDir, 'valid/../../../escape'), /Path traversal detected/);
   });
 
   it('allows path that contains .. but stays within base', () => {
@@ -323,25 +309,16 @@ describe('safePath()', () => {
 
   it('rejects symlink escapes that point outside the working directory', () => {
     fs.symlinkSync('/etc', path.join(tmpDir, 'etc-link'));
-    assert.throws(
-      () => safePath(tmpDir, 'etc-link/passwd'),
-      /Path traversal detected/,
-    );
+    assert.throws(() => safePath(tmpDir, 'etc-link/passwd'), /Path traversal detected/);
   });
 
   it('rejects empty subpath that resolves to parent of base', () => {
     // path.resolve('/tmp/scaffold-test-xxx', '..') === '/tmp'
-    assert.throws(
-      () => safePath(tmpDir, '..'),
-      /Path traversal detected/,
-    );
+    assert.throws(() => safePath(tmpDir, '..'), /Path traversal detected/);
   });
 
   it('handles subPath with leading slash (absolute path)', () => {
-    assert.throws(
-      () => safePath(tmpDir, '/tmp/other-dir'),
-      /Path traversal detected/,
-    );
+    assert.throws(() => safePath(tmpDir, '/tmp/other-dir'), /Path traversal detected/);
   });
 });
 
@@ -374,10 +351,7 @@ describe('SCAFFOLD_TOOL_NAMES', () => {
       'seed_database',
     ];
     for (const name of expected) {
-      assert.ok(
-        source.includes(`'${name}'`),
-        `SCAFFOLD_TOOL_NAMES must include '${name}'`,
-      );
+      assert.ok(source.includes(`'${name}'`), `SCAFFOLD_TOOL_NAMES must include '${name}'`);
     }
   });
 
@@ -435,7 +409,14 @@ describe('scaffold-templates source', () => {
   });
 
   it('exports PAGE_TEMPLATES with 6 page types', () => {
-    for (const key of ['product-listing', 'product-detail', 'cart', 'checkout', 'account', 'orders']) {
+    for (const key of [
+      'product-listing',
+      'product-detail',
+      'cart',
+      'checkout',
+      'account',
+      'orders',
+    ]) {
       assert.ok(
         templateSource.includes(`'${key}'`) || templateSource.includes(`${key}:`),
         `PAGE_TEMPLATES must include '${key}'`,
@@ -444,7 +425,15 @@ describe('scaffold-templates source', () => {
   });
 
   it('exports COMPONENT_TEMPLATES with 7 component types', () => {
-    for (const key of ['product-card', 'product-grid', 'cart-drawer', 'add-to-cart', 'checkout-form', 'header', 'footer']) {
+    for (const key of [
+      'product-card',
+      'product-grid',
+      'cart-drawer',
+      'add-to-cart',
+      'checkout-form',
+      'header',
+      'footer',
+    ]) {
       assert.ok(
         templateSource.includes(`'${key}'`) || templateSource.includes(`${key}:`),
         `COMPONENT_TEMPLATES must include '${key}'`,
@@ -649,7 +638,7 @@ describe('scaffold-server structure', () => {
   });
 
   it('defaults workDir to process.cwd()', () => {
-    assert.ok(source.includes("workDir = process.cwd()"));
+    assert.ok(source.includes('workDir = process.cwd()'));
   });
 
   it('defaults allowWrite to false', () => {
@@ -686,7 +675,10 @@ describe('tool definitions in source', () => {
   });
 
   it('defines create_project tool with template enum', () => {
-    assert.ok(source.includes("tool(\n        'create_project'") || source.includes("tool('create_project'"));
+    assert.ok(
+      source.includes("tool(\n        'create_project'") ||
+        source.includes("tool('create_project'"),
+    );
     // Verify the template enum values
     assert.ok(source.includes("'nextjs', 'nextjs-minimal', 'vite-react', 'astro'"));
   });
@@ -742,37 +734,37 @@ describe('tool definitions in source', () => {
 describe('preview mode behavior in source', () => {
   it('create_project returns preview when allowWrite is false', () => {
     assert.ok(
-      source.includes("preview: true") && source.includes("Would create"),
+      source.includes('preview: true') && source.includes('Would create'),
       'create_project must return preview with message',
     );
   });
 
   it('add_page returns preview when allowWrite is false', () => {
-    assert.ok(source.includes("Would create page at"));
+    assert.ok(source.includes('Would create page at'));
   });
 
   it('add_component returns preview when allowWrite is false', () => {
-    assert.ok(source.includes("Would create component at"));
+    assert.ok(source.includes('Would create component at'));
   });
 
   it('add_hook returns preview when allowWrite is false', () => {
-    assert.ok(source.includes("Would create hook at"));
+    assert.ok(source.includes('Would create hook at'));
   });
 
   it('add_api_route returns preview when allowWrite is false', () => {
-    assert.ok(source.includes("Would create API route at"));
+    assert.ok(source.includes('Would create API route at'));
   });
 
   it('write_file returns preview when allowWrite is false', () => {
-    assert.ok(source.includes("Would write"));
+    assert.ok(source.includes('Would write'));
   });
 
   it('run_command returns preview when allowWrite is false', () => {
-    assert.ok(source.includes("Would run:"));
+    assert.ok(source.includes('Would run:'));
   });
 
   it('seed_database returns preview when allowWrite is false', () => {
-    assert.ok(source.includes("Would seed database at"));
+    assert.ok(source.includes('Would seed database at'));
   });
 
   it('preview results set success: false', () => {
@@ -789,12 +781,12 @@ describe('preview mode behavior in source', () => {
 describe('helper functions in source', () => {
   it('defines ensureDir with recursive mkdir', () => {
     assert.ok(source.includes('function ensureDir('));
-    assert.ok(source.includes("{ recursive: true }"));
+    assert.ok(source.includes('{ recursive: true }'));
   });
 
   it('defines writeFileSync helper', () => {
     assert.ok(source.includes('function writeFileSync('));
-    assert.ok(source.includes("fs.writeFileSync"));
+    assert.ok(source.includes('fs.writeFileSync'));
   });
 
   it('defines fileExists helper', () => {
@@ -859,10 +851,7 @@ describe('create_project tool structure', () => {
 
   it('creates proper directory structure', () => {
     for (const dir of ['app', 'components', 'lib', 'hooks', 'public', 'styles']) {
-      assert.ok(
-        source.includes(`'${dir}'`),
-        `create_project must create '${dir}' directory`,
-      );
+      assert.ok(source.includes(`'${dir}'`), `create_project must create '${dir}' directory`);
     }
   });
 
@@ -924,165 +913,180 @@ describe('read_file tool source behavior', () => {
 // Template content tests (from scaffold-templates.js)
 // ============================================================================
 
-describe('scaffold-templates content', { skip: !templatesLoaded && 'templates module not available' }, () => {
-  it('TEMPLATES has exactly 4 entries', () => {
-    assert.equal(Object.keys(templatesMod.TEMPLATES).length, 4);
-  });
+describe(
+  'scaffold-templates content',
+  { skip: !templatesLoaded && 'templates module not available' },
+  () => {
+    it('TEMPLATES has exactly 4 entries', () => {
+      assert.equal(Object.keys(templatesMod.TEMPLATES).length, 4);
+    });
 
-  it('nextjs template has correct features', () => {
-    const t = templatesMod.TEMPLATES.nextjs;
-    assert.equal(t.framework, 'next');
-    assert.ok(t.features.includes('ssr'));
-    assert.ok(t.features.includes('tailwind'));
-    assert.ok(t.features.includes('typescript'));
-  });
+    it('nextjs template has correct features', () => {
+      const t = templatesMod.TEMPLATES.nextjs;
+      assert.equal(t.framework, 'next');
+      assert.ok(t.features.includes('ssr'));
+      assert.ok(t.features.includes('tailwind'));
+      assert.ok(t.features.includes('typescript'));
+    });
 
-  it('PAGE_TEMPLATES has exactly 6 entries', () => {
-    assert.equal(Object.keys(templatesMod.PAGE_TEMPLATES).length, 6);
-  });
+    it('PAGE_TEMPLATES has exactly 6 entries', () => {
+      assert.equal(Object.keys(templatesMod.PAGE_TEMPLATES).length, 6);
+    });
 
-  it('COMPONENT_TEMPLATES has exactly 7 entries', () => {
-    assert.equal(Object.keys(templatesMod.COMPONENT_TEMPLATES).length, 7);
-  });
+    it('COMPONENT_TEMPLATES has exactly 7 entries', () => {
+      assert.equal(Object.keys(templatesMod.COMPONENT_TEMPLATES).length, 7);
+    });
 
-  it('createPackageJson returns valid package object', () => {
-    const pkg = templatesMod.createPackageJson('test-store', 'nextjs', []);
-    assert.equal(pkg.name, 'test-store');
-    assert.ok(pkg.dependencies['@stateset/embedded']);
-    assert.ok(pkg.dependencies.next);
-    assert.ok(pkg.dependencies.react);
-  });
+    it('createPackageJson returns valid package object', () => {
+      const pkg = templatesMod.createPackageJson('test-store', 'nextjs', []);
+      assert.equal(pkg.name, 'test-store');
+      assert.ok(pkg.dependencies['@stateset/embedded']);
+      assert.ok(pkg.dependencies.next);
+      assert.ok(pkg.dependencies.react);
+    });
 
-  it('createPackageJson sanitizes name to lowercase kebab', () => {
-    const pkg = templatesMod.createPackageJson('My Store!', 'nextjs', []);
-    assert.equal(pkg.name, 'my-store-');
-  });
+    it('createPackageJson sanitizes name to lowercase kebab', () => {
+      const pkg = templatesMod.createPackageJson('My Store!', 'nextjs', []);
+      assert.equal(pkg.name, 'my-store-');
+    });
 
-  it('createPackageJson adds tailwind devDeps for nextjs template', () => {
-    const pkg = templatesMod.createPackageJson('store', 'nextjs', []);
-    assert.ok(pkg.devDependencies.tailwindcss);
-    assert.ok(pkg.devDependencies.postcss);
-    assert.ok(pkg.devDependencies.autoprefixer);
-  });
+    it('createPackageJson adds tailwind devDeps for nextjs template', () => {
+      const pkg = templatesMod.createPackageJson('store', 'nextjs', []);
+      assert.ok(pkg.devDependencies.tailwindcss);
+      assert.ok(pkg.devDependencies.postcss);
+      assert.ok(pkg.devDependencies.autoprefixer);
+    });
 
-  it('createPackageJson skips tailwind for nextjs-minimal', () => {
-    const pkg = templatesMod.createPackageJson('store', 'nextjs-minimal', []);
-    assert.ok(!pkg.devDependencies.tailwindcss);
-  });
+    it('createPackageJson skips tailwind for nextjs-minimal', () => {
+      const pkg = templatesMod.createPackageJson('store', 'nextjs-minimal', []);
+      assert.ok(!pkg.devDependencies.tailwindcss);
+    });
 
-  it('createTsConfig returns valid JSON', () => {
-    const config = templatesMod.createTsConfig('nextjs');
-    const parsed = JSON.parse(config);
-    assert.ok(parsed.compilerOptions);
-    assert.equal(parsed.compilerOptions.strict, true);
-  });
+    it('createTsConfig returns valid JSON', () => {
+      const config = templatesMod.createTsConfig('nextjs');
+      const parsed = JSON.parse(config);
+      assert.ok(parsed.compilerOptions);
+      assert.equal(parsed.compilerOptions.strict, true);
+    });
 
-  it('createNextConfig returns config string', () => {
-    const config = templatesMod.createNextConfig();
-    assert.ok(config.includes('nextConfig'));
-    assert.ok(config.includes('images.unsplash.com'));
-  });
+    it('createNextConfig returns config string', () => {
+      const config = templatesMod.createNextConfig();
+      assert.ok(config.includes('nextConfig'));
+      assert.ok(config.includes('images.unsplash.com'));
+    });
 
-  it('generatePageContent returns content for all page types', () => {
-    for (const pt of ['product-listing', 'product-detail', 'cart', 'checkout', 'account', 'orders']) {
-      const content = templatesMod.generatePageContent(pt);
-      assert.ok(content.length > 0, `Page type '${pt}' should generate content`);
-    }
-  });
+    it('generatePageContent returns content for all page types', () => {
+      for (const pt of [
+        'product-listing',
+        'product-detail',
+        'cart',
+        'checkout',
+        'account',
+        'orders',
+      ]) {
+        const content = templatesMod.generatePageContent(pt);
+        assert.ok(content.length > 0, `Page type '${pt}' should generate content`);
+      }
+    });
 
-  it('generatePageContent returns custom page for unknown type', () => {
-    const content = templatesMod.generatePageContent('custom', 'MyPage');
-    assert.ok(content.includes('MyPage'));
-  });
+    it('generatePageContent returns custom page for unknown type', () => {
+      const content = templatesMod.generatePageContent('custom', 'MyPage');
+      assert.ok(content.includes('MyPage'));
+    });
 
-  it('generateComponentContent returns content for known types', () => {
-    for (const ct of ['product-card', 'add-to-cart', 'header', 'footer']) {
-      const content = templatesMod.generateComponentContent(ct);
-      assert.ok(content.length > 0, `Component type '${ct}' should generate content`);
-    }
-  });
+    it('generateComponentContent returns content for known types', () => {
+      for (const ct of ['product-card', 'add-to-cart', 'header', 'footer']) {
+        const content = templatesMod.generateComponentContent(ct);
+        assert.ok(content.length > 0, `Component type '${ct}' should generate content`);
+      }
+    });
 
-  it('generateComponentContent returns custom component', () => {
-    const content = templatesMod.generateComponentContent('custom', 'Widget');
-    assert.ok(content.includes('Widget'));
-  });
+    it('generateComponentContent returns custom component', () => {
+      const content = templatesMod.generateComponentContent('custom', 'Widget');
+      assert.ok(content.includes('Widget'));
+    });
 
-  it('generateHookContent returns useCart hook', () => {
-    const content = templatesMod.generateHookContent('useCart');
-    assert.ok(content.includes('useCart'));
-    assert.ok(content.includes('addItem'));
-  });
+    it('generateHookContent returns useCart hook', () => {
+      const content = templatesMod.generateHookContent('useCart');
+      assert.ok(content.includes('useCart'));
+      assert.ok(content.includes('addItem'));
+    });
 
-  it('generateHookContent returns useProducts hook', () => {
-    const content = templatesMod.generateHookContent('useProducts');
-    assert.ok(content.includes('useProducts'));
-    assert.ok(content.includes('fetchProducts'));
-  });
+    it('generateHookContent returns useProducts hook', () => {
+      const content = templatesMod.generateHookContent('useProducts');
+      assert.ok(content.includes('useProducts'));
+      assert.ok(content.includes('fetchProducts'));
+    });
 
-  it('generateHookContent returns custom hook', () => {
-    const content = templatesMod.generateHookContent('custom', 'useWidget');
-    assert.ok(content.includes('useWidget'));
-  });
+    it('generateHookContent returns custom hook', () => {
+      const content = templatesMod.generateHookContent('custom', 'useWidget');
+      assert.ok(content.includes('useWidget'));
+    });
 
-  it('generateApiRouteContent generates handlers for specified methods', () => {
-    const content = templatesMod.generateApiRouteContent('products', ['GET', 'POST']);
-    assert.ok(content.includes('export async function GET'));
-    assert.ok(content.includes('export async function POST'));
-    assert.ok(!content.includes('export async function DELETE'));
-  });
+    it('generateApiRouteContent generates handlers for specified methods', () => {
+      const content = templatesMod.generateApiRouteContent('products', ['GET', 'POST']);
+      assert.ok(content.includes('export async function GET'));
+      assert.ok(content.includes('export async function POST'));
+      assert.ok(!content.includes('export async function DELETE'));
+    });
 
-  it('generateSeedScript includes product data', () => {
-    const script = templatesMod.generateSeedScript('./store.db', 5);
-    assert.ok(script.includes("'./store.db'"));
-    assert.ok(script.includes('Classic T-Shirt'));
-    assert.ok(script.includes('.slice(0, 5)'));
-  });
+    it('generateSeedScript includes product data', () => {
+      const script = templatesMod.generateSeedScript('./store.db', 5);
+      assert.ok(script.includes("'./store.db'"));
+      assert.ok(script.includes('Classic T-Shirt'));
+      assert.ok(script.includes('.slice(0, 5)'));
+    });
 
-  it('createRootLayout includes project name', () => {
-    const layout = templatesMod.createRootLayout('My Store');
-    assert.ok(layout.includes('My Store'));
-    assert.ok(layout.includes('StateSet iCommerce'));
-  });
+    it('createRootLayout includes project name', () => {
+      const layout = templatesMod.createRootLayout('My Store');
+      assert.ok(layout.includes('My Store'));
+      assert.ok(layout.includes('StateSet iCommerce'));
+    });
 
-  it('createHomePage returns valid JSX', () => {
-    const page = templatesMod.createHomePage();
-    assert.ok(page.includes('HomePage'));
-    assert.ok(page.includes('getProducts'));
-  });
+    it('createHomePage returns valid JSX', () => {
+      const page = templatesMod.createHomePage();
+      assert.ok(page.includes('HomePage'));
+      assert.ok(page.includes('getProducts'));
+    });
 
-  it('createGlobalStyles includes tailwind directives', () => {
-    const styles = templatesMod.createGlobalStyles();
-    assert.ok(styles.includes('@tailwind base'));
-    assert.ok(styles.includes('@tailwind components'));
-    assert.ok(styles.includes('@tailwind utilities'));
-  });
+    it('createGlobalStyles includes tailwind directives', () => {
+      const styles = templatesMod.createGlobalStyles();
+      assert.ok(styles.includes('@tailwind base'));
+      assert.ok(styles.includes('@tailwind components'));
+      assert.ok(styles.includes('@tailwind utilities'));
+    });
 
-  it('createGitignore includes common patterns', () => {
-    const gi = templatesMod.createGitignore();
-    assert.ok(gi.includes('node_modules'));
-    assert.ok(gi.includes('.next'));
-    assert.ok(gi.includes('.env'));
-    assert.ok(gi.includes('*.db'));
-  });
+    it('createGitignore includes common patterns', () => {
+      const gi = templatesMod.createGitignore();
+      assert.ok(gi.includes('node_modules'));
+      assert.ok(gi.includes('.next'));
+      assert.ok(gi.includes('.env'));
+      assert.ok(gi.includes('*.db'));
+    });
 
-  it('createReadme includes project name and template info', () => {
-    const readme = templatesMod.createReadme('TestStore', 'nextjs');
-    assert.ok(readme.includes('TestStore'));
-    assert.ok(readme.includes('StateSet iCommerce'));
-    assert.ok(readme.includes('npm install'));
-  });
+    it('createReadme includes project name and template info', () => {
+      const readme = templatesMod.createReadme('TestStore', 'nextjs');
+      assert.ok(readme.includes('TestStore'));
+      assert.ok(readme.includes('StateSet iCommerce'));
+      assert.ok(readme.includes('npm install'));
+    });
 
-  it('createEnvLocal includes DATABASE_PATH', () => {
-    const env = templatesMod.createEnvLocal();
-    assert.ok(env.includes('DATABASE_PATH'));
-  });
-});
+    it('createEnvLocal includes DATABASE_PATH', () => {
+      const env = templatesMod.createEnvLocal();
+      assert.ok(env.includes('DATABASE_PATH'));
+    });
+  },
+);
 
-describe('scaffold-templates source fallback', { skip: templatesLoaded && 'templates loaded, no fallback needed' }, () => {
-  it('scaffold-templates source defines TEMPLATES export', () => {
-    assert.ok(templateSource.includes('export const TEMPLATES'));
-  });
-});
+describe(
+  'scaffold-templates source fallback',
+  { skip: templatesLoaded && 'templates loaded, no fallback needed' },
+  () => {
+    it('scaffold-templates source defines TEMPLATES export', () => {
+      assert.ok(templateSource.includes('export const TEMPLATES'));
+    });
+  },
+);
 
 // ============================================================================
 // seed_database tool analysis

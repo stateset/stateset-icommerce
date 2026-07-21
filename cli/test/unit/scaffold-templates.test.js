@@ -45,7 +45,10 @@ describe('TEMPLATES', () => {
         typeof tmpl.framework === 'string' && tmpl.framework.length > 0,
         `${key} missing framework`,
       );
-      assert.ok(Array.isArray(tmpl.features) && tmpl.features.length > 0, `${key} missing features`);
+      assert.ok(
+        Array.isArray(tmpl.features) && tmpl.features.length > 0,
+        `${key} missing features`,
+      );
     }
   });
 
@@ -67,10 +70,14 @@ describe('PAGE_TEMPLATES', () => {
   it('has exactly 6 page entries', () => {
     const keys = Object.keys(PAGE_TEMPLATES);
     assert.equal(keys.length, 6);
-    assert.deepStrictEqual(
-      keys.sort(),
-      ['account', 'cart', 'checkout', 'orders', 'product-detail', 'product-listing'],
-    );
+    assert.deepStrictEqual(keys.sort(), [
+      'account',
+      'cart',
+      'checkout',
+      'orders',
+      'product-detail',
+      'product-listing',
+    ]);
   });
 
   it('each page template has name, description, and path', () => {
@@ -86,7 +93,10 @@ describe('PAGE_TEMPLATES', () => {
 
   it('all paths end with page.tsx', () => {
     for (const [key, page] of Object.entries(PAGE_TEMPLATES)) {
-      assert.ok(page.path.endsWith('page.tsx'), `${key} path does not end with page.tsx: ${page.path}`);
+      assert.ok(
+        page.path.endsWith('page.tsx'),
+        `${key} path does not end with page.tsx: ${page.path}`,
+      );
     }
   });
 });
@@ -99,10 +109,15 @@ describe('COMPONENT_TEMPLATES', () => {
   it('has exactly 7 component entries', () => {
     const keys = Object.keys(COMPONENT_TEMPLATES);
     assert.equal(keys.length, 7);
-    assert.deepStrictEqual(
-      keys.sort(),
-      ['add-to-cart', 'cart-drawer', 'checkout-form', 'footer', 'header', 'product-card', 'product-grid'],
-    );
+    assert.deepStrictEqual(keys.sort(), [
+      'add-to-cart',
+      'cart-drawer',
+      'checkout-form',
+      'footer',
+      'header',
+      'product-card',
+      'product-grid',
+    ]);
   });
 
   it('each component template has name, description, and path', () => {
@@ -529,7 +544,13 @@ describe('generateApiRouteContent', () => {
   });
 
   it('includes fallback resource method checks', () => {
-    const content = generateApiRouteContent('/api/products', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+    const content = generateApiRouteContent('/api/products', [
+      'GET',
+      'POST',
+      'PUT',
+      'PATCH',
+      'DELETE',
+    ]);
     assert.ok(content.includes('resource.get || resource.getById || resource.findById'));
     assert.ok(content.includes('resource.create'));
     assert.ok(content.includes('resource.update || resource.save || resource.patch'));

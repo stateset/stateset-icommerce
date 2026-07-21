@@ -63,10 +63,7 @@ describe('RFQ Competition demo scenario', () => {
   // -----------------------------------------------------------------------
 
   it('DEMO_SCENARIOS includes rfq-competition', () => {
-    assert.ok(
-      Array.isArray(DEMO_SCENARIOS),
-      'DEMO_SCENARIOS should be an array',
-    );
+    assert.ok(Array.isArray(DEMO_SCENARIOS), 'DEMO_SCENARIOS should be an array');
     assert.ok(
       DEMO_SCENARIOS.includes('rfq-competition'),
       'DEMO_SCENARIOS should include rfq-competition',
@@ -224,11 +221,7 @@ describe('RFQ Competition demo scenario', () => {
         log: (msg) => messages.push(String(msg)),
       });
       const registrationMsgs = messages.filter((m) => m.includes('registered service'));
-      assert.strictEqual(
-        registrationMsgs.length,
-        5,
-        'should log 5 service registrations',
-      );
+      assert.strictEqual(registrationMsgs.length, 5, 'should log 5 service registrations');
     } finally {
       s.store.close();
     }

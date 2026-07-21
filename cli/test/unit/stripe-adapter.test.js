@@ -57,7 +57,9 @@ describe('stripe adapter', () => {
     it('maps customer.created', () => {
       const adapter = new StripeAdapter();
       const result = adapter.handleWebhook('customer.created', {
-        data: { object: { id: 'cus_1', name: 'Alice', email: 'alice@test.com', created: 1709251200 } },
+        data: {
+          object: { id: 'cus_1', name: 'Alice', email: 'alice@test.com', created: 1709251200 },
+        },
       });
       assert.equal(result.externalId, 'cus_1');
     });

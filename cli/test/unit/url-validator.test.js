@@ -30,21 +30,15 @@ describe('validateFetchUrl — allowed URLs', () => {
   });
 
   it('allows HTTPS URLs with ports', () => {
-    assert.doesNotThrow(() =>
-      validateFetchUrl('https://api.example.com:8443/v1'),
-    );
+    assert.doesNotThrow(() => validateFetchUrl('https://api.example.com:8443/v1'));
   });
 
   it('allows HTTPS URLs with query strings', () => {
-    assert.doesNotThrow(() =>
-      validateFetchUrl('https://example.com/search?q=hello&page=1'),
-    );
+    assert.doesNotThrow(() => validateFetchUrl('https://example.com/search?q=hello&page=1'));
   });
 
   it('allows HTTPS URLs with fragments', () => {
-    assert.doesNotThrow(() =>
-      validateFetchUrl('https://example.com/docs#section'),
-    );
+    assert.doesNotThrow(() => validateFetchUrl('https://example.com/docs#section'));
   });
 
   it('allows public IP addresses', () => {
@@ -396,17 +390,15 @@ describe('validateFetchUrl — blocks internal hostnames', () => {
   });
 
   it('blocks deeply nested .internal domains', () => {
-    assert.throws(
-      () => validateFetchUrl('https://service.cluster.internal/health'),
-      { message: /SSRF blocked/ },
-    );
+    assert.throws(() => validateFetchUrl('https://service.cluster.internal/health'), {
+      message: /SSRF blocked/,
+    });
   });
 
   it('blocks deeply nested .local domains', () => {
-    assert.throws(
-      () => validateFetchUrl('http://myhost.office.local/api'),
-      { message: /SSRF blocked/ },
-    );
+    assert.throws(() => validateFetchUrl('http://myhost.office.local/api'), {
+      message: /SSRF blocked/,
+    });
   });
 });
 
@@ -428,10 +420,9 @@ describe('validateFetchUrl — blocks non-HTTP protocols', () => {
   });
 
   it('blocks data: protocol', () => {
-    assert.throws(
-      () => validateFetchUrl('data:text/html,<h1>Hello</h1>'),
-      { message: /Unsupported protocol/ },
-    );
+    assert.throws(() => validateFetchUrl('data:text/html,<h1>Hello</h1>'), {
+      message: /Unsupported protocol/,
+    });
   });
 
   it('blocks javascript: protocol', () => {
@@ -482,10 +473,7 @@ describe('isSafeDisplayUrl — allowed URLs', () => {
   });
 
   it('returns true for URLs with paths and queries', () => {
-    assert.strictEqual(
-      isSafeDisplayUrl('https://example.com/page?foo=bar'),
-      true,
-    );
+    assert.strictEqual(isSafeDisplayUrl('https://example.com/page?foo=bar'), true);
   });
 });
 
@@ -499,10 +487,7 @@ describe('isSafeDisplayUrl — blocked URLs', () => {
   });
 
   it('returns false for data: URLs', () => {
-    assert.strictEqual(
-      isSafeDisplayUrl('data:text/html,<h1>Hello</h1>'),
-      false,
-    );
+    assert.strictEqual(isSafeDisplayUrl('data:text/html,<h1>Hello</h1>'), false);
   });
 
   it('returns false for file: URLs', () => {

@@ -796,9 +796,7 @@ describe('validatePaymentParams', () => {
           toAddress: validSolanaAddr,
         }),
       (e) => {
-        const selfErr = e.context.errors.find(
-          (x) => x.code === ValidationErrorCodes.SELF_TRANSFER,
-        );
+        const selfErr = e.context.errors.find((x) => x.code === ValidationErrorCodes.SELF_TRANSFER);
         assert.ok(selfErr, 'expected SELF_TRANSFER in errors array');
         return true;
       },

@@ -47,17 +47,17 @@ describe('Discord Gateway', () => {
     });
 
     it('source imports createSessionManager from channels/base', () => {
-      assert.ok(source.includes("createSessionManager"));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('createSessionManager'));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
-      assert.ok(source.includes("createMessageHandler"));
+      assert.ok(source.includes('createMessageHandler'));
     });
 
     it('source imports getNotifier from channels/notifier', () => {
-      assert.ok(source.includes("getNotifier"));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('getNotifier'));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('dynamically imports discord.js SDK', () => {
@@ -74,7 +74,7 @@ describe('Discord Gateway', () => {
   describe('environment validation', () => {
     it('requires DISCORD_BOT_TOKEN env var', () => {
       assert.ok(source.includes('DISCORD_BOT_TOKEN'));
-      assert.ok(source.includes("process.env.DISCORD_BOT_TOKEN"));
+      assert.ok(source.includes('process.env.DISCORD_BOT_TOKEN'));
     });
 
     it('throws with helpful message when token is missing', () => {

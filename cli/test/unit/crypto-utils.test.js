@@ -224,32 +224,20 @@ describe('toChecksumAddress', () => {
 
 describe('isValidEthAddress', () => {
   it('accepts valid lowercase address', () => {
-    assert.strictEqual(
-      isValidEthAddress('0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'),
-      true,
-    );
+    assert.strictEqual(isValidEthAddress('0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'), true);
   });
 
   it('accepts valid uppercase address', () => {
-    assert.strictEqual(
-      isValidEthAddress('0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED'),
-      true,
-    );
+    assert.strictEqual(isValidEthAddress('0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED'), true);
   });
 
   it('accepts valid checksummed address', () => {
-    assert.strictEqual(
-      isValidEthAddress('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'),
-      true,
-    );
+    assert.strictEqual(isValidEthAddress('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'), true);
   });
 
   it('rejects invalid checksum', () => {
     // Flip one character's case to break checksum
-    assert.strictEqual(
-      isValidEthAddress('0x5AAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'),
-      false,
-    );
+    assert.strictEqual(isValidEthAddress('0x5AAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'), false);
   });
 
   it('rejects too short', () => {
@@ -257,17 +245,11 @@ describe('isValidEthAddress', () => {
   });
 
   it('rejects missing 0x prefix', () => {
-    assert.strictEqual(
-      isValidEthAddress('5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'),
-      false,
-    );
+    assert.strictEqual(isValidEthAddress('5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'), false);
   });
 
   it('rejects non-hex characters', () => {
-    assert.strictEqual(
-      isValidEthAddress('0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaeg'),
-      false,
-    );
+    assert.strictEqual(isValidEthAddress('0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaeg'), false);
   });
 
   it('rejects empty string', () => {

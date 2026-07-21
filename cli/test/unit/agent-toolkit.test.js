@@ -457,7 +457,10 @@ describe('agent-toolkit', () => {
     });
 
     assert.equal(contract.totalTools, 1);
-    assert.deepEqual(contract.tools.map((tool) => tool.name), ['create_customer']);
+    assert.deepEqual(
+      contract.tools.map((tool) => tool.name),
+      ['create_customer'],
+    );
     assert.equal(simulation.outcomes[0].tool, 'create_customer');
     assert.equal(simulation.outcomes[0].status, 'success');
     assert.equal(execution.steps[0].tool, 'create_customer');
@@ -616,12 +619,16 @@ describe('agent-toolkit', () => {
         },
       });
 
-      const result = await toolkit.executeToolWithPayment('list_customers', {}, {
-        payment: {
-          acceptedMethods: ['bitcoin'],
-          maxAmountSmallest: '10000',
+      const result = await toolkit.executeToolWithPayment(
+        'list_customers',
+        {},
+        {
+          payment: {
+            acceptedMethods: ['bitcoin'],
+            maxAmountSmallest: '10000',
+          },
         },
-      });
+      );
 
       assert.equal(result.success, true);
       assert.equal(result.status, 'success');
@@ -644,12 +651,16 @@ describe('agent-toolkit', () => {
         },
       });
 
-      const result = await toolkit.executePaidTool('list_customers', {}, {
-        payment: {
-          acceptedMethods: ['bitcoin'],
-          maxAmountSmallest: '10000',
+      const result = await toolkit.executePaidTool(
+        'list_customers',
+        {},
+        {
+          payment: {
+            acceptedMethods: ['bitcoin'],
+            maxAmountSmallest: '10000',
+          },
         },
-      });
+      );
 
       assert.equal(result.success, true);
       assert.equal(result.status, 'success');
@@ -847,18 +858,15 @@ describe('agent-toolkit', () => {
       },
     });
 
-    const [descriptor] = await toolkit.createRemoteHttpToolDescriptors(
-      'https://merchant.example',
-      {
-        fetch,
-        executionOptions: {
-          http: {
-            fetch,
-            validateUrl: false,
-          },
+    const [descriptor] = await toolkit.createRemoteHttpToolDescriptors('https://merchant.example', {
+      fetch,
+      executionOptions: {
+        http: {
+          fetch,
+          validateUrl: false,
         },
       },
-    );
+    });
 
     const response = await descriptor.executeWithPayment(
       {

@@ -106,11 +106,11 @@ describe('DynamicPricingStrategy — volume discounts', () => {
   });
 
   it('returns 0.10 discount at qty 50 (second break)', () => {
-    assert.strictEqual(s.getVolumeDiscount(50), 0.10);
+    assert.strictEqual(s.getVolumeDiscount(50), 0.1);
   });
 
   it('returns 0.10 discount at qty 99 (between second and third break)', () => {
-    assert.strictEqual(s.getVolumeDiscount(99), 0.10);
+    assert.strictEqual(s.getVolumeDiscount(99), 0.1);
   });
 
   it('returns 0.15 discount at qty 100 (third break)', () => {
@@ -149,7 +149,7 @@ describe('DynamicPricingStrategy — reputation adjustments', () => {
   });
 
   it('returns -0.10 for verified tier', () => {
-    assert.strictEqual(s.getReputationAdjustment('verified'), -0.10);
+    assert.strictEqual(s.getReputationAdjustment('verified'), -0.1);
   });
 
   it('returns 0 for standard tier', () => {
@@ -157,7 +157,7 @@ describe('DynamicPricingStrategy — reputation adjustments', () => {
   });
 
   it('returns 0.20 for sandbox tier', () => {
-    assert.strictEqual(s.getReputationAdjustment('sandbox'), 0.20);
+    assert.strictEqual(s.getReputationAdjustment('sandbox'), 0.2);
   });
 
   it('falls back to standard (0) for unknown tier', () => {
@@ -192,11 +192,11 @@ describe('DynamicPricingStrategy — loyalty discounts', () => {
   });
 
   it('returns -0.10 at 10 transactions (second tier)', () => {
-    assert.strictEqual(s.getLoyaltyDiscount(10), -0.10);
+    assert.strictEqual(s.getLoyaltyDiscount(10), -0.1);
   });
 
   it('returns -0.10 at 19 transactions (between second and third tier)', () => {
-    assert.strictEqual(s.getLoyaltyDiscount(19), -0.10);
+    assert.strictEqual(s.getLoyaltyDiscount(19), -0.1);
   });
 
   it('returns -0.15 at 20 transactions (third tier)', () => {
@@ -228,7 +228,10 @@ describe('DynamicPricingStrategy — evaluateIncomingQuote', () => {
   });
 
   it('applies volume discount when quantity qualifies', () => {
-    const s = createDynamicPricingStrategy({ demandSurgeThreshold: 9999, peakHours: { start: 25, end: 25, surgeMultiplier: 1.0 } });
+    const s = createDynamicPricingStrategy({
+      demandSurgeThreshold: 9999,
+      peakHours: { start: 25, end: 25, surgeMultiplier: 1.0 },
+    });
     // 60 items at $10 each = cost $600, volume discount 0.10 (qty 60 >= 50)
     const quote = makeQuote({
       items: [{ description: 'Bolt', unit_price: 10, quantity: 60 }],
@@ -250,7 +253,10 @@ describe('DynamicPricingStrategy — evaluateIncomingQuote', () => {
     });
     const result = s.evaluateIncomingQuote(quote);
     // reputation adjustment = -0.15, so effective markup lower
-    assert.ok(result.message.includes('reputation'), 'message should mention reputation adjustment');
+    assert.ok(
+      result.message.includes('reputation'),
+      'message should mention reputation adjustment',
+    );
   });
 
   it('applies sandbox surcharge', () => {
@@ -352,7 +358,7 @@ describe('DynamicPricingStrategy — evaluateCounterOffer', () => {
   });
 
   it('enforces custom minMargin', () => {
-    const s = createDynamicPricingStrategy({ minMargin: 0.20, demandSurgeThreshold: 9999 });
+    const s = createDynamicPricingStrategy({ minMargin: 0.2, demandSurgeThreshold: 9999 });
     // cost = 100, floor = 100 * 1.20 = 120
     const quote = makeQuote({ total_decimal: 115, total: 115 });
     const result = s.evaluateCounterOffer(quote);
@@ -719,11 +725,11 @@ describe('DynamicPricingStrategy — custom config', () => {
 
   it('respects custom reputationTiers', () => {
     const s = createDynamicPricingStrategy({
-      reputationTiers: { gold: -0.20, silver: -0.10, bronze: 0.10 },
+      reputationTiers: { gold: -0.2, silver: -0.1, bronze: 0.1 },
     });
-    assert.strictEqual(s.getReputationAdjustment('gold'), -0.20);
-    assert.strictEqual(s.getReputationAdjustment('silver'), -0.10);
-    assert.strictEqual(s.getReputationAdjustment('bronze'), 0.10);
+    assert.strictEqual(s.getReputationAdjustment('gold'), -0.2);
+    assert.strictEqual(s.getReputationAdjustment('silver'), -0.1);
+    assert.strictEqual(s.getReputationAdjustment('bronze'), 0.1);
     // unknown falls back to standard key which does not exist in custom => 0
     assert.strictEqual(s.getReputationAdjustment('unknown'), 0);
   });

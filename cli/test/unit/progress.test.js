@@ -74,7 +74,7 @@ describe('progress', () => {
         const p = createProgress({ label: 'Index', fallback: 'log' });
         logs.length = 0; // Clear initial "Index..." message
 
-        p.setPercent(5);  // rounds to 0
+        p.setPercent(5); // rounds to 0
         p.setPercent(10); // rounds to 0 (no new log)
         p.setPercent(30); // rounds to 25
         p.setPercent(55); // rounds to 50
@@ -120,17 +120,28 @@ describe('progress', () => {
 
     it('propagates errors from fn', async () => {
       await assert.rejects(
-        () => withProgress('Loading', async () => { throw new Error('boom'); }, { enabled: false }),
+        () =>
+          withProgress(
+            'Loading',
+            async () => {
+              throw new Error('boom');
+            },
+            { enabled: false },
+          ),
         { message: 'boom' },
       );
     });
 
     it('passes progress reporter to fn', async () => {
       let receivedProgress = null;
-      await withProgress('Loading', async (p) => {
-        receivedProgress = p;
-        p.setPercent(50);
-      }, { enabled: false });
+      await withProgress(
+        'Loading',
+        async (p) => {
+          receivedProgress = p;
+          p.setPercent(50);
+        },
+        { enabled: false },
+      );
       assert.ok(receivedProgress);
       assert.ok(typeof receivedProgress.setPercent === 'function');
     });

@@ -211,8 +211,7 @@ class GeminiProvider extends ModelProvider {
 
           try {
             const chunk = JSON.parse(buffer.slice(objStart, objEnd));
-            const text =
-              chunk.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '';
+            const text = chunk.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '';
 
             if (text) {
               fullText += text;
@@ -591,11 +590,7 @@ describe('Source code patterns', () => {
     });
 
     it('uses correct API base URL', () => {
-      assert.ok(
-        geminiSrc.includes(
-          "https://generativelanguage.googleapis.com/v1beta/models",
-        ),
-      );
+      assert.ok(geminiSrc.includes('https://generativelanguage.googleapis.com/v1beta/models'));
     });
 
     it('uses streamGenerateContent for streaming', () => {
@@ -654,7 +649,7 @@ describe('Source code patterns', () => {
     });
 
     it('parses SSE data lines', () => {
-      assert.ok(openaiSrc.includes("data: [DONE]"));
+      assert.ok(openaiSrc.includes('data: [DONE]'));
       assert.ok(openaiSrc.includes("trimmed.startsWith('data: ')"));
     });
 
@@ -667,7 +662,7 @@ describe('Source code patterns', () => {
     });
 
     it('has cost estimation for o1 and o1-mini', () => {
-      assert.ok(openaiSrc.includes("o1:"));
+      assert.ok(openaiSrc.includes('o1:'));
       assert.ok(openaiSrc.includes("'o1-mini'"));
     });
 
@@ -822,26 +817,20 @@ describe('GeminiProvider', () => {
 
     it('converts user role to user', () => {
       const p = new GeminiProvider();
-      const { contents } = p._convertMessages([
-        { role: 'user', content: 'Hello' },
-      ]);
+      const { contents } = p._convertMessages([{ role: 'user', content: 'Hello' }]);
       assert.equal(contents[0].role, 'user');
       assert.deepEqual(contents[0].parts, [{ text: 'Hello' }]);
     });
 
     it('converts assistant role to model', () => {
       const p = new GeminiProvider();
-      const { contents } = p._convertMessages([
-        { role: 'assistant', content: 'Hi there' },
-      ]);
+      const { contents } = p._convertMessages([{ role: 'assistant', content: 'Hi there' }]);
       assert.equal(contents[0].role, 'model');
     });
 
     it('returns null systemInstruction when no system message', () => {
       const p = new GeminiProvider();
-      const { systemInstruction } = p._convertMessages([
-        { role: 'user', content: 'Hello' },
-      ]);
+      const { systemInstruction } = p._convertMessages([{ role: 'user', content: 'Hello' }]);
       assert.equal(systemInstruction, null);
     });
 
@@ -900,10 +889,7 @@ describe('GeminiProvider', () => {
 
     it('returns null for unknown model', () => {
       const p = new GeminiProvider();
-      const cost = p.estimateCost(
-        { inputTokens: 1000, outputTokens: 500 },
-        'unknown-model',
-      );
+      const cost = p.estimateCost({ inputTokens: 1000, outputTokens: 500 }, 'unknown-model');
       assert.equal(cost, null);
     });
 
@@ -1153,50 +1139,35 @@ describe('OpenAIProvider', () => {
   describe('cost estimation', () => {
     it('estimates cost for gpt-4o', () => {
       const p = new OpenAIProvider();
-      const cost = p.estimateCost(
-        { inputTokens: 1_000_000, outputTokens: 1_000_000 },
-        'gpt-4o',
-      );
+      const cost = p.estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'gpt-4o');
       // 1M * 2.5/1M + 1M * 10/1M = 2.5 + 10 = 12.5
       assert.ok(Math.abs(cost - 12.5) < 0.001);
     });
 
     it('estimates cost for gpt-4', () => {
       const p = new OpenAIProvider();
-      const cost = p.estimateCost(
-        { inputTokens: 1_000_000, outputTokens: 1_000_000 },
-        'gpt-4',
-      );
+      const cost = p.estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'gpt-4');
       // 1M * 30/1M + 1M * 60/1M = 30 + 60 = 90
       assert.ok(Math.abs(cost - 90) < 0.001);
     });
 
     it('estimates cost for o1', () => {
       const p = new OpenAIProvider();
-      const cost = p.estimateCost(
-        { inputTokens: 1_000_000, outputTokens: 1_000_000 },
-        'o1',
-      );
+      const cost = p.estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'o1');
       // 1M * 15/1M + 1M * 60/1M = 15 + 60 = 75
       assert.ok(Math.abs(cost - 75) < 0.001);
     });
 
     it('estimates cost for o1-mini', () => {
       const p = new OpenAIProvider();
-      const cost = p.estimateCost(
-        { inputTokens: 1_000_000, outputTokens: 1_000_000 },
-        'o1-mini',
-      );
+      const cost = p.estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'o1-mini');
       // 1M * 3/1M + 1M * 12/1M = 3 + 12 = 15
       assert.ok(Math.abs(cost - 15) < 0.001);
     });
 
     it('returns null for unknown model', () => {
       const p = new OpenAIProvider();
-      assert.equal(
-        p.estimateCost({ inputTokens: 100, outputTokens: 50 }, 'gpt-5-ultra'),
-        null,
-      );
+      assert.equal(p.estimateCost({ inputTokens: 100, outputTokens: 50 }, 'gpt-5-ultra'), null);
     });
 
     it('returns 0 cost for 0 tokens', () => {
@@ -1243,12 +1214,7 @@ describe('OpenAIProvider', () => {
 
     it('ignores empty lines', async () => {
       const p = new OpenAIProvider();
-      const lines = [
-        '\n',
-        '  \n',
-        'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
-        '\n',
-      ];
+      const lines = ['\n', '  \n', 'data: {"choices":[{"delta":{"content":"ok"}}]}\n', '\n'];
 
       const res = fakeStreamResponse(lines);
       const result = await p._handleStream(res, 'gpt-4o', null);
@@ -1258,10 +1224,7 @@ describe('OpenAIProvider', () => {
 
     it('ignores data: [DONE] line', async () => {
       const p = new OpenAIProvider();
-      const lines = [
-        'data: {"choices":[{"delta":{"content":"test"}}]}\n',
-        'data: [DONE]\n',
-      ];
+      const lines = ['data: {"choices":[{"delta":{"content":"test"}}]}\n', 'data: [DONE]\n'];
 
       const res = fakeStreamResponse(lines);
       const result = await p._handleStream(res, 'gpt-4o', null);
@@ -1285,10 +1248,7 @@ describe('OpenAIProvider', () => {
 
     it('handles malformed JSON in SSE gracefully', async () => {
       const p = new OpenAIProvider();
-      const lines = [
-        'data: {broken json}\n',
-        'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
-      ];
+      const lines = ['data: {broken json}\n', 'data: {"choices":[{"delta":{"content":"ok"}}]}\n'];
 
       const res = fakeStreamResponse(lines);
       const result = await p._handleStream(res, 'gpt-4o', null);
@@ -1298,9 +1258,7 @@ describe('OpenAIProvider', () => {
 
     it('streaming result has null cost and zero usage', async () => {
       const p = new OpenAIProvider();
-      const lines = [
-        'data: {"choices":[{"delta":{"content":"x"}}]}\n',
-      ];
+      const lines = ['data: {"choices":[{"delta":{"content":"x"}}]}\n'];
 
       const res = fakeStreamResponse(lines);
       const result = await p._handleStream(res, 'gpt-4o', null);
@@ -1450,7 +1408,12 @@ describe('OllamaProvider', () => {
       const p = new OllamaProvider();
       const lines = [
         JSON.stringify({ message: { content: 'Hello' }, done: false }) + '\n',
-        JSON.stringify({ message: { content: ' World' }, done: true, prompt_eval_count: 10, eval_count: 5 }) + '\n',
+        JSON.stringify({
+          message: { content: ' World' },
+          done: true,
+          prompt_eval_count: 10,
+          eval_count: 5,
+        }) + '\n',
       ];
 
       const res = fakeStreamResponse(lines);
@@ -1488,7 +1451,12 @@ describe('OllamaProvider', () => {
       const lines = [
         JSON.stringify({ message: { content: 'A' }, done: false }) + '\n',
         JSON.stringify({ message: { content: 'B' }, done: false }) + '\n',
-        JSON.stringify({ message: { content: '' }, done: true, prompt_eval_count: 5, eval_count: 3 }) + '\n',
+        JSON.stringify({
+          message: { content: '' },
+          done: true,
+          prompt_eval_count: 5,
+          eval_count: 3,
+        }) + '\n',
       ];
 
       const res = fakeStreamResponse(lines);
@@ -1502,7 +1470,12 @@ describe('OllamaProvider', () => {
     it('handles early completion (done on first line)', async () => {
       const p = new OllamaProvider();
       const lines = [
-        JSON.stringify({ message: { content: 'quick' }, done: true, prompt_eval_count: 1, eval_count: 1 }) + '\n',
+        JSON.stringify({
+          message: { content: 'quick' },
+          done: true,
+          prompt_eval_count: 1,
+          eval_count: 1,
+        }) + '\n',
       ];
 
       const res = fakeStreamResponse(lines);
@@ -1516,7 +1489,12 @@ describe('OllamaProvider', () => {
       const p = new OllamaProvider();
       const lines = [
         '\n',
-        JSON.stringify({ message: { content: 'ok' }, done: true, prompt_eval_count: 1, eval_count: 1 }) + '\n',
+        JSON.stringify({
+          message: { content: 'ok' },
+          done: true,
+          prompt_eval_count: 1,
+          eval_count: 1,
+        }) + '\n',
         '\n',
       ];
 
@@ -1530,7 +1508,12 @@ describe('OllamaProvider', () => {
       const p = new OllamaProvider();
       const lines = [
         '{bad json}\n',
-        JSON.stringify({ message: { content: 'ok' }, done: true, prompt_eval_count: 0, eval_count: 1 }) + '\n',
+        JSON.stringify({
+          message: { content: 'ok' },
+          done: true,
+          prompt_eval_count: 0,
+          eval_count: 1,
+        }) + '\n',
       ];
 
       const res = fakeStreamResponse(lines);
@@ -1541,9 +1524,7 @@ describe('OllamaProvider', () => {
 
     it('returns zero usage when no done message received', async () => {
       const p = new OllamaProvider();
-      const lines = [
-        JSON.stringify({ message: { content: 'hello' }, done: false }) + '\n',
-      ];
+      const lines = [JSON.stringify({ message: { content: 'hello' }, done: false }) + '\n'];
 
       const res = fakeStreamResponse(lines);
       const result = await p._handleStream(res, 'llama3', null);
@@ -1556,7 +1537,12 @@ describe('OllamaProvider', () => {
     it('cost is always null for streaming', async () => {
       const p = new OllamaProvider();
       const lines = [
-        JSON.stringify({ message: { content: 'x' }, done: true, prompt_eval_count: 1, eval_count: 1 }) + '\n',
+        JSON.stringify({
+          message: { content: 'x' },
+          done: true,
+          prompt_eval_count: 1,
+          eval_count: 1,
+        }) + '\n',
       ];
 
       const res = fakeStreamResponse(lines);
@@ -1646,7 +1632,7 @@ describe('Cross-provider comparisons', () => {
     assert.ok(!ollamaSrc.includes('data: '));
 
     // OpenAI: SSE with data: prefix
-    assert.ok(openaiSrc.includes("data: [DONE]"));
+    assert.ok(openaiSrc.includes('data: [DONE]'));
     assert.ok(openaiSrc.includes("startsWith('data: ')"));
 
     // Gemini: JSON object brace matching

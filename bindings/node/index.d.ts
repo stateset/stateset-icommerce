@@ -40,6 +40,47 @@ export interface CustomerOutput {
   createdAt: string
   updatedAt: string
 }
+export interface UpdateCustomerInput {
+  email?: string
+  firstName?: string
+  lastName?: string
+  phone?: string
+  status?: string
+  acceptsMarketing?: boolean
+}
+export interface CreateCustomerAddressInput {
+  customerId: string
+  addressType?: string
+  firstName: string
+  lastName: string
+  company?: string
+  line1: string
+  line2?: string
+  city: string
+  state?: string
+  postalCode: string
+  country: string
+  phone?: string
+  isDefault?: boolean
+}
+export interface CustomerAddressOutput {
+  id: string
+  customerId: string
+  addressType: string
+  firstName: string
+  lastName: string
+  company?: string
+  line1: string
+  line2?: string
+  city: string
+  state?: string
+  postalCode: string
+  country: string
+  phone?: string
+  isDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
 export interface CreateOrderItemInput {
   sku: string
   name: string
@@ -105,6 +146,12 @@ export interface ProductVariantOutput {
   price: number
   compareAtPrice?: number
   isDefault: boolean
+}
+export interface UpdateProductInput {
+  name?: string
+  slug?: string
+  description?: string
+  status?: string
 }
 export interface CustomFieldDefinitionInput {
   key: string
@@ -4690,6 +4737,14 @@ export declare class Customers {
   getByEmail(email: string): Promise<CustomerOutput | null>
   list(): Promise<Array<CustomerOutput>>
   count(): Promise<number>
+  update(id: string, input: UpdateCustomerInput): Promise<CustomerOutput>
+  delete(id: string): Promise<void>
+  findOrCreate(input: CreateCustomerInput): Promise<CustomerOutput>
+  addAddress(input: CreateCustomerAddressInput): Promise<CustomerAddressOutput>
+  getAddresses(customerId: string): Promise<Array<CustomerAddressOutput>>
+  updateAddress(addressId: string, input: CreateCustomerAddressInput): Promise<CustomerAddressOutput>
+  deleteAddress(addressId: string): Promise<void>
+  setDefaultAddress(customerId: string, addressId: string, addressType: string): Promise<void>
 }
 export declare class Orders {
   create(input: CreateOrderInput): Promise<OrderOutput>
@@ -4706,6 +4761,17 @@ export declare class Products {
   getVariantBySku(sku: string): Promise<ProductVariantOutput | null>
   list(): Promise<Array<ProductOutput>>
   count(): Promise<number>
+  update(id: string, input: UpdateProductInput): Promise<ProductOutput>
+  delete(id: string): Promise<void>
+  getBySlug(slug: string): Promise<ProductOutput | null>
+  activate(id: string): Promise<ProductOutput>
+  archive(id: string): Promise<ProductOutput>
+  search(query: string): Promise<Array<ProductOutput>>
+  getVariant(id: string): Promise<ProductVariantOutput | null>
+  getVariants(productId: string): Promise<Array<ProductVariantOutput>>
+  addVariant(productId: string, input: CreateProductVariantInput): Promise<ProductVariantOutput>
+  updateVariant(id: string, input: CreateProductVariantInput): Promise<ProductVariantOutput>
+  deleteVariant(id: string): Promise<void>
 }
 export declare class CustomObjects {
   createType(input: CreateCustomObjectTypeInput): Promise<CustomObjectTypeOutput>
@@ -4736,6 +4802,13 @@ export declare class Returns {
   reject(id: string, reason: string): Promise<ReturnOutput>
   list(): Promise<Array<ReturnOutput>>
   count(): Promise<number>
+  listForOrder(orderId: string): Promise<Array<ReturnOutput>>
+  listForCustomer(customerId: string): Promise<Array<ReturnOutput>>
+  listPending(): Promise<Array<ReturnOutput>>
+  markReceived(id: string): Promise<ReturnOutput>
+  complete(id: string): Promise<ReturnOutput>
+  cancel(id: string): Promise<ReturnOutput>
+  addTracking(id: string, trackingNumber: string): Promise<ReturnOutput>
 }
 export declare class Payments {
   create(input: CreatePaymentInput): Promise<PaymentOutput>

@@ -1148,7 +1148,11 @@ describe('edge cases', () => {
         `INSERT INTO a2a_payments (id, status, sender_address, recipient_address, amount, amount_decimal, asset, memo, created_at, updated_at)
        VALUES ('special-pay', 'completed', '0xSender', '0xRecipient', 10000, 100, 'USDC', ?, ?, ?)`,
       )
-      .run("memo with 'quotes' and \"double\" and <html>", new Date().toISOString(), new Date().toISOString());
+      .run(
+        'memo with \'quotes\' and "double" and <html>',
+        new Date().toISOString(),
+        new Date().toISOString(),
+      );
     const result = svc.exportAuditTrail({ format: 'csv' });
     assert.ok(result.csv.includes('quotes'));
   });

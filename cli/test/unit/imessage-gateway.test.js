@@ -49,7 +49,7 @@ describe('iMessage Gateway', () => {
 
     it('source imports createSessionManager from channels/base', () => {
       assert.ok(source.includes('createSessionManager'));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
@@ -62,7 +62,7 @@ describe('iMessage Gateway', () => {
 
     it('source imports getNotifier from channels/notifier', () => {
       assert.ok(source.includes('getNotifier'));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('does not require any external SDK (uses fetch)', () => {
@@ -75,11 +75,11 @@ describe('iMessage Gateway', () => {
 
   describe('environment validation', () => {
     it('reads BLUEBUBBLES_URL from env or config', () => {
-      assert.ok(source.includes("process.env.BLUEBUBBLES_URL"));
+      assert.ok(source.includes('process.env.BLUEBUBBLES_URL'));
     });
 
     it('reads BLUEBUBBLES_PASSWORD from env or config', () => {
-      assert.ok(source.includes("process.env.BLUEBUBBLES_PASSWORD"));
+      assert.ok(source.includes('process.env.BLUEBUBBLES_PASSWORD'));
     });
 
     it('requires BLUEBUBBLES_PASSWORD', () => {
@@ -127,8 +127,10 @@ describe('iMessage Gateway', () => {
     });
 
     it('supports header-first auth with legacy query fallback', () => {
-      assert.ok(source.includes("const BLUEBUBBLES_AUTH_MODES = new Set(['auto', 'header', 'query'])"));
-      assert.ok(source.includes("fetchOpts.headers.Authorization = `Bearer ${password}`"));
+      assert.ok(
+        source.includes("const BLUEBUBBLES_AUTH_MODES = new Set(['auto', 'header', 'query'])"),
+      );
+      assert.ok(source.includes('fetchOpts.headers.Authorization = `Bearer ${password}`'));
       assert.ok(source.includes("url.searchParams.set('password', password)"));
     });
 

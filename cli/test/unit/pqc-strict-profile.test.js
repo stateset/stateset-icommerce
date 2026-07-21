@@ -68,10 +68,7 @@ describe('profileMetricLabel', () => {
 
 describe('assertSecureTransportForProfile', () => {
   it('rejects insecure transport for legacy unless explicitly allowed', () => {
-    assert.throws(
-      () => assertSecureTransportForProfile('legacy', false),
-      /explicitly allowed/,
-    );
+    assert.throws(() => assertSecureTransportForProfile('legacy', false), /explicitly allowed/);
   });
 
   it('allows insecure transport for legacy when explicitly allowed', () => {
@@ -79,10 +76,7 @@ describe('assertSecureTransportForProfile', () => {
   });
 
   it('rejects insecure transport for pqc-strict', () => {
-    assert.throws(
-      () => assertSecureTransportForProfile('pqc-strict', false),
-      /must use TLS/,
-    );
+    assert.throws(() => assertSecureTransportForProfile('pqc-strict', false), /must use TLS/);
   });
 
   it('allows secure transport for pqc-strict', () => {
@@ -114,10 +108,7 @@ describe('assertEventMatchesSecurityProfile — pqc-strict', () => {
       agentSignatureScheme: 1, // ED25519
       agentSignature: Buffer.alloc(64, 1),
     };
-    assert.throws(
-      () => assertEventMatchesSecurityProfile(event, 'pqc-strict'),
-      /pqc-strict/,
-    );
+    assert.throws(() => assertEventMatchesSecurityProfile(event, 'pqc-strict'), /pqc-strict/);
   });
 
   it('rejects event with Ed25519 material present', () => {
@@ -129,10 +120,7 @@ describe('assertEventMatchesSecurityProfile — pqc-strict', () => {
       },
       agentSignature: Buffer.alloc(64, 1),
     };
-    assert.throws(
-      () => assertEventMatchesSecurityProfile(event, 'pqc-strict'),
-      /rejects Ed25519/,
-    );
+    assert.throws(() => assertEventMatchesSecurityProfile(event, 'pqc-strict'), /rejects Ed25519/);
   });
 
   it('accepts valid pqc-strict event (plaintext)', () => {
@@ -188,10 +176,7 @@ describe('assertEventMatchesSecurityProfile — pqc-strict', () => {
         ],
       },
     };
-    assert.throws(
-      () => assertEventMatchesSecurityProfile(event, 'pqc-strict'),
-      /rejects X25519/,
-    );
+    assert.throws(() => assertEventMatchesSecurityProfile(event, 'pqc-strict'), /rejects X25519/);
   });
 });
 
@@ -208,9 +193,7 @@ describe('assertKeyRegistrationMatchesSecurityProfile — pqc-strict', () => {
         mlDsa65PublicKey: Buffer.alloc(1952, 1),
       },
     };
-    assert.doesNotThrow(() =>
-      assertKeyRegistrationMatchesSecurityProfile(reg, 'pqc-strict'),
-    );
+    assert.doesNotThrow(() => assertKeyRegistrationMatchesSecurityProfile(reg, 'pqc-strict'));
   });
 
   it('rejects hybrid signing key under pqc-strict', () => {
@@ -251,9 +234,7 @@ describe('assertKeyRegistrationMatchesSecurityProfile — pqc-strict', () => {
         mlKem768PublicKey: Buffer.alloc(1184, 1),
       },
     };
-    assert.doesNotThrow(() =>
-      assertKeyRegistrationMatchesSecurityProfile(reg, 'pqc-strict'),
-    );
+    assert.doesNotThrow(() => assertKeyRegistrationMatchesSecurityProfile(reg, 'pqc-strict'));
   });
 
   it('rejects X25519 public key material under pqc-strict', () => {
@@ -327,10 +308,7 @@ describe('assertReceiptMatchesSecurityProfile — pqc-strict', () => {
         // missing mlDsa65Signature
       },
     };
-    assert.throws(
-      () => assertReceiptMatchesSecurityProfile(receipt, 'hybrid'),
-      /requires both/,
-    );
+    assert.throws(() => assertReceiptMatchesSecurityProfile(receipt, 'hybrid'), /requires both/);
   });
 
   it('accepts valid hybrid receipt', () => {
@@ -369,10 +347,7 @@ describe('Cross-profile rejection', () => {
         mlDsa65Signature: Buffer.alloc(100, 2),
       },
     };
-    assert.throws(
-      () => assertEventMatchesSecurityProfile(event, 'pqc-strict'),
-      /pqc-strict/,
-    );
+    assert.throws(() => assertEventMatchesSecurityProfile(event, 'pqc-strict'), /pqc-strict/);
   });
 });
 

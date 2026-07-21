@@ -47,7 +47,7 @@ describe('Signal Gateway', () => {
 
     it('source imports createSessionManager from channels/base', () => {
       assert.ok(source.includes('createSessionManager'));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
@@ -70,12 +70,12 @@ describe('Signal Gateway', () => {
 
     it('source imports getNotifier from channels/notifier', () => {
       assert.ok(source.includes('getNotifier'));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('source imports richMessageToPlainText for fallback', () => {
       assert.ok(source.includes('richMessageToPlainText'));
-      assert.ok(source.includes("../channels/rich-messages.js"));
+      assert.ok(source.includes('../channels/rich-messages.js'));
     });
 
     it('does not use any external SDK (no dynamic import of vendor)', () => {
@@ -88,7 +88,7 @@ describe('Signal Gateway', () => {
 
   describe('parameter validation', () => {
     it('requires --phone parameter', () => {
-      assert.ok(source.includes("if (!phone)"));
+      assert.ok(source.includes('if (!phone)'));
     });
 
     it('throws with helpful message when phone is missing', () => {

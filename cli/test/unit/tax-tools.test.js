@@ -54,7 +54,11 @@ function createCommerceTaxApi(overrides = {}) {
   return {
     tax: {
       calculateForItem: async () => 7.5,
-      getJurisdiction: async (jurisdictionId) => ({ id: jurisdictionId, code: 'CA', name: 'California' }),
+      getJurisdiction: async (jurisdictionId) => ({
+        id: jurisdictionId,
+        code: 'CA',
+        name: 'California',
+      }),
       getJurisdictionByCode: async (code) => ({ id: 'jur_001', code, name: 'California' }),
       createJurisdiction: async (params) => ({ id: 'jur_new', ...params }),
       getRate: async (rateId) => ({ id: rateId, rate: 0.0725, name: 'CA state rate' }),
@@ -92,7 +96,12 @@ describe('non-provider tax MCP tools', () => {
 
     assert.equal(result.success, true);
     assert.equal(result.taxAmount, 8.25);
-    assert.deepEqual(calledWith, [55, 2, 'standard', { country: 'US', state: 'CA', postalCode: '94105' }]);
+    assert.deepEqual(calledWith, [
+      55,
+      2,
+      'standard',
+      { country: 'US', state: 'CA', postalCode: '94105' },
+    ]);
   });
 
   it('get_tax_jurisdiction can resolve by code', async () => {
@@ -230,7 +239,9 @@ describe('tax compliance and failover tools', () => {
     assert.equal(result.success, true);
     assert.equal(result.compliance.valid, false);
     assert.ok(result.compliance.errors.some((entry) => entry.includes('shippingAddress.state')));
-    assert.ok(result.compliance.errors.some((entry) => entry.includes('shippingAddress.postalCode')));
+    assert.ok(
+      result.compliance.errors.some((entry) => entry.includes('shippingAddress.postalCode')),
+    );
   });
 
   it('calculate_tax_quote_with_failover falls back when primary provider does not support country', async () => {

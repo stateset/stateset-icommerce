@@ -96,7 +96,11 @@ describe('Sync Tools — definitions', () => {
 
   it('every tool has a handler function', () => {
     for (const tool of syncTools) {
-      assert.strictEqual(typeof tool.handler, 'function', `${tool.name} handler should be a function`);
+      assert.strictEqual(
+        typeof tool.handler,
+        'function',
+        `${tool.name} handler should be a function`,
+      );
     }
   });
 });
@@ -111,17 +115,9 @@ describe('Sync Tools — permissions', () => {
     'sync_conflicts',
   ];
 
-  const writeTools = [
-    'sync_pull',
-    'sync_push',
-  ];
+  const writeTools = ['sync_pull', 'sync_push'];
 
-  const adminTools = [
-    'sync_retry_failed',
-    'sync_full',
-    'sync_resolve',
-    'sync_rebase',
-  ];
+  const adminTools = ['sync_retry_failed', 'sync_full', 'sync_resolve', 'sync_rebase'];
 
   for (const name of readTools) {
     it(`${name} has read permission`, () => {

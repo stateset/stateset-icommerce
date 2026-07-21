@@ -52,9 +52,9 @@ function makeCommerce(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Return Tools — structure', () => {
-  it('exports an array of 5 tools', () => {
+  it('exports an array of 12 tools', () => {
     assert.ok(Array.isArray(returnTools));
-    assert.strictEqual(returnTools.length, 5);
+    assert.strictEqual(returnTools.length, 12);
   });
 
   it('every tool has name, handler, permission, and inputSchema', () => {
@@ -111,7 +111,11 @@ describe('list_returns', () => {
   });
 
   it('propagates commerce errors', async () => {
-    const commerce = makeCommerce({ list: async () => { throw new Error('DB fail'); } });
+    const commerce = makeCommerce({
+      list: async () => {
+        throw new Error('DB fail');
+      },
+    });
     await assert.rejects(() => tool.handler({ commerce, params: { limit: 50 } }), /DB fail/);
   });
 });
@@ -128,21 +132,34 @@ describe('get_return', () => {
   });
 
   it('returns return by ID', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { returnId: 'ret_001' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { returnId: 'ret_001' },
+    });
     assert.strictEqual(result.success, true);
     assert.ok(result.return);
     assert.strictEqual(result.return.id, 'ret_001');
   });
 
   it('returns error when return not found', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { returnId: 'nonexistent' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { returnId: 'nonexistent' },
+    });
     assert.strictEqual(result.success, false);
     assert.ok(result.error.toLowerCase().includes('not found'));
   });
 
   it('propagates commerce errors', async () => {
-    const commerce = makeCommerce({ get: async () => { throw new Error('timeout'); } });
-    await assert.rejects(() => tool.handler({ commerce, params: { returnId: 'ret_001' } }), /timeout/);
+    const commerce = makeCommerce({
+      get: async () => {
+        throw new Error('timeout');
+      },
+    });
+    await assert.rejects(
+      () => tool.handler({ commerce, params: { returnId: 'ret_001' } }),
+      /timeout/,
+    );
   });
 });
 
@@ -180,7 +197,11 @@ describe('create_return', () => {
   });
 
   it('propagates commerce errors', async () => {
-    const commerce = makeCommerce({ create: async () => { throw new Error('Duplicate'); } });
+    const commerce = makeCommerce({
+      create: async () => {
+        throw new Error('Duplicate');
+      },
+    });
     await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Duplicate/);
   });
 });
@@ -212,8 +233,15 @@ describe('approve_return', () => {
   });
 
   it('propagates commerce errors', async () => {
-    const commerce = makeCommerce({ approve: async () => { throw new Error('Already approved'); } });
-    await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Already approved/);
+    const commerce = makeCommerce({
+      approve: async () => {
+        throw new Error('Already approved');
+      },
+    });
+    await assert.rejects(
+      () => tool.handler({ commerce, params, allowApply: true }),
+      /Already approved/,
+    );
   });
 });
 
@@ -244,7 +272,14 @@ describe('reject_return', () => {
   });
 
   it('propagates commerce errors', async () => {
-    const commerce = makeCommerce({ reject: async () => { throw new Error('Already processed'); } });
-    await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Already processed/);
+    const commerce = makeCommerce({
+      reject: async () => {
+        throw new Error('Already processed');
+      },
+    });
+    await assert.rejects(
+      () => tool.handler({ commerce, params, allowApply: true }),
+      /Already processed/,
+    );
   });
 });

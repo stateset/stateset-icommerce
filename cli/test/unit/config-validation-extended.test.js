@@ -51,9 +51,7 @@ describe('config validation extended', () => {
         httpGateway: {
           enabled: true,
           port: 8080,
-          apiKeys: [
-            { key: 'sk-admin-secret', name: 'admin', level: 'admin' },
-          ],
+          apiKeys: [{ key: 'sk-admin-secret', name: 'admin', level: 'admin' }],
         },
       };
       writeJson(configPath, config);
@@ -97,9 +95,7 @@ describe('config validation extended', () => {
           sandbox: { browser: true, shell: true },
         },
         heartbeat: {
-          checks: [
-            { id: 'low-stock', enabled: true, config: { threshold: 10 } },
-          ],
+          checks: [{ id: 'low-stock', enabled: true, config: { threshold: 10 } }],
         },
       };
       writeJson(configPath, config);

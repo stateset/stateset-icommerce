@@ -1,6 +1,10 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { wireRuntimeEvents, createWiredAgentRuntime, EVENT_MAP } from '../../src/a2a/event-wiring.js';
+import {
+  wireRuntimeEvents,
+  createWiredAgentRuntime,
+  EVENT_MAP,
+} from '../../src/a2a/event-wiring.js';
 import { EventEmitter } from 'node:events';
 
 // ---------------------------------------------------------------------------
@@ -232,7 +236,9 @@ describe('event-wiring', () => {
     });
 
     it('survives stream.pushEvent throwing', () => {
-      stream.pushEvent = mock.fn(() => { throw new Error('stream error'); });
+      stream.pushEvent = mock.fn(() => {
+        throw new Error('stream error');
+      });
       wireRuntimeEvents(runtime, stream, bridge);
 
       // Should not throw
@@ -243,7 +249,9 @@ describe('event-wiring', () => {
     });
 
     it('survives bridge.sendCommerceEvent throwing', () => {
-      bridge.sendCommerceEvent = mock.fn(() => { throw new Error('bridge error'); });
+      bridge.sendCommerceEvent = mock.fn(() => {
+        throw new Error('bridge error');
+      });
       wireRuntimeEvents(runtime, stream, bridge);
 
       // Should not throw

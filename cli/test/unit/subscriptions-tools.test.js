@@ -164,7 +164,10 @@ describe('list_subscription_plans', () => {
   it('passes status and billingInterval filters', async () => {
     let calledWith = {};
     const commerce = makeCommerce({
-      listSubscriptionPlans: async (filters) => { calledWith = filters; return []; },
+      listSubscriptionPlans: async (filters) => {
+        calledWith = filters;
+        return [];
+      },
     });
     await tool.handler({ commerce, params: { status: 'active', billingInterval: 'monthly' } });
     assert.strictEqual(calledWith.status, 'active');
@@ -190,13 +193,19 @@ describe('get_subscription_plan', () => {
   });
 
   it('falls back to plan code lookup when available', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { planId: 'COFFEE_MONTHLY' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { planId: 'COFFEE_MONTHLY' },
+    });
     assert.strictEqual(result.success, true);
     assert.ok(result.plan);
   });
 
   it('returns error when plan not found', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { planId: 'nonexistent' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { planId: 'nonexistent' },
+    });
     assert.strictEqual(result.success, false);
     assert.ok(result.error.toLowerCase().includes('not found'));
   });
@@ -232,7 +241,10 @@ describe('create_subscription_plan', () => {
   it('converts price to string before creating', async () => {
     let calledWith = {};
     const commerce = makeCommerce({
-      createSubscriptionPlan: async (data) => { calledWith = data; return makePlan(data); },
+      createSubscriptionPlan: async (data) => {
+        calledWith = data;
+        return makePlan(data);
+      },
     });
     await tool.handler({ commerce, params, allowApply: true });
     assert.strictEqual(calledWith.price, '49.99');
@@ -338,7 +350,10 @@ describe('list_subscriptions', () => {
   it('passes filters to commerce', async () => {
     let calledWith = {};
     const commerce = makeCommerce({
-      listSubscriptions: async (filters) => { calledWith = filters; return []; },
+      listSubscriptions: async (filters) => {
+        calledWith = filters;
+        return [];
+      },
     });
     await tool.handler({ commerce, params: { customerId: 'cust_001', status: 'active' } });
     assert.strictEqual(calledWith.customerId, 'cust_001');
@@ -358,13 +373,19 @@ describe('get_subscription', () => {
   });
 
   it('returns subscription by ID', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { subscriptionId: 'sub_001' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { subscriptionId: 'sub_001' },
+    });
     assert.ok(result);
     assert.strictEqual(result.id, 'sub_001');
   });
 
   it('returns error when subscription not found', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { subscriptionId: 'nonexistent' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { subscriptionId: 'nonexistent' },
+    });
     assert.strictEqual(result.success, false);
     assert.ok(result.error.toLowerCase().includes('not found'));
   });
@@ -582,13 +603,19 @@ describe('get_billing_cycle', () => {
   });
 
   it('returns billing cycle by ID', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { cycleId: 'cycle_001' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cycleId: 'cycle_001' },
+    });
     assert.ok(result);
     assert.strictEqual(result.id, 'cycle_001');
   });
 
   it('returns error when cycle not found', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { cycleId: 'nonexistent' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { cycleId: 'nonexistent' },
+    });
     assert.strictEqual(result.success, false);
     assert.ok(result.error.toLowerCase().includes('not found'));
   });
@@ -627,7 +654,10 @@ describe('get_subscription_events', () => {
   it('passes limit parameter', async () => {
     let passedLimit;
     const commerce = makeCommerce({
-      getSubscriptionEvents: async (_id, limit) => { passedLimit = limit; return []; },
+      getSubscriptionEvents: async (_id, limit) => {
+        passedLimit = limit;
+        return [];
+      },
     });
     await tool.handler({ commerce, params: { subscriptionId: 'sub_001', limit: 5 } });
     assert.strictEqual(passedLimit, 5);

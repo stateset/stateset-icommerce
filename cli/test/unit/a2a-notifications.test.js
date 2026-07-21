@@ -70,7 +70,11 @@ describe('sendNotification', () => {
         recipient_address: '0xRecipient',
         endpoint_url: config.endpoint_url,
         event_type: 'payment.completed',
-        payload: JSON.stringify({ event_type: 'payment.completed', payload: { amount: 50 }, timestamp: '2026-01-01T00:00:00.000Z' }),
+        payload: JSON.stringify({
+          event_type: 'payment.completed',
+          payload: { amount: 50 },
+          timestamp: '2026-01-01T00:00:00.000Z',
+        }),
         signature: 'abc',
         status: 'delivered',
         attempts: 1,
@@ -109,18 +113,16 @@ describe('sendNotification', () => {
 
   it('throws when recipientAddress is missing', async () => {
     const svc = createNotificationService(makeStore());
-    await assert.rejects(
-      () => svc.sendNotification({ eventType: 'test', payload: {} }),
-      { message: 'recipientAddress is required' },
-    );
+    await assert.rejects(() => svc.sendNotification({ eventType: 'test', payload: {} }), {
+      message: 'recipientAddress is required',
+    });
   });
 
   it('throws when eventType is missing', async () => {
     const svc = createNotificationService(makeStore());
-    await assert.rejects(
-      () => svc.sendNotification({ recipientAddress: '0xA', payload: {} }),
-      { message: 'eventType is required' },
-    );
+    await assert.rejects(() => svc.sendNotification({ recipientAddress: '0xA', payload: {} }), {
+      message: 'eventType is required',
+    });
   });
 
   it('throws when no webhook config exists and no override URL', async () => {
@@ -138,7 +140,8 @@ describe('sendNotification', () => {
     });
     const svc = createNotificationService(store);
     await assert.rejects(
-      () => svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'test', payload: {} }),
+      () =>
+        svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'test', payload: {} }),
       /not active/,
     );
   });
@@ -151,7 +154,12 @@ describe('sendNotification', () => {
     });
     const svc = createNotificationService(store);
     await assert.rejects(
-      () => svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'escrow.released', payload: {} }),
+      () =>
+        svc.sendNotification({
+          recipientAddress: '0xRecipient',
+          eventType: 'escrow.released',
+          payload: {},
+        }),
       /not enabled/,
     );
   });
@@ -194,7 +202,8 @@ describe('sendNotification', () => {
     });
     const svc = createNotificationService(store);
     await assert.rejects(
-      () => svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'test', payload: {} }),
+      () =>
+        svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'test', payload: {} }),
       /protocol|Invalid/i,
     );
   });
@@ -207,7 +216,8 @@ describe('sendNotification', () => {
     });
     const svc = createNotificationService(store);
     await assert.rejects(
-      () => svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'test', payload: {} }),
+      () =>
+        svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'test', payload: {} }),
       /SSRF|blocked|internal/i,
     );
   });
@@ -220,7 +230,8 @@ describe('sendNotification', () => {
     });
     const svc = createNotificationService(store);
     await assert.rejects(
-      () => svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'test', payload: {} }),
+      () =>
+        svc.sendNotification({ recipientAddress: '0xRecipient', eventType: 'test', payload: {} }),
       /SSRF|blocked|internal/i,
     );
   });
@@ -231,11 +242,12 @@ describe('sendNotification', () => {
       getWebhookConfig: mock.fn(async () => config),
       getNotificationLog: mock.fn(async () => null),
     });
-    globalThis.fetch = mock.fn(async () =>
-      new Response('', {
-        status: 302,
-        headers: { location: 'http://169.254.169.254/latest/meta-data' },
-      }),
+    globalThis.fetch = mock.fn(
+      async () =>
+        new Response('', {
+          status: 302,
+          headers: { location: 'http://169.254.169.254/latest/meta-data' },
+        }),
     );
 
     const svc = createNotificationService(store);
@@ -304,7 +316,11 @@ describe('sendNotification', () => {
       getWebhookConfig: mock.fn(async () => webhookConfig()),
       getNotificationLog: mock.fn(async () => null),
     });
-    globalThis.fetch = mock.fn(async () => ({ ok: false, status: 503, statusText: 'Service Unavailable' }));
+    globalThis.fetch = mock.fn(async () => ({
+      ok: false,
+      status: 503,
+      statusText: 'Service Unavailable',
+    }));
 
     const svc = createNotificationService(store);
     const result = await svc.sendNotification({
@@ -324,7 +340,9 @@ describe('sendNotification', () => {
       getWebhookConfig: mock.fn(async () => webhookConfig()),
       getNotificationLog: mock.fn(async () => null),
     });
-    globalThis.fetch = mock.fn(async () => { throw new Error('ECONNREFUSED'); });
+    globalThis.fetch = mock.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    });
 
     const svc = createNotificationService(store);
     const result = await svc.sendNotification({
@@ -472,15 +490,21 @@ describe('retryPendingNotifications', () => {
   });
 
   it('successfully retries a pending notification', async () => {
-    const pending = [{
-      id: 'notif-1',
-      endpoint_url: 'https://hooks.example.com/webhook',
-      event_type: 'payment.completed',
-      payload: JSON.stringify({ event_type: 'payment.completed', payload: {}, timestamp: '2026-01-01' }),
-      signature: 'sig1',
-      attempts: 1,
-      last_attempt_at: '2020-01-01T00:00:00.000Z', // far in the past — backoff elapsed
-    }];
+    const pending = [
+      {
+        id: 'notif-1',
+        endpoint_url: 'https://hooks.example.com/webhook',
+        event_type: 'payment.completed',
+        payload: JSON.stringify({
+          event_type: 'payment.completed',
+          payload: {},
+          timestamp: '2026-01-01',
+        }),
+        signature: 'sig1',
+        attempts: 1,
+        last_attempt_at: '2020-01-01T00:00:00.000Z', // far in the past — backoff elapsed
+      },
+    ];
     const store = makeStore({ getPendingNotifications: mock.fn(async () => pending) });
     globalThis.fetch = mock.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
 
@@ -502,15 +526,17 @@ describe('retryPendingNotifications', () => {
 
   it('skips notifications still within backoff window', async () => {
     // last_attempt_at is right now, attempts=1 => backoff = 2s
-    const pending = [{
-      id: 'notif-2',
-      endpoint_url: 'https://hooks.example.com/webhook',
-      event_type: 'test',
-      payload: '{}',
-      signature: 'sig',
-      attempts: 1,
-      last_attempt_at: new Date().toISOString(), // just now — within backoff
-    }];
+    const pending = [
+      {
+        id: 'notif-2',
+        endpoint_url: 'https://hooks.example.com/webhook',
+        event_type: 'test',
+        payload: '{}',
+        signature: 'sig',
+        attempts: 1,
+        last_attempt_at: new Date().toISOString(), // just now — within backoff
+      },
+    ];
     const store = makeStore({ getPendingNotifications: mock.fn(async () => pending) });
     globalThis.fetch = mock.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
 
@@ -524,17 +550,23 @@ describe('retryPendingNotifications', () => {
   });
 
   it('marks notification as failed when max attempts reached on HTTP error', async () => {
-    const pending = [{
-      id: 'notif-3',
-      endpoint_url: 'https://hooks.example.com/webhook',
-      event_type: 'test',
-      payload: '{"event_type":"test"}',
-      signature: 'sig',
-      attempts: 2, // next will be 3 (= maxAttempts), so status becomes 'failed'
-      last_attempt_at: '2020-01-01T00:00:00.000Z',
-    }];
+    const pending = [
+      {
+        id: 'notif-3',
+        endpoint_url: 'https://hooks.example.com/webhook',
+        event_type: 'test',
+        payload: '{"event_type":"test"}',
+        signature: 'sig',
+        attempts: 2, // next will be 3 (= maxAttempts), so status becomes 'failed'
+        last_attempt_at: '2020-01-01T00:00:00.000Z',
+      },
+    ];
     const store = makeStore({ getPendingNotifications: mock.fn(async () => pending) });
-    globalThis.fetch = mock.fn(async () => ({ ok: false, status: 500, statusText: 'Internal Server Error' }));
+    globalThis.fetch = mock.fn(async () => ({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+    }));
 
     const svc = createNotificationService(store);
     const result = await svc.retryPendingNotifications();
@@ -550,15 +582,17 @@ describe('retryPendingNotifications', () => {
   });
 
   it('keeps notification pending when attempts < maxAttempts on HTTP error', async () => {
-    const pending = [{
-      id: 'notif-4',
-      endpoint_url: 'https://hooks.example.com/webhook',
-      event_type: 'test',
-      payload: '{}',
-      signature: 'sig',
-      attempts: 1, // next will be 2, still < 3
-      last_attempt_at: '2020-01-01T00:00:00.000Z',
-    }];
+    const pending = [
+      {
+        id: 'notif-4',
+        endpoint_url: 'https://hooks.example.com/webhook',
+        event_type: 'test',
+        payload: '{}',
+        signature: 'sig',
+        attempts: 1, // next will be 2, still < 3
+        last_attempt_at: '2020-01-01T00:00:00.000Z',
+      },
+    ];
     const store = makeStore({ getPendingNotifications: mock.fn(async () => pending) });
     globalThis.fetch = mock.fn(async () => ({ ok: false, status: 502, statusText: 'Bad Gateway' }));
 
@@ -575,17 +609,21 @@ describe('retryPendingNotifications', () => {
   });
 
   it('marks notification as failed when max attempts reached on network error', async () => {
-    const pending = [{
-      id: 'notif-5',
-      endpoint_url: 'https://hooks.example.com/webhook',
-      event_type: 'test',
-      payload: '{}',
-      signature: 'sig',
-      attempts: 2,
-      last_attempt_at: '2020-01-01T00:00:00.000Z',
-    }];
+    const pending = [
+      {
+        id: 'notif-5',
+        endpoint_url: 'https://hooks.example.com/webhook',
+        event_type: 'test',
+        payload: '{}',
+        signature: 'sig',
+        attempts: 2,
+        last_attempt_at: '2020-01-01T00:00:00.000Z',
+      },
+    ];
     const store = makeStore({ getPendingNotifications: mock.fn(async () => pending) });
-    globalThis.fetch = mock.fn(async () => { throw new Error('ETIMEDOUT'); });
+    globalThis.fetch = mock.fn(async () => {
+      throw new Error('ETIMEDOUT');
+    });
 
     const svc = createNotificationService(store);
     const result = await svc.retryPendingNotifications();
@@ -648,15 +686,17 @@ describe('retryPendingNotifications', () => {
   });
 
   it('handles payload as an object (not string)', async () => {
-    const pending = [{
-      id: 'notif-obj',
-      endpoint_url: 'https://hooks.example.com/webhook',
-      event_type: 'test',
-      payload: { event_type: 'test', payload: {}, timestamp: '2026-01-01' }, // object, not string
-      signature: 'sig',
-      attempts: 1,
-      last_attempt_at: '2020-01-01T00:00:00.000Z',
-    }];
+    const pending = [
+      {
+        id: 'notif-obj',
+        endpoint_url: 'https://hooks.example.com/webhook',
+        event_type: 'test',
+        payload: { event_type: 'test', payload: {}, timestamp: '2026-01-01' }, // object, not string
+        signature: 'sig',
+        attempts: 1,
+        last_attempt_at: '2020-01-01T00:00:00.000Z',
+      },
+    ];
     const store = makeStore({ getPendingNotifications: mock.fn(async () => pending) });
     globalThis.fetch = mock.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
 
@@ -672,15 +712,17 @@ describe('retryPendingNotifications', () => {
   });
 
   it('skips notifications with no last_attempt_at (no backoff delay)', async () => {
-    const pending = [{
-      id: 'notif-no-ts',
-      endpoint_url: 'https://hooks.example.com/webhook',
-      event_type: 'test',
-      payload: '{}',
-      signature: 'sig',
-      attempts: 0,
-      last_attempt_at: null, // no previous attempt
-    }];
+    const pending = [
+      {
+        id: 'notif-no-ts',
+        endpoint_url: 'https://hooks.example.com/webhook',
+        event_type: 'test',
+        payload: '{}',
+        signature: 'sig',
+        attempts: 0,
+        last_attempt_at: null, // no previous attempt
+      },
+    ];
     const store = makeStore({ getPendingNotifications: mock.fn(async () => pending) });
     globalThis.fetch = mock.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
 
@@ -693,15 +735,17 @@ describe('retryPendingNotifications', () => {
   });
 
   it('sends correct headers during retry delivery', async () => {
-    const pending = [{
-      id: 'notif-hdr',
-      endpoint_url: 'https://hooks.example.com/webhook',
-      event_type: 'order.shipped',
-      payload: '{"event_type":"order.shipped"}',
-      signature: 'abc123',
-      attempts: 1,
-      last_attempt_at: '2020-01-01T00:00:00.000Z',
-    }];
+    const pending = [
+      {
+        id: 'notif-hdr',
+        endpoint_url: 'https://hooks.example.com/webhook',
+        event_type: 'order.shipped',
+        payload: '{"event_type":"order.shipped"}',
+        signature: 'abc123',
+        attempts: 1,
+        last_attempt_at: '2020-01-01T00:00:00.000Z',
+      },
+    ];
     const store = makeStore({ getPendingNotifications: mock.fn(async () => pending) });
     globalThis.fetch = mock.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
 
@@ -747,18 +791,16 @@ describe('configureWebhooks', () => {
 
   it('throws when agentAddress is missing', async () => {
     const svc = createNotificationService(makeStore());
-    await assert.rejects(
-      () => svc.configureWebhooks({ endpointUrl: 'https://x.com/h' }),
-      { message: 'agentAddress is required' },
-    );
+    await assert.rejects(() => svc.configureWebhooks({ endpointUrl: 'https://x.com/h' }), {
+      message: 'agentAddress is required',
+    });
   });
 
   it('throws when endpointUrl is missing', async () => {
     const svc = createNotificationService(makeStore());
-    await assert.rejects(
-      () => svc.configureWebhooks({ agentAddress: '0xA' }),
-      { message: 'endpointUrl is required' },
-    );
+    await assert.rejects(() => svc.configureWebhooks({ agentAddress: '0xA' }), {
+      message: 'endpointUrl is required',
+    });
   });
 
   it('throws when endpointUrl uses non-HTTP protocol', async () => {
@@ -908,7 +950,12 @@ describe('getNotificationLog', () => {
   it('passes filter through to store.listNotificationLog', async () => {
     const store = makeStore({ listNotificationLog: mock.fn(async () => []) });
     const svc = createNotificationService(store);
-    const filter = { recipient_address: '0xA', event_type: 'payment.completed', limit: 10, offset: 0 };
+    const filter = {
+      recipient_address: '0xA',
+      event_type: 'payment.completed',
+      limit: 10,
+      offset: 0,
+    };
     await svc.getNotificationLog(filter);
 
     const passedFilter = store.listNotificationLog.mock.calls[0].arguments[0];

@@ -50,7 +50,9 @@ function sampleItems(n = 2) {
 
 describe('createPaymentLink', () => {
   let svc;
-  beforeEach(() => { svc = makeSvc(); });
+  beforeEach(() => {
+    svc = makeSvc();
+  });
 
   it('creates a payment link and returns required fields', () => {
     const result = svc.createPaymentLink({ items: sampleItems() });
@@ -77,9 +79,7 @@ describe('createPaymentLink', () => {
   });
 
   it('handles fractional prices with rounding', () => {
-    const items = [
-      { name: 'A', quantity: 3, unitPrice: 1.33 },
-    ];
+    const items = [{ name: 'A', quantity: 3, unitPrice: 1.33 }];
     const result = svc.createPaymentLink({ items });
     assert.equal(result.total, 3.99);
   });
@@ -177,7 +177,9 @@ describe('createPaymentLink', () => {
 
 describe('resolvePaymentLink', () => {
   let svc;
-  beforeEach(() => { svc = makeSvc(); });
+  beforeEach(() => {
+    svc = makeSvc();
+  });
 
   it('resolves by ID', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
@@ -272,7 +274,9 @@ describe('resolvePaymentLink', () => {
 
 describe('expressCheckout', () => {
   let svc;
-  beforeEach(() => { svc = makeSvc(); });
+  beforeEach(() => {
+    svc = makeSvc();
+  });
 
   it('converts a link and returns order/payment IDs', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
@@ -291,7 +295,10 @@ describe('expressCheckout', () => {
   it('generates UUID-format payment ID', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
     const result = svc.expressCheckout({ linkId: link.linkId });
-    assert.match(result.paymentId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.match(
+      result.paymentId,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
   });
 
   it('marks link as converted', () => {
@@ -334,42 +341,27 @@ describe('expressCheckout', () => {
 
   it('fails on expired link', () => {
     const link = svc.createPaymentLink({ items: sampleItems(), expiresIn: -1 });
-    assert.throws(
-      () => svc.expressCheckout({ linkId: link.linkId }),
-      /expired/i,
-    );
+    assert.throws(() => svc.expressCheckout({ linkId: link.linkId }), /expired/i);
   });
 
   it('fails on revoked link', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
     svc.revokePaymentLink(link.linkId);
-    assert.throws(
-      () => svc.expressCheckout({ linkId: link.linkId }),
-      /revoked/i,
-    );
+    assert.throws(() => svc.expressCheckout({ linkId: link.linkId }), /revoked/i);
   });
 
   it('fails on already-converted link', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
     svc.expressCheckout({ linkId: link.linkId });
-    assert.throws(
-      () => svc.expressCheckout({ linkId: link.linkId }),
-      /already been converted/i,
-    );
+    assert.throws(() => svc.expressCheckout({ linkId: link.linkId }), /already been converted/i);
   });
 
   it('fails when linkId is missing', () => {
-    assert.throws(
-      () => svc.expressCheckout({}),
-      /linkId is required/,
-    );
+    assert.throws(() => svc.expressCheckout({}), /linkId is required/);
   });
 
   it('fails when link not found', () => {
-    assert.throws(
-      () => svc.expressCheckout({ linkId: 'nonexistent' }),
-      /not found/i,
-    );
+    assert.throws(() => svc.expressCheckout({ linkId: 'nonexistent' }), /not found/i);
   });
 });
 
@@ -379,7 +371,9 @@ describe('expressCheckout', () => {
 
 describe('agentCheckout', () => {
   let svc;
-  beforeEach(() => { svc = makeSvc(); });
+  beforeEach(() => {
+    svc = makeSvc();
+  });
 
   it('creates and converts a link in one call', () => {
     const result = svc.agentCheckout({
@@ -469,7 +463,9 @@ describe('agentCheckout', () => {
 
 describe('getPaymentLinkStatus', () => {
   let svc;
-  beforeEach(() => { svc = makeSvc(); });
+  beforeEach(() => {
+    svc = makeSvc();
+  });
 
   it('returns status for active link', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
@@ -516,7 +512,9 @@ describe('getPaymentLinkStatus', () => {
 
 describe('listPaymentLinks', () => {
   let svc;
-  beforeEach(() => { svc = makeSvc(); });
+  beforeEach(() => {
+    svc = makeSvc();
+  });
 
   it('lists all links when no filters given', () => {
     svc.createPaymentLink({ items: sampleItems() });
@@ -616,7 +614,9 @@ describe('listPaymentLinks', () => {
 
 describe('revokePaymentLink', () => {
   let svc;
-  beforeEach(() => { svc = makeSvc(); });
+  beforeEach(() => {
+    svc = makeSvc();
+  });
 
   it('revokes an active link', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
@@ -634,28 +634,19 @@ describe('revokePaymentLink', () => {
   });
 
   it('fails on unknown link', () => {
-    assert.throws(
-      () => svc.revokePaymentLink('nonexistent'),
-      /not found/i,
-    );
+    assert.throws(() => svc.revokePaymentLink('nonexistent'), /not found/i);
   });
 
   it('fails on already-revoked link', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
     svc.revokePaymentLink(link.linkId);
-    assert.throws(
-      () => svc.revokePaymentLink(link.linkId),
-      /already revoked/i,
-    );
+    assert.throws(() => svc.revokePaymentLink(link.linkId), /already revoked/i);
   });
 
   it('fails on converted link', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
     svc.expressCheckout({ linkId: link.linkId });
-    assert.throws(
-      () => svc.revokePaymentLink(link.linkId),
-      /converted/i,
-    );
+    assert.throws(() => svc.revokePaymentLink(link.linkId), /converted/i);
   });
 
   it('returns updated link with parsed items', () => {
@@ -688,7 +679,9 @@ describe('revokePaymentLink', () => {
 
 describe('Edge cases', () => {
   let svc;
-  beforeEach(() => { svc = makeSvc(); });
+  beforeEach(() => {
+    svc = makeSvc();
+  });
 
   it('handles large items array (100 items)', () => {
     const items = [];
@@ -702,9 +695,7 @@ describe('Edge cases', () => {
   });
 
   it('handles zero-price items', () => {
-    const items = [
-      { name: 'Free Sample', quantity: 5, unitPrice: 0 },
-    ];
+    const items = [{ name: 'Free Sample', quantity: 5, unitPrice: 0 }];
     const link = svc.createPaymentLink({ items });
     assert.equal(link.total, 0);
   });

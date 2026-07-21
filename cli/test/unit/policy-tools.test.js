@@ -30,13 +30,23 @@ const SAMPLE_POLICY = {
   rules: [
     {
       name: 'auto_approve_small',
-      conditions: { logic: 'and', conditions: [{ field: 'return.value', operator: 'lt', value: 100 }] },
+      conditions: {
+        logic: 'and',
+        conditions: [{ field: 'return.value', operator: 'lt', value: 100 }],
+      },
       action: { type: 'allow' },
     },
     {
       name: 'deny_large',
-      conditions: { logic: 'and', conditions: [{ field: 'return.value', operator: 'gte', value: 100 }] },
-      action: { type: 'deny', reason: 'Amount too large', remediation: 'Requires manager approval' },
+      conditions: {
+        logic: 'and',
+        conditions: [{ field: 'return.value', operator: 'gte', value: 100 }],
+      },
+      action: {
+        type: 'deny',
+        reason: 'Amount too large',
+        remediation: 'Requires manager approval',
+      },
     },
   ],
 };
@@ -90,30 +100,42 @@ describe('policy tools — evaluate_policy', () => {
   });
 
   it('evaluates allow decision', async () => {
-    const result = await callTool('evaluate_policy', {
-      domain: 'returns',
-      context: { return: { value: 50 } },
-    }, engine);
+    const result = await callTool(
+      'evaluate_policy',
+      {
+        domain: 'returns',
+        context: { return: { value: 50 } },
+      },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.decision, 'allow');
     assert.equal(result.shouldAllow, true);
   });
 
   it('evaluates deny decision', async () => {
-    const result = await callTool('evaluate_policy', {
-      domain: 'returns',
-      context: { return: { value: 200 } },
-    }, engine);
+    const result = await callTool(
+      'evaluate_policy',
+      {
+        domain: 'returns',
+        context: { return: { value: 200 } },
+      },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.decision, 'deny');
     assert.equal(result.shouldDeny, true);
   });
 
   it('handles unknown domain in deny mode', async () => {
-    const result = await callTool('evaluate_policy', {
-      domain: 'nonexistent',
-      context: {},
-    }, engine);
+    const result = await callTool(
+      'evaluate_policy',
+      {
+        domain: 'nonexistent',
+        context: {},
+      },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.unknownDomain, true);
     assert.equal(result.decision, 'deny');
@@ -121,21 +143,29 @@ describe('policy tools — evaluate_policy', () => {
 
   it('handles unknown domain in allow mode', async () => {
     const allowEngine = new PolicyEngine({ unknownDomainMode: 'allow' });
-    const result = await callTool('evaluate_policy', {
-      domain: 'nonexistent',
-      context: {},
-    }, allowEngine);
+    const result = await callTool(
+      'evaluate_policy',
+      {
+        domain: 'nonexistent',
+        context: {},
+      },
+      allowEngine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.unknownDomain, true);
     assert.equal(result.decision, 'allow');
   });
 
   it('supports dry-run', async () => {
-    const result = await callTool('evaluate_policy', {
-      domain: 'returns',
-      context: { 'return.value': 50 },
-      dryRun: true,
-    }, engine);
+    const result = await callTool(
+      'evaluate_policy',
+      {
+        domain: 'returns',
+        context: { 'return.value': 50 },
+        dryRun: true,
+      },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.dryRun, true);
   });
@@ -200,35 +230,59 @@ describe('policy tools — register_policy_template', () => {
   });
 
   it('returns error when no policy engine', async () => {
-    const result = await callTool('register_policy_template', { templateName: 'autoApproveReturns' }, null);
+    const result = await callTool(
+      'register_policy_template',
+      { templateName: 'autoApproveReturns' },
+      null,
+    );
     assert.equal(result.success, false);
   });
 
   it('registers autoApproveReturns template', async () => {
-    const result = await callTool('register_policy_template', { templateName: 'autoApproveReturns' }, engine);
+    const result = await callTool(
+      'register_policy_template',
+      { templateName: 'autoApproveReturns' },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.ok(result.policySet.id);
     assert.equal(result.policySet.domain, 'returns');
   });
 
   it('registers inventoryRestock template', async () => {
-    const result = await callTool('register_policy_template', { templateName: 'inventoryRestock' }, engine);
+    const result = await callTool(
+      'register_policy_template',
+      { templateName: 'inventoryRestock' },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.policySet.domain, 'inventory');
   });
 
   it('registers orderFraudDetection template', async () => {
-    const result = await callTool('register_policy_template', { templateName: 'orderFraudDetection' }, engine);
+    const result = await callTool(
+      'register_policy_template',
+      { templateName: 'orderFraudDetection' },
+      engine,
+    );
     assert.equal(result.success, true);
   });
 
   it('registers promotionEligibility template', async () => {
-    const result = await callTool('register_policy_template', { templateName: 'promotionEligibility' }, engine);
+    const result = await callTool(
+      'register_policy_template',
+      { templateName: 'promotionEligibility' },
+      engine,
+    );
     assert.equal(result.success, true);
   });
 
   it('registers subscriptionRules template', async () => {
-    const result = await callTool('register_policy_template', { templateName: 'subscriptionRules' }, engine);
+    const result = await callTool(
+      'register_policy_template',
+      { templateName: 'subscriptionRules' },
+      engine,
+    );
     assert.equal(result.success, true);
   });
 });
@@ -310,35 +364,51 @@ describe('policy tools — explain_policy_denial', () => {
   });
 
   it('returns error when no policy engine', async () => {
-    const result = await callTool('explain_policy_denial', { domain: 'returns', context: {} }, null);
+    const result = await callTool(
+      'explain_policy_denial',
+      { domain: 'returns', context: {} },
+      null,
+    );
     assert.equal(result.success, false);
   });
 
   it('explains an allowed evaluation', async () => {
-    const result = await callTool('explain_policy_denial', {
-      domain: 'returns',
-      context: { return: { value: 50 } },
-    }, engine);
+    const result = await callTool(
+      'explain_policy_denial',
+      {
+        domain: 'returns',
+        context: { return: { value: 50 } },
+      },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.decision, 'allow');
     assert.ok(Array.isArray(result.breakdown));
   });
 
   it('explains a denied evaluation', async () => {
-    const result = await callTool('explain_policy_denial', {
-      domain: 'returns',
-      context: { return: { value: 200 } },
-    }, engine);
+    const result = await callTool(
+      'explain_policy_denial',
+      {
+        domain: 'returns',
+        context: { return: { value: 200 } },
+      },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.decision, 'deny');
     assert.ok(Array.isArray(result.breakdown));
   });
 
   it('explains unknown domain in deny mode', async () => {
-    const result = await callTool('explain_policy_denial', {
-      domain: 'nonexistent',
-      context: {},
-    }, engine);
+    const result = await callTool(
+      'explain_policy_denial',
+      {
+        domain: 'nonexistent',
+        context: {},
+      },
+      engine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.unknownDomain, true);
     assert.equal(result.decision, 'deny');
@@ -347,30 +417,42 @@ describe('policy tools — explain_policy_denial', () => {
 
   it('explains unknown domain in allow mode', async () => {
     const allowEngine = new PolicyEngine({ unknownDomainMode: 'allow' });
-    const result = await callTool('explain_policy_denial', {
-      domain: 'nonexistent',
-      context: {},
-    }, allowEngine);
+    const result = await callTool(
+      'explain_policy_denial',
+      {
+        domain: 'nonexistent',
+        context: {},
+      },
+      allowEngine,
+    );
     assert.equal(result.success, true);
     assert.equal(result.unknownDomain, true);
     assert.equal(result.decision, 'allow');
   });
 
   it('does not record in evaluation history (uses dry-run)', async () => {
-    await callTool('explain_policy_denial', {
-      domain: 'returns',
-      context: { return: { value: 50 } },
-    }, engine);
+    await callTool(
+      'explain_policy_denial',
+      {
+        domain: 'returns',
+        context: { return: { value: 50 } },
+      },
+      engine,
+    );
     // explain uses dry-run internally, so no history recorded for the explanation call
     const history = engine.getHistory();
     assert.equal(history.length, 0);
   });
 
   it('includes breakdown with conditions', async () => {
-    const result = await callTool('explain_policy_denial', {
-      domain: 'returns',
-      context: { return: { value: 200 } },
-    }, engine);
+    const result = await callTool(
+      'explain_policy_denial',
+      {
+        domain: 'returns',
+        context: { return: { value: 200 } },
+      },
+      engine,
+    );
     assert.ok(result.breakdown.length > 0);
     const deniedRule = result.breakdown.find((b) => b.ruleName === 'deny_large');
     assert.ok(deniedRule, 'deny_large rule should be in breakdown');

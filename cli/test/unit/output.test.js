@@ -30,13 +30,13 @@ describe('output', () => {
       it('should format data as table', () => {
         const data = [
           { id: '1', name: 'Alice', status: 'active' },
-          { id: '2', name: 'Bob', status: 'inactive' }
+          { id: '2', name: 'Bob', status: 'inactive' },
         ];
 
         const columns = [
           { key: 'id', header: 'ID' },
           { key: 'name', header: 'Name' },
-          { key: 'status', header: 'Status' }
+          { key: 'status', header: 'Status' },
         ];
 
         const result = output.table(data, columns);
@@ -65,11 +65,13 @@ describe('output', () => {
 
       it('should apply column formatters', () => {
         const data = [{ price: 100 }];
-        const columns = [{
-          key: 'price',
-          header: 'Price',
-          format: (val) => `$${val}`
-        }];
+        const columns = [
+          {
+            key: 'price',
+            header: 'Price',
+            format: (val) => `$${val}`,
+          },
+        ];
 
         const result = output.table(data, columns);
         assert.ok(result.includes('$100'));
@@ -79,7 +81,7 @@ describe('output', () => {
         const data = [{ id: '1', name: null }];
         const columns = [
           { key: 'id', header: 'ID' },
-          { key: 'name', header: 'Name' }
+          { key: 'name', header: 'Name' },
         ];
 
         const result = output.table(data, columns);
@@ -238,7 +240,7 @@ describe('output', () => {
       it('should format key-value pairs', () => {
         const result = output.keyValue({
           Name: 'Alice',
-          Email: 'alice@example.com'
+          Email: 'alice@example.com',
         });
 
         assert.ok(result.includes('Name'));
@@ -269,7 +271,6 @@ describe('output', () => {
         assert.ok(result.includes('Title'));
       });
     });
-
 
     describe('promptReport', () => {
       it('should format injected prompt budget details', () => {
@@ -358,7 +359,7 @@ describe('output', () => {
     it('should format array data as csv', () => {
       const data = [
         { id: 1, name: 'Alice' },
-        { id: 2, name: 'Bob' }
+        { id: 2, name: 'Bob' },
       ];
       const result = formatStructuredOutput(data, 'csv');
       assert.ok(result.startsWith('id,name'));

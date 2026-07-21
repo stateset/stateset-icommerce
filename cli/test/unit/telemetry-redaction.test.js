@@ -232,9 +232,7 @@ describe('telemetry redaction', () => {
       const input = {
         order: {
           id: 'ord-123',
-          items: [
-            { sku: 'WIDGET-001', qty: 2, price: 29.99 },
-          ],
+          items: [{ sku: 'WIDGET-001', qty: 2, price: 29.99 }],
           total: 59.98,
         },
       };
@@ -406,7 +404,9 @@ describe('telemetry redaction', () => {
       // logError emits 'error' on the EventEmitter — must attach a listener
       // to prevent ERR_UNHANDLED_ERROR
       let emitted = null;
-      tel.on('error', (record) => { emitted = record; });
+      tel.on('error', (record) => {
+        emitted = record;
+      });
       tel.logError(new Error('test error'), {
         apiKey: 'sk-secret',
         orderId: 'ord-123',

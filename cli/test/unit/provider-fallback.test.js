@@ -68,7 +68,11 @@ describe('CircuitBreaker', () => {
     const cb = new CircuitBreaker({ failureThreshold: 3 });
     cb.recordFailure('openai');
     cb.recordFailure('openai');
-    assert.strictEqual(cb.isAvailable('openai'), true, 'Should still be available after 2 failures');
+    assert.strictEqual(
+      cb.isAvailable('openai'),
+      true,
+      'Should still be available after 2 failures',
+    );
   });
 
   it('opens after reaching failure threshold', () => {
@@ -168,10 +172,9 @@ describe('FallbackChain', () => {
     registry.register(mock);
 
     const chain = new FallbackChain({ order: ['openai', 'gemini'] });
-    const result = await chain.chat(
-      [{ role: 'user', content: 'hello' }],
-      { preferredProvider: 'openai' },
-    );
+    const result = await chain.chat([{ role: 'user', content: 'hello' }], {
+      preferredProvider: 'openai',
+    });
 
     assert.strictEqual(result.provider, 'openai');
     assert.strictEqual(result.failedOver, false);
@@ -186,10 +189,9 @@ describe('FallbackChain', () => {
     registry.register(working);
 
     const chain = new FallbackChain({ order: ['openai', 'gemini'] });
-    const result = await chain.chat(
-      [{ role: 'user', content: 'hello' }],
-      { preferredProvider: 'openai' },
-    );
+    const result = await chain.chat([{ role: 'user', content: 'hello' }], {
+      preferredProvider: 'openai',
+    });
 
     assert.strictEqual(result.provider, 'gemini');
     assert.strictEqual(result.failedOver, true);
@@ -307,7 +309,11 @@ describe('FallbackChain.chatWithClaudeFallback', () => {
     const chain = new FallbackChain({ order: ['claude', 'openai'] });
 
     const result = await chain.chatWithClaudeFallback(
-      async () => ({ text: 'Claude response', model: 'claude-sonnet', usage: { inputTokens: 5, outputTokens: 10 } }),
+      async () => ({
+        text: 'Claude response',
+        model: 'claude-sonnet',
+        usage: { inputTokens: 5, outputTokens: 10 },
+      }),
       [{ role: 'user', content: 'hello' }],
     );
 
@@ -322,10 +328,9 @@ describe('FallbackChain.chatWithClaudeFallback', () => {
 
     const chain = new FallbackChain({ order: ['claude', 'openai'] });
 
-    const result = await chain.chatWithClaudeFallback(
-      async () => { throw new Error('Claude down'); },
-      [{ role: 'user', content: 'hello' }],
-    );
+    const result = await chain.chatWithClaudeFallback(async () => {
+      throw new Error('Claude down');
+    }, [{ role: 'user', content: 'hello' }]);
 
     assert.strictEqual(result.failedOver, true);
     assert.strictEqual(result.provider, 'openai');
@@ -340,10 +345,9 @@ describe('FallbackChain.chatWithClaudeFallback', () => {
       failureThreshold: 1,
     });
 
-    await chain.chatWithClaudeFallback(
-      async () => { throw new Error('Claude down'); },
-      [{ role: 'user', content: 'hello' }],
-    );
+    await chain.chatWithClaudeFallback(async () => {
+      throw new Error('Claude down');
+    }, [{ role: 'user', content: 'hello' }]);
 
     const status = chain.getCircuitStatus();
     assert.strictEqual(status.claude.state, 'open');
@@ -359,16 +363,15 @@ describe('FallbackChain.chatWithClaudeFallback', () => {
     });
 
     // Trip Claude's circuit
-    await chain.chatWithClaudeFallback(
-      async () => { throw new Error('Claude down'); },
-      [{ role: 'user', content: 'hello' }],
-    );
+    await chain.chatWithClaudeFallback(async () => {
+      throw new Error('Claude down');
+    }, [{ role: 'user', content: 'hello' }]);
 
     let claudeCalled = false;
-    const result = await chain.chatWithClaudeFallback(
-      async () => { claudeCalled = true; return { text: 'ok' }; },
-      [{ role: 'user', content: 'hello again' }],
-    );
+    const result = await chain.chatWithClaudeFallback(async () => {
+      claudeCalled = true;
+      return { text: 'ok' };
+    }, [{ role: 'user', content: 'hello again' }]);
 
     assert.strictEqual(claudeCalled, false, 'Claude should not be called when circuit is open');
     assert.strictEqual(result.provider, 'openai');

@@ -1,7 +1,10 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createStripeWebhookHandlers, getSupportedStripeEvents } from '../../src/adapters/stripe/webhooks.js';
+import {
+  createStripeWebhookHandlers,
+  getSupportedStripeEvents,
+} from '../../src/adapters/stripe/webhooks.js';
 
 // ---------------------------------------------------------------------------
 // Mock commerce and idMapStore
@@ -76,7 +79,15 @@ describe('stripe webhooks — handlers', () => {
   describe('payment_intent.succeeded', () => {
     it('creates a payment record', async () => {
       const result = await handlers['payment_intent.succeeded']({
-        data: { object: { id: 'pi_1', amount: 5000, currency: 'usd', status: 'succeeded', created: 1709251200 } },
+        data: {
+          object: {
+            id: 'pi_1',
+            amount: 5000,
+            currency: 'usd',
+            status: 'succeeded',
+            created: 1709251200,
+          },
+        },
       });
       assert.equal(result.action, 'created');
       assert.equal(result.externalId, 'pi_1');
@@ -86,7 +97,15 @@ describe('stripe webhooks — handlers', () => {
     it('skips duplicate payment', async () => {
       idMapStore.store('stripe', 'payments', 'pi_1', 'pay_existing', {});
       const result = await handlers['payment_intent.succeeded']({
-        data: { object: { id: 'pi_1', amount: 5000, currency: 'usd', status: 'succeeded', created: 1709251200 } },
+        data: {
+          object: {
+            id: 'pi_1',
+            amount: 5000,
+            currency: 'usd',
+            status: 'succeeded',
+            created: 1709251200,
+          },
+        },
       });
       assert.equal(result.action, 'skipped');
     });
@@ -105,14 +124,28 @@ describe('stripe webhooks — handlers', () => {
     it('updates existing payment on failure', async () => {
       idMapStore.store('stripe', 'payments', 'pi_1', 'pay_1', {});
       const result = await handlers['payment_intent.payment_failed']({
-        data: { object: { id: 'pi_1', amount: 5000, status: 'requires_payment_method', created: 1709251200 } },
+        data: {
+          object: {
+            id: 'pi_1',
+            amount: 5000,
+            status: 'requires_payment_method',
+            created: 1709251200,
+          },
+        },
       });
       assert.equal(result.action, 'updated');
     });
 
     it('records unknown failed payment', async () => {
       const result = await handlers['payment_intent.payment_failed']({
-        data: { object: { id: 'pi_new', amount: 5000, status: 'requires_payment_method', created: 1709251200 } },
+        data: {
+          object: {
+            id: 'pi_new',
+            amount: 5000,
+            status: 'requires_payment_method',
+            created: 1709251200,
+          },
+        },
       });
       assert.equal(result.action, 'recorded');
     });
@@ -129,7 +162,9 @@ describe('stripe webhooks — handlers', () => {
 
     it('skips unknown canceled payment', async () => {
       const result = await handlers['payment_intent.canceled']({
-        data: { object: { id: 'pi_unknown', amount: 5000, status: 'canceled', created: 1709251200 } },
+        data: {
+          object: { id: 'pi_unknown', amount: 5000, status: 'canceled', created: 1709251200 },
+        },
       });
       assert.equal(result.action, 'skipped');
     });
@@ -138,7 +173,15 @@ describe('stripe webhooks — handlers', () => {
   describe('charge.succeeded', () => {
     it('creates a charge record', async () => {
       const result = await handlers['charge.succeeded']({
-        data: { object: { id: 'ch_1', amount: 3000, currency: 'usd', status: 'succeeded', created: 1709251200 } },
+        data: {
+          object: {
+            id: 'ch_1',
+            amount: 3000,
+            currency: 'usd',
+            status: 'succeeded',
+            created: 1709251200,
+          },
+        },
       });
       assert.equal(result.action, 'created');
     });
@@ -151,7 +194,15 @@ describe('stripe webhooks — handlers', () => {
           object: {
             id: 'ch_1',
             refunds: {
-              data: [{ id: 're_1', amount: 1500, currency: 'usd', status: 'succeeded', created: 1709251200 }],
+              data: [
+                {
+                  id: 're_1',
+                  amount: 1500,
+                  currency: 'usd',
+                  status: 'succeeded',
+                  created: 1709251200,
+                },
+              ],
             },
           },
         },
@@ -190,7 +241,9 @@ describe('stripe webhooks — handlers', () => {
   describe('customer.created', () => {
     it('creates a customer', async () => {
       const result = await handlers['customer.created']({
-        data: { object: { id: 'cus_1', name: 'Bob', email: 'bob@example.com', created: 1709251200 } },
+        data: {
+          object: { id: 'cus_1', name: 'Bob', email: 'bob@example.com', created: 1709251200 },
+        },
       });
       assert.equal(result.action, 'created');
       assert.equal(commerce._records.customers.length, 1);

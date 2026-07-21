@@ -78,10 +78,7 @@ async function request(url, opts = {}) {
       });
     } catch (error) {
       lastError = error;
-      if (
-        !TRANSIENT_REQUEST_ERROR_CODES.has(error?.code) ||
-        attempt === maxAttempts
-      ) {
+      if (!TRANSIENT_REQUEST_ERROR_CODES.has(error?.code) || attempt === maxAttempts) {
         throw error;
       }
       await delay(15 * attempt);
@@ -99,10 +96,7 @@ async function startGateway(gateway, maxAttempts = 5) {
       return await gateway.start();
     } catch (error) {
       lastError = error;
-      if (
-        !TRANSIENT_GATEWAY_START_ERROR_CODES.has(error?.code) ||
-        attempt === maxAttempts
-      ) {
+      if (!TRANSIENT_GATEWAY_START_ERROR_CODES.has(error?.code) || attempt === maxAttempts) {
         throw error;
       }
       await delay(25 * attempt);
@@ -672,7 +666,10 @@ describe('HttpGateway plugin payment routes', () => {
     assert.ok(res.body.paths['/health'].get);
     assert.ok(res.body.paths['/memory/stats'].get);
     assert.ok(res.body.paths['/heartbeat/checks/{id}/run'].post);
-    assert.strictEqual(res.body.paths['/browser/evaluate'].post['x-stateset-permission-level'], 'admin');
+    assert.strictEqual(
+      res.body.paths['/browser/evaluate'].post['x-stateset-permission-level'],
+      'admin',
+    );
     assert.strictEqual(res.body.paths['/payable'].post['x-payment-info'].amount.asset, 'BTC');
     assert.strictEqual(res.body.paths['/headers'].get['x-payment-info'], undefined);
   });

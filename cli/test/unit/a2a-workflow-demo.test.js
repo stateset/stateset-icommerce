@@ -9,7 +9,11 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { A2AStore } from '../../src/a2a/store.js';
 import { makeCommerceProxy } from '../../src/a2a/agent-runtime.js';
-import { runWorkflowPipeline, runDemoScenario, DEMO_SCENARIOS } from '../../src/a2a/demo-scenarios.js';
+import {
+  runWorkflowPipeline,
+  runDemoScenario,
+  DEMO_SCENARIOS,
+} from '../../src/a2a/demo-scenarios.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,7 +42,13 @@ describe('a2a-workflow-demo — DEMO_SCENARIOS registry', () => {
 
   it('DEMO_SCENARIOS contains exactly the expected 5 scenarios', () => {
     assert.strictEqual(DEMO_SCENARIOS.length, 5);
-    const expected = ['basic-negotiation', 'marketplace', 'escrow-deal', 'rfq-competition', 'workflow-pipeline'];
+    const expected = [
+      'basic-negotiation',
+      'marketplace',
+      'escrow-deal',
+      'rfq-competition',
+      'workflow-pipeline',
+    ];
     for (const name of expected) {
       assert.ok(DEMO_SCENARIOS.includes(name), `Missing scenario: ${name}`);
     }
@@ -106,7 +116,10 @@ describe('a2a-workflow-demo — runWorkflowPipeline return shape', () => {
 
   it('returns a status string', () => {
     assert.strictEqual(typeof result.status, 'string');
-    assert.ok(['completed', 'failed'].includes(result.status), `Unexpected status: ${result.status}`);
+    assert.ok(
+      ['completed', 'failed'].includes(result.status),
+      `Unexpected status: ${result.status}`,
+    );
   });
 
   it('returns totalCost as a number', () => {
@@ -195,7 +208,10 @@ describe('a2a-workflow-demo — step details structure', () => {
   it('step status is a recognized value', () => {
     const validStatuses = new Set(['pending', 'running', 'completed', 'failed']);
     for (const step of result.stepDetails) {
-      assert.ok(validStatuses.has(step.status), `Unexpected status "${step.status}" for step "${step.name}"`);
+      assert.ok(
+        validStatuses.has(step.status),
+        `Unexpected status "${step.status}" for step "${step.name}"`,
+      );
     }
   });
 
@@ -232,7 +248,9 @@ describe('a2a-workflow-demo — custom log function', () => {
   it('log messages reference workflow pipeline', async () => {
     const logs = [];
     await runWorkflowPipeline(commerce, { log: (msg) => logs.push(msg) });
-    const pipelineLogs = logs.filter((m) => typeof m === 'string' && m.toLowerCase().includes('pipeline'));
+    const pipelineLogs = logs.filter(
+      (m) => typeof m === 'string' && m.toLowerCase().includes('pipeline'),
+    );
     assert.ok(pipelineLogs.length > 0, 'Expected log messages referencing pipeline');
   });
 });

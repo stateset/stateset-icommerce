@@ -78,7 +78,11 @@ describe('Vector Tools — definitions', () => {
 
   it('every tool has a handler function', () => {
     for (const tool of vectorTools) {
-      assert.strictEqual(typeof tool.handler, 'function', `${tool.name} handler should be a function`);
+      assert.strictEqual(
+        typeof tool.handler,
+        'function',
+        `${tool.name} handler should be a function`,
+      );
     }
   });
 });
@@ -197,7 +201,14 @@ describe('Vector Tools — handler blocks writes when allowApply is false', () =
       const tool = findTool(name);
       const result = await tool.handler({
         commerce: {},
-        params: { query: 'x', product_id: 'x', customer_id: 'x', order_id: 'x', item_id: 'x', entity_type: 'products' },
+        params: {
+          query: 'x',
+          product_id: 'x',
+          customer_id: 'x',
+          order_id: 'x',
+          item_id: 'x',
+          entity_type: 'products',
+        },
         allowApply: false,
       });
       assert.strictEqual(result.success, false);

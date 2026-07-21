@@ -47,10 +47,7 @@ describe('applyRequired — operation name', () => {
 
   it('includes "requires --apply" phrasing', () => {
     const result = applyRequired('Approve return');
-    assert.ok(
-      result.error.includes('--apply'),
-      `error "${result.error}" should include "--apply"`,
-    );
+    assert.ok(result.error.includes('--apply'), `error "${result.error}" should include "--apply"`);
   });
 
   it('works with different operation names', () => {
@@ -64,10 +61,7 @@ describe('applyRequired — operation name', () => {
     for (const op of operations) {
       const result = applyRequired(op);
       assert.strictEqual(result.success, false);
-      assert.ok(
-        result.error.includes(op),
-        `error for "${op}" should include the operation name`,
-      );
+      assert.ok(result.error.includes(op), `error for "${op}" should include the operation name`);
     }
   });
 });

@@ -116,11 +116,13 @@ function createMockSettlement(overrides = {}) {
       },
       async getBalance() {
         calls.getBalance.push(true);
-        return overrides.balanceResult || {
-          balance: '100.0',
-          balanceSmallest: 100000000n,
-          symbol: overrides.symbol || 'BTC',
-        };
+        return (
+          overrides.balanceResult || {
+            balance: '100.0',
+            balanceSmallest: 100000000n,
+            symbol: overrides.symbol || 'BTC',
+          }
+        );
       },
       async getAddress() {
         calls.getAddress.push(true);

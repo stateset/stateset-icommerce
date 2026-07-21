@@ -720,6 +720,106 @@ impl From<stateset_core::Customer> for CustomerOutput {
     }
 }
 
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateCustomerInput {
+    pub email: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub phone: Option<String>,
+    pub status: Option<String>,
+    pub accepts_marketing: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateCustomerAddressInput {
+    pub customer_id: String,
+    pub address_type: Option<String>,
+    pub first_name: String,
+    pub last_name: String,
+    pub company: Option<String>,
+    pub line1: String,
+    pub line2: Option<String>,
+    pub city: String,
+    pub state: Option<String>,
+    pub postal_code: String,
+    pub country: String,
+    pub phone: Option<String>,
+    pub is_default: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CustomerAddressOutput {
+    pub id: String,
+    pub customer_id: String,
+    pub address_type: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub company: Option<String>,
+    pub line1: String,
+    pub line2: Option<String>,
+    pub city: String,
+    pub state: Option<String>,
+    pub postal_code: String,
+    pub country: String,
+    pub phone: Option<String>,
+    pub is_default: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::CustomerAddress> for CustomerAddressOutput {
+    fn from(a: stateset_core::CustomerAddress) -> Self {
+        Self {
+            id: a.id.to_string(),
+            customer_id: a.customer_id.to_string(),
+            address_type: format!("{}", a.address_type),
+            first_name: a.first_name,
+            last_name: a.last_name,
+            company: a.company,
+            line1: a.line1,
+            line2: a.line2,
+            city: a.city,
+            state: a.state,
+            postal_code: a.postal_code,
+            country: a.country,
+            phone: a.phone,
+            is_default: a.is_default,
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+fn create_customer_address_from_input(
+    input: CreateCustomerAddressInput,
+) -> Result<stateset_core::CreateCustomerAddress> {
+    let customer_id: uuid::Uuid =
+        input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+    let address_type = input
+        .address_type
+        .map(|s| s.parse::<stateset_core::AddressType>())
+        .transpose()
+        .map_err(|_| Error::from_reason("Invalid address type"))?;
+    Ok(stateset_core::CreateCustomerAddress {
+        customer_id: customer_id.into(),
+        address_type,
+        first_name: input.first_name,
+        last_name: input.last_name,
+        company: input.company,
+        line1: input.line1,
+        line2: input.line2,
+        city: input.city,
+        state: input.state,
+        postal_code: input.postal_code,
+        country: input.country,
+        phone: input.phone,
+        is_default: input.is_default,
+    })
+}
+
 #[napi]
 pub struct Customers {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -789,6 +889,136 @@ impl Customers {
             .map_err(|e| Error::from_reason(format!("Failed to count customers: {}", e)))?;
 
         Ok(count as u32)
+    }
+
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateCustomerInput) -> Result<CustomerOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let status = input
+            .status
+            .map(|s| s.parse::<stateset_core::CustomerStatus>())
+            .transpose()
+            .map_err(|_| Error::from_reason("Invalid customer status"))?;
+        let customer = commerce
+            .customers()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateCustomer {
+                    email: input.email,
+                    first_name: input.first_name,
+                    last_name: input.last_name,
+                    phone: input.phone,
+                    status,
+                    accepts_marketing: input.accepts_marketing,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update customer: {}", e)))?;
+        Ok(customer.into())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .customers()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete customer: {}", e)))?;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn find_or_create(&self, input: CreateCustomerInput) -> Result<CustomerOutput> {
+        let commerce = self.commerce.lock().await;
+        let customer = commerce
+            .customers()
+            .find_or_create(stateset_core::CreateCustomer {
+                email: input.email,
+                first_name: input.first_name,
+                last_name: input.last_name,
+                phone: input.phone,
+                accepts_marketing: input.accepts_marketing,
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to find or create customer: {}", e)))?;
+        Ok(customer.into())
+    }
+
+    #[napi]
+    pub async fn add_address(
+        &self,
+        input: CreateCustomerAddressInput,
+    ) -> Result<CustomerAddressOutput> {
+        let commerce = self.commerce.lock().await;
+        let address = commerce
+            .customers()
+            .add_address(create_customer_address_from_input(input)?)
+            .map_err(|e| Error::from_reason(format!("Failed to add address: {}", e)))?;
+        Ok(address.into())
+    }
+
+    #[napi]
+    pub async fn get_addresses(&self, customer_id: String) -> Result<Vec<CustomerAddressOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let addresses = commerce
+            .customers()
+            .get_addresses(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get addresses: {}", e)))?;
+        Ok(addresses.into_iter().map(|a| a.into()).collect())
+    }
+
+    #[napi]
+    pub async fn update_address(
+        &self,
+        address_id: String,
+        input: CreateCustomerAddressInput,
+    ) -> Result<CustomerAddressOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            address_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let address = commerce
+            .customers()
+            .update_address(uuid, create_customer_address_from_input(input)?)
+            .map_err(|e| Error::from_reason(format!("Failed to update address: {}", e)))?;
+        Ok(address.into())
+    }
+
+    #[napi]
+    pub async fn delete_address(&self, address_id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            address_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .customers()
+            .delete_address(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to delete address: {}", e)))?;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn set_default_address(
+        &self,
+        customer_id: String,
+        address_id: String,
+        address_type: String,
+    ) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let cust: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let addr: uuid::Uuid =
+            address_id.parse().map_err(|_| Error::from_reason("Invalid address UUID"))?;
+        let atype = address_type
+            .parse::<stateset_core::AddressType>()
+            .map_err(|_| Error::from_reason("Invalid address type"))?;
+        commerce
+            .customers()
+            .set_default_address(cust.into(), addr, atype)
+            .map_err(|e| Error::from_reason(format!("Failed to set default address: {}", e)))?;
+        Ok(())
     }
 }
 
@@ -1091,6 +1321,30 @@ impl TryFrom<stateset_core::ProductVariant> for ProductVariantOutput {
     }
 }
 
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateProductInput {
+    pub name: Option<String>,
+    pub slug: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<String>,
+}
+
+fn create_variant_from_input(
+    v: CreateProductVariantInput,
+) -> Result<stateset_core::CreateProductVariant> {
+    Ok(stateset_core::CreateProductVariant {
+        sku: v.sku,
+        name: v.name,
+        price: decimal_from_f64(v.price, "variant price")?,
+        compare_at_price: optional_decimal_from_f64(
+            v.compare_at_price,
+            "variant compare at price",
+        )?,
+        ..Default::default()
+    })
+}
+
 #[napi]
 pub struct Products {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -1179,6 +1433,150 @@ impl Products {
             .map_err(|e| Error::from_reason(format!("Failed to count products: {}", e)))?;
 
         Ok(count as u32)
+    }
+
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateProductInput) -> Result<ProductOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let status = input
+            .status
+            .map(|s| s.parse::<stateset_core::ProductStatus>())
+            .transpose()
+            .map_err(|_| Error::from_reason("Invalid product status"))?;
+        let product = commerce
+            .products()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateProduct {
+                    name: input.name,
+                    slug: input.slug,
+                    description: input.description,
+                    status,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update product: {}", e)))?;
+        Ok(product.into())
+    }
+
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .products()
+            .delete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to delete product: {}", e)))?;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn get_by_slug(&self, slug: String) -> Result<Option<ProductOutput>> {
+        let commerce = self.commerce.lock().await;
+        let product = commerce
+            .products()
+            .get_by_slug(&slug)
+            .map_err(|e| Error::from_reason(format!("Failed to get product: {}", e)))?;
+        Ok(product.map(|p| p.into()))
+    }
+
+    #[napi]
+    pub async fn activate(&self, id: String) -> Result<ProductOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let product = commerce
+            .products()
+            .activate(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to activate product: {}", e)))?;
+        Ok(product.into())
+    }
+
+    #[napi]
+    pub async fn archive(&self, id: String) -> Result<ProductOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let product = commerce
+            .products()
+            .archive(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to archive product: {}", e)))?;
+        Ok(product.into())
+    }
+
+    #[napi]
+    pub async fn search(&self, query: String) -> Result<Vec<ProductOutput>> {
+        let commerce = self.commerce.lock().await;
+        let products = commerce
+            .products()
+            .search(&query)
+            .map_err(|e| Error::from_reason(format!("Failed to search products: {}", e)))?;
+        Ok(products.into_iter().map(|p| p.into()).collect())
+    }
+
+    #[napi]
+    pub async fn get_variant(&self, id: String) -> Result<Option<ProductVariantOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let variant = commerce
+            .products()
+            .get_variant(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get variant: {}", e)))?;
+        convert_optional_output(variant)
+    }
+
+    #[napi]
+    pub async fn get_variants(&self, product_id: String) -> Result<Vec<ProductVariantOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let variants = commerce
+            .products()
+            .get_variants(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to get variants: {}", e)))?;
+        variants.into_iter().map(|v| v.try_into()).collect::<Result<Vec<_>>>()
+    }
+
+    #[napi]
+    pub async fn add_variant(
+        &self,
+        product_id: String,
+        input: CreateProductVariantInput,
+    ) -> Result<ProductVariantOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let variant = commerce
+            .products()
+            .add_variant(uuid.into(), create_variant_from_input(input)?)
+            .map_err(|e| Error::from_reason(format!("Failed to add variant: {}", e)))?;
+        variant.try_into()
+    }
+
+    #[napi]
+    pub async fn update_variant(
+        &self,
+        id: String,
+        input: CreateProductVariantInput,
+    ) -> Result<ProductVariantOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let variant =
+            commerce
+                .products()
+                .update_variant(uuid, create_variant_from_input(input)?)
+                .map_err(|e| Error::from_reason(format!("Failed to update variant: {}", e)))?;
+        variant.try_into()
+    }
+
+    #[napi]
+    pub async fn delete_variant(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        commerce
+            .products()
+            .delete_variant(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to delete variant: {}", e)))?;
+        Ok(())
     }
 }
 
@@ -1963,6 +2361,84 @@ impl Returns {
             .map_err(|e| Error::from_reason(format!("Failed to count returns: {}", e)))?;
 
         Ok(count as u32)
+    }
+
+    #[napi]
+    pub async fn list_for_order(&self, order_id: String) -> Result<Vec<ReturnOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            order_id.parse().map_err(|_| Error::from_reason("Invalid order UUID"))?;
+        let returns = commerce
+            .returns()
+            .list_for_order(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to list returns: {}", e)))?;
+        Ok(returns.into_iter().map(|r| r.into()).collect())
+    }
+
+    #[napi]
+    pub async fn list_for_customer(&self, customer_id: String) -> Result<Vec<ReturnOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let returns = commerce
+            .returns()
+            .list_for_customer(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to list returns: {}", e)))?;
+        Ok(returns.into_iter().map(|r| r.into()).collect())
+    }
+
+    #[napi]
+    pub async fn list_pending(&self) -> Result<Vec<ReturnOutput>> {
+        let commerce = self.commerce.lock().await;
+        let returns = commerce
+            .returns()
+            .list_pending()
+            .map_err(|e| Error::from_reason(format!("Failed to list pending returns: {}", e)))?;
+        Ok(returns.into_iter().map(|r| r.into()).collect())
+    }
+
+    #[napi]
+    pub async fn mark_received(&self, id: String) -> Result<ReturnOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let ret = commerce
+            .returns()
+            .mark_received(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to mark return received: {}", e)))?;
+        Ok(ret.into())
+    }
+
+    #[napi]
+    pub async fn complete(&self, id: String) -> Result<ReturnOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let ret = commerce
+            .returns()
+            .complete(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to complete return: {}", e)))?;
+        Ok(ret.into())
+    }
+
+    #[napi]
+    pub async fn cancel(&self, id: String) -> Result<ReturnOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let ret = commerce
+            .returns()
+            .cancel(uuid.into())
+            .map_err(|e| Error::from_reason(format!("Failed to cancel return: {}", e)))?;
+        Ok(ret.into())
+    }
+
+    #[napi]
+    pub async fn add_tracking(&self, id: String, tracking_number: String) -> Result<ReturnOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let ret = commerce
+            .returns()
+            .add_tracking(uuid.into(), &tracking_number)
+            .map_err(|e| Error::from_reason(format!("Failed to add tracking: {}", e)))?;
+        Ok(ret.into())
     }
 }
 

@@ -356,7 +356,8 @@ describe('sync_verify_inclusion — Handler', () => {
     // Instead, let's build leaf0 from known payloadPlainHash + agentSignature
     const payloadPlainHash = crypto.randomBytes(32);
     const agentSignature = crypto.randomBytes(64);
-    const computedLeaf = crypto.createHash('sha256')
+    const computedLeaf = crypto
+      .createHash('sha256')
       .update(payloadPlainHash)
       .update(agentSignature)
       .digest();
@@ -382,7 +383,8 @@ describe('sync_verify_inclusion — Handler', () => {
   it('verifies a valid 2-leaf Merkle inclusion proof (leaf 1)', async () => {
     const payloadPlainHash = crypto.randomBytes(32);
     const agentSignature = crypto.randomBytes(64);
-    const computedLeaf = crypto.createHash('sha256')
+    const computedLeaf = crypto
+      .createHash('sha256')
       .update(payloadPlainHash)
       .update(agentSignature)
       .digest();
@@ -429,7 +431,8 @@ describe('sync_verify_inclusion — Handler', () => {
   it('rejects an invalid Merkle proof (wrong sibling)', async () => {
     const payloadPlainHash = crypto.randomBytes(32);
     const agentSignature = crypto.randomBytes(64);
-    const computedLeaf = crypto.createHash('sha256')
+    const computedLeaf = crypto
+      .createHash('sha256')
       .update(payloadPlainHash)
       .update(agentSignature)
       .digest();
@@ -455,7 +458,7 @@ describe('sync_verify_inclusion — Handler', () => {
   it('verifies a 4-leaf tree inclusion proof', async () => {
     // Build 4 leaves
     const leaves = Array.from({ length: 4 }, (_, i) =>
-      crypto.createHash('sha256').update(`leaf-${i}`).digest()
+      crypto.createHash('sha256').update(`leaf-${i}`).digest(),
     );
     // Level 1
     const node01 = computeNodeHash(leaves[0], leaves[1]);
@@ -540,7 +543,9 @@ describe('sync_inspect_commitment — Handler', () => {
       const tool = findTool('sync_inspect_commitment');
       const result = await tool.handler({ params: { batchId: 'batch-001' } });
       assert.equal(result.success, false);
-      assert.ok(result.error.includes('not configured') || result.error.includes('Sync not configured'));
+      assert.ok(
+        result.error.includes('not configured') || result.error.includes('Sync not configured'),
+      );
     } finally {
       process.chdir(origCwd);
       await fs.rm(tempPath, { recursive: true, force: true });
@@ -571,7 +576,11 @@ describe('VES Tools — All registered', () => {
   });
 
   it('all VES tools have handlers', () => {
-    for (const name of ['sync_verify_receipt', 'sync_verify_inclusion', 'sync_inspect_commitment']) {
+    for (const name of [
+      'sync_verify_receipt',
+      'sync_verify_inclusion',
+      'sync_inspect_commitment',
+    ]) {
       const tool = findTool(name);
       assert.equal(typeof tool.handler, 'function', `${name} handler should be a function`);
     }

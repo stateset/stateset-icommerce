@@ -176,7 +176,10 @@ describe('stateset-setup wizard', () => {
       const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       assert.ok(parsed.mcpServers, 'should include mcpServers');
       assert.ok(parsed.mcpServers['stateset-commerce'], 'should include stateset-commerce server');
-      assert.equal(parsed.mcpServers['stateset-commerce'].env.DB_PATH, path.join(testHome, 'store.db'));
+      assert.equal(
+        parsed.mcpServers['stateset-commerce'].env.DB_PATH,
+        path.join(testHome, 'store.db'),
+      );
     });
 
     it('merges into an existing MCP config file', () => {
@@ -226,10 +229,9 @@ describe('stateset-setup wizard', () => {
 
   describe('starter packs', () => {
     it('installs starter pack policies and prompt artifacts', () => {
-      const result = runSetup(
-        ['--starter-pack', 'ops', '--db', './tenant/store.db'],
-        { ANTHROPIC_API_KEY: 'sk-ant-test' },
-      );
+      const result = runSetup(['--starter-pack', 'ops', '--db', './tenant/store.db'], {
+        ANTHROPIC_API_KEY: 'sk-ant-test',
+      });
       assert.equal(result.exitCode, 0);
 
       const policyBase = path.join(testHome, 'tenant', '.stateset');
@@ -246,10 +248,9 @@ describe('stateset-setup wizard', () => {
     });
 
     it('returns starter pack metadata in JSON mode', () => {
-      const result = runSetup(
-        ['--json', '--starter-pack', 'checkout', '--print-starter'],
-        { ANTHROPIC_API_KEY: 'sk-ant-test' },
-      );
+      const result = runSetup(['--json', '--starter-pack', 'checkout', '--print-starter'], {
+        ANTHROPIC_API_KEY: 'sk-ant-test',
+      });
       assert.equal(result.exitCode, 0);
       const parsed = JSON.parse(result.stdout);
       const starterStep = parsed.steps.find((s) => s.name === 'starter_pack');
@@ -279,7 +280,13 @@ describe('stateset-setup wizard', () => {
       );
       assert.equal(result.exitCode, 0);
 
-      const handoffPath = path.join(testHome, 'tenant', '.stateset', 'agent-starters', 'handoff.json');
+      const handoffPath = path.join(
+        testHome,
+        'tenant',
+        '.stateset',
+        'agent-starters',
+        'handoff.json',
+      );
       assert.ok(fs.existsSync(handoffPath), 'should create handoff bundle');
 
       const parsed = JSON.parse(fs.readFileSync(handoffPath, 'utf8'));
@@ -288,14 +295,28 @@ describe('stateset-setup wizard', () => {
       assert.ok(parsed.starterPack, 'should include starter pack section');
       assert.ok(parsed.launch, 'should include launch section');
       assert.ok(
-        typeof parsed.launch.startCommand === 'string' && parsed.launch.startCommand.includes('start-mcp.sh'),
+        typeof parsed.launch.startCommand === 'string' &&
+          parsed.launch.startCommand.includes('start-mcp.sh'),
       );
       assert.ok(
-        typeof parsed.launch.checkCommand === 'string' && parsed.launch.checkCommand.includes('check-mcp.sh'),
+        typeof parsed.launch.checkCommand === 'string' &&
+          parsed.launch.checkCommand.includes('check-mcp.sh'),
       );
 
-      const launchStart = path.join(testHome, 'tenant', '.stateset', 'agent-starters', 'start-mcp.sh');
-      const launchCheck = path.join(testHome, 'tenant', '.stateset', 'agent-starters', 'check-mcp.sh');
+      const launchStart = path.join(
+        testHome,
+        'tenant',
+        '.stateset',
+        'agent-starters',
+        'start-mcp.sh',
+      );
+      const launchCheck = path.join(
+        testHome,
+        'tenant',
+        '.stateset',
+        'agent-starters',
+        'check-mcp.sh',
+      );
       assert.ok(fs.existsSync(launchStart), 'should create start-mcp.sh');
       assert.ok(fs.existsSync(launchCheck), 'should create check-mcp.sh');
     });

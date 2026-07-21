@@ -784,7 +784,11 @@ describe('A2A tools reuse active runtimes for native settlement', () => {
             return { confirmed: true, block_height: 210, block_time: 1_710_000_210 };
           },
           async text() {
-            return JSON.stringify({ confirmed: true, block_height: 210, block_time: 1_710_000_210 });
+            return JSON.stringify({
+              confirmed: true,
+              block_height: 210,
+              block_time: 1_710_000_210,
+            });
           },
         };
       }
@@ -1002,7 +1006,9 @@ describe('A2A tools reuse active runtimes for native settlement', () => {
     assert.equal(result.balance.summarySource, 'store_aggregate');
     assert.ok(Math.abs(result.balance.breakdownByAsset.BTC.totalSent - 0.003) < 1e-12);
     assert.ok(Math.abs(result.balance.breakdownByAsset.BTC.totalReceived - 0.001) < 1e-12);
-    assert.ok(Math.abs(result.balance.breakdownByAsset.BTC.networks.bitcoin.netFlow + 0.002) < 1e-12);
+    assert.ok(
+      Math.abs(result.balance.breakdownByAsset.BTC.networks.bitcoin.netFlow + 0.002) < 1e-12,
+    );
   });
 
   it('a2a_settlement_finality_metrics computes persisted metrics for filtered bitcoin payments', async () => {
@@ -1136,7 +1142,11 @@ describe('A2A tools reuse active runtimes for native settlement', () => {
             return { confirmed: true, block_height: 420, block_time: 1_710_000_420 };
           },
           async text() {
-            return JSON.stringify({ confirmed: true, block_height: 420, block_time: 1_710_000_420 });
+            return JSON.stringify({
+              confirmed: true,
+              block_height: 420,
+              block_time: 1_710_000_420,
+            });
           },
         };
       }
@@ -1252,7 +1262,11 @@ describe('A2A tools reuse active runtimes for native settlement', () => {
             return { confirmed: true, block_height: 220, block_time: 1_710_000_220 };
           },
           async text() {
-            return JSON.stringify({ confirmed: true, block_height: 220, block_time: 1_710_000_220 });
+            return JSON.stringify({
+              confirmed: true,
+              block_height: 220,
+              block_time: 1_710_000_220,
+            });
           },
         };
       }
@@ -1348,7 +1362,11 @@ describe('A2A tools reuse active runtimes for native settlement', () => {
             return { confirmed: true, block_height: 230, block_time: 1_710_000_230 };
           },
           async text() {
-            return JSON.stringify({ confirmed: true, block_height: 230, block_time: 1_710_000_230 });
+            return JSON.stringify({
+              confirmed: true,
+              block_height: 230,
+              block_time: 1_710_000_230,
+            });
           },
         };
       }

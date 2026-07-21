@@ -65,7 +65,9 @@ function createMockCommerce() {
       paymentRequests.set(id, updated);
       return { ...updated };
     }),
-    listPaymentRequests: mock.fn(async () => [...paymentRequests.values()].map((request) => ({ ...request }))),
+    listPaymentRequests: mock.fn(async () =>
+      [...paymentRequests.values()].map((request) => ({ ...request })),
+    ),
     createQuote: mock.fn(async (quote) => {
       quotes.set(quote.id, { ...quote });
       return { ...quote };
@@ -175,7 +177,10 @@ describe('A2A network routing', () => {
     assert.equal(payments[0].network, 'zcash');
     assert.equal(payments[0].asset, 'ZEC');
     assert.equal(payments[0].recipient_address, SELLER_ZCASH);
-    assert.equal(JSON.parse(paymentRequests.get(request.request.id).metadata).requester_payment_address, SELLER_ZCASH);
+    assert.equal(
+      JSON.parse(paymentRequests.get(request.request.id).metadata).requester_payment_address,
+      SELLER_ZCASH,
+    );
   });
 
   it('stores and exposes the requested quote network', async () => {
@@ -352,7 +357,11 @@ describe('A2A network routing', () => {
             return { confirmed: true, block_height: 120, block_time: 1_710_000_120 };
           },
           async text() {
-            return JSON.stringify({ confirmed: true, block_height: 120, block_time: 1_710_000_120 });
+            return JSON.stringify({
+              confirmed: true,
+              block_height: 120,
+              block_time: 1_710_000_120,
+            });
           },
         };
       }
@@ -494,7 +503,9 @@ describe('A2A network routing', () => {
     assert.ok(Math.abs(balance.breakdownByAsset.BTC.totalReceived - 0.004) < 1e-12);
     assert.ok(Math.abs(balance.breakdownByAsset.BTC.netFlow + 0.006) < 1e-12);
     assert.ok(Math.abs(balance.breakdownByAsset.BTC.networks.bitcoin.totalSent - 0.01) < 1e-12);
-    assert.ok(Math.abs(balance.breakdownByAsset.BTC.networks.bitcoin.totalReceived - 0.004) < 1e-12);
+    assert.ok(
+      Math.abs(balance.breakdownByAsset.BTC.networks.bitcoin.totalReceived - 0.004) < 1e-12,
+    );
     assert.ok(Math.abs(balance.breakdownByAsset.ZEC.totalSent - 1.25) < 1e-12);
     assert.equal(balance.breakdownByAsset.ZEC.totalReceived, 0);
     assert.ok(Math.abs(balance.breakdownByAsset.ZEC.networks.zcash.totalSent - 1.25) < 1e-12);

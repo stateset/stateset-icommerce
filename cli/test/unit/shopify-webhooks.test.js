@@ -1,7 +1,10 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createShopifyWebhookHandlers, getSupportedTopics } from '../../src/adapters/shopify/webhooks.js';
+import {
+  createShopifyWebhookHandlers,
+  getSupportedTopics,
+} from '../../src/adapters/shopify/webhooks.js';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -143,7 +146,13 @@ describe('webhook: customers/create', () => {
   it('skips if customer already exists in id_map', async () => {
     idMapStore.store('shopify', 'customers', '1001', 'existing-id');
 
-    const payload = { id: 1001, email: 'test@example.com', first_name: 'Test', last_name: 'User', state: 'enabled' };
+    const payload = {
+      id: 1001,
+      email: 'test@example.com',
+      first_name: 'Test',
+      last_name: 'User',
+      state: 'enabled',
+    };
     const result = await handlers['customers/create'](payload);
     assert.equal(result.action, 'skipped');
     assert.equal(result.statesetId, 'existing-id');
@@ -167,14 +176,26 @@ describe('webhook: customers/update', () => {
   it('updates an existing customer mapping', async () => {
     idMapStore.store('shopify', 'customers', '1001', 'existing-id');
 
-    const payload = { id: 1001, email: 'updated@example.com', first_name: 'Updated', last_name: 'User', state: 'enabled' };
+    const payload = {
+      id: 1001,
+      email: 'updated@example.com',
+      first_name: 'Updated',
+      last_name: 'User',
+      state: 'enabled',
+    };
     const result = await handlers['customers/update'](payload);
     assert.equal(result.action, 'updated');
     assert.equal(result.statesetId, 'existing-id');
   });
 
   it('creates customer if not exists', async () => {
-    const payload = { id: 1001, email: 'new@example.com', first_name: 'New', last_name: 'User', state: 'enabled' };
+    const payload = {
+      id: 1001,
+      email: 'new@example.com',
+      first_name: 'New',
+      last_name: 'User',
+      state: 'enabled',
+    };
     const result = await handlers['customers/update'](payload);
     assert.equal(result.action, 'created');
     assert.equal(commerce._store.customers.length, 1);
@@ -213,7 +234,13 @@ describe('webhook: products/create', () => {
   it('skips if product already exists', async () => {
     idMapStore.store('shopify', 'products', '2001', 'existing-prod');
 
-    const payload = { id: 2001, title: 'Existing', handle: 'existing', status: 'active', variants: [] };
+    const payload = {
+      id: 2001,
+      title: 'Existing',
+      handle: 'existing',
+      status: 'active',
+      variants: [],
+    };
     const result = await handlers['products/create'](payload);
     assert.equal(result.action, 'skipped');
     assert.equal(commerce._store.products.length, 0);
@@ -236,7 +263,13 @@ describe('webhook: products/update', () => {
   it('updates existing product mapping', async () => {
     idMapStore.store('shopify', 'products', '2001', 'existing-prod');
 
-    const payload = { id: 2001, title: 'Updated', handle: 'updated', status: 'active', variants: [] };
+    const payload = {
+      id: 2001,
+      title: 'Updated',
+      handle: 'updated',
+      status: 'active',
+      variants: [],
+    };
     const result = await handlers['products/update'](payload);
     assert.equal(result.action, 'updated');
   });

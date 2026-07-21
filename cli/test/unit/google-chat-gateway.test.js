@@ -47,7 +47,7 @@ describe('Google Chat Gateway', () => {
 
     it('source imports createSessionManager from channels/base', () => {
       assert.ok(source.includes('createSessionManager'));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
@@ -56,12 +56,12 @@ describe('Google Chat Gateway', () => {
 
     it('source imports getNotifier from channels/notifier', () => {
       assert.ok(source.includes('getNotifier'));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('source imports richMessageToPlainText for fallback', () => {
       assert.ok(source.includes('richMessageToPlainText'));
-      assert.ok(source.includes("../channels/rich-messages.js"));
+      assert.ok(source.includes('../channels/rich-messages.js'));
     });
 
     it('dynamically imports googleapis SDK', () => {
@@ -85,7 +85,7 @@ describe('Google Chat Gateway', () => {
 
   describe('environment validation', () => {
     it('requires GOOGLE_APPLICATION_CREDENTIALS env var', () => {
-      assert.ok(source.includes("process.env.GOOGLE_APPLICATION_CREDENTIALS"));
+      assert.ok(source.includes('process.env.GOOGLE_APPLICATION_CREDENTIALS'));
     });
 
     it('throws with helpful message when credentials are missing', () => {
@@ -197,7 +197,7 @@ describe('Google Chat Gateway', () => {
     });
 
     it('converts markdown headers to bold', () => {
-      assert.ok(source.includes("replace(/^#{1,6}"));
+      assert.ok(source.includes('replace(/^#{1,6}'));
     });
 
     it('converts **bold** to *bold*', () => {

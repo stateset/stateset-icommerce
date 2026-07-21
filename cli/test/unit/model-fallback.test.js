@@ -135,7 +135,14 @@ describe('ModelFallback.getAvailableModels', () => {
 
   it('excludes models missing env key', () => {
     const chain = [
-      { id: 'm1', provider: 'test', model: 'x', envKey: 'MISSING_KEY_XYZ', priority: 1, capabilities: [] },
+      {
+        id: 'm1',
+        provider: 'test',
+        model: 'x',
+        envKey: 'MISSING_KEY_XYZ',
+        priority: 1,
+        capabilities: [],
+      },
     ];
     const fb = new ModelFallback({ chain });
     assert.equal(fb.getAvailableModels().length, 0);
@@ -260,7 +267,10 @@ describe('ModelFallback.execute — fallback', () => {
       retryDelayMs: 1,
     });
     await assert.rejects(
-      () => fb.execute(async () => { throw new Error('always fail'); }),
+      () =>
+        fb.execute(async () => {
+          throw new Error('always fail');
+        }),
       (e) => {
         assert.ok(e.message.includes('All models failed'));
         assert.ok(e.message.includes('model-a'));
@@ -415,8 +425,22 @@ describe('ModelFallback.execute — no models available', () => {
 
   it('throws helpful error when all missing keys', async () => {
     const chain = [
-      { id: 'm1', provider: 'test', model: 'x', envKey: 'MISSING_A_XYZ', priority: 1, capabilities: [] },
-      { id: 'm2', provider: 'test', model: 'y', envKey: 'MISSING_B_XYZ', priority: 2, capabilities: [] },
+      {
+        id: 'm1',
+        provider: 'test',
+        model: 'x',
+        envKey: 'MISSING_A_XYZ',
+        priority: 1,
+        capabilities: [],
+      },
+      {
+        id: 'm2',
+        provider: 'test',
+        model: 'y',
+        envKey: 'MISSING_B_XYZ',
+        priority: 2,
+        capabilities: [],
+      },
     ];
     const fb = new ModelFallback({ chain });
     await assert.rejects(
@@ -457,10 +481,7 @@ describe('ModelFallback.executeWithModel', () => {
   it('throws when model is in cooldown', async () => {
     const fb = new ModelFallback({ chain: testChain() });
     fb.setModelCooldown('model-a', 60000, 'rate limit');
-    await assert.rejects(
-      () => fb.executeWithModel('model-a', async () => 'ok'),
-      /cooldown/,
-    );
+    await assert.rejects(() => fb.executeWithModel('model-a', async () => 'ok'), /cooldown/);
   });
 });
 

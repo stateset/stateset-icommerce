@@ -54,9 +54,7 @@ function makeQuote(overrides = {}) {
     id: 'quote-1',
     total: 100,
     total_decimal: 100,
-    items: [
-      { description: 'Service A', unitPrice: 50, quantity: 2 },
-    ],
+    items: [{ description: 'Service A', unitPrice: 50, quantity: 2 }],
     counter_count: 0,
     ...overrides,
   };
@@ -171,7 +169,7 @@ describe('BudgetGated Strategy', () => {
   it('uses total_decimal when total is missing', () => {
     const decision = strategy.evaluateReceivedQuote(
       makeQuote({ total: undefined, total_decimal: 50 }),
-      makeCtx()
+      makeCtx(),
     );
     assert.equal(decision.action, 'accept');
   });
@@ -273,19 +271,13 @@ describe('BudgetGated Strategy', () => {
   // --- evaluatePaymentRequest ---
 
   it('pays when within budget', () => {
-    const decision = strategy.evaluatePaymentRequest(
-      { amount_decimal: 100 },
-      makeCtx()
-    );
+    const decision = strategy.evaluatePaymentRequest({ amount_decimal: 100 }, makeCtx());
     assert.equal(decision.action, 'pay');
   });
 
   it('declines payment when over budget', () => {
     const ctx = makeCtx({ canAfford: () => false });
-    const decision = strategy.evaluatePaymentRequest(
-      { amount_decimal: 9999 },
-      ctx
-    );
+    const decision = strategy.evaluatePaymentRequest({ amount_decimal: 9999 }, ctx);
     assert.equal(decision.action, 'decline');
   });
 
@@ -298,10 +290,7 @@ describe('BudgetGated Strategy', () => {
       },
     });
 
-    strategy.evaluatePaymentRequest(
-      { amount_decimal: 1.25, asset: 'ZEC', network: 'zcash' },
-      ctx,
-    );
+    strategy.evaluatePaymentRequest({ amount_decimal: 1.25, asset: 'ZEC', network: 'zcash' }, ctx);
 
     assert.deepEqual(received, {
       amount: 1.25,
@@ -314,7 +303,7 @@ describe('BudgetGated Strategy', () => {
   it('defaults markup to 1.3', () => {
     const s = createBudgetGatedStrategy();
     const pricing = s.evaluateIncomingQuote(
-      makeQuote({ items: [{ description: 'A', unit_price: 100, quantity: 1 }] })
+      makeQuote({ items: [{ description: 'A', unit_price: 100, quantity: 1 }] }),
     );
     assert.equal(pricing.total, 130); // 100 * 1.3
   });
@@ -370,7 +359,7 @@ describe('Negotiator Strategy', () => {
   it('counter-offers at target discount', () => {
     const decision = strategy.evaluateReceivedQuote(
       makeQuote({ total: 100, counter_count: 0 }),
-      makeCtx()
+      makeCtx(),
     );
     assert.equal(decision.action, 'counter');
     assert.equal(decision.total, 80); // 100 * (1 - 0.2)
@@ -379,7 +368,7 @@ describe('Negotiator Strategy', () => {
   it('accepts after max negotiation rounds', () => {
     const decision = strategy.evaluateReceivedQuote(
       makeQuote({ total: 100, counter_count: 3 }),
-      makeCtx()
+      makeCtx(),
     );
     assert.equal(decision.action, 'accept');
   });
@@ -387,7 +376,7 @@ describe('Negotiator Strategy', () => {
   it('counter message includes discount percentage', () => {
     const decision = strategy.evaluateReceivedQuote(
       makeQuote({ total: 200, counter_count: 0 }),
-      makeCtx()
+      makeCtx(),
     );
     assert.equal(decision.action, 'counter');
     assert.ok(decision.message.includes('20%'));
@@ -397,7 +386,7 @@ describe('Negotiator Strategy', () => {
   it('uses total_decimal when total is missing', () => {
     const decision = strategy.evaluateReceivedQuote(
       makeQuote({ total: undefined, total_decimal: 80, counter_count: 0 }),
-      makeCtx()
+      makeCtx(),
     );
     assert.equal(decision.action, 'counter');
     assert.equal(decision.total, 64); // 80 * 0.8
@@ -458,27 +447,18 @@ describe('Negotiator Strategy', () => {
   // --- evaluatePaymentRequest ---
 
   it('pays when within threshold', () => {
-    const decision = strategy.evaluatePaymentRequest(
-      { amount_decimal: 100 },
-      makeCtx()
-    );
+    const decision = strategy.evaluatePaymentRequest({ amount_decimal: 100 }, makeCtx());
     assert.equal(decision.action, 'pay');
   });
 
   it('declines payment above walkaway', () => {
-    const decision = strategy.evaluatePaymentRequest(
-      { amount_decimal: 600 },
-      makeCtx()
-    );
+    const decision = strategy.evaluatePaymentRequest({ amount_decimal: 600 }, makeCtx());
     assert.equal(decision.action, 'decline');
   });
 
   it('declines payment when cannot afford', () => {
     const ctx = makeCtx({ canAfford: () => false });
-    const decision = strategy.evaluatePaymentRequest(
-      { amount_decimal: 100 },
-      ctx
-    );
+    const decision = strategy.evaluatePaymentRequest({ amount_decimal: 100 }, ctx);
     assert.equal(decision.action, 'decline');
   });
 
@@ -488,7 +468,7 @@ describe('Negotiator Strategy', () => {
     const s = createNegotiatorStrategy();
     const decision = s.evaluateReceivedQuote(
       makeQuote({ total: 100, counter_count: 0 }),
-      makeCtx()
+      makeCtx(),
     );
     assert.equal(decision.action, 'counter');
     assert.equal(decision.total, 85); // 100 * (1 - 0.15)

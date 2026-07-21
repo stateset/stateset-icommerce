@@ -1,13 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -85,7 +78,10 @@ describe('agent OS runbooks', () => {
       origin: 'workspace',
       workspaceSkillDir: workspaceDir,
     });
-    assert.equal(skills.some((skill) => skill.name === 'commerce-runbook-daily-ops'), true);
+    assert.equal(
+      skills.some((skill) => skill.name === 'commerce-runbook-daily-ops'),
+      true,
+    );
   });
 
   it('keeps generated runbook frontmatter single-document and escaped', async () => {

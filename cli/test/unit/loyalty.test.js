@@ -231,7 +231,9 @@ describe('create_loyalty_program', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeLoyaltyCommerce({
-      createProgram: async () => { throw new Error('program creation failed'); },
+      createProgram: async () => {
+        throw new Error('program creation failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { name: 'Test' }, allowApply: true }),
@@ -270,7 +272,9 @@ describe('get_loyalty_program', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeLoyaltyCommerce({
-      getProgram: async () => { throw new Error('DB error'); },
+      getProgram: async () => {
+        throw new Error('DB error');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { programId: 'lp_001' } }),
@@ -328,10 +332,17 @@ describe('enroll_customer', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeLoyaltyCommerce({
-      enrollCustomer: async () => { throw new Error('already enrolled'); },
+      enrollCustomer: async () => {
+        throw new Error('already enrolled');
+      },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { programId: 'lp_001', customerId: 'cust_001' }, allowApply: true }),
+      () =>
+        tool.handler({
+          commerce,
+          params: { programId: 'lp_001', customerId: 'cust_001' },
+          allowApply: true,
+        }),
       /already enrolled/,
     );
   });
@@ -368,7 +379,9 @@ describe('get_loyalty_account', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeLoyaltyCommerce({
-      getAccount: async () => { throw new Error('account lookup failed'); },
+      getAccount: async () => {
+        throw new Error('account lookup failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { programId: 'lp_001', customerId: 'cust_001' } }),
@@ -458,10 +471,17 @@ describe('earn_points', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeLoyaltyCommerce({
-      earnPoints: async () => { throw new Error('points award failed'); },
+      earnPoints: async () => {
+        throw new Error('points award failed');
+      },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { programId: 'lp_001', customerId: 'cust_001', points: 100 }, allowApply: true }),
+      () =>
+        tool.handler({
+          commerce,
+          params: { programId: 'lp_001', customerId: 'cust_001', points: 100 },
+          allowApply: true,
+        }),
       /points award failed/,
     );
   });
@@ -527,10 +547,17 @@ describe('redeem_points', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeLoyaltyCommerce({
-      redeemPoints: async () => { throw new Error('insufficient points'); },
+      redeemPoints: async () => {
+        throw new Error('insufficient points');
+      },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { programId: 'lp_001', customerId: 'cust_001', points: 9999 }, allowApply: true }),
+      () =>
+        tool.handler({
+          commerce,
+          params: { programId: 'lp_001', customerId: 'cust_001', points: 9999 },
+          allowApply: true,
+        }),
       /insufficient points/,
     );
   });
@@ -586,7 +613,9 @@ describe('list_rewards', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeLoyaltyCommerce({
-      listRewards: async () => { throw new Error('rewards query failed'); },
+      listRewards: async () => {
+        throw new Error('rewards query failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { programId: 'lp_001' } }),
@@ -681,7 +710,13 @@ describe('create_reward', () => {
     });
     await tool.handler({
       commerce,
-      params: { programId: 'lp_001', name: 'Gift Card $25', pointsCost: 2500, type: 'gift_card', value: 25 },
+      params: {
+        programId: 'lp_001',
+        name: 'Gift Card $25',
+        pointsCost: 2500,
+        type: 'gift_card',
+        value: 25,
+      },
       allowApply: true,
     });
     assert.equal(typeof calledData.value, 'string');
@@ -690,14 +725,23 @@ describe('create_reward', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeLoyaltyCommerce({
-      createReward: async () => { throw new Error('reward creation failed'); },
+      createReward: async () => {
+        throw new Error('reward creation failed');
+      },
     });
     await assert.rejects(
-      () => tool.handler({
-        commerce,
-        params: { programId: 'lp_001', name: 'Test', pointsCost: 100, type: 'free_shipping', value: 0 },
-        allowApply: true,
-      }),
+      () =>
+        tool.handler({
+          commerce,
+          params: {
+            programId: 'lp_001',
+            name: 'Test',
+            pointsCost: 100,
+            type: 'free_shipping',
+            value: 0,
+          },
+          allowApply: true,
+        }),
       /reward creation failed/,
     );
   });

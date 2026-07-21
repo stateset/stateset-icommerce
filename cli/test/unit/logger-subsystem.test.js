@@ -35,7 +35,12 @@ describe('Logger subsystem support', () => {
     it('includes [subsystem] prefix in plain text output', () => {
       const logs = [];
       const mockOutput = { log: (...args) => logs.push(args.join(' ')) };
-      const logger = new Logger({ level: 'info', color: false, output: mockOutput, subsystem: 'mcp' });
+      const logger = new Logger({
+        level: 'info',
+        color: false,
+        output: mockOutput,
+        subsystem: 'mcp',
+      });
 
       logger.info('Server started');
       assert.strictEqual(logs.length, 1);
@@ -46,7 +51,12 @@ describe('Logger subsystem support', () => {
     it('includes nested subsystem prefix', () => {
       const logs = [];
       const mockOutput = { log: (...args) => logs.push(args.join(' ')) };
-      const logger = new Logger({ level: 'info', color: false, output: mockOutput, subsystem: 'gateway/slack' });
+      const logger = new Logger({
+        level: 'info',
+        color: false,
+        output: mockOutput,
+        subsystem: 'gateway/slack',
+      });
 
       logger.warn('Rate limited');
       assert.ok(logs[0].includes('[gateway/slack]'));
@@ -64,7 +74,12 @@ describe('Logger subsystem support', () => {
     it('includes subsystem in JSON output', () => {
       const logs = [];
       const mockOutput = { log: (...args) => logs.push(args.join(' ')) };
-      const logger = new Logger({ level: 'info', json: true, output: mockOutput, subsystem: 'permissions' });
+      const logger = new Logger({
+        level: 'info',
+        json: true,
+        output: mockOutput,
+        subsystem: 'permissions',
+      });
 
       logger.info('Access denied');
       const parsed = JSON.parse(logs[0]);
@@ -87,7 +102,12 @@ describe('Logger subsystem support', () => {
     it('wraps prefix in ANSI color codes when color enabled', () => {
       const logs = [];
       const mockOutput = { log: (...args) => logs.push(args.join(' ')) };
-      const logger = new Logger({ level: 'info', color: true, output: mockOutput, subsystem: 'gateway' });
+      const logger = new Logger({
+        level: 'info',
+        color: true,
+        output: mockOutput,
+        subsystem: 'gateway',
+      });
 
       logger.info('Connected');
       assert.ok(logs[0].includes('[gateway]'));
@@ -141,7 +161,12 @@ describe('Logger subsystem support', () => {
     it('child includes subsystem in output', () => {
       const logs = [];
       const mockOutput = { log: (...args) => logs.push(args.join(' ')) };
-      const parent = new Logger({ level: 'info', color: false, output: mockOutput, subsystem: 'mcp' });
+      const parent = new Logger({
+        level: 'info',
+        color: false,
+        output: mockOutput,
+        subsystem: 'mcp',
+      });
       const child = parent.child({ requestId: 'abc' });
 
       child.info('Tool called');

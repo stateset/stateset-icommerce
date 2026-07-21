@@ -177,8 +177,14 @@ describe('createMcpEventStreamer', () => {
       eventTypes: ['order.*'],
     });
     assert.equal(sessionOneHistory.length, 2);
-    assert.equal(sessionOneHistory.every((event) => event.sessionId === 'session-1'), true);
-    assert.equal(sessionOneHistory.every((event) => event.type.startsWith('order.')), true);
+    assert.equal(
+      sessionOneHistory.every((event) => event.sessionId === 'session-1'),
+      true,
+    );
+    assert.equal(
+      sessionOneHistory.every((event) => event.type.startsWith('order.')),
+      true,
+    );
   });
 
   it('supports onEvent callbacks', async () => {
@@ -216,4 +222,4 @@ describe('createMcpEventStreamer', () => {
     assert.equal(globalRes.write.mock.calls.length, 1);
     assert.equal(globalRes.write.mock.calls[0].arguments[0].includes('connected'), true);
   });
-}); 
+});

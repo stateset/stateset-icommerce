@@ -34,9 +34,7 @@ function makeQuote(overrides = {}) {
     id: 'quote-1',
     total: 100,
     total_decimal: 100,
-    items: [
-      { description: 'Service A', unitPrice: 50, quantity: 2 },
-    ],
+    items: [{ description: 'Service A', unitPrice: 50, quantity: 2 }],
     counter_count: 0,
     ...overrides,
   };
@@ -78,7 +76,7 @@ describe('ReputationAware Strategy — evaluateReceivedQuote', () => {
       minTrustTier: 'standard',
       minAvgScore: 3.5,
       reputationDiscount: 0.05,
-      enterpriseDiscount: 0.10,
+      enterpriseDiscount: 0.1,
       maxRounds: 2,
     });
   });
@@ -215,7 +213,7 @@ describe('ReputationAware Strategy — evaluateIncomingQuote', () => {
   beforeEach(() => {
     strategy = createReputationAwareStrategy({
       baseMarkup: 1.4,
-      highTrustMarkdown: 0.10,
+      highTrustMarkdown: 0.1,
     });
   });
 
@@ -372,28 +370,19 @@ describe('ReputationAware Strategy — evaluatePaymentRequest', () => {
   });
 
   it('pays when budget allows', () => {
-    const decision = strategy.evaluatePaymentRequest(
-      { amount_decimal: 100 },
-      makeCtx()
-    );
+    const decision = strategy.evaluatePaymentRequest({ amount_decimal: 100 }, makeCtx());
     assert.equal(decision.action, 'pay');
   });
 
   it('declines when budget cannot afford', () => {
     const ctx = makeCtx({ canAfford: () => false });
-    const decision = strategy.evaluatePaymentRequest(
-      { amount_decimal: 9999 },
-      ctx
-    );
+    const decision = strategy.evaluatePaymentRequest({ amount_decimal: 9999 }, ctx);
     assert.equal(decision.action, 'decline');
     assert.ok(decision.reason.includes('Cannot afford'));
   });
 
   it('uses amount field when amount_decimal is missing', () => {
-    const decision = strategy.evaluatePaymentRequest(
-      { amount: 50 },
-      makeCtx()
-    );
+    const decision = strategy.evaluatePaymentRequest({ amount: 50 }, makeCtx());
     assert.equal(decision.action, 'pay');
   });
 });

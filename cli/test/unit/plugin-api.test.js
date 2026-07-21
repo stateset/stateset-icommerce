@@ -55,14 +55,26 @@ describe('HookRunner', () => {
   describe('run (parallel hooks)', () => {
     it('runs parallel hooks and returns original data', async () => {
       let called = false;
-      runner.add('message_received', async () => { called = true; }, { priority: 100, pluginId: 'p1' });
+      runner.add(
+        'message_received',
+        async () => {
+          called = true;
+        },
+        { priority: 100, pluginId: 'p1' },
+      );
       const result = await runner.run('message_received', { text: 'hi' });
       assert.ok(called);
       assert.deepEqual(result, { text: 'hi' });
     });
 
     it('swallows errors in parallel hooks', async () => {
-      runner.add('message_received', async () => { throw new Error('boom'); }, { priority: 100, pluginId: 'p1' });
+      runner.add(
+        'message_received',
+        async () => {
+          throw new Error('boom');
+        },
+        { priority: 100, pluginId: 'p1' },
+      );
       // Should not throw
       const result = await runner.run('message_received', { text: 'hi' });
       assert.deepEqual(result, { text: 'hi' });
@@ -76,22 +88,40 @@ describe('HookRunner', () => {
 
   describe('run (sequential hooks)', () => {
     it('passes data through sequential handlers', async () => {
-      runner.add('message_sending', async (data) => ({ ...data, modified: true }), { priority: 100, pluginId: 'p1' });
+      runner.add('message_sending', async (data) => ({ ...data, modified: true }), {
+        priority: 100,
+        pluginId: 'p1',
+      });
       const result = await runner.run('message_sending', { text: 'hello' });
       assert.equal(result.modified, true);
       assert.equal(result.text, 'hello');
     });
 
     it('chains modifications across handlers', async () => {
-      runner.add('message_sending', async (data) => ({ step: 1 }), { priority: 50, pluginId: 'p1' });
-      runner.add('message_sending', async (data) => ({ step: data.step + 1 }), { priority: 100, pluginId: 'p2' });
+      runner.add('message_sending', async (data) => ({ step: 1 }), {
+        priority: 50,
+        pluginId: 'p1',
+      });
+      runner.add('message_sending', async (data) => ({ step: data.step + 1 }), {
+        priority: 100,
+        pluginId: 'p2',
+      });
       const result = await runner.run('message_sending', {});
       assert.equal(result.step, 2);
     });
 
     it('swallows errors in sequential hooks and continues', async () => {
-      runner.add('before_agent_start', async () => { throw new Error('fail'); }, { priority: 50, pluginId: 'p1' });
-      runner.add('before_agent_start', async (data) => ({ ok: true }), { priority: 100, pluginId: 'p2' });
+      runner.add(
+        'before_agent_start',
+        async () => {
+          throw new Error('fail');
+        },
+        { priority: 50, pluginId: 'p1' },
+      );
+      runner.add('before_agent_start', async (data) => ({ ok: true }), {
+        priority: 100,
+        pluginId: 'p2',
+      });
       const result = await runner.run('before_agent_start', {});
       assert.equal(result.ok, true);
     });
@@ -100,8 +130,22 @@ describe('HookRunner', () => {
   describe('priority ordering', () => {
     it('runs lower priority (number) first', async () => {
       const order = [];
-      runner.add('message_sending', async () => { order.push('B'); return {}; }, { priority: 200, pluginId: 'p2' });
-      runner.add('message_sending', async () => { order.push('A'); return {}; }, { priority: 50, pluginId: 'p1' });
+      runner.add(
+        'message_sending',
+        async () => {
+          order.push('B');
+          return {};
+        },
+        { priority: 200, pluginId: 'p2' },
+      );
+      runner.add(
+        'message_sending',
+        async () => {
+          order.push('A');
+          return {};
+        },
+        { priority: 50, pluginId: 'p1' },
+      );
       await runner.run('message_sending', {});
       assert.deepEqual(order, ['A', 'B']);
     });
@@ -209,7 +253,13 @@ describe('PluginAPI', () => {
 
     it('throws for invalid level', () => {
       assert.throws(
-        () => api.registerHttpRoute({ method: 'GET', path: '/x', handler: async () => {}, level: 'superadmin' }),
+        () =>
+          api.registerHttpRoute({
+            method: 'GET',
+            path: '/x',
+            handler: async () => {},
+            level: 'superadmin',
+          }),
         /Invalid route level/,
       );
     });
@@ -244,7 +294,9 @@ describe('PluginRegistry', () => {
   describe('register', () => {
     it('registers a plugin and calls initFn with API', async () => {
       let receivedApi = null;
-      const entry = await registry.register('my-plugin', (api) => { receivedApi = api; });
+      const entry = await registry.register('my-plugin', (api) => {
+        receivedApi = api;
+      });
       assert.ok(receivedApi);
       assert.equal(receivedApi.getPluginId(), 'my-plugin');
       assert.equal(entry.id, 'my-plugin');
@@ -257,14 +309,19 @@ describe('PluginRegistry', () => {
 
     it('wraps initFn errors', async () => {
       await assert.rejects(
-        () => registry.register('bad', () => { throw new Error('init boom'); }),
+        () =>
+          registry.register('bad', () => {
+            throw new Error('init boom');
+          }),
         /Failed to initialize/,
       );
     });
 
     it('supports async initFn', async () => {
       let called = false;
-      await registry.register('async-plugin', async () => { called = true; });
+      await registry.register('async-plugin', async () => {
+        called = true;
+      });
       assert.ok(called);
     });
   });
@@ -285,7 +342,13 @@ describe('PluginRegistry', () => {
     it('stops services on unregister', async () => {
       let stopped = false;
       await registry.register('p1', (api) => {
-        api.registerService({ name: 'svc', start: async () => {}, stop: async () => { stopped = true; } });
+        api.registerService({
+          name: 'svc',
+          start: async () => {},
+          stop: async () => {
+            stopped = true;
+          },
+        });
       });
       await registry.unregister('p1');
       assert.ok(stopped);

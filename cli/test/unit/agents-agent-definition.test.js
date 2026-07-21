@@ -10,7 +10,11 @@ describe('agents agent definition', () => {
 
   it('AGENTS has 20 entries', () => {
     const count = Object.keys(AGENTS).length;
-    assert.strictEqual(count, 20, `Expected 20 agents, got ${count}: ${Object.keys(AGENTS).join(', ')}`);
+    assert.strictEqual(
+      count,
+      20,
+      `Expected 20 agents, got ${count}: ${Object.keys(AGENTS).join(', ')}`,
+    );
   });
 
   it('agents entry has required fields', () => {

@@ -643,10 +643,7 @@ describe('FallbackChain', { skip: !canImport && `import failed: ${importError?.m
       usage: { inputTokens: 50, outputTokens: 20 },
     });
 
-    const result = await chain.chatWithClaudeFallback(
-      claudeFn,
-      [{ role: 'user', content: 'hi' }],
-    );
+    const result = await chain.chatWithClaudeFallback(claudeFn, [{ role: 'user', content: 'hi' }]);
 
     assert.equal(result.provider, 'claude');
     assert.equal(result.failedOver, false);
@@ -674,10 +671,7 @@ describe('FallbackChain', { skip: !canImport && `import failed: ${importError?.m
       throw new Error('Claude API error');
     };
 
-    const result = await chain.chatWithClaudeFallback(
-      claudeFn,
-      [{ role: 'user', content: 'hi' }],
-    );
+    const result = await chain.chatWithClaudeFallback(claudeFn, [{ role: 'user', content: 'hi' }]);
 
     assert.equal(result.failedOver, true);
     assert.equal(result.provider, 'backup');
@@ -689,72 +683,76 @@ describe('FallbackChain', { skip: !canImport && `import failed: ${importError?.m
 // Singletons: getProviderRegistry, resetProviderRegistry, getFallbackChain
 // ===========================================================================
 
-describe('Provider singletons', { skip: !canImport && `import failed: ${importError?.message}` }, () => {
-  afterEach(() => {
-    resetProviderRegistry();
-  });
+describe(
+  'Provider singletons',
+  { skip: !canImport && `import failed: ${importError?.message}` },
+  () => {
+    afterEach(() => {
+      resetProviderRegistry();
+    });
 
-  it('getProviderRegistry() returns the same instance on repeated calls', () => {
-    const a = getProviderRegistry();
-    const b = getProviderRegistry();
-    assert.equal(a, b);
-  });
+    it('getProviderRegistry() returns the same instance on repeated calls', () => {
+      const a = getProviderRegistry();
+      const b = getProviderRegistry();
+      assert.equal(a, b);
+    });
 
-  it('ensureProviderRegistry() resolves to the same singleton instance', async () => {
-    const registry = getProviderRegistry();
-    const readyRegistry = await ensureProviderRegistry();
-    assert.equal(readyRegistry, registry);
-  });
+    it('ensureProviderRegistry() resolves to the same singleton instance', async () => {
+      const registry = getProviderRegistry();
+      const readyRegistry = await ensureProviderRegistry();
+      assert.equal(readyRegistry, registry);
+    });
 
-  it('resetProviderRegistry() causes a new instance on next call', () => {
-    const a = getProviderRegistry();
-    resetProviderRegistry();
-    const b = getProviderRegistry();
-    assert.notEqual(a, b);
-  });
+    it('resetProviderRegistry() causes a new instance on next call', () => {
+      const a = getProviderRegistry();
+      resetProviderRegistry();
+      const b = getProviderRegistry();
+      assert.notEqual(a, b);
+    });
 
-  it('registry supports register, get, has, list', () => {
-    const registry = getProviderRegistry();
-    const p = new ModelProvider('test-reg', { default: 'v1' });
-    registry.register(p);
+    it('registry supports register, get, has, list', () => {
+      const registry = getProviderRegistry();
+      const p = new ModelProvider('test-reg', { default: 'v1' });
+      registry.register(p);
 
-    assert.equal(registry.has('test-reg'), true);
-    assert.equal(registry.get('test-reg'), p);
-    assert.ok(registry.list().includes('test-reg'));
-  });
+      assert.equal(registry.has('test-reg'), true);
+      assert.equal(registry.get('test-reg'), p);
+      assert.ok(registry.list().includes('test-reg'));
+    });
 
-  it('registry.get() returns null for unknown providers', () => {
-    const registry = getProviderRegistry();
-    assert.equal(registry.get('nonexistent'), null);
-  });
+    it('registry.get() returns null for unknown providers', () => {
+      const registry = getProviderRegistry();
+      assert.equal(registry.get('nonexistent'), null);
+    });
 
-  it('registry.has() returns false for unknown providers', () => {
-    const registry = getProviderRegistry();
-    assert.equal(registry.has('nonexistent'), false);
-  });
+    it('registry.has() returns false for unknown providers', () => {
+      const registry = getProviderRegistry();
+      assert.equal(registry.has('nonexistent'), false);
+    });
 
-  it('getFallbackChain() returns a FallbackChain singleton', () => {
-    const a = getFallbackChain();
-    const b = getFallbackChain();
-    assert.equal(a, b);
-    assert.ok(a instanceof FallbackChain);
-  });
+    it('getFallbackChain() returns a FallbackChain singleton', () => {
+      const a = getFallbackChain();
+      const b = getFallbackChain();
+      assert.equal(a, b);
+      assert.ok(a instanceof FallbackChain);
+    });
 
-  it('resetProviderRegistry() also resets the fallback chain singleton', () => {
-    const a = getFallbackChain();
-    resetProviderRegistry();
-    const b = getFallbackChain();
-    assert.notEqual(a, b);
-  });
+    it('resetProviderRegistry() also resets the fallback chain singleton', () => {
+      const a = getFallbackChain();
+      resetProviderRegistry();
+      const b = getFallbackChain();
+      assert.notEqual(a, b);
+    });
 
-  it('getFallbackChain() accepts options on first call', () => {
-    const chain = getFallbackChain({ failureThreshold: 5, verbose: false });
-    assert.ok(chain instanceof FallbackChain);
-  });
+    it('getFallbackChain() accepts options on first call', () => {
+      const chain = getFallbackChain({ failureThreshold: 5, verbose: false });
+      assert.ok(chain instanceof FallbackChain);
+    });
 
-  it('registry.listAvailable() always includes claude', async () => {
-    const registry = getProviderRegistry();
-    const available = await registry.listAvailable();
-    assert.ok(available.includes('claude'));
-  });
-});
+    it('registry.listAvailable() always includes claude', async () => {
+      const registry = getProviderRegistry();
+      const available = await registry.listAvailable();
+      assert.ok(available.includes('claude'));
+    });
+  },
+);

@@ -64,13 +64,21 @@ describe('Treasury Tools — definitions', () => {
 
   it('each tool has a handler function', () => {
     for (const tool of treasuryTools) {
-      assert.strictEqual(typeof tool.handler, 'function', `${tool.name} handler should be a function`);
+      assert.strictEqual(
+        typeof tool.handler,
+        'function',
+        `${tool.name} handler should be a function`,
+      );
     }
   });
 
   it('each tool has an inputSchema object', () => {
     for (const tool of treasuryTools) {
-      assert.strictEqual(typeof tool.inputSchema, 'object', `${tool.name} should have an inputSchema`);
+      assert.strictEqual(
+        typeof tool.inputSchema,
+        'object',
+        `${tool.name} should have an inputSchema`,
+      );
     }
   });
 });

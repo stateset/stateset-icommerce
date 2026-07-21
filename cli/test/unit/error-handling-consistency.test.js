@@ -101,11 +101,15 @@ describe('Error handling consistency', () => {
           if (tool.permission === 'read') continue;
 
           // Test with allowApply = false
-          const mockCommerce = new Proxy({}, {
-            get: () => new Proxy(() => ({}), {
-              get: () => () => ({}),
-            }),
-          });
+          const mockCommerce = new Proxy(
+            {},
+            {
+              get: () =>
+                new Proxy(() => ({}), {
+                  get: () => () => ({}),
+                }),
+            },
+          );
 
           try {
             const result = await tool.handler({
@@ -121,10 +125,7 @@ describe('Error handling consistency', () => {
               false,
               `${tool.name}: expected success: false when allowApply=false, got ${JSON.stringify(result)}`,
             );
-            assert.ok(
-              result.error,
-              `${tool.name}: expected error message when allowApply=false`,
-            );
+            assert.ok(result.error, `${tool.name}: expected error message when allowApply=false`);
           } catch {
             // Some handlers may throw due to mock — that's ok, we're testing the guard path
           }

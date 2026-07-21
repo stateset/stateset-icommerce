@@ -13,14 +13,8 @@ describe('browser evaluate policy', () => {
   });
 
   it('accepts selector-based read-only expressions', () => {
-    assert.equal(
-      validateBrowserExpression('document.querySelector("#price").textContent'),
-      null,
-    );
-    assert.equal(
-      validateBrowserExpression('document.querySelectorAll(".item").length'),
-      null,
-    );
+    assert.equal(validateBrowserExpression('document.querySelector("#price").textContent'), null);
+    assert.equal(validateBrowserExpression('document.querySelectorAll(".item").length'), null);
   });
 
   it('rejects missing/empty values', () => {

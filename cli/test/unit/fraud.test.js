@@ -180,7 +180,9 @@ describe('assess_order_fraud', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeFraudCommerce({
-      assessOrder: async () => { throw new Error('assessment engine unavailable'); },
+      assessOrder: async () => {
+        throw new Error('assessment engine unavailable');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { orderId: 'ord_001' } }),
@@ -222,7 +224,9 @@ describe('get_fraud_assessment', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeFraudCommerce({
-      getAssessment: async () => { throw new Error('lookup failed'); },
+      getAssessment: async () => {
+        throw new Error('lookup failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { assessmentId: 'fa_001' } }),
@@ -281,12 +285,11 @@ describe('list_fraud_signals', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeFraudCommerce({
-      listSignals: async () => { throw new Error('signals query failed'); },
+      listSignals: async () => {
+        throw new Error('signals query failed');
+      },
     });
-    await assert.rejects(
-      () => tool.handler({ commerce, params: {} }),
-      /signals query failed/,
-    );
+    await assert.rejects(() => tool.handler({ commerce, params: {} }), /signals query failed/);
   });
 });
 
@@ -382,18 +385,21 @@ describe('create_fraud_rule', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeFraudCommerce({
-      createRule: async () => { throw new Error('rule creation failed'); },
+      createRule: async () => {
+        throw new Error('rule creation failed');
+      },
     });
     await assert.rejects(
-      () => tool.handler({
-        commerce,
-        params: {
-          name: 'Test Rule',
-          condition: { field: 'order_amount', operator: 'gt', value: 100 },
-          action: 'flag',
-        },
-        allowApply: true,
-      }),
+      () =>
+        tool.handler({
+          commerce,
+          params: {
+            name: 'Test Rule',
+            condition: { field: 'order_amount', operator: 'gt', value: 100 },
+            action: 'flag',
+          },
+          allowApply: true,
+        }),
       /rule creation failed/,
     );
   });
@@ -476,10 +482,13 @@ describe('update_fraud_rule', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeFraudCommerce({
-      updateRule: async () => { throw new Error('rule not found'); },
+      updateRule: async () => {
+        throw new Error('rule not found');
+      },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { ruleId: 'fr_nope', enabled: false }, allowApply: true }),
+      () =>
+        tool.handler({ commerce, params: { ruleId: 'fr_nope', enabled: false }, allowApply: true }),
       /rule not found/,
     );
   });
@@ -559,14 +568,17 @@ describe('review_flagged_order', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeFraudCommerce({
-      reviewOrder: async () => { throw new Error('assessment already reviewed'); },
+      reviewOrder: async () => {
+        throw new Error('assessment already reviewed');
+      },
     });
     await assert.rejects(
-      () => tool.handler({
-        commerce,
-        params: { assessmentId: 'fa_001', decision: 'approve', reason: 'OK' },
-        allowApply: true,
-      }),
+      () =>
+        tool.handler({
+          commerce,
+          params: { assessmentId: 'fa_001', decision: 'approve', reason: 'OK' },
+          allowApply: true,
+        }),
       /assessment already reviewed/,
     );
   });

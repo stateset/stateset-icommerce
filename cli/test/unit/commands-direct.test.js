@@ -232,11 +232,7 @@ describe('customers command', () => {
     });
 
     it('routes to create action', async () => {
-      const result = await execute(
-        'create',
-        ['new@example.com', 'New', 'User'],
-        makeOpts(),
-      );
+      const result = await execute('create', ['new@example.com', 'New', 'User'], makeOpts());
       assert.ok(result.customer);
       assert.equal(result.customer.email, 'new@example.com');
     });
@@ -285,10 +281,7 @@ describe('customers command', () => {
   // ========================================================================
   describe('execute get', () => {
     it('throws when no ID provided', async () => {
-      await assert.rejects(
-        () => execute('get', [], makeOpts()),
-        /Usage: customers get/,
-      );
+      await assert.rejects(() => execute('get', [], makeOpts()), /Usage: customers get/);
     });
 
     it('uses getByEmail for email addresses', async () => {
@@ -371,10 +364,7 @@ describe('customers command', () => {
   // ========================================================================
   describe('execute search', () => {
     it('throws when no query provided', async () => {
-      await assert.rejects(
-        () => execute('search', [], makeOpts()),
-        /Usage: customers search/,
-      );
+      await assert.rejects(() => execute('search', [], makeOpts()), /Usage: customers search/);
     });
 
     it('filters customers by email match', async () => {

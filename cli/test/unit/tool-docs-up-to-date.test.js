@@ -15,7 +15,9 @@ test('docs/TOOLS.md is up to date with the domain registry', () => {
   try {
     committed = readFileSync(TOOLS_DOC_PATH, 'utf8');
   } catch {
-    assert.fail(`docs/TOOLS.md is missing — run "npm run docs:tools" and commit it (${TOOLS_DOC_PATH})`);
+    assert.fail(
+      `docs/TOOLS.md is missing — run "npm run docs:tools" and commit it (${TOOLS_DOC_PATH})`,
+    );
   }
   assert.equal(
     committed,
@@ -27,7 +29,9 @@ test('docs/TOOLS.md is up to date with the domain registry', () => {
 test('generated catalog states the real registry totals', () => {
   const markdown = buildToolDocs();
   assert.ok(
-    markdown.includes(`**${ALL_DOMAIN_TOOLS.length} tools** across **${DOMAIN_TOOL_ENTRIES.length} domains**`),
+    markdown.includes(
+      `**${ALL_DOMAIN_TOOLS.length} tools** across **${DOMAIN_TOOL_ENTRIES.length} domains**`,
+    ),
     'catalog header must state the registry tool/domain counts',
   );
   for (const [domain] of DOMAIN_TOOL_ENTRIES) {

@@ -258,7 +258,13 @@ class MockProvider extends ModelProvider {
   constructor(name, opts = {}) {
     super(name, opts.config || {});
     this._available = opts.available ?? true;
-    this._chatResult = opts.chatResult || { text: `${name} response`, model: 'test', provider: name, cost: null, usage: { inputTokens: 0, outputTokens: 0 } };
+    this._chatResult = opts.chatResult || {
+      text: `${name} response`,
+      model: 'test',
+      provider: name,
+      cost: null,
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
     this._chatError = opts.chatError || null;
   }
 
@@ -494,7 +500,9 @@ describe('CircuitBreaker', () => {
       assert.equal(cb.isAvailable('p1'), false);
       // Wait a tiny bit for the timeout to elapse
       const start = Date.now();
-      while (Date.now() - start < 5) { /* spin */ }
+      while (Date.now() - start < 5) {
+        /* spin */
+      }
       assert.equal(cb.isAvailable('p1'), true);
     });
   });
@@ -606,8 +614,12 @@ describe('FallbackChain', () => {
     });
 
     it('falls back to other providers when claude fails', async () => {
-      const claudeFn = async () => { throw new Error('claude down'); };
-      const result = await chain.chatWithClaudeFallback(claudeFn, [{ role: 'user', content: 'hi' }]);
+      const claudeFn = async () => {
+        throw new Error('claude down');
+      };
+      const result = await chain.chatWithClaudeFallback(claudeFn, [
+        { role: 'user', content: 'hi' },
+      ]);
       assert.equal(result.failedOver, true);
       assert.equal(result.text, 'openai response');
     });

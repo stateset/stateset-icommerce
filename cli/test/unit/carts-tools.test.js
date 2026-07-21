@@ -39,9 +39,7 @@ function makeCart(overrides = {}) {
     paymentMethod: null,
     shippingMethod: null,
     couponCode: null,
-    items: [
-      { id: 'item_001', sku: 'WIDGET-001', name: 'Widget', quantity: 2, unitPrice: 29.99 },
-    ],
+    items: [{ id: 'item_001', sku: 'WIDGET-001', name: 'Widget', quantity: 2, unitPrice: 29.99 }],
     itemCount: 2,
     shippingAddress: null,
     billingAddress: null,
@@ -80,7 +78,8 @@ function makeCommerce(overrides = {}) {
       removeItem: async () => {},
       getItems: async () => makeCart().items,
       clearItems: async () => {},
-      setShippingAddress: async (cartId, address) => makeCart({ id: cartId, shippingAddress: address }),
+      setShippingAddress: async (cartId, address) =>
+        makeCart({ id: cartId, shippingAddress: address }),
       setShipping: async (cartId, input) =>
         makeCart({
           id: cartId,
@@ -89,12 +88,22 @@ function makeCommerce(overrides = {}) {
           shippingCarrier: input.shippingCarrier,
           shippingAmount: input.shippingAmount ?? 0,
         }),
-      setBillingAddress: async (cartId, address) => makeCart({ id: cartId, billingAddress: address }),
+      setBillingAddress: async (cartId, address) =>
+        makeCart({ id: cartId, billingAddress: address }),
       setPayment: async (cartId, payment) => makeCart({ id: cartId, ...payment }),
-      applyDiscount: async (cartId, code) => makeCart({ id: cartId, couponCode: code, discountAmount: 10, grandTotal: 59.78 }),
-      removeDiscount: async (cartId) => makeCart({ id: cartId, couponCode: null, discountAmount: 0, grandTotal: 69.78 }),
+      applyDiscount: async (cartId, code) =>
+        makeCart({ id: cartId, couponCode: code, discountAmount: 10, grandTotal: 59.78 }),
+      removeDiscount: async (cartId) =>
+        makeCart({ id: cartId, couponCode: null, discountAmount: 0, grandTotal: 69.78 }),
       getShippingRates: async () => [
-        { id: 'rate_001', carrier: 'USPS', service: 'Priority', price: 7.99, currency: 'USD', estimatedDays: 3 },
+        {
+          id: 'rate_001',
+          carrier: 'USPS',
+          service: 'Priority',
+          price: 7.99,
+          currency: 'USD',
+          estimatedDays: 3,
+        },
       ],
       markReadyForPayment: async (cartId) => makeCart({ id: cartId, status: 'ready_for_payment' }),
       beginCheckout: async (cartId) => makeCart({ id: cartId, status: 'checkout_started' }),
@@ -175,7 +184,11 @@ describe('list_carts', () => {
   });
 
   it('propagates commerce errors', async () => {
-    const commerce = makeCommerce({ list: async () => { throw new Error('DB down'); } });
+    const commerce = makeCommerce({
+      list: async () => {
+        throw new Error('DB down');
+      },
+    });
     await assert.rejects(() => tool.handler({ commerce, params: { limit: 50 } }), /DB down/);
   });
 });
@@ -192,7 +205,10 @@ describe('get_cart', () => {
   });
 
   it('returns cart by UUID identifier', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { identifier: 'cart_001' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { identifier: 'cart_001' },
+    });
     assert.strictEqual(result.success, true);
     assert.ok(result.cart);
     assert.strictEqual(result.cart.id, 'cart_001');
@@ -201,7 +217,10 @@ describe('get_cart', () => {
   it('looks up by cart number when identifier starts with CART-', async () => {
     let calledGetByNumber = false;
     const commerce = makeCommerce({
-      getByNumber: async (num) => { calledGetByNumber = true; return makeCart({ cartNumber: num }); },
+      getByNumber: async (num) => {
+        calledGetByNumber = true;
+        return makeCart({ cartNumber: num });
+      },
     });
     const result = await tool.handler({ commerce, params: { identifier: 'CART-100001' } });
     assert.strictEqual(result.success, true);
@@ -209,7 +228,10 @@ describe('get_cart', () => {
   });
 
   it('returns error when cart not found', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { identifier: 'nonexistent' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { identifier: 'nonexistent' },
+    });
     assert.strictEqual(result.success, false);
     assert.ok(result.error.includes('not found'));
   });
@@ -243,8 +265,15 @@ describe('create_cart', () => {
   });
 
   it('propagates commerce errors', async () => {
-    const commerce = makeCommerce({ create: async () => { throw new Error('Create failed'); } });
-    await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Create failed/);
+    const commerce = makeCommerce({
+      create: async () => {
+        throw new Error('Create failed');
+      },
+    });
+    await assert.rejects(
+      () => tool.handler({ commerce, params, allowApply: true }),
+      /Create failed/,
+    );
   });
 });
 
@@ -254,7 +283,13 @@ describe('create_cart', () => {
 
 describe('add_cart_item', () => {
   const tool = findTool('add_cart_item');
-  const params = { cartId: 'cart_001', sku: 'WIDGET-001', name: 'Widget', quantity: 2, unitPrice: 29.99 };
+  const params = {
+    cartId: 'cart_001',
+    sku: 'WIDGET-001',
+    name: 'Widget',
+    quantity: 2,
+    unitPrice: 29.99,
+  };
 
   it('has write permission', () => {
     assert.strictEqual(tool.permission, 'write');

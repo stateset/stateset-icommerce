@@ -36,9 +36,7 @@ const mockWishlist = {
   visibility: 'private',
   isPublic: false,
   itemCount: 3,
-  items: [
-    { id: 'wli_001', productId: 'prod_001', variantId: null, note: null, priority: 1 },
-  ],
+  items: [{ id: 'wli_001', productId: 'prod_001', variantId: null, note: null, priority: 1 }],
   createdAt: '2026-02-01T00:00:00Z',
   updatedAt: '2026-02-01T00:00:00Z',
 };
@@ -99,7 +97,12 @@ describe('Wishlist Tools — structure', () => {
   });
 
   it('write tool permissions are correct', () => {
-    const writeTools = ['create_wishlist', 'add_to_wishlist', 'remove_from_wishlist', 'convert_wishlist_to_cart'];
+    const writeTools = [
+      'create_wishlist',
+      'add_to_wishlist',
+      'remove_from_wishlist',
+      'convert_wishlist_to_cart',
+    ];
     for (const name of writeTools) {
       const tool = findTool(wishlistTools, name);
       assert.equal(tool.permission, 'write', `${name} should have write permission`);
@@ -182,7 +185,9 @@ describe('create_wishlist', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeWishlistCommerce({
-      create: async () => { throw new Error('create failed'); },
+      create: async () => {
+        throw new Error('create failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { customerId: 'cust_001' }, allowApply: true }),
@@ -221,7 +226,9 @@ describe('get_wishlist', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeWishlistCommerce({
-      get: async () => { throw new Error('DB unavailable'); },
+      get: async () => {
+        throw new Error('DB unavailable');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { wishlistId: 'wl_001' } }),
@@ -287,10 +294,17 @@ describe('add_to_wishlist', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeWishlistCommerce({
-      addItem: async () => { throw new Error('wishlist not found'); },
+      addItem: async () => {
+        throw new Error('wishlist not found');
+      },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { wishlistId: 'wl_x', productId: 'p' }, allowApply: true }),
+      () =>
+        tool.handler({
+          commerce,
+          params: { wishlistId: 'wl_x', productId: 'p' },
+          allowApply: true,
+        }),
       /wishlist not found/,
     );
   });
@@ -342,10 +356,17 @@ describe('remove_from_wishlist', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeWishlistCommerce({
-      removeItem: async () => { throw new Error('item not found'); },
+      removeItem: async () => {
+        throw new Error('item not found');
+      },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { wishlistId: 'wl_001', itemId: 'wli_x' }, allowApply: true }),
+      () =>
+        tool.handler({
+          commerce,
+          params: { wishlistId: 'wl_001', itemId: 'wli_x' },
+          allowApply: true,
+        }),
       /item not found/,
     );
   });
@@ -398,7 +419,9 @@ describe('list_wishlists', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeWishlistCommerce({
-      list: async () => { throw new Error('list query failed'); },
+      list: async () => {
+        throw new Error('list query failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { customerId: 'cust_001' } }),
@@ -473,7 +496,9 @@ describe('convert_wishlist_to_cart', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeWishlistCommerce({
-      convertToCart: async () => { throw new Error('cart creation failed'); },
+      convertToCart: async () => {
+        throw new Error('cart creation failed');
+      },
     });
     await assert.rejects(
       () => tool.handler({ commerce, params: { wishlistId: 'wl_001' }, allowApply: true }),

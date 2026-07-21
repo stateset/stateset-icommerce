@@ -10,7 +10,16 @@ describe('theme', () => {
     });
 
     it('exports all semantic colors', () => {
-      for (const key of ['accent', 'accentBright', 'accentDim', 'success', 'warn', 'error', 'info', 'muted']) {
+      for (const key of [
+        'accent',
+        'accentBright',
+        'accentDim',
+        'success',
+        'warn',
+        'error',
+        'info',
+        'muted',
+      ]) {
         assert.ok(PALETTE[key], `missing palette entry: ${key}`);
       }
     });

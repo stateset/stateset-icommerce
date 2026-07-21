@@ -1,11 +1,7 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  ToolRegistry,
-  AGENT_TOOL_CATEGORIES,
-  createToolRegistry,
-} from '../../src/tools/index.js';
+import { ToolRegistry, AGENT_TOOL_CATEGORIES, createToolRegistry } from '../../src/tools/index.js';
 import { getStaticMcpToolDefinitions } from '../../src/mcp-server.js';
 import { AGENTS } from '../../src/agent-definitions.js';
 
@@ -315,7 +311,11 @@ describe('AGENT_TOOL_CATEGORIES', () => {
         (toolName) => toolName.startsWith('mcp__stateset-commerce__') && !loadedNames.has(toolName),
       );
 
-      assert.deepStrictEqual(missing, [], `${agentName} has tools not covered by its registry categories`);
+      assert.deepStrictEqual(
+        missing,
+        [],
+        `${agentName} has tools not covered by its registry categories`,
+      );
     }
   });
 });

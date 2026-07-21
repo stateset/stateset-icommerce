@@ -107,7 +107,11 @@ describe('harness-hooks', () => {
       } catch {
         return;
       }
-      assert.strictEqual(mod.getBundledPluginDir, undefined, 'Internal function should not be exported');
+      assert.strictEqual(
+        mod.getBundledPluginDir,
+        undefined,
+        'Internal function should not be exported',
+      );
     });
   });
 });

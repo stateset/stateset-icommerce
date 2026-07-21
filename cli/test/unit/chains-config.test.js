@@ -30,9 +30,19 @@ import {
 describe('CHAINS', () => {
   it('contains all expected chains', () => {
     const expected = [
-      'solana', 'solana_devnet', 'set_chain', 'set_chain_testnet',
-      'base', 'ethereum', 'arbitrum', 'arc', 'arc_testnet',
-      'zcash', 'zcash_testnet', 'bitcoin', 'bitcoin_testnet',
+      'solana',
+      'solana_devnet',
+      'set_chain',
+      'set_chain_testnet',
+      'base',
+      'ethereum',
+      'arbitrum',
+      'arc',
+      'arc_testnet',
+      'zcash',
+      'zcash_testnet',
+      'bitcoin',
+      'bitcoin_testnet',
     ];
     for (const chain of expected) {
       assert.ok(CHAINS[chain], `Expected chain ${chain} to exist`);

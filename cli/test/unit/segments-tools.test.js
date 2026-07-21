@@ -57,7 +57,10 @@ describe('segmentTools — module exports', () => {
 
   it('all tools have an inputSchema object', () => {
     for (const tool of segmentTools) {
-      assert.ok(tool.inputSchema && typeof tool.inputSchema === 'object', `${tool.name} missing inputSchema`);
+      assert.ok(
+        tool.inputSchema && typeof tool.inputSchema === 'object',
+        `${tool.name} missing inputSchema`,
+      );
     }
   });
 });

@@ -157,18 +157,12 @@ describe('agent-card-auto', () => {
 
     it('updateAgent rejects disallowed fields', () => {
       const card = store.registerAgent({ name: 'Bot', wallet_address: '0xR' });
-      assert.throws(
-        () => store.updateAgent(card.id, { id: 'new-id' }),
-        /not allowed/,
-      );
+      assert.throws(() => store.updateAgent(card.id, { id: 'new-id' }), /not allowed/);
     });
 
     it('wallet_address UNIQUE constraint prevents duplicates', () => {
       store.registerAgent({ name: 'Bot1', wallet_address: '0xDup' });
-      assert.throws(
-        () => store.registerAgent({ name: 'Bot2', wallet_address: '0xDup' }),
-        /UNIQUE/,
-      );
+      assert.throws(() => store.registerAgent({ name: 'Bot2', wallet_address: '0xDup' }), /UNIQUE/);
     });
   });
 

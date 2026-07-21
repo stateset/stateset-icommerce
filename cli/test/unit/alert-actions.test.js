@@ -36,7 +36,10 @@ describe('ALERT_ACTION_MAP', () => {
   it('all action values are either "notify" or "celebrate"', () => {
     const validActions = new Set(['notify', 'celebrate']);
     for (const [id, entry] of Object.entries(ALERT_ACTION_MAP)) {
-      assert.ok(validActions.has(entry.action), `${id}.action "${entry.action}" is not a valid value`);
+      assert.ok(
+        validActions.has(entry.action),
+        `${id}.action "${entry.action}" is not a valid value`,
+      );
     }
   });
 
@@ -54,14 +57,26 @@ describe('mapAlertToAction', () => {
   });
 
   it('returns an enriched object for a known checkId', () => {
-    const alert = { checkId: 'low-stock', checkName: 'Low Stock', status: 'alert', details: {}, timestamp: Date.now() };
+    const alert = {
+      checkId: 'low-stock',
+      checkName: 'Low Stock',
+      status: 'alert',
+      details: {},
+      timestamp: Date.now(),
+    };
     const result = mapAlertToAction(alert);
     assert.notEqual(result, null);
     assert.equal(typeof result, 'object');
   });
 
   it('result includes the original alert object', () => {
-    const alert = { checkId: 'low-stock', checkName: 'Low Stock', status: 'alert', details: { count: 3 }, timestamp: 1000 };
+    const alert = {
+      checkId: 'low-stock',
+      checkName: 'Low Stock',
+      status: 'alert',
+      details: { count: 3 },
+      timestamp: 1000,
+    };
     const result = mapAlertToAction(alert);
     assert.deepEqual(result.alert, alert);
   });
@@ -114,7 +129,11 @@ describe('mapAlertToAction', () => {
     for (const [checkId, expectedAction] of Object.entries(expectedActions)) {
       const result = mapAlertToAction({ checkId });
       assert.notEqual(result, null, `Expected non-null result for ${checkId}`);
-      assert.equal(result.action, expectedAction, `${checkId} should have action "${expectedAction}"`);
+      assert.equal(
+        result.action,
+        expectedAction,
+        `${checkId} should have action "${expectedAction}"`,
+      );
     }
   });
 

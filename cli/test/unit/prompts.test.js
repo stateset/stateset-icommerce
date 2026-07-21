@@ -35,10 +35,7 @@ describe('isInteractive', () => {
 
 describe('interactiveOr', () => {
   it('returns fallback when not interactive', async () => {
-    const result = await interactiveOr(
-      async () => 'interactive-value',
-      'fallback-value',
-    );
+    const result = await interactiveOr(async () => 'interactive-value', 'fallback-value');
     assert.equal(result, 'fallback-value');
   });
 
@@ -50,10 +47,7 @@ describe('interactiveOr', () => {
   });
 
   it('throws with default message when no error message provided', async () => {
-    await assert.rejects(
-      () => interactiveOr(async () => 'x'),
-      /non-interactive/,
-    );
+    await assert.rejects(() => interactiveOr(async () => 'x'), /non-interactive/);
   });
 
   it('accepts null as valid fallback', async () => {

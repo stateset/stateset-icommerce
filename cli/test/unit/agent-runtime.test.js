@@ -5,7 +5,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 
-import { createStreamingHandler, resolveAgentRuntimeOptions } from '../../src/utils/agent-runtime.js';
+import {
+  createStreamingHandler,
+  resolveAgentRuntimeOptions,
+} from '../../src/utils/agent-runtime.js';
 
 describe('agent-runtime utils', () => {
   it('defaults to off think level and claude provider', () => {

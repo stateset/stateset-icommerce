@@ -47,7 +47,7 @@ describe('Telegram Gateway', () => {
 
     it('source imports createSessionManager from channels/base', () => {
       assert.ok(source.includes('createSessionManager'));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
@@ -56,7 +56,7 @@ describe('Telegram Gateway', () => {
 
     it('source imports getNotifier from channels/notifier', () => {
       assert.ok(source.includes('getNotifier'));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('dynamically imports grammy SDK', () => {
@@ -72,7 +72,7 @@ describe('Telegram Gateway', () => {
 
   describe('environment validation', () => {
     it('requires TELEGRAM_BOT_TOKEN env var', () => {
-      assert.ok(source.includes("process.env.TELEGRAM_BOT_TOKEN"));
+      assert.ok(source.includes('process.env.TELEGRAM_BOT_TOKEN'));
     });
 
     it('throws with helpful message when token is missing', () => {

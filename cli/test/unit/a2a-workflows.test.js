@@ -27,9 +27,24 @@ function makeStore() {
 
 function linearSteps() {
   return [
-    { name: 'step-a', type: 'quote_request', agentAddress: '0xA', params: { description: 'fetch data' } },
-    { name: 'step-b', type: 'transform', dependsOn: ['step-a'], params: { transformType: 'merge' } },
-    { name: 'step-c', type: 'transform', dependsOn: ['step-b'], params: { transformType: 'merge' } },
+    {
+      name: 'step-a',
+      type: 'quote_request',
+      agentAddress: '0xA',
+      params: { description: 'fetch data' },
+    },
+    {
+      name: 'step-b',
+      type: 'transform',
+      dependsOn: ['step-a'],
+      params: { transformType: 'merge' },
+    },
+    {
+      name: 'step-c',
+      type: 'transform',
+      dependsOn: ['step-b'],
+      params: { transformType: 'merge' },
+    },
   ];
 }
 
@@ -37,7 +52,12 @@ function parallelSteps() {
   return [
     { name: 'fetch-1', type: 'quote_request', agentAddress: '0xA' },
     { name: 'fetch-2', type: 'quote_request', agentAddress: '0xB' },
-    { name: 'merge', type: 'transform', dependsOn: ['fetch-1', 'fetch-2'], params: { transformType: 'merge' } },
+    {
+      name: 'merge',
+      type: 'transform',
+      dependsOn: ['fetch-1', 'fetch-2'],
+      params: { transformType: 'merge' },
+    },
   ];
 }
 
@@ -46,7 +66,12 @@ function diamondSteps() {
     { name: 'source', type: 'quote_request', agentAddress: '0xS' },
     { name: 'left', type: 'transform', dependsOn: ['source'], params: { transformType: 'merge' } },
     { name: 'right', type: 'transform', dependsOn: ['source'], params: { transformType: 'merge' } },
-    { name: 'sink', type: 'transform', dependsOn: ['left', 'right'], params: { transformType: 'sum_costs' } },
+    {
+      name: 'sink',
+      type: 'transform',
+      dependsOn: ['left', 'right'],
+      params: { transformType: 'sum_costs' },
+    },
   ];
 }
 
@@ -193,9 +218,7 @@ describe('validateDAG()', () => {
   });
 
   it('rejects unknown dependency', () => {
-    const result = svc.validateDAG([
-      { name: 'a', type: 'transform', dependsOn: ['nonexistent'] },
-    ]);
+    const result = svc.validateDAG([{ name: 'a', type: 'transform', dependsOn: ['nonexistent'] }]);
     assert.strictEqual(result.valid, false);
     assert.ok(result.error.includes('unknown step'));
   });
@@ -210,17 +233,13 @@ describe('validateDAG()', () => {
   });
 
   it('rejects step without a name', () => {
-    const result = svc.validateDAG([
-      { type: 'transform' },
-    ]);
+    const result = svc.validateDAG([{ type: 'transform' }]);
     assert.strictEqual(result.valid, false);
     assert.ok(result.error.includes('name'));
   });
 
   it('rejects invalid step type', () => {
-    const result = svc.validateDAG([
-      { name: 'bad', type: 'invalid_type' },
-    ]);
+    const result = svc.validateDAG([{ name: 'bad', type: 'invalid_type' }]);
     assert.strictEqual(result.valid, false);
     assert.ok(result.error.includes('Invalid step type'));
   });
@@ -256,7 +275,10 @@ describe('createWorkflow()', () => {
   });
 
   it('persists workflow in the store', () => {
-    const result = svc.createWorkflow({ name: 'persist-check', steps: [{ name: 'only', type: 'transform' }] });
+    const result = svc.createWorkflow({
+      name: 'persist-check',
+      steps: [{ name: 'only', type: 'transform' }],
+    });
     const fetched = store.getWorkflow(result.workflow.id);
     assert.ok(fetched);
     assert.strictEqual(fetched.name, 'persist-check');
@@ -282,7 +304,11 @@ describe('createWorkflow()', () => {
 
   it('saves metadata when provided', () => {
     const meta = { source: 'unit-test', priority: 'high' };
-    const result = svc.createWorkflow({ name: 'meta-wf', steps: [{ name: 'x', type: 'transform' }], metadata: meta });
+    const result = svc.createWorkflow({
+      name: 'meta-wf',
+      steps: [{ name: 'x', type: 'transform' }],
+      metadata: meta,
+    });
     const wf = store.getWorkflow(result.workflow.id);
     const parsed = JSON.parse(wf.metadata);
     assert.strictEqual(parsed.source, 'unit-test');
@@ -313,31 +339,30 @@ describe('createWorkflow()', () => {
   });
 
   it('throws when steps is not provided', () => {
-    assert.throws(
-      () => svc.createWorkflow({ name: 'no-steps' }),
-      /Steps array is required/,
-    );
+    assert.throws(() => svc.createWorkflow({ name: 'no-steps' }), /Steps array is required/);
   });
 
   it('throws when DAG has a cycle', () => {
     assert.throws(
-      () => svc.createWorkflow({
-        name: 'cyclic',
-        steps: [
-          { name: 'a', type: 'transform', dependsOn: ['b'] },
-          { name: 'b', type: 'transform', dependsOn: ['a'] },
-        ],
-      }),
+      () =>
+        svc.createWorkflow({
+          name: 'cyclic',
+          steps: [
+            { name: 'a', type: 'transform', dependsOn: ['b'] },
+            { name: 'b', type: 'transform', dependsOn: ['a'] },
+          ],
+        }),
       /Invalid workflow DAG.*Cycle/,
     );
   });
 
   it('throws when step has unknown dependency', () => {
     assert.throws(
-      () => svc.createWorkflow({
-        name: 'bad-dep',
-        steps: [{ name: 'orphan', type: 'transform', dependsOn: ['ghost'] }],
-      }),
+      () =>
+        svc.createWorkflow({
+          name: 'bad-dep',
+          steps: [{ name: 'orphan', type: 'transform', dependsOn: ['ghost'] }],
+        }),
       /Invalid workflow DAG.*unknown step/,
     );
   });
@@ -436,9 +461,7 @@ describe('executeWorkflow()', () => {
   it('passes context to steps', async () => {
     const wf = svc.createWorkflow({
       name: 'context-pass',
-      steps: [
-        { name: 'transform', type: 'transform', params: { transformType: 'merge' } },
-      ],
+      steps: [{ name: 'transform', type: 'transform', params: { transformType: 'merge' } }],
     });
     const ctx = { inputData: 'hello' };
     const result = await svc.executeWorkflow(wf.workflow.id, ctx);
@@ -448,10 +471,7 @@ describe('executeWorkflow()', () => {
   });
 
   it('throws when workflow ID does not exist', async () => {
-    await assert.rejects(
-      () => svc.executeWorkflow('nonexistent-id'),
-      /not found/,
-    );
+    await assert.rejects(() => svc.executeWorkflow('nonexistent-id'), /not found/);
   });
 
   it('returns early for already-completed workflow', async () => {
@@ -517,7 +537,12 @@ describe('Step types — transform', () => {
       steps: [
         { name: 'src-a', type: 'quote_request' },
         { name: 'src-b', type: 'quote_request' },
-        { name: 'merged', type: 'transform', dependsOn: ['src-a', 'src-b'], params: { transformType: 'merge' } },
+        {
+          name: 'merged',
+          type: 'transform',
+          dependsOn: ['src-a', 'src-b'],
+          params: { transformType: 'merge' },
+        },
       ],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
@@ -533,7 +558,12 @@ describe('Step types — transform', () => {
       steps: [
         { name: 'a', type: 'quote_request' },
         { name: 'b', type: 'quote_request' },
-        { name: 'total', type: 'transform', dependsOn: ['a', 'b'], params: { transformType: 'sum_costs' } },
+        {
+          name: 'total',
+          type: 'transform',
+          dependsOn: ['a', 'b'],
+          params: { transformType: 'sum_costs' },
+        },
       ],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
@@ -547,7 +577,12 @@ describe('Step types — transform', () => {
       steps: [
         { name: 'x', type: 'quote_request' },
         { name: 'y', type: 'quote_request' },
-        { name: 'agg', type: 'transform', dependsOn: ['x', 'y'], params: { transformType: 'aggregate' } },
+        {
+          name: 'agg',
+          type: 'transform',
+          dependsOn: ['x', 'y'],
+          params: { transformType: 'aggregate' },
+        },
       ],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
@@ -564,7 +599,12 @@ describe('Step types — transform', () => {
       name: 'passthrough-test',
       steps: [
         { name: 'src', type: 'quote_request' },
-        { name: 'pass', type: 'transform', dependsOn: ['src'], params: { transformType: 'unknown_type' } },
+        {
+          name: 'pass',
+          type: 'transform',
+          dependsOn: ['src'],
+          params: { transformType: 'unknown_type' },
+        },
       ],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
@@ -619,7 +659,12 @@ describe('Step types — condition_check', () => {
       name: 'exists-target',
       steps: [
         { name: 'dep', type: 'quote_request' },
-        { name: 'check', type: 'condition_check', dependsOn: ['dep'], params: { check: 'exists', target: 'dep' } },
+        {
+          name: 'check',
+          type: 'condition_check',
+          dependsOn: ['dep'],
+          params: { check: 'exists', target: 'dep' },
+        },
       ],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
@@ -648,7 +693,12 @@ describe('Step types — condition_check', () => {
       name: 'min-val-pass',
       steps: [
         { name: 'source', type: 'quote_request' },
-        { name: 'check', type: 'condition_check', dependsOn: ['source'], params: { check: 'min_value', target: 'source', minValue: 0 } },
+        {
+          name: 'check',
+          type: 'condition_check',
+          dependsOn: ['source'],
+          params: { check: 'min_value', target: 'source', minValue: 0 },
+        },
       ],
     });
     // The simulated quote_request has cost: 0 and total is not set, so total is undefined
@@ -663,9 +713,7 @@ describe('Step types — condition_check', () => {
   it('condition_check with unknown check type passes (default)', async () => {
     const wf = svc.createWorkflow({
       name: 'unknown-check',
-      steps: [
-        { name: 'check', type: 'condition_check', params: { check: 'custom_check' } },
-      ],
+      steps: [{ name: 'check', type: 'condition_check', params: { check: 'custom_check' } }],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
     assert.strictEqual(result.status, 'completed');
@@ -708,7 +756,14 @@ describe('Step types — with a2a service', () => {
     const svc = createWorkflowService(store, mockA2A);
     const wf = svc.createWorkflow({
       name: 'real-quote',
-      steps: [{ name: 'fetch', type: 'quote_request', agentAddress: '0xSeller', params: { description: 'widgets' } }],
+      steps: [
+        {
+          name: 'fetch',
+          type: 'quote_request',
+          agentAddress: '0xSeller',
+          params: { description: 'widgets' },
+        },
+      ],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
     assert.strictEqual(result.status, 'completed');
@@ -744,7 +799,14 @@ describe('Step types — with a2a service', () => {
     const svc = createWorkflowService(store, mockA2A);
     const wf = svc.createWorkflow({
       name: 'real-payment',
-      steps: [{ name: 'pay', type: 'payment', agentAddress: '0xRecipient', params: { amount: 100, asset: 'USDC' } }],
+      steps: [
+        {
+          name: 'pay',
+          type: 'payment',
+          agentAddress: '0xRecipient',
+          params: { amount: 100, asset: 'USDC' },
+        },
+      ],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
     assert.strictEqual(result.status, 'completed');
@@ -840,10 +902,7 @@ describe('getWorkflowStatus()', () => {
   });
 
   it('throws for nonexistent workflow', () => {
-    assert.throws(
-      () => svc.getWorkflowStatus('does-not-exist'),
-      /not found/,
-    );
+    assert.throws(() => svc.getWorkflowStatus('does-not-exist'), /not found/);
   });
 
   it('shows progress for multi-step workflow after partial failure', async () => {
@@ -851,7 +910,12 @@ describe('getWorkflowStatus()', () => {
       name: 'partial-fail',
       steps: [
         { name: 'good', type: 'transform' },
-        { name: 'bad', type: 'condition_check', dependsOn: ['good'], params: { check: 'exists', target: 'nonexistent' } },
+        {
+          name: 'bad',
+          type: 'condition_check',
+          dependsOn: ['good'],
+          params: { check: 'exists', target: 'nonexistent' },
+        },
         { name: 'unreached', type: 'transform', dependsOn: ['bad'] },
       ],
     });
@@ -903,10 +967,7 @@ describe('pauseWorkflow()', () => {
       steps: [{ name: 'x', type: 'transform' }],
     });
     store.updateWorkflow(wf.workflow.id, { status: 'completed' });
-    assert.throws(
-      () => svc.pauseWorkflow(wf.workflow.id),
-      /Cannot pause workflow in "completed"/,
-    );
+    assert.throws(() => svc.pauseWorkflow(wf.workflow.id), /Cannot pause workflow in "completed"/);
   });
 
   it('cannot pause a failed workflow', () => {
@@ -915,10 +976,7 @@ describe('pauseWorkflow()', () => {
       steps: [{ name: 'x', type: 'transform' }],
     });
     store.updateWorkflow(wf.workflow.id, { status: 'failed' });
-    assert.throws(
-      () => svc.pauseWorkflow(wf.workflow.id),
-      /Cannot pause workflow in "failed"/,
-    );
+    assert.throws(() => svc.pauseWorkflow(wf.workflow.id), /Cannot pause workflow in "failed"/);
   });
 
   it('cannot pause an already-paused workflow', () => {
@@ -927,17 +985,11 @@ describe('pauseWorkflow()', () => {
       steps: [{ name: 'x', type: 'transform' }],
     });
     store.updateWorkflow(wf.workflow.id, { status: 'paused' });
-    assert.throws(
-      () => svc.pauseWorkflow(wf.workflow.id),
-      /Cannot pause workflow in "paused"/,
-    );
+    assert.throws(() => svc.pauseWorkflow(wf.workflow.id), /Cannot pause workflow in "paused"/);
   });
 
   it('throws for nonexistent workflow', () => {
-    assert.throws(
-      () => svc.pauseWorkflow('no-such-id'),
-      /not found/,
-    );
+    assert.throws(() => svc.pauseWorkflow('no-such-id'), /not found/);
   });
 });
 
@@ -998,10 +1050,7 @@ describe('resumeWorkflow()', () => {
   });
 
   it('throws for nonexistent workflow', async () => {
-    await assert.rejects(
-      () => svc.resumeWorkflow('no-such-id'),
-      /not found/,
-    );
+    await assert.rejects(() => svc.resumeWorkflow('no-such-id'), /not found/);
   });
 });
 
@@ -1041,7 +1090,12 @@ describe('Edge cases', () => {
       name: 'mid-fail',
       steps: [
         { name: 'good-1', type: 'transform' },
-        { name: 'fail-here', type: 'condition_check', dependsOn: ['good-1'], params: { check: 'exists', target: 'nonexistent' } },
+        {
+          name: 'fail-here',
+          type: 'condition_check',
+          dependsOn: ['good-1'],
+          params: { check: 'exists', target: 'nonexistent' },
+        },
         { name: 'never-runs', type: 'transform', dependsOn: ['fail-here'] },
       ],
     });
@@ -1105,7 +1159,12 @@ describe('Edge cases', () => {
         { name: 'quote', type: 'quote_request' },
         { name: 'pay', type: 'payment', dependsOn: ['quote'] },
         { name: 'check', type: 'condition_check', dependsOn: ['pay'] },
-        { name: 'finalize', type: 'transform', dependsOn: ['check'], params: { transformType: 'merge' } },
+        {
+          name: 'finalize',
+          type: 'transform',
+          dependsOn: ['check'],
+          params: { transformType: 'merge' },
+        },
       ],
     });
     const result = await svc.executeWorkflow(wf.workflow.id);
@@ -1214,7 +1273,9 @@ describe('Edge cases', () => {
 
   it('a2a service failure propagates as step failure', async () => {
     const mockA2A = {
-      requestQuote: async () => { throw new Error('Network timeout'); },
+      requestQuote: async () => {
+        throw new Error('Network timeout');
+      },
     };
     const svcWithA2A = createWorkflowService(store, mockA2A);
     const wf = svcWithA2A.createWorkflow({

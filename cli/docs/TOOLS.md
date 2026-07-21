@@ -5,18 +5,18 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**898 tools** across **87 domains**.
+**923 tools** across **87 domains**.
 
 ## Domains
 
 | Domain | Tools |
 | --- | ---: |
-| [customers](#customers) | 3 |
+| [customers](#customers) | 11 |
 | [orders](#orders) | 6 |
-| [products](#products) | 4 |
+| [products](#products) | 14 |
 | [inventory](#inventory) | 6 |
 | [custom-objects](#custom-objects) | 12 |
-| [returns](#returns) | 5 |
+| [returns](#returns) | 12 |
 | [carts](#carts) | 30 |
 | [analytics](#analytics) | 14 |
 | [currency](#currency) | 12 |
@@ -106,6 +106,14 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `list_customers` | read | List all customers in the database. Returns customer details including email, name, and status. |
 | `get_customer` | read | Get a specific customer by ID or email address. |
 | `create_customer` | write | Create a new customer. Requires email, first name, and last name. |
+| `update_customer` | write | Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in). |
+| `delete_customer` | write | Delete a customer (soft delete). |
+| `find_or_create_customer` | write | Find a customer by email, or create one if none exists. Returns the existing or newly created customer. |
+| `list_customer_addresses` | read | List all addresses in a customer address book. |
+| `add_customer_address` | write | Add an address to a customer address book. |
+| `update_customer_address` | write | Update an existing customer address. |
+| `delete_customer_address` | write | Delete a customer address. |
+| `set_default_customer_address` | write | Set a customer address as the default for shipping, billing, or both. |
 
 ## orders
 
@@ -124,8 +132,18 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | --- | --- | --- |
 | `list_products` | read | List all products in the catalog. |
 | `get_product` | read | Get a specific product by ID. |
+| `get_product_by_slug` | read | Get a specific product by its URL slug. |
+| `search_products` | read | Search active products by name or description. |
 | `get_product_variant` | read | Get a product variant by SKU. |
+| `list_product_variants` | read | List all variants for a product. |
 | `create_product` | write | Create a new product with optional variants. |
+| `update_product` | write | Update an existing product. Only the fields provided are changed (name, slug, description, status). |
+| `activate_product` | write | Activate a product, making it available for purchase. |
+| `archive_product` | write | Archive a product, removing it from sale. |
+| `delete_product` | write | Delete a product (archives it). |
+| `add_product_variant` | write | Add a variant to an existing product. |
+| `update_product_variant` | write | Update an existing product variant. |
+| `delete_product_variant` | write | Delete a product variant. |
 
 ## inventory
 
@@ -161,9 +179,16 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | --- | --- | --- |
 | `list_returns` | read | List all returns. Shows return status, order, and reason. |
 | `get_return` | read | Get a specific return by ID. |
+| `list_returns_for_order` | read | List all returns filed against a specific order. |
+| `list_returns_for_customer` | read | List all returns filed by a specific customer. |
+| `list_pending_returns` | read | List returns awaiting approval (status requested). |
 | `create_return` | write | Create a return request for an order. |
 | `approve_return` | write | Approve a return request. |
 | `reject_return` | write | Reject a return request with a reason. |
+| `mark_return_received` | write | Mark a return as physically received at the warehouse. |
+| `complete_return` | write | Complete a return and process the refund. |
+| `cancel_return` | write | Cancel a return request. |
+| `add_return_tracking` | write | Add a return-shipping tracking number and mark the return in transit. |
 
 ## carts
 
@@ -346,7 +371,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `create_bom` | write | Create a new Bill of Materials for a product. Defines what components/ingredients are needed. |
 | `add_bom_component` | write | Add a component/ingredient to a Bill of Materials. |
 | `activate_bom` | write | Activate a BOM to make it available for work orders. |
-| `list_work_orders` | read | List all manufacturing work orders. Work orders track production runs. |
+| `list_work_orders` | read | List manufacturing work orders (production runs), optionally filtered by product, BOM, status, priority, assignee or work center. |
 | `get_work_order` | read | Get a work order by ID with full details. |
 | `create_work_order` | write | Create a manufacturing work order to produce a quantity of product. |
 | `start_work_order` | write | Start a work order (begin production). |
@@ -560,7 +585,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `list_suppliers` | read | List all suppliers. |
 | `get_supplier` | read | Get a supplier by ID. |
 | `create_supplier` | write | Create a new supplier. |
-| `list_purchase_orders` | read | List all purchase orders. |
+| `list_purchase_orders` | read | List purchase orders, optionally filtered by supplier, status, date range or total. |
 | `get_purchase_order` | read | Get a purchase order by ID. |
 | `create_purchase_order` | write | Create a purchase order to a supplier. |
 | `submit_purchase_order` | write | Submit a purchase order for approval. |
@@ -1026,12 +1051,12 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 
 | Tool | Permission | Description |
 | --- | --- | --- |
-| `list_inspections` | read | List quality inspections. |
+| `list_inspections` | read | List quality inspections, optionally filtered by type, status, reference, inspector or date range. |
 | `get_inspection` | read | Get a quality inspection by ID. |
 | `create_inspection` | write | Create a quality inspection. |
 | `start_inspection` | write | Start a quality inspection. |
 | `complete_inspection` | write | Complete a quality inspection. |
-| `list_ncrs` | read | List non-conformance reports. |
+| `list_ncrs` | read | List non-conformance reports, optionally filtered by source, severity, status, SKU, lot, assignee or date range. |
 | `get_ncr` | read | Get a non-conformance report by ID. |
 | `create_ncr` | write | Create a non-conformance report. |
 | `close_ncr` | write | Close a non-conformance report. |

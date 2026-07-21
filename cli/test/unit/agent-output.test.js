@@ -20,7 +20,7 @@ describe('agent-output utils', () => {
       const format = resolveOutputFormat({
         format: 'table',
         json: true,
-        argv: ['node', 'cli']
+        argv: ['node', 'cli'],
       });
       assert.strictEqual(format, 'json');
     });
@@ -29,7 +29,7 @@ describe('agent-output utils', () => {
       const format = resolveOutputFormat({
         format: 'table',
         json: true,
-        argv: ['node', 'cli', '--format', 'csv']
+        argv: ['node', 'cli', '--format', 'csv'],
       });
       assert.strictEqual(format, 'csv');
     });
@@ -38,7 +38,7 @@ describe('agent-output utils', () => {
       const format = resolveOutputFormat({
         format: 'table',
         json: false,
-        argv: ['node', 'cli', '--format=yaml']
+        argv: ['node', 'cli', '--format=yaml'],
       });
       assert.strictEqual(format, 'yaml');
     });
@@ -61,10 +61,10 @@ describe('agent-output utils', () => {
           toolResults: [
             {
               toolCall: { name: 'mcp__stateset-commerce__list_orders', input: { limit: 1 } },
-              result: [{ id: 'ord-1' }]
-            }
-          ]
-        }
+              result: [{ id: 'ord-1' }],
+            },
+          ],
+        },
       });
 
       assert.strictEqual(output.agent, 'orders');

@@ -101,13 +101,13 @@ describe('load-env parsing logic', () => {
   });
 
   it('does not strip mismatched quotes (double then single)', () => {
-    const result = parseEnvContent("KEY=\"hello'");
-    assert.deepStrictEqual(result, { KEY: "\"hello'" });
+    const result = parseEnvContent('KEY="hello\'');
+    assert.deepStrictEqual(result, { KEY: '"hello\'' });
   });
 
   it('does not strip mismatched quotes (single then double)', () => {
-    const result = parseEnvContent("KEY='hello\"");
-    assert.deepStrictEqual(result, { KEY: "'hello\"" });
+    const result = parseEnvContent('KEY=\'hello"');
+    assert.deepStrictEqual(result, { KEY: '\'hello"' });
   });
 
   it('does not strip internal quotes in value', () => {

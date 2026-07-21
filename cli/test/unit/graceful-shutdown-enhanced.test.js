@@ -43,7 +43,10 @@ describe('graceful-shutdown (enhanced)', () => {
       const { getErrorHint } = await import('../../src/utils/error-hints.js');
       const hint = getErrorHint(new Error('ANTHROPIC_API_KEY is not set'));
       assert.ok(hint, 'expected a hint for API key error');
-      assert.ok(hint.includes('stateset-config'), `hint should mention stateset-config, got: ${hint}`);
+      assert.ok(
+        hint.includes('stateset-config'),
+        `hint should mention stateset-config, got: ${hint}`,
+      );
     });
 
     it('getErrorHint returns null for unknown errors', async () => {

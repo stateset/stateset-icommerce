@@ -51,9 +51,13 @@ describe('isValidShopifyDomain', () => {
 
 describe('parseLinkHeader', () => {
   it('parses next link', () => {
-    const header = '<https://store.myshopify.com/admin/api/2024-01/customers.json?page_info=abc>; rel="next"';
+    const header =
+      '<https://store.myshopify.com/admin/api/2024-01/customers.json?page_info=abc>; rel="next"';
     const result = parseLinkHeader(header);
-    assert.equal(result.next, 'https://store.myshopify.com/admin/api/2024-01/customers.json?page_info=abc');
+    assert.equal(
+      result.next,
+      'https://store.myshopify.com/admin/api/2024-01/customers.json?page_info=abc',
+    );
     assert.equal(result.previous, null);
   });
 
@@ -126,10 +130,7 @@ describe('ShopifyClient constructor', () => {
   });
 
   it('throws on missing shopDomain', () => {
-    assert.throws(
-      () => new ShopifyClient({ accessToken: 'shpat_test' }),
-      /shopDomain is required/,
-    );
+    assert.throws(() => new ShopifyClient({ accessToken: 'shpat_test' }), /shopDomain is required/);
   });
 
   it('throws on missing accessToken', () => {

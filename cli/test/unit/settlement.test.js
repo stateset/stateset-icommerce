@@ -52,7 +52,8 @@ function createMockChains(overrides = {}) {
       ...overrides.hasSufficientBalance,
     }),
     getDefaultPaymentToken: (chainId) =>
-      overrides.defaultPaymentToken || overrides.defaultStablecoin || { symbol: 'USDC', decimals: 6 },
+      overrides.defaultPaymentToken ||
+      overrides.defaultStablecoin || { symbol: 'USDC', decimals: 6 },
     fromSmallestUnit: (smallest, decimals) => '1000.00',
   };
 }
@@ -98,7 +99,10 @@ describe('Settlement Service', () => {
       const token = tokenSymbol || mockChains.getDefaultPaymentToken(chainId)?.symbol;
       const result = await mockChains.getBalance(address, chainId, token, { configDir });
       return {
-        balance: result.balance || result.balanceDecimal || mockChains.fromSmallestUnit(result.balanceSmallest, result.decimals || 6),
+        balance:
+          result.balance ||
+          result.balanceDecimal ||
+          mockChains.fromSmallestUnit(result.balanceSmallest, result.decimals || 6),
         balanceSmallest: result.balanceSmallest,
         symbol: result.symbol || token,
       };
@@ -113,7 +117,9 @@ describe('Settlement Service', () => {
     async function settle({ toAddress, amount, asset, memo, paymentId }) {
       try {
         const token = asset || tokenSymbol || mockChains.getDefaultPaymentToken(chainId)?.symbol;
-        logger(`[settlement] Settling ${amount} ${token} → ${toAddress} on ${chainId}${simulate ? ' (simulate)' : ''}`);
+        logger(
+          `[settlement] Settling ${amount} ${token} → ${toAddress} on ${chainId}${simulate ? ' (simulate)' : ''}`,
+        );
 
         const result = await mockChains.executePayment(
           {
@@ -131,9 +137,11 @@ describe('Settlement Service', () => {
           {
             configDir,
             simulate,
-            onProgress: onProgress || ((event) => {
-              logger(`[settlement] ${event.step}: ${event.message}`);
-            }),
+            onProgress:
+              onProgress ||
+              ((event) => {
+                logger(`[settlement] ${event.step}: ${event.message}`);
+              }),
           },
         );
 
@@ -168,9 +176,15 @@ describe('Settlement Service', () => {
       getBalance,
       getAddress,
       hasSufficientFunds,
-      get chainId() { return chainId; },
-      get isSimulation() { return simulate; },
-      get agentId() { return agentId; },
+      get chainId() {
+        return chainId;
+      },
+      get isSimulation() {
+        return simulate;
+      },
+      get agentId() {
+        return agentId;
+      },
     };
   }
 
@@ -194,10 +208,7 @@ describe('Settlement Service', () => {
     });
 
     it('creates service with valid config', () => {
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        createMockChains(),
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, createMockChains());
       assert.ok(svc);
       assert.equal(svc.chainId, 'base');
       assert.equal(svc.agentId, 'agent-1');
@@ -213,10 +224,7 @@ describe('Settlement Service', () => {
     });
 
     it('defaults simulate to false', () => {
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        createMockChains(),
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, createMockChains());
       assert.equal(svc.isSimulation, false);
     });
 
@@ -260,10 +268,7 @@ describe('Settlement Service', () => {
         return origGetWallet(...args);
       };
 
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, chains);
 
       await svc.getAddress();
       await svc.getAddress();
@@ -296,10 +301,7 @@ describe('Settlement Service', () => {
 
   describe('getBalance()', () => {
     it('returns balance with symbol', async () => {
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        createMockChains(),
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, createMockChains());
       const bal = await svc.getBalance();
       assert.equal(bal.balance, '1000.00');
       assert.equal(bal.symbol, 'USDC');
@@ -331,10 +333,7 @@ describe('Settlement Service', () => {
         return { balanceSmallest: 100n, balance: '100.00', symbol: token, decimals: 18 };
       };
 
-      const svc = createTestSettlement(
-        { chainId: 'ethereum', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'ethereum', agentId: 'agent-1' }, chains);
       await svc.getBalance();
       assert.equal(capturedToken, 'DAI');
     });
@@ -349,10 +348,7 @@ describe('Settlement Service', () => {
       });
       chains.fromSmallestUnit = (smallest, decimals) => '2.00';
 
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, chains);
       const bal = await svc.getBalance();
       assert.equal(bal.balance, '2.00');
     });
@@ -364,10 +360,7 @@ describe('Settlement Service', () => {
 
   describe('hasSufficientFunds()', () => {
     it('returns sufficient: true when balance covers amount', async () => {
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        createMockChains(),
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, createMockChains());
       const result = await svc.hasSufficientFunds(50);
       assert.equal(result.sufficient, true);
       assert.equal(result.balance, '1000.00');
@@ -376,12 +369,14 @@ describe('Settlement Service', () => {
 
     it('returns sufficient: false when balance is too low', async () => {
       const chains = createMockChains({
-        hasSufficientBalance: { sufficient: false, balance: '10.00', required: '100', symbol: 'USDC' },
+        hasSufficientBalance: {
+          sufficient: false,
+          balance: '10.00',
+          required: '100',
+          symbol: 'USDC',
+        },
       });
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, chains);
       const result = await svc.hasSufficientFunds(100);
       assert.equal(result.sufficient, false);
       assert.equal(result.balance, '10.00');
@@ -450,10 +445,7 @@ describe('Settlement Service', () => {
     });
 
     it('returns success result with txHash and blockNumber', async () => {
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        createMockChains(),
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, createMockChains());
 
       const result = await svc.settle({ toAddress: '0xSeller', amount: 50 });
       assert.equal(result.success, true);
@@ -473,10 +465,7 @@ describe('Settlement Service', () => {
         intentId: 'intent-002',
       });
 
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, chains);
 
       const result = await svc.settle({ toAddress: '0xSeller', amount: 50 });
       assert.equal(result.success, false);
@@ -490,10 +479,7 @@ describe('Settlement Service', () => {
         throw new Error('RPC timeout');
       };
 
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, chains);
 
       const result = await svc.settle({ toAddress: '0xSeller', amount: 50 });
       assert.equal(result.success, false);
@@ -508,10 +494,7 @@ describe('Settlement Service', () => {
         return { success: true, txHash: '0x1', blockNumber: 1 };
       };
 
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, chains);
 
       await svc.settle({ toAddress: '0xSeller', amount: 50, asset: 'WETH' });
       assert.equal(capturedToken, 'WETH');
@@ -560,13 +543,15 @@ describe('Settlement Service', () => {
       );
 
       await svc.settle({ toAddress: '0xSeller', amount: 75 });
-      assert.ok(logs.some(l => l.includes('[settlement]') && l.includes('75')));
+      assert.ok(logs.some((l) => l.includes('[settlement]') && l.includes('75')));
     });
 
     it('logs error on failure', async () => {
       const logs = [];
       const chains = createMockChains();
-      chains.executePayment = async () => { throw new Error('network error'); };
+      chains.executePayment = async () => {
+        throw new Error('network error');
+      };
 
       const svc = createTestSettlement(
         { chainId: 'base', agentId: 'agent-1', logger: (msg) => logs.push(msg) },
@@ -574,7 +559,7 @@ describe('Settlement Service', () => {
       );
 
       await svc.settle({ toAddress: '0xSeller', amount: 50 });
-      assert.ok(logs.some(l => l.includes('Error') && l.includes('network error')));
+      assert.ok(logs.some((l) => l.includes('Error') && l.includes('network error')));
     });
 
     it('handles null paymentId and memo gracefully', async () => {
@@ -585,10 +570,7 @@ describe('Settlement Service', () => {
         return { success: true, txHash: '0x1', blockNumber: 1 };
       };
 
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, chains);
 
       await svc.settle({ toAddress: '0xSeller', amount: 50 });
       assert.equal(capturedParams.metadata.a2a_payment_id, null);
@@ -605,10 +587,7 @@ describe('Settlement Service', () => {
       };
 
       const onProgress = (event) => progressEvents.push(event);
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1', onProgress },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1', onProgress }, chains);
 
       await svc.settle({ toAddress: '0xSeller', amount: 50 });
       assert.equal(capturedOpts.onProgress, onProgress);
@@ -621,10 +600,7 @@ describe('Settlement Service', () => {
         // No txHash, blockNumber, explorerUrl
       });
 
-      const svc = createTestSettlement(
-        { chainId: 'base', agentId: 'agent-1' },
-        chains,
-      );
+      const svc = createTestSettlement({ chainId: 'base', agentId: 'agent-1' }, chains);
 
       const result = await svc.settle({ toAddress: '0xSeller', amount: 50 });
       assert.equal(result.success, true);

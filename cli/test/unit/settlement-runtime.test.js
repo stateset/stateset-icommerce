@@ -42,7 +42,10 @@ function createMockCommerce() {
   let paymentCounter = 0;
 
   const a2aStore = {
-    createQuote: (q) => { quotes.set(q.id, { ...q }); return { ...q }; },
+    createQuote: (q) => {
+      quotes.set(q.id, { ...q });
+      return { ...q };
+    },
     getQuote: (id) => quotes.get(id) || null,
     updateQuote: (id, u) => {
       const q = quotes.get(id);
@@ -50,9 +53,11 @@ function createMockCommerce() {
     },
     listQuotes: (filter = {}) => {
       let results = [...quotes.values()];
-      if (filter.seller_address) results = results.filter(q => q.seller_address === filter.seller_address);
-      if (filter.buyer_address) results = results.filter(q => q.buyer_address === filter.buyer_address);
-      if (filter.status) results = results.filter(q => q.status === filter.status);
+      if (filter.seller_address)
+        results = results.filter((q) => q.seller_address === filter.seller_address);
+      if (filter.buyer_address)
+        results = results.filter((q) => q.buyer_address === filter.buyer_address);
+      if (filter.status) results = results.filter((q) => q.status === filter.status);
       return results;
     },
     createPayment: (p) => {
@@ -68,7 +73,8 @@ function createMockCommerce() {
     },
     listPayments: (filter = {}) => {
       let results = [...payments.values()];
-      if (filter.sender_address) results = results.filter(p => p.sender_address === filter.sender_address);
+      if (filter.sender_address)
+        results = results.filter((p) => p.sender_address === filter.sender_address);
       return results;
     },
     sumPayments: () => ({ total: 0 }),
@@ -76,7 +82,10 @@ function createMockCommerce() {
     getPaymentRequest: () => null,
     updatePaymentRequest: () => {},
     listPaymentRequests: () => [],
-    createService: (s) => { services.set(s.id, { ...s }); return { ...s }; },
+    createService: (s) => {
+      services.set(s.id, { ...s });
+      return { ...s };
+    },
     getService: (id) => services.get(id) || null,
     updateService: (id, u) => {
       const s = services.get(id);
@@ -84,17 +93,24 @@ function createMockCommerce() {
     },
     listServices: (filter = {}) => {
       let results = [...services.values()];
-      if (filter.agent_address) results = results.filter(s => s.agent_address === filter.agent_address);
-      if (filter.category) results = results.filter(s => s.category === filter.category);
-      if (filter.active !== undefined) results = results.filter(s => s.active === filter.active);
+      if (filter.agent_address)
+        results = results.filter((s) => s.agent_address === filter.agent_address);
+      if (filter.category) results = results.filter((s) => s.category === filter.category);
+      if (filter.active !== undefined) results = results.filter((s) => s.active === filter.active);
       return results;
     },
-    createFeedback: (f) => { feedback.set(f.id || crypto.randomUUID(), f); return f; },
+    createFeedback: (f) => {
+      feedback.set(f.id || crypto.randomUUID(), f);
+      return f;
+    },
     getFeedback: (id) => feedback.get(id) || null,
     updateFeedback: () => {},
     listFeedback: () => [...feedback.values()],
     getReputationScore: (addr) => reputations.get(addr) || null,
-    upsertReputationScore: (s) => { reputations.set(s.agent_address, s); return s; },
+    upsertReputationScore: (s) => {
+      reputations.set(s.agent_address, s);
+      return s;
+    },
     createEscrow: (e) => e,
     getEscrow: () => null,
     updateEscrow: () => {},
@@ -157,40 +173,52 @@ function createMockSettlement(overrides = {}) {
   return {
     calls,
     service: {
-      get chainId() { return overrides.chainId || 'set_chain'; },
-      get isSimulation() { return overrides.isSimulation || false; },
-      get agentId() { return overrides.agentId || 'agent-1'; },
+      get chainId() {
+        return overrides.chainId || 'set_chain';
+      },
+      get isSimulation() {
+        return overrides.isSimulation || false;
+      },
+      get agentId() {
+        return overrides.agentId || 'agent-1';
+      },
 
       settle: async (params) => {
         calls.settle.push(params);
         if (overrides.settleError) throw new Error(overrides.settleError);
-        return overrides.settleResult || {
-          success: true,
-          txHash: '0x' + 'b'.repeat(64),
-          blockNumber: 54321,
-          explorerUrl: `https://basescan.org/tx/0x${'b'.repeat(64)}`,
-          confirmations: 5,
-          simulated: false,
-        };
+        return (
+          overrides.settleResult || {
+            success: true,
+            txHash: '0x' + 'b'.repeat(64),
+            blockNumber: 54321,
+            explorerUrl: `https://basescan.org/tx/0x${'b'.repeat(64)}`,
+            confirmations: 5,
+            simulated: false,
+          }
+        );
       },
 
       hasSufficientFunds: async (amount) => {
         calls.hasSufficientFunds.push(amount);
-        return overrides.fundsResult || {
-          sufficient: true,
-          balance: '1000.00',
-          required: String(amount),
-          symbol: 'USDC',
-        };
+        return (
+          overrides.fundsResult || {
+            sufficient: true,
+            balance: '1000.00',
+            required: String(amount),
+            symbol: 'USDC',
+          }
+        );
       },
 
       getBalance: async () => {
         calls.getBalance.push(true);
-        return overrides.balanceResult || {
-          balance: '1000.00',
-          balanceSmallest: 1000000000n,
-          symbol: 'USDC',
-        };
+        return (
+          overrides.balanceResult || {
+            balance: '1000.00',
+            balanceSmallest: 1000000000n,
+            symbol: 'USDC',
+          }
+        );
       },
 
       getAddress: async () => {
@@ -253,7 +281,9 @@ describe('Settlement Runtime Integration', () => {
 
   describe('backward compatibility (no settlement)', () => {
     it('tick() processes quotes without settlement when settlement is null', async () => {
-      const { runtime, quotes, payments, quoteId } = setupBuyerWithQuotedQuote({ noSettlement: true });
+      const { runtime, quotes, payments, quoteId } = setupBuyerWithQuotedQuote({
+        noSettlement: true,
+      });
 
       const processed = await runtime.tick();
       assert.equal(processed, 1);
@@ -794,7 +824,7 @@ describe('Settlement Runtime Integration', () => {
       assert.equal(mock.calls.settle.length, 3);
 
       // Each settle call should have different amounts
-      const amounts = mock.calls.settle.map(s => s.amount).sort((a, b) => a - b);
+      const amounts = mock.calls.settle.map((s) => s.amount).sort((a, b) => a - b);
       assert.deepEqual(amounts, [10, 20, 30]);
 
       runtime.destroy();
@@ -877,9 +907,9 @@ describe('Settlement Runtime Integration', () => {
       await runtime.tick();
 
       // Budget check should trigger, not settlement check
-      assert.ok(events.some(e => e.type === 'perTransaction'));
-      assert.ok(events.some(e => e.limit === 100));
-      assert.ok(events.some(e => e.attempted === 999));
+      assert.ok(events.some((e) => e.type === 'perTransaction'));
+      assert.ok(events.some((e) => e.limit === 100));
+      assert.ok(events.some((e) => e.attempted === 999));
       assert.ok(!events.includes('funds'));
 
       // hasSufficientFunds should NOT be called
@@ -909,11 +939,11 @@ describe('Settlement Runtime Integration', () => {
 
       await runtime.tick();
 
-      assert.ok(events.some(e => e.type === 'daily'));
-      assert.ok(events.some(e => e.asset === 'BTC'));
-      assert.ok(events.some(e => e.network === 'bitcoin'));
-      assert.ok(events.some(e => e.limit === 2000));
-      assert.ok(events.some(e => e.remaining === 50));
+      assert.ok(events.some((e) => e.type === 'daily'));
+      assert.ok(events.some((e) => e.asset === 'BTC'));
+      assert.ok(events.some((e) => e.network === 'bitcoin'));
+      assert.ok(events.some((e) => e.limit === 2000));
+      assert.ok(events.some((e) => e.remaining === 50));
       assert.ok(!events.includes('funds'));
       assert.equal(mock.calls.hasSufficientFunds.length, 0);
 

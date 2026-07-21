@@ -123,7 +123,12 @@ describe('validateEnv', () => {
 
   beforeEach(() => {
     // Save relevant env vars
-    for (const key of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'LOG_LEVEL', 'STATESET_MAX_MONETARY']) {
+    for (const key of [
+      'ANTHROPIC_API_KEY',
+      'OPENAI_API_KEY',
+      'LOG_LEVEL',
+      'STATESET_MAX_MONETARY',
+    ]) {
       savedEnv[key] = process.env[key];
     }
   });

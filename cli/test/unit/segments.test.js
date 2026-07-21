@@ -25,9 +25,7 @@ function findTool(tools, name) {
 // Mock factory
 // ============================================================================
 
-const mockConditions = [
-  { field: 'totalSpent', operator: 'gte', value: 500 },
-];
+const mockConditions = [{ field: 'totalSpent', operator: 'gte', value: 500 }];
 
 const mockSegment = {
   id: 'seg_001',

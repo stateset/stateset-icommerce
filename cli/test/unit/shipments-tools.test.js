@@ -11,7 +11,10 @@ import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { shipmentTools } from '../../src/tools/shipments.js';
-import { createPaymentIntent, __resetPaymentProviderState } from '../../src/tools/providers/payments.js';
+import {
+  createPaymentIntent,
+  __resetPaymentProviderState,
+} from '../../src/tools/providers/payments.js';
 import { __resetShippingProviderState } from '../../src/tools/providers/shipping.js';
 
 // ---------------------------------------------------------------------------

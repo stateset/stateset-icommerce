@@ -22,7 +22,11 @@ describe('AuditStore', () => {
     store.close();
     resetAuditStore();
     // Clean up test database
-    try { fs.rmSync(TEST_DB_DIR, { recursive: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(TEST_DB_DIR, { recursive: true });
+    } catch {
+      /* ignore */
+    }
   });
 
   describe('log()', () => {
@@ -31,7 +35,7 @@ describe('AuditStore', () => {
         tool: 'create_order',
         params: { customerId: 'c1', totalAmount: 100 },
         result: 'allowed',
-        level: 'write'
+        level: 'write',
       });
 
       const entries = store.query({ tool: 'create_order' });
@@ -47,12 +51,12 @@ describe('AuditStore', () => {
         tool: 'cancel_order',
         result: 'denied',
         reason: 'Insufficient permission level',
-        level: 'preview'
+        level: 'preview',
       });
 
       const denied = store.query({ result: 'denied' });
       assert.ok(denied.length >= 1);
-      const entry = denied.find(e => e.tool === 'cancel_order');
+      const entry = denied.find((e) => e.tool === 'cancel_order');
       assert.ok(entry);
       assert.equal(entry.reason, 'Insufficient permission level');
     });
@@ -63,11 +67,11 @@ describe('AuditStore', () => {
         result: 'allowed',
         level: 'read',
         sessionId: 'sess-123',
-        agent: 'orders-agent'
+        agent: 'orders-agent',
       });
 
       const entries = store.query({ tool: 'list_orders' });
-      const entry = entries.find(e => e.session_id === 'sess-123');
+      const entry = entries.find((e) => e.session_id === 'sess-123');
       assert.ok(entry);
       assert.equal(entry.agent, 'orders-agent');
     });
@@ -76,12 +80,12 @@ describe('AuditStore', () => {
   describe('query()', () => {
     it('filters by tool name', () => {
       const results = store.query({ tool: 'create_order' });
-      assert.ok(results.every(e => e.tool === 'create_order'));
+      assert.ok(results.every((e) => e.tool === 'create_order'));
     });
 
     it('filters by result', () => {
       const results = store.query({ result: 'denied' });
-      assert.ok(results.every(e => e.result === 'denied'));
+      assert.ok(results.every((e) => e.result === 'denied'));
     });
 
     it('filters by since timestamp', () => {
@@ -155,7 +159,7 @@ describe('AuditStore', () => {
       // Create store with very short retention
       const shortRetention = new AuditStore({
         dbPath: path.join(TEST_DB_DIR, 'audit-cleanup.db'),
-        retentionDays: 0 // 0 days = delete everything older than now
+        retentionDays: 0, // 0 days = delete everything older than now
       });
 
       shortRetention.log({ tool: 'test_tool', result: 'allowed', level: 'read' });
@@ -168,7 +172,11 @@ describe('AuditStore', () => {
       assert.equal(shortRetention.count(), 0);
 
       shortRetention.close();
-      try { fs.unlinkSync(path.join(TEST_DB_DIR, 'audit-cleanup.db')); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(path.join(TEST_DB_DIR, 'audit-cleanup.db'));
+      } catch {
+        /* ignore */
+      }
     });
   });
 });

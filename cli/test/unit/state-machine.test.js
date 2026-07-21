@@ -317,10 +317,7 @@ describe('StateMachine', () => {
         new StateMachine({
           name: 'ok',
           initialState: 'a',
-          states: [
-            { name: 'a', timeout: 1000, timeoutTransition: 'b' },
-            { name: 'b' },
-          ],
+          states: [{ name: 'a', timeout: 1000, timeoutTransition: 'b' }, { name: 'b' }],
           transitions: [],
           finalStates: ['b'],
         });
@@ -429,11 +426,7 @@ describe('WorkflowEngine', () => {
     return {
       name: 'simple',
       initialState: 'start',
-      states: [
-        { name: 'start' },
-        { name: 'middle' },
-        { name: 'end' },
-      ],
+      states: [{ name: 'start' }, { name: 'middle' }, { name: 'end' }],
       transitions: [
         { name: 'advance', from: 'start', to: 'middle' },
         { name: 'finish', from: 'middle', to: 'end' },
@@ -536,10 +529,7 @@ describe('WorkflowEngine', () => {
       e.registerWorkflow({
         name: 'enter-test',
         initialState: 'init',
-        states: [
-          { name: 'init', onEnter: 'doInit' },
-          { name: 'done' },
-        ],
+        states: [{ name: 'init', onEnter: 'doInit' }, { name: 'done' }],
         transitions: [{ name: 'go', from: 'init', to: 'done' }],
         finalStates: ['done'],
       });
@@ -621,10 +611,7 @@ describe('WorkflowEngine', () => {
     it('throws when instance is not running', async () => {
       const inst = await engine.startWorkflow(wfId);
       await engine.pauseInstance(inst.id);
-      await assert.rejects(
-        () => engine.transition(inst.id, 'middle'),
-        /Instance is not running/,
-      );
+      await assert.rejects(() => engine.transition(inst.id, 'middle'), /Instance is not running/);
     });
 
     it('throws when no valid transition exists', async () => {
@@ -906,10 +893,7 @@ describe('WorkflowEngine', () => {
 
     it('throws if instance is not paused', async () => {
       const inst = await engine.startWorkflow(wfId);
-      await assert.rejects(
-        () => engine.resumeInstance(inst.id),
-        /Instance is not paused/,
-      );
+      await assert.rejects(() => engine.resumeInstance(inst.id), /Instance is not paused/);
     });
   });
 
@@ -996,7 +980,10 @@ describe('WorkflowEngine', () => {
     });
 
     it('throws for unknown instance', async () => {
-      await assert.rejects(() => engine.failInstance('missing', new Error('x')), /Instance not found/);
+      await assert.rejects(
+        () => engine.failInstance('missing', new Error('x')),
+        /Instance not found/,
+      );
     });
 
     it('clears timeout timer', async () => {
@@ -1148,10 +1135,7 @@ describe('WorkflowEngine', () => {
       e.registerWorkflow({
         name: 'timeout-clear',
         initialState: 'a',
-        states: [
-          { name: 'a', timeout: 999999, timeoutTransition: 'b' },
-          { name: 'b' },
-        ],
+        states: [{ name: 'a', timeout: 999999, timeoutTransition: 'b' }, { name: 'b' }],
         transitions: [{ name: 'go', from: 'a', to: 'b' }],
         finalStates: ['b'],
       });
@@ -1394,28 +1378,19 @@ describe('WorkflowEngine', () => {
       await engine.transition(inst.id, 'end');
       assert.equal(inst.status, 'completed');
 
-      await assert.rejects(
-        () => engine.transition(inst.id, 'middle'),
-        /Instance is not running/,
-      );
+      await assert.rejects(() => engine.transition(inst.id, 'middle'), /Instance is not running/);
     });
 
     it('cannot transition after cancel', async () => {
       const inst = await engine.startWorkflow(wfId);
       await engine.cancelInstance(inst.id);
-      await assert.rejects(
-        () => engine.transition(inst.id, 'middle'),
-        /Instance is not running/,
-      );
+      await assert.rejects(() => engine.transition(inst.id, 'middle'), /Instance is not running/);
     });
 
     it('cannot transition after failure', async () => {
       const inst = await engine.startWorkflow(wfId);
       await engine.failInstance(inst.id, new Error('broke'));
-      await assert.rejects(
-        () => engine.transition(inst.id, 'middle'),
-        /Instance is not running/,
-      );
+      await assert.rejects(() => engine.transition(inst.id, 'middle'), /Instance is not running/);
     });
   });
 
@@ -1426,10 +1401,7 @@ describe('WorkflowEngine', () => {
       e.registerWorkflow({
         name: 'timeout-auto',
         initialState: 'wait',
-        states: [
-          { name: 'wait', timeout: 50, timeoutTransition: 'done' },
-          { name: 'done' },
-        ],
+        states: [{ name: 'wait', timeout: 50, timeoutTransition: 'done' }, { name: 'done' }],
         transitions: [{ name: 'auto', from: 'wait', to: 'done' }],
         finalStates: ['done'],
       });

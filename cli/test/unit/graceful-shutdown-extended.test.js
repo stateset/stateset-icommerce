@@ -59,7 +59,9 @@ describe('graceful shutdown extended', () => {
   describe('cleanup callback registration', () => {
     it('accepts a sync cleanup function without error', () => {
       installShutdownHandlers('test-sync-cleanup', {
-        cleanup: () => { /* sync cleanup */ },
+        cleanup: () => {
+          /* sync cleanup */
+        },
       });
       // Should register without throwing
       assert.ok(true);
@@ -96,10 +98,7 @@ describe('graceful shutdown extended', () => {
         process.listenerCount('unhandledRejection'),
         before.unhandledRejection + 1,
       );
-      assert.strictEqual(
-        process.listenerCount('uncaughtException'),
-        before.uncaughtException + 1,
-      );
+      assert.strictEqual(process.listenerCount('uncaughtException'), before.uncaughtException + 1);
       assert.strictEqual(process.listenerCount('SIGINT'), before.SIGINT + 1);
       assert.strictEqual(process.listenerCount('SIGTERM'), before.SIGTERM + 1);
     });
@@ -263,9 +262,7 @@ describe('graceful shutdown extended', () => {
     it('Promise.race can be used for cleanup timeouts', async () => {
       const slowCleanup = () => new Promise((r) => setTimeout(r, 5000));
       const timeout = (ms) =>
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('timeout')), ms),
-        );
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
 
       try {
         await Promise.race([slowCleanup(), timeout(20)]);

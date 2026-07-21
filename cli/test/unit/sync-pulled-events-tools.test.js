@@ -34,9 +34,7 @@ function findTool(name) {
 async function createTempSyncEnv(securityProfile) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `sync-pulled-${securityProfile}-`));
   const sequencerUrl =
-    securityProfile === 'legacy'
-      ? 'http://localhost:50051'
-      : 'https://sequencer.example.com';
+    securityProfile === 'legacy' ? 'http://localhost:50051' : 'https://sequencer.example.com';
   const config = createSyncConfig({
     sequencerUrl,
     tenantId: TENANT_ID,

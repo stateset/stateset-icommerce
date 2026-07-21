@@ -24,7 +24,9 @@ const cliSrc = path.join(__dirname, '..', '..', 'src');
 
 const { A2AStore } = await import(path.join(cliSrc, 'a2a', 'store.js'));
 const { makeCommerceProxy } = await import(path.join(cliSrc, 'a2a', 'agent-runtime.js'));
-const { agentRuntimeTools, _getRuntimeRegistry } = await import(path.join(cliSrc, 'tools', 'agent-runtime.js'));
+const { agentRuntimeTools, _getRuntimeRegistry } = await import(
+  path.join(cliSrc, 'tools', 'agent-runtime.js')
+);
 
 // =============================================================================
 // Helpers
@@ -32,7 +34,7 @@ const { agentRuntimeTools, _getRuntimeRegistry } = await import(path.join(cliSrc
 
 /** Find a tool by name from the exported array. */
 function getTool(name) {
-  const tool = agentRuntimeTools.find(t => t.name === name);
+  const tool = agentRuntimeTools.find((t) => t.name === name);
   if (!tool) throw new Error(`Tool "${name}" not found`);
   return tool;
 }
@@ -52,7 +54,11 @@ async function invoke(toolName, params = {}, opts = {}) {
 async function cleanupRuntimes() {
   const res = await invoke('agent_list_runtimes');
   for (const agent of res.agents || []) {
-    try { await invoke('agent_destroy_runtime', { name: agent.name }); } catch { /* best effort */ }
+    try {
+      await invoke('agent_destroy_runtime', { name: agent.name });
+    } catch {
+      /* best effort */
+    }
   }
 }
 
@@ -79,8 +85,16 @@ beforeEach(() => {
 
 afterEach(async () => {
   await cleanupRuntimes();
-  try { store.close(); } catch { /* ignore */ }
-  try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+  try {
+    store.close();
+  } catch {
+    /* ignore */
+  }
+  try {
+    fs.unlinkSync(dbPath);
+  } catch {
+    /* ignore */
+  }
 });
 
 // =============================================================================
@@ -95,9 +109,15 @@ describe('Agent Runtime Tools — tool registration', () => {
   it('every tool has required shape (name, description, inputSchema, permission, handler)', () => {
     for (const tool of agentRuntimeTools) {
       assert.ok(typeof tool.name === 'string' && tool.name.length > 0, `tool.name missing`);
-      assert.ok(typeof tool.description === 'string' && tool.description.length > 0, `${tool.name} description missing`);
+      assert.ok(
+        typeof tool.description === 'string' && tool.description.length > 0,
+        `${tool.name} description missing`,
+      );
       assert.ok(typeof tool.inputSchema === 'object', `${tool.name} inputSchema missing`);
-      assert.ok(['read', 'write', 'delete'].includes(tool.permission), `${tool.name} has invalid permission "${tool.permission}"`);
+      assert.ok(
+        ['read', 'write', 'delete'].includes(tool.permission),
+        `${tool.name} has invalid permission "${tool.permission}"`,
+      );
       assert.ok(typeof tool.handler === 'function', `${tool.name} handler is not a function`);
     }
   });
@@ -110,8 +130,12 @@ describe('Agent Runtime Tools — tool registration', () => {
 
   it('permission levels are correct for read tools', () => {
     const readTools = [
-      'agent_list_runtimes', 'agent_get_status', 'agent_get_budget',
-      'agent_discover_services', 'agent_get_reputation', 'agent_get_event_history',
+      'agent_list_runtimes',
+      'agent_get_status',
+      'agent_get_budget',
+      'agent_discover_services',
+      'agent_get_reputation',
+      'agent_get_event_history',
     ];
     for (const name of readTools) {
       assert.strictEqual(getTool(name).permission, 'read', `${name} should be read`);
@@ -120,10 +144,16 @@ describe('Agent Runtime Tools — tool registration', () => {
 
   it('permission levels are correct for write/delete tools', () => {
     const writeTools = [
-      'agent_create_runtime', 'agent_set_strategy', 'agent_tick',
-      'agent_start_loop', 'agent_stop_loop', 'agent_register_service',
-      'agent_create_escrow_deal', 'agent_subscribe_to_service',
-      'agent_rate_counterparty', 'agent_create_split_deal',
+      'agent_create_runtime',
+      'agent_set_strategy',
+      'agent_tick',
+      'agent_start_loop',
+      'agent_stop_loop',
+      'agent_register_service',
+      'agent_create_escrow_deal',
+      'agent_subscribe_to_service',
+      'agent_rate_counterparty',
+      'agent_create_split_deal',
     ];
     for (const name of writeTools) {
       assert.strictEqual(getTool(name).permission, 'write', `${name} should be write`);
@@ -250,7 +280,7 @@ describe('Agent Runtime Tools — lifecycle', () => {
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.count, 2);
 
-    const names = result.agents.map(a => a.name).sort();
+    const names = result.agents.map((a) => a.name).sort();
     assert.deepStrictEqual(names, ['Agent1', 'Agent2']);
 
     // Each agent should have the expected fields
@@ -526,7 +556,9 @@ describe('Agent Runtime Tools — agent operations', () => {
     assert.strictEqual(mixed.budget.aggregateTotalsMeaningful, false);
     assert.strictEqual(mixed.budget.spentToday, null);
     assert.deepStrictEqual(mixed.budget.assets, ['BTC', 'ZEC']);
-    assert.ok(Math.abs(mixed.budget.breakdownByAsset.BTC.networks.bitcoin.spentToday - 0.4) < 1e-12);
+    assert.ok(
+      Math.abs(mixed.budget.breakdownByAsset.BTC.networks.bitcoin.spentToday - 0.4) < 1e-12,
+    );
     assert.ok(Math.abs(mixed.budget.breakdownByAsset.ZEC.networks.zcash.spentToday - 1.25) < 1e-12);
 
     const btc = await invoke('agent_get_budget', {
@@ -559,11 +591,7 @@ describe('Agent Runtime Tools — agent operations', () => {
 
   it('agent_tick without --apply returns error', async () => {
     await createAgent('TickGuard');
-    const result = await invoke(
-      'agent_tick',
-      { name: 'TickGuard' },
-      { allowApply: false },
-    );
+    const result = await invoke('agent_tick', { name: 'TickGuard' }, { allowApply: false });
 
     assert.strictEqual(result.success, false);
     assert.ok(result.error.includes('--apply'));
@@ -678,11 +706,7 @@ describe('Agent Runtime Tools — service loop', () => {
 
   it('agent_start_loop without --apply returns error', async () => {
     await createAgent('LoopGuard');
-    const result = await invoke(
-      'agent_start_loop',
-      { name: 'LoopGuard' },
-      { allowApply: false },
-    );
+    const result = await invoke('agent_start_loop', { name: 'LoopGuard' }, { allowApply: false });
 
     assert.strictEqual(result.success, false);
     assert.ok(result.error.includes('--apply'));
@@ -712,11 +736,7 @@ describe('Agent Runtime Tools — service loop', () => {
 
   it('agent_stop_loop without --apply returns error', async () => {
     await createAgent('StopGuard');
-    const result = await invoke(
-      'agent_stop_loop',
-      { name: 'StopGuard' },
-      { allowApply: false },
-    );
+    const result = await invoke('agent_stop_loop', { name: 'StopGuard' }, { allowApply: false });
 
     assert.strictEqual(result.success, false);
     assert.ok(result.error.includes('--apply'));

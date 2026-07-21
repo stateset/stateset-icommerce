@@ -20,7 +20,10 @@ import { RotationPolicyManager, getRotationPolicyManager } from '../../src/sync/
 let tmpDir;
 
 async function makeTmpDir() {
-  tmpDir = path.join(os.tmpdir(), `rotation-policy-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  tmpDir = path.join(
+    os.tmpdir(),
+    `rotation-policy-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   await fs.mkdir(tmpDir, { recursive: true });
   return tmpDir;
 }
@@ -53,8 +56,12 @@ describe('RotationPolicyManager — defaults', () => {
 // ---------------------------------------------------------------------------
 
 describe('RotationPolicyManager — policy CRUD', () => {
-  beforeEach(async () => { await makeTmpDir(); });
-  afterEach(async () => { await cleanupTmpDir(); });
+  beforeEach(async () => {
+    await makeTmpDir();
+  });
+  afterEach(async () => {
+    await cleanupTmpDir();
+  });
 
   it('setPolicy creates and returns merged policy', async () => {
     const rpm = new RotationPolicyManager(tmpDir);
@@ -109,8 +116,12 @@ describe('RotationPolicyManager — policy CRUD', () => {
 // ---------------------------------------------------------------------------
 
 describe('RotationPolicyManager — usage tracking', () => {
-  beforeEach(async () => { await makeTmpDir(); });
-  afterEach(async () => { await cleanupTmpDir(); });
+  beforeEach(async () => {
+    await makeTmpDir();
+  });
+  afterEach(async () => {
+    await cleanupTmpDir();
+  });
 
   it('recordUsage increments count', async () => {
     const rpm = new RotationPolicyManager(tmpDir);
@@ -142,8 +153,12 @@ describe('RotationPolicyManager — usage tracking', () => {
 // ---------------------------------------------------------------------------
 
 describe('RotationPolicyManager — shouldRotate', () => {
-  beforeEach(async () => { await makeTmpDir(); });
-  afterEach(async () => { await cleanupTmpDir(); });
+  beforeEach(async () => {
+    await makeTmpDir();
+  });
+  afterEach(async () => {
+    await cleanupTmpDir();
+  });
 
   it('returns false when key is fresh', async () => {
     const rpm = new RotationPolicyManager(tmpDir);
@@ -194,8 +209,12 @@ describe('RotationPolicyManager — shouldRotate', () => {
 // ---------------------------------------------------------------------------
 
 describe('RotationPolicyManager — getExpiryDate', () => {
-  beforeEach(async () => { await makeTmpDir(); });
-  afterEach(async () => { await cleanupTmpDir(); });
+  beforeEach(async () => {
+    await makeTmpDir();
+  });
+  afterEach(async () => {
+    await cleanupTmpDir();
+  });
 
   it('returns null when no maxAgeHours', async () => {
     const rpm = new RotationPolicyManager(tmpDir);
@@ -222,8 +241,12 @@ describe('RotationPolicyManager — getExpiryDate', () => {
 // ---------------------------------------------------------------------------
 
 describe('RotationPolicyManager — scheduled rotations', () => {
-  beforeEach(async () => { await makeTmpDir(); });
-  afterEach(async () => { await cleanupTmpDir(); });
+  beforeEach(async () => {
+    await makeTmpDir();
+  });
+  afterEach(async () => {
+    await cleanupTmpDir();
+  });
 
   it('scheduleRotation creates a pending rotation', async () => {
     const rpm = new RotationPolicyManager(tmpDir);
@@ -255,10 +278,7 @@ describe('RotationPolicyManager — scheduled rotations', () => {
     const rpm = new RotationPolicyManager(tmpDir);
     const rot = await rpm.scheduleRotation('agent-1', 'signing', 1, 'age_limit');
     await rpm.completeRotation(rot.id, 2);
-    await assert.rejects(
-      () => rpm.completeRotation(rot.id, 3),
-      /not pending/,
-    );
+    await assert.rejects(() => rpm.completeRotation(rot.id, 3), /not pending/);
   });
 
   it('failRotation marks rotation as failed', async () => {
@@ -282,10 +302,7 @@ describe('RotationPolicyManager — scheduled rotations', () => {
     const rpm = new RotationPolicyManager(tmpDir);
     const rot = await rpm.scheduleRotation('agent-1', 'signing', 1, 'age_limit');
     await rpm.cancelRotation(rot.id);
-    await assert.rejects(
-      () => rpm.cancelRotation(rot.id),
-      /Cannot cancel/,
-    );
+    await assert.rejects(() => rpm.cancelRotation(rot.id), /Cannot cancel/);
   });
 
   it('getPendingRotations filters by agent', async () => {

@@ -171,8 +171,12 @@ describe('a2aObservabilityTools', () => {
     assert.equal(result.economics.anomalyCounts.transaction, 1);
     assert.equal(result.economics.summary.aggregateAsset, 'BTC');
     assert.equal(result.economics.margin.aggregateAsset, 'BTC');
-    assert.deepEqual(result.economics.operationBreakdown, [{ operation: 'quote_payment', totalAmount: 0.01 }]);
-    assert.deepEqual(result.economics.dailyTrend, [{ date: '2026-03-18', spent: 0.01, earned: 0, net: -0.01 }]);
+    assert.deepEqual(result.economics.operationBreakdown, [
+      { operation: 'quote_payment', totalAmount: 0.01 },
+    ]);
+    assert.deepEqual(result.economics.dailyTrend, [
+      { date: '2026-03-18', spent: 0.01, earned: 0, net: -0.01 },
+    ]);
 
     assert.deepEqual(summaryFilter, {
       agentAddress: '0xAlice',
@@ -314,7 +318,9 @@ describe('a2aObservabilityTools', () => {
     assert.equal(result.economics.summary.aggregateAsset, 'ZEC');
     assert.equal(result.economics.margin.aggregateAsset, 'ZEC');
     assert.deepEqual(result.economics.anomalyCounts, { transaction: 0, daily: 1 });
-    assert.deepEqual(result.economics.dailyTrend, [{ date: '2026-03-18', spent: 1.25, earned: 0, net: -1.25 }]);
+    assert.deepEqual(result.economics.dailyTrend, [
+      { date: '2026-03-18', spent: 1.25, earned: 0, net: -1.25 },
+    ]);
   });
 
   it('a2a_agent_alerts merges budget and settlement alerts with rail filters', async () => {

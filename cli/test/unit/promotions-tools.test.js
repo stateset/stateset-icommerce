@@ -81,7 +81,15 @@ function makeCommerce(overrides = {}) {
     listCoupons: async () => [makeCoupon()],
     getActive: async () => [makePromotion()],
     isValid: async (promotionId) => promotionId !== 'promo_invalid',
-    recordUsage: async (promotionId, couponId, customerId, orderId, cartId, discountAmount, currency) => ({
+    recordUsage: async (
+      promotionId,
+      couponId,
+      customerId,
+      orderId,
+      cartId,
+      discountAmount,
+      currency,
+    ) => ({
       id: 'usage_001',
       promotionId,
       couponId,
@@ -96,23 +104,25 @@ function makeCommerce(overrides = {}) {
 
   return {
     promotions: () => promoMethods,
-    applyCartPromotions: overrides.applyCartPromotions || (async () => ({
-      originalSubtotal: 100,
-      totalDiscount: 25,
-      discountedSubtotal: 75,
-      shippingDiscount: 0,
-      grandTotal: 75,
-      appliedPromotions: [
-        {
-          promotionName: 'Summer Sale',
-          discountType: 'PercentageOff',
-          discountAmount: 25,
-          description: '25% off',
-          couponCode: null,
-        },
-      ],
-      rejectedPromotions: [],
-    })),
+    applyCartPromotions:
+      overrides.applyCartPromotions ||
+      (async () => ({
+        originalSubtotal: 100,
+        totalDiscount: 25,
+        discountedSubtotal: 75,
+        shippingDiscount: 0,
+        grandTotal: 75,
+        appliedPromotions: [
+          {
+            promotionName: 'Summer Sale',
+            discountType: 'PercentageOff',
+            discountAmount: 25,
+            description: '25% off',
+            couponCode: null,
+          },
+        ],
+        rejectedPromotions: [],
+      })),
     ...overrides.commerceTop,
   };
 }
@@ -197,7 +207,10 @@ describe('list_promotions', () => {
     let calledWith = {};
     const commerce = makeCommerce({
       promoMethods: {
-        list: async (filter) => { calledWith = filter; return []; },
+        list: async (filter) => {
+          calledWith = filter;
+          return [];
+        },
       },
     });
     await tool.handler({ commerce, params: { status: 'active' } });
@@ -208,7 +221,10 @@ describe('list_promotions', () => {
     let calledWith = {};
     const commerce = makeCommerce({
       promoMethods: {
-        list: async (filter) => { calledWith = filter; return []; },
+        list: async (filter) => {
+          calledWith = filter;
+          return [];
+        },
       },
     });
     await tool.handler({ commerce, params: { type: 'percentage_off' } });
@@ -228,7 +244,10 @@ describe('get_promotion', () => {
   });
 
   it('returns promotion by ID', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { identifier: 'promo_001' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { identifier: 'promo_001' },
+    });
     assert.strictEqual(result.success, true);
     assert.ok(result.promotion);
     assert.strictEqual(result.promotion.id, 'promo_001');
@@ -238,8 +257,13 @@ describe('get_promotion', () => {
     let codeUsed = false;
     const commerce = makeCommerce({
       promoMethods: {
-        get: async () => { throw new Error('Not found by ID'); },
-        getByCode: async (code) => { codeUsed = true; return makePromotion({ code }); },
+        get: async () => {
+          throw new Error('Not found by ID');
+        },
+        getByCode: async (code) => {
+          codeUsed = true;
+          return makePromotion({ code });
+        },
       },
     });
     const result = await tool.handler({ commerce, params: { identifier: 'SUMMER25' } });
@@ -250,7 +274,9 @@ describe('get_promotion', () => {
   it('returns error when promotion not found by either method', async () => {
     const commerce = makeCommerce({
       promoMethods: {
-        get: async () => { throw new Error('Not found'); },
+        get: async () => {
+          throw new Error('Not found');
+        },
         getByCode: async () => null,
       },
     });
@@ -260,7 +286,10 @@ describe('get_promotion', () => {
   });
 
   it('maps full promotion fields', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { identifier: 'promo_001' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { identifier: 'promo_001' },
+    });
     const p = result.promotion;
     assert.strictEqual(p.maxDiscount, null);
     assert.strictEqual(p.usageLimit, 1000);
@@ -302,7 +331,12 @@ describe('update_promotion', () => {
 
 describe('create_promotion', () => {
   const tool = findTool('create_promotion');
-  const params = { name: 'Winter Sale', type: 'percentage_off', trigger: 'automatic', percentageOff: 0.2 };
+  const params = {
+    name: 'Winter Sale',
+    type: 'percentage_off',
+    trigger: 'automatic',
+    percentageOff: 0.2,
+  };
 
   it('has write permission', () => {
     assert.strictEqual(tool.permission, 'write');
@@ -328,7 +362,10 @@ describe('create_promotion', () => {
     let calledWith = {};
     const commerce = makeCommerce({
       promoMethods: {
-        create: async (data) => { calledWith = data; return makePromotion(data); },
+        create: async (data) => {
+          calledWith = data;
+          return makePromotion(data);
+        },
       },
     });
     await tool.handler({ commerce, params, allowApply: true });
@@ -339,10 +376,15 @@ describe('create_promotion', () => {
   it('propagates commerce errors', async () => {
     const commerce = makeCommerce({
       promoMethods: {
-        create: async () => { throw new Error('Duplicate code'); },
+        create: async () => {
+          throw new Error('Duplicate code');
+        },
       },
     });
-    await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Duplicate code/);
+    await assert.rejects(
+      () => tool.handler({ commerce, params, allowApply: true }),
+      /Duplicate code/,
+    );
   });
 });
 
@@ -462,7 +504,10 @@ describe('create_coupon', () => {
     let calledWith = {};
     const commerce = makeCommerce({
       promoMethods: {
-        createCoupon: async (data) => { calledWith = data; return makeCoupon(data); },
+        createCoupon: async (data) => {
+          calledWith = data;
+          return makeCoupon(data);
+        },
       },
     });
     await tool.handler({ commerce, params, allowApply: true });
@@ -482,7 +527,10 @@ describe('get_coupon', () => {
   });
 
   it('returns coupon by ID', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { identifier: 'coupon_001' } });
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params: { identifier: 'coupon_001' },
+    });
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.coupon.id, 'coupon_001');
   });
@@ -556,7 +604,10 @@ describe('validate_coupon', () => {
     let calledWith;
     const commerce = makeCommerce({
       promoMethods: {
-        validateCoupon: async (code) => { calledWith = code; return makeCoupon({ code }); },
+        validateCoupon: async (code) => {
+          calledWith = code;
+          return makeCoupon({ code });
+        },
         get: async () => makePromotion(),
       },
     });
@@ -598,7 +649,10 @@ describe('list_coupons', () => {
     let calledWith = {};
     const commerce = makeCommerce({
       promoMethods: {
-        listCoupons: async (filter) => { calledWith = filter; return []; },
+        listCoupons: async (filter) => {
+          calledWith = filter;
+          return [];
+        },
       },
     });
     await tool.handler({ commerce, params: { promotionId: 'promo_001', status: 'active' } });
@@ -686,7 +740,9 @@ describe('apply_cart_promotions', () => {
 
   it('propagates commerce errors', async () => {
     const commerce = makeCommerce({
-      applyCartPromotions: async () => { throw new Error('Cart empty'); },
+      applyCartPromotions: async () => {
+        throw new Error('Cart empty');
+      },
     });
     await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Cart empty/);
   });

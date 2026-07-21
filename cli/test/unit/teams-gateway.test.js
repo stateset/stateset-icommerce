@@ -49,7 +49,7 @@ describe('Teams Gateway', () => {
 
     it('source imports createSessionManager from channels/base', () => {
       assert.ok(source.includes('createSessionManager'));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
@@ -66,12 +66,12 @@ describe('Teams Gateway', () => {
 
     it('source imports getNotifier from channels/notifier', () => {
       assert.ok(source.includes('getNotifier'));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('source imports richMessageToPlainText for fallback', () => {
       assert.ok(source.includes('richMessageToPlainText'));
-      assert.ok(source.includes("../channels/rich-messages.js"));
+      assert.ok(source.includes('../channels/rich-messages.js'));
     });
 
     it('does not require any external SDK', () => {
@@ -84,11 +84,11 @@ describe('Teams Gateway', () => {
 
   describe('environment validation', () => {
     it('requires TEAMS_APP_ID env var', () => {
-      assert.ok(source.includes("process.env.TEAMS_APP_ID"));
+      assert.ok(source.includes('process.env.TEAMS_APP_ID'));
     });
 
     it('requires TEAMS_APP_PASSWORD env var', () => {
-      assert.ok(source.includes("process.env.TEAMS_APP_PASSWORD"));
+      assert.ok(source.includes('process.env.TEAMS_APP_PASSWORD'));
     });
 
     it('throws with helpful message when TEAMS_APP_ID is missing', () => {

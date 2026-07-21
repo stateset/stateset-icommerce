@@ -68,13 +68,9 @@ describe('PQC cross-language test vectors', () => {
         return;
       }
       const kp = native.vesHybridGenerateSigningKeypair();
-      const hash = Buffer.alloc(32, 0xAA);
+      const hash = Buffer.alloc(32, 0xaa);
 
-      const sig = native.vesHybridSignEventHash(
-        hash,
-        kp.ed25519PrivateKey,
-        kp.mlDsa65Seed,
-      );
+      const sig = native.vesHybridSignEventHash(hash, kp.ed25519PrivateKey, kp.mlDsa65Seed);
       assert.equal(sig.ed25519Signature.length, 64);
       assert.ok(sig.mlDsa65Signature.length > 0);
 
@@ -94,13 +90,9 @@ describe('PQC cross-language test vectors', () => {
       }
       const signer = native.vesHybridGenerateSigningKeypair();
       const verifier = native.vesHybridGenerateSigningKeypair();
-      const hash = Buffer.alloc(32, 0xBB);
+      const hash = Buffer.alloc(32, 0xbb);
 
-      const sig = native.vesHybridSignEventHash(
-        hash,
-        signer.ed25519PrivateKey,
-        signer.mlDsa65Seed,
-      );
+      const sig = native.vesHybridSignEventHash(hash, signer.ed25519PrivateKey, signer.mlDsa65Seed);
 
       const valid = native.vesHybridVerifyEventSignature(
         hash,
@@ -117,15 +109,11 @@ describe('PQC cross-language test vectors', () => {
         return;
       }
       const kp = native.vesHybridGenerateSigningKeypair();
-      const hash = Buffer.alloc(32, 0xCC);
-      const sig = native.vesHybridSignEventHash(
-        hash,
-        kp.ed25519PrivateKey,
-        kp.mlDsa65Seed,
-      );
+      const hash = Buffer.alloc(32, 0xcc);
+      const sig = native.vesHybridSignEventHash(hash, kp.ed25519PrivateKey, kp.mlDsa65Seed);
 
       const tampered = Buffer.from(sig.ed25519Signature);
-      tampered[0] ^= 0xFF;
+      tampered[0] ^= 0xff;
 
       const valid = native.vesHybridVerifyEventSignature(
         hash,
@@ -190,11 +178,9 @@ describe('PQC cross-language test vectors', () => {
 
       // Update AAD with correct plain hash for decryption
       aadParams.payloadPlainHash = encrypted.payloadPlainHash;
-      const reEncrypted = native.vesHybridEncryptPayload(
-        payload,
-        aadParams,
-        [{ kid: 1, x25519PublicKey: rk.x25519PublicKey, mlKem768PublicKey: rk.mlKem768PublicKey }],
-      );
+      const reEncrypted = native.vesHybridEncryptPayload(payload, aadParams, [
+        { kid: 1, x25519PublicKey: rk.x25519PublicKey, mlKem768PublicKey: rk.mlKem768PublicKey },
+      ]);
 
       const decrypted = native.vesHybridDecryptPayload(
         reEncrypted.payloadEncryptedJson,
@@ -227,10 +213,12 @@ describe('PQC cross-language test vectors', () => {
       // The NAPI bindings use random seeds, so we verify structural
       // invariants rather than bit-exact values here.
       const kp = native.vesHybridGenerateSigningKeypair();
-      assert.equal(kp.mlDsa65PublicKey.length, ML_DSA_65_PUBLIC_KEY_LENGTH,
-        'ML-DSA-65 public key should be 1952 bytes');
-      assert.equal(kp.mlDsa65Seed.length, 32,
-        'ML-DSA-65 seed should be 32 bytes');
+      assert.equal(
+        kp.mlDsa65PublicKey.length,
+        ML_DSA_65_PUBLIC_KEY_LENGTH,
+        'ML-DSA-65 public key should be 1952 bytes',
+      );
+      assert.equal(kp.mlDsa65Seed.length, 32, 'ML-DSA-65 seed should be 32 bytes');
     });
   });
 });

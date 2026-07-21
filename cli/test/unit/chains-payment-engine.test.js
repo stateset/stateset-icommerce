@@ -133,7 +133,11 @@ describe('chain payment engine', () => {
           case 'z_getnewaccount':
             return jsonResponse({ result: 7, error: null, id: request.id });
           case 'z_getaddressforaccount':
-            return jsonResponse({ result: { address: shieldedAddress }, error: null, id: request.id });
+            return jsonResponse({
+              result: { address: shieldedAddress },
+              error: null,
+              id: request.id,
+            });
           case 'z_sendmany':
             assert.equal(request.params[0], shieldedAddress);
             assert.equal(request.params[1][0].address, recipientAddress);
@@ -155,7 +159,10 @@ describe('chain payment engine', () => {
         }
       };
 
-      const address = await getWalletAddress(agentId, 'zcash', { configDir, requireShielded: true });
+      const address = await getWalletAddress(agentId, 'zcash', {
+        configDir,
+        requireShielded: true,
+      });
       assert.equal(address, shieldedAddress);
 
       const result = await executePayment(

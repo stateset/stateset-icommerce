@@ -25,7 +25,7 @@ describe('confirm utils', () => {
       confirmPrompt: async () => {
         called = true;
         return true;
-      }
+      },
     });
     const ok = await handler({ operation: 'test' });
     assert.strictEqual(called, true);

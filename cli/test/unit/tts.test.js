@@ -301,10 +301,13 @@ describe('TTSProvider', () => {
       });
 
       const tts = new TTSProvider({ apiKey: 'bad-key' });
-      await assert.rejects(() => tts.synthesize('hello'), (err) => {
-        assert.ok(err.message.includes('ElevenLabs API error 401'));
-        return true;
-      });
+      await assert.rejects(
+        () => tts.synthesize('hello'),
+        (err) => {
+          assert.ok(err.message.includes('ElevenLabs API error 401'));
+          return true;
+        },
+      );
     });
   });
 
@@ -322,7 +325,13 @@ describe('TTSProvider', () => {
         ok: true,
         json: async () => ({
           voices: [
-            { voice_id: 'v1', name: 'Rachel', category: 'premade', labels: { accent: 'american' }, preview_url: 'https://example.com/v1.mp3' },
+            {
+              voice_id: 'v1',
+              name: 'Rachel',
+              category: 'premade',
+              labels: { accent: 'american' },
+              preview_url: 'https://example.com/v1.mp3',
+            },
             { voice_id: 'v2', name: 'Domi' },
           ],
         }),
@@ -347,10 +356,13 @@ describe('TTSProvider', () => {
       });
 
       const tts = new TTSProvider({ apiKey: 'k' });
-      await assert.rejects(() => tts.listVoices(), (err) => {
-        assert.ok(err.message.includes('ElevenLabs voices API error 500'));
-        return true;
-      });
+      await assert.rejects(
+        () => tts.listVoices(),
+        (err) => {
+          assert.ok(err.message.includes('ElevenLabs voices API error 500'));
+          return true;
+        },
+      );
     });
   });
 

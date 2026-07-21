@@ -357,22 +357,24 @@ describe('AgentSessionStore', () => {
           updated_at INTEGER NOT NULL
         );
       `);
-      legacyDb.prepare(
-        `INSERT INTO agent_sessions
+      legacyDb
+        .prepare(
+          `INSERT INTO agent_sessions
           (session_id, provider, model, think_level, agent, summaries, last_request, last_response, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        'legacy-1',
-        'claude',
-        'legacy-model',
-        'low',
-        'orders',
-        '[]',
-        'old request',
-        'old response',
-        1,
-        1,
-      );
+        )
+        .run(
+          'legacy-1',
+          'claude',
+          'legacy-model',
+          'low',
+          'orders',
+          '[]',
+          'old request',
+          'old response',
+          1,
+          1,
+        );
       legacyDb.close();
     } else {
       const legacyStore = new AgentSessionStore({ dbPath });

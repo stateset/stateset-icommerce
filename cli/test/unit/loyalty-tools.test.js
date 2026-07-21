@@ -59,7 +59,10 @@ describe('loyaltyTools — module exports', () => {
 
   it('all tools have an inputSchema object', () => {
     for (const tool of loyaltyTools) {
-      assert.ok(tool.inputSchema && typeof tool.inputSchema === 'object', `${tool.name} missing inputSchema`);
+      assert.ok(
+        tool.inputSchema && typeof tool.inputSchema === 'object',
+        `${tool.name} missing inputSchema`,
+      );
     }
   });
 });
@@ -399,7 +402,12 @@ describe('loyaltyTools — handler success paths (mocked commerce)', () => {
     },
   ];
 
-  const mockTransaction = { id: 'txn-1', points: 100, type: 'earn', createdAt: '2026-01-15T00:00:00Z' };
+  const mockTransaction = {
+    id: 'txn-1',
+    points: 100,
+    type: 'earn',
+    createdAt: '2026-01-15T00:00:00Z',
+  };
 
   const commerce = {
     loyalty: {

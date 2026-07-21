@@ -31,10 +31,7 @@ describe('PolicyEngine — unknownDomainMode constructor', () => {
   });
 
   it('throws on numeric mode', () => {
-    assert.throws(
-      () => new PolicyEngine({ unknownDomainMode: 1 }),
-      /must be 'allow' or 'deny'/,
-    );
+    assert.throws(() => new PolicyEngine({ unknownDomainMode: 1 }), /must be 'allow' or 'deny'/);
   });
 
   it('works with no arguments (default constructor)', () => {
@@ -100,7 +97,9 @@ describe('PolicyEngine — evaluate unknown domain (deny mode)', () => {
 
   it('emits evaluated event with unknownDomain', async () => {
     let emitted = null;
-    engine.on('evaluated', (e) => { emitted = e; });
+    engine.on('evaluated', (e) => {
+      emitted = e;
+    });
     await engine.evaluate('nonexistent_domain', {});
     assert.ok(emitted);
     assert.equal(emitted.unknownDomain, true);
@@ -109,7 +108,10 @@ describe('PolicyEngine — evaluate unknown domain (deny mode)', () => {
 
   it('still evaluates normally when policies exist', async () => {
     engine.registerPolicySet(PolicyTemplates.autoApproveReturns);
-    const result = await engine.evaluate('returns', { return: { value: 50 }, customer: { lifetimeValue: 1000 } });
+    const result = await engine.evaluate('returns', {
+      return: { value: 50 },
+      customer: { lifetimeValue: 1000 },
+    });
     assert.equal(result.unknownDomain, undefined);
     assert.equal(result.shouldAllow, true);
   });

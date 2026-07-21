@@ -29,8 +29,10 @@ describe('EventCapture', () => {
         capture.capture('nonexistent.operation', 'id-123', {});
 
         assert.ok(
-          warnings.some(w => w.includes('Unmapped operation') && w.includes('nonexistent.operation')),
-          `Expected warning about unmapped operation, got: ${JSON.stringify(warnings)}`
+          warnings.some(
+            (w) => w.includes('Unmapped operation') && w.includes('nonexistent.operation'),
+          ),
+          `Expected warning about unmapped operation, got: ${JSON.stringify(warnings)}`,
         );
       } finally {
         console.warn = origWarn;
@@ -70,7 +72,12 @@ describe('EventCapture', () => {
 
       let outboxCalled = false;
       const mockDb = {
-        prepare: () => ({ all: () => [], run: () => { outboxCalled = true; } }),
+        prepare: () => ({
+          all: () => [],
+          run: () => {
+            outboxCalled = true;
+          },
+        }),
         exec: () => {},
       };
       const config = { identity: { tenantId: 't1', storeId: 's1', agentId: 'a1' } };

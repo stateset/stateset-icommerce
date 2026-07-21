@@ -436,10 +436,9 @@ describe('agent_key_export — Handler', () => {
 
   it('throws when agent has no keys', async () => {
     const km = new AgentKeyManager(tempDir);
-    await assert.rejects(
-      () => km.exportSigningPublicKey('nonexistent-agent'),
-      { message: /No signing key found/ }
-    );
+    await assert.rejects(() => km.exportSigningPublicKey('nonexistent-agent'), {
+      message: /No signing key found/,
+    });
   });
 
   it('does not include private key in export', async () => {

@@ -48,7 +48,7 @@ describe('Slack Gateway', () => {
 
     it('source imports createSessionManager from channels/base', () => {
       assert.ok(source.includes('createSessionManager'));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
@@ -57,12 +57,12 @@ describe('Slack Gateway', () => {
 
     it('source imports getNotifier from channels/notifier', () => {
       assert.ok(source.includes('getNotifier'));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('source imports richMessageToPlainText for fallback', () => {
       assert.ok(source.includes('richMessageToPlainText'));
-      assert.ok(source.includes("../channels/rich-messages.js"));
+      assert.ok(source.includes('../channels/rich-messages.js'));
     });
 
     it('dynamically imports @slack/bolt SDK', () => {
@@ -78,11 +78,11 @@ describe('Slack Gateway', () => {
 
   describe('environment validation', () => {
     it('requires SLACK_BOT_TOKEN env var', () => {
-      assert.ok(source.includes("process.env.SLACK_BOT_TOKEN"));
+      assert.ok(source.includes('process.env.SLACK_BOT_TOKEN'));
     });
 
     it('requires SLACK_APP_TOKEN env var', () => {
-      assert.ok(source.includes("process.env.SLACK_APP_TOKEN"));
+      assert.ok(source.includes('process.env.SLACK_APP_TOKEN'));
     });
 
     it('throws with helpful message when SLACK_BOT_TOKEN is missing', () => {
@@ -151,7 +151,7 @@ describe('Slack Gateway', () => {
     });
 
     it('formats markdown headers to Slack bold', () => {
-      assert.ok(source.includes("replace(/^#{1,6}"));
+      assert.ok(source.includes('replace(/^#{1,6}'));
     });
 
     it('sets maxMessageLength to 3000', () => {

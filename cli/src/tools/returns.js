@@ -6,8 +6,29 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
 
-export const returnTools = [
+const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
+
+function returnSummary(ret) {
+  return {
+    id: ret.id,
+    orderId: ret.orderId,
+    status: ret.status,
+    reason: ret.reason,
+    createdAt: ret.createdAt,
+  };
+}
+
+function returnList(returns) {
+  return {
+    success: true,
+    count: returns.length,
+    returns: returns.map(returnSummary),
+  };
+}
+
+export const returnTools = withPolicyDomain('returns', [
   {
     name: 'list_returns',
     description: 'List all returns. Shows return status, order, and reason.',
@@ -59,6 +80,43 @@ export const returnTools = [
       }
 
       return { success: true, return: ret };
+    },
+  },
+
+  {
+    name: 'list_returns_for_order',
+    description: 'List all returns filed against a specific order.',
+    inputSchema: {
+      orderId: z.string().min(1).describe('Order ID (UUID)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const returns = await commerce.returns.listForOrder(params.orderId);
+      return returnList(returns);
+    },
+  },
+
+  {
+    name: 'list_returns_for_customer',
+    description: 'List all returns filed by a specific customer.',
+    inputSchema: {
+      customerId: z.string().min(1).describe('Customer ID (UUID)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const returns = await commerce.returns.listForCustomer(params.customerId);
+      return returnList(returns);
+    },
+  },
+
+  {
+    name: 'list_pending_returns',
+    description: 'List returns awaiting approval (status requested).',
+    inputSchema: {},
+    permission: 'read',
+    handler: async ({ commerce }) => {
+      const returns = await commerce.returns.listPending();
+      return returnList(returns);
     },
   },
 
@@ -176,6 +234,91 @@ export const returnTools = [
       };
     },
   },
-];
+
+  {
+    name: 'mark_return_received',
+    description: 'Mark a return as physically received at the warehouse.',
+    inputSchema: {
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Mark return received', params);
+      }
+
+      const ret = await commerce.returns.markReceived(params.returnId);
+      return {
+        success: true,
+        message: 'Return marked as received',
+        return: { id: ret.id, status: ret.status },
+      };
+    },
+  },
+
+  {
+    name: 'complete_return',
+    description: 'Complete a return and process the refund.',
+    inputSchema: {
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Complete return', params);
+      }
+
+      const ret = await commerce.returns.complete(params.returnId);
+      return {
+        success: true,
+        message: 'Return completed',
+        return: { id: ret.id, status: ret.status },
+      };
+    },
+  },
+
+  {
+    name: 'cancel_return',
+    description: 'Cancel a return request.',
+    inputSchema: {
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Cancel return', params);
+      }
+
+      const ret = await commerce.returns.cancel(params.returnId);
+      return {
+        success: true,
+        message: 'Return cancelled',
+        return: { id: ret.id, status: ret.status },
+      };
+    },
+  },
+
+  {
+    name: 'add_return_tracking',
+    description: 'Add a return-shipping tracking number and mark the return in transit.',
+    inputSchema: {
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
+      trackingNumber: z.string().min(1).max(200).describe('Return shipment tracking number'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Add return tracking', params);
+      }
+
+      const ret = await commerce.returns.addTracking(params.returnId, params.trackingNumber);
+      return {
+        success: true,
+        message: 'Tracking added',
+        return: { id: ret.id, status: ret.status },
+      };
+    },
+  },
+]);
 
 export default returnTools;

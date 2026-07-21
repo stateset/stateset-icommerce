@@ -212,7 +212,10 @@ describe('Custom Object Record tools', () => {
           return [];
         },
       });
-      await tool.handler({ commerce, params: { typeHandle: 'warranty_registration', ownerId: 'cust-1' } });
+      await tool.handler({
+        commerce,
+        params: { typeHandle: 'warranty_registration', ownerId: 'cust-1' },
+      });
       assert.equal(calledFilter.typeHandle, 'warranty_registration');
       assert.equal(calledFilter.ownerId, 'cust-1');
     });

@@ -32,7 +32,8 @@ function setup() {
  * Helper: create a service in the store and return its ID and agent address.
  */
 function createTestService(store, overrides = {}) {
-  const agentAddress = overrides.agent_address || `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const agentAddress =
+    overrides.agent_address || `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const svc = store.createService({
     agent_address: agentAddress,
     name: overrides.name || 'Test Service',
@@ -91,7 +92,6 @@ function createTestPayment(store, { recipientAddress, amount }) {
   });
 }
 
-
 // =============================================================================
 // 1. createSLAService validation
 // =============================================================================
@@ -124,7 +124,6 @@ describe('createSLAService — construction', () => {
   });
 });
 
-
 // =============================================================================
 // 2. attachSLA — validation, metric requirements, service existence
 // =============================================================================
@@ -132,10 +131,7 @@ describe('createSLAService — construction', () => {
 describe('attachSLA — validation', () => {
   it('should throw when serviceId is missing', () => {
     const { sla } = setup();
-    assert.throws(
-      () => sla.attachSLA({ responseTimeMs: 5000 }),
-      /serviceId is required/,
-    );
+    assert.throws(() => sla.attachSLA({ responseTimeMs: 5000 }), /serviceId is required/);
   });
 
   it('should throw when serviceId is empty string', () => {
@@ -157,23 +153,21 @@ describe('attachSLA — validation', () => {
   it('should throw when no metrics are provided', () => {
     const { store, sla } = setup();
     const { serviceId } = createTestService(store);
-    assert.throws(
-      () => sla.attachSLA({ serviceId }),
-      /At least one SLA metric must be defined/,
-    );
+    assert.throws(() => sla.attachSLA({ serviceId }), /At least one SLA metric must be defined/);
   });
 
   it('should throw when all metrics are explicitly null', () => {
     const { store, sla } = setup();
     const { serviceId } = createTestService(store);
     assert.throws(
-      () => sla.attachSLA({
-        serviceId,
-        responseTimeMs: null,
-        uptimePercent: null,
-        qualityMinScore: null,
-        throughputRps: null,
-      }),
+      () =>
+        sla.attachSLA({
+          serviceId,
+          responseTimeMs: null,
+          uptimePercent: null,
+          qualityMinScore: null,
+          throughputRps: null,
+        }),
       /At least one SLA metric must be defined/,
     );
   });
@@ -279,7 +273,6 @@ describe('attachSLA — success cases', () => {
     assert.equal(all.length, 2);
   });
 });
-
 
 // =============================================================================
 // 3. checkCompliance — response time, uptime, quality, throughput
@@ -597,7 +590,6 @@ describe('checkCompliance — metrics object', () => {
   });
 });
 
-
 // =============================================================================
 // 4. detectBreaches — violations, severity, penalty
 // =============================================================================
@@ -803,7 +795,6 @@ describe('detectBreaches — penalty calculation', () => {
   });
 });
 
-
 // =============================================================================
 // 5. resolveViolation — marks as resolved with note
 // =============================================================================
@@ -811,10 +802,7 @@ describe('detectBreaches — penalty calculation', () => {
 describe('resolveViolation', () => {
   it('should throw for nonexistent violation', () => {
     const { sla } = setup();
-    assert.throws(
-      () => sla.resolveViolation('nonexistent-id'),
-      /not found/,
-    );
+    assert.throws(() => sla.resolveViolation('nonexistent-id'), /not found/);
   });
 
   it('should mark violation as resolved', () => {
@@ -918,7 +906,6 @@ describe('resolveViolation', () => {
   });
 });
 
-
 // =============================================================================
 // 6. getSLAs — listing definitions for a service
 // =============================================================================
@@ -971,7 +958,6 @@ describe('getSLAs', () => {
     assert.equal(result.length, 1);
   });
 });
-
 
 // =============================================================================
 // 7. getViolations — filters by resolved/severity
@@ -1076,7 +1062,9 @@ describe('getViolations', () => {
 
   it('should not return violations from other services', () => {
     const { store, sla } = setup();
-    const { serviceId: svc1, agentAddress: addr1 } = createTestService(store, { agent_address: 'agent-x-001' });
+    const { serviceId: svc1, agentAddress: addr1 } = createTestService(store, {
+      agent_address: 'agent-x-001',
+    });
     const { serviceId: svc2 } = createTestService(store, { agent_address: 'agent-y-002' });
 
     sla.attachSLA({ serviceId: svc1, responseTimeMs: 1000 });
@@ -1096,7 +1084,6 @@ describe('getViolations', () => {
     assert.equal(v2.length, 0);
   });
 });
-
 
 // =============================================================================
 // 8. Edge cases

@@ -15,10 +15,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { createAgentRuntime, makeCommerceProxy } from '../../src/a2a/agent-runtime.js';
-import {
-  createAlwaysAcceptStrategy,
-  createBudgetGatedStrategy,
-} from '../../src/a2a/strategies.js';
+import { createAlwaysAcceptStrategy, createBudgetGatedStrategy } from '../../src/a2a/strategies.js';
 
 // ===========================================================================
 // Helpers
@@ -47,7 +44,10 @@ function createMockCommerce() {
 
   const a2aStore = {
     // Quotes
-    createQuote: (q) => { quotes.set(q.id, { ...q }); return { ...q }; },
+    createQuote: (q) => {
+      quotes.set(q.id, { ...q });
+      return { ...q };
+    },
     getQuote: (id) => quotes.get(id) || null,
     updateQuote: (id, u) => {
       const q = quotes.get(id);
@@ -55,13 +55,18 @@ function createMockCommerce() {
     },
     listQuotes: (filter = {}) => {
       let results = [...quotes.values()];
-      if (filter.seller_address) results = results.filter(q => q.seller_address === filter.seller_address);
-      if (filter.buyer_address) results = results.filter(q => q.buyer_address === filter.buyer_address);
-      if (filter.status) results = results.filter(q => q.status === filter.status);
+      if (filter.seller_address)
+        results = results.filter((q) => q.seller_address === filter.seller_address);
+      if (filter.buyer_address)
+        results = results.filter((q) => q.buyer_address === filter.buyer_address);
+      if (filter.status) results = results.filter((q) => q.status === filter.status);
       return results;
     },
     // Payments
-    createPayment: (p) => { payments.set(p.id, { ...p }); return { ...p }; },
+    createPayment: (p) => {
+      payments.set(p.id, { ...p });
+      return { ...p };
+    },
     getPayment: (id) => payments.get(id) || null,
     updatePayment: (id, u) => {
       const p = payments.get(id);
@@ -75,7 +80,10 @@ function createMockCommerce() {
     updatePaymentRequest: () => {},
     listPaymentRequests: () => [],
     // Services
-    createService: (s) => { services.set(s.id, { ...s }); return { ...s }; },
+    createService: (s) => {
+      services.set(s.id, { ...s });
+      return { ...s };
+    },
     getService: (id) => services.get(id) || null,
     updateService: (id, u) => {
       const s = services.get(id);
@@ -83,18 +91,25 @@ function createMockCommerce() {
     },
     listServices: (filter = {}) => {
       let results = [...services.values()];
-      if (filter.agent_address) results = results.filter(s => s.agent_address === filter.agent_address);
-      if (filter.category) results = results.filter(s => s.category === filter.category);
-      if (filter.active !== undefined) results = results.filter(s => s.active === filter.active);
+      if (filter.agent_address)
+        results = results.filter((s) => s.agent_address === filter.agent_address);
+      if (filter.category) results = results.filter((s) => s.category === filter.category);
+      if (filter.active !== undefined) results = results.filter((s) => s.active === filter.active);
       return results;
     },
     // Feedback / Reputation
-    createFeedback: (f) => { feedback.set(f.id || crypto.randomUUID(), f); return f; },
+    createFeedback: (f) => {
+      feedback.set(f.id || crypto.randomUUID(), f);
+      return f;
+    },
     getFeedback: (id) => feedback.get(id) || null,
     updateFeedback: () => {},
     listFeedback: () => [...feedback.values()],
     getReputationScore: (addr) => reputations.get(addr) || null,
-    upsertReputationScore: (s) => { reputations.set(s.agent_address, s); return s; },
+    upsertReputationScore: (s) => {
+      reputations.set(s.agent_address, s);
+      return s;
+    },
     // Escrow (stubs)
     createEscrow: (e) => e,
     getEscrow: () => null,
@@ -240,16 +255,15 @@ describe('AgentRuntime — Construction', () => {
 
   it('throws when walletAddress is missing', () => {
     const { commerce } = createMockCommerce();
-    assert.throws(
-      () => createAgentRuntime({ name: 'X', commerce, signingKey: makeKeys() }),
-      { message: /walletAddress is required/ }
-    );
+    assert.throws(() => createAgentRuntime({ name: 'X', commerce, signingKey: makeKeys() }), {
+      message: /walletAddress is required/,
+    });
   });
 
   it('throws when commerce is missing', () => {
     assert.throws(
       () => createAgentRuntime({ name: 'X', walletAddress: WALLET_A, signingKey: makeKeys() }),
-      { message: /commerce is required/ }
+      { message: /commerce is required/ },
     );
   });
 
@@ -453,7 +467,9 @@ describe('AgentRuntime — Services', () => {
     });
 
     let emitted = false;
-    rt.on('service:registered', () => { emitted = true; });
+    rt.on('service:registered', () => {
+      emitted = true;
+    });
     rt.registerService({ name: 'Test', category: 'test' });
     assert.ok(emitted);
   });
@@ -596,7 +612,9 @@ describe('AgentRuntime — Service Loop', () => {
   it('tick emits loop:tick with processed count', async () => {
     const rt = createRuntime();
     let tickEvent = null;
-    rt.on('loop:tick', (data) => { tickEvent = data; });
+    rt.on('loop:tick', (data) => {
+      tickEvent = data;
+    });
     await rt.tick();
     assert.ok(tickEvent);
     assert.equal(typeof tickEvent.processed, 'number');
@@ -634,10 +652,18 @@ describe('AgentRuntime — Service Loop', () => {
     const mock = createMockCommerce();
     const badStrategy = {
       name: 'buggy',
-      evaluateIncomingQuote() { throw new Error('Strategy bug'); },
-      evaluateReceivedQuote() { return { action: 'accept' }; },
-      evaluateCounterOffer() { return { action: 'accept' }; },
-      evaluatePaymentRequest() { return { action: 'pay' }; },
+      evaluateIncomingQuote() {
+        throw new Error('Strategy bug');
+      },
+      evaluateReceivedQuote() {
+        return { action: 'accept' };
+      },
+      evaluateCounterOffer() {
+        return { action: 'accept' };
+      },
+      evaluatePaymentRequest() {
+        return { action: 'pay' };
+      },
     };
 
     const rt = createAgentRuntime({
@@ -760,7 +786,9 @@ describe('AgentRuntime — Lifecycle', () => {
   it('destroy stops loop and clears listeners', () => {
     rt = createRuntime({ pollIntervalMs: 100 });
     let tickCount = 0;
-    rt.on('loop:tick', () => { tickCount++; });
+    rt.on('loop:tick', () => {
+      tickCount++;
+    });
     rt.start();
     rt.destroy();
     assert.equal(rt.isRunning(), false);
@@ -795,7 +823,9 @@ describe('AgentRuntime — Events', () => {
   it('once fires only once', () => {
     const rt = createRuntime();
     let count = 0;
-    rt.once('single', () => { count++; });
+    rt.once('single', () => {
+      count++;
+    });
     rt.emit('single');
     rt.emit('single');
     assert.equal(count, 1);
@@ -810,37 +840,69 @@ describe('AgentRuntime — Events', () => {
 describe('makeCommerceProxy', () => {
   it('creates a proxy with a2a() and x402() methods', () => {
     const fakeStore = {
-      createPayment: () => {}, getPayment: () => null, updatePayment: () => {},
-      listPayments: () => [], sumPayments: () => ({ total: 0 }),
-      createPaymentRequest: () => {}, getPaymentRequest: () => null,
-      updatePaymentRequest: () => {}, listPaymentRequests: () => [],
-      createQuote: () => {}, getQuote: () => null, updateQuote: () => {},
+      createPayment: () => {},
+      getPayment: () => null,
+      updatePayment: () => {},
+      listPayments: () => [],
+      sumPayments: () => ({ total: 0 }),
+      createPaymentRequest: () => {},
+      getPaymentRequest: () => null,
+      updatePaymentRequest: () => {},
+      listPaymentRequests: () => [],
+      createQuote: () => {},
+      getQuote: () => null,
+      updateQuote: () => {},
       listQuotes: () => [],
-      createEscrow: () => {}, getEscrow: () => null, updateEscrow: () => {},
+      createEscrow: () => {},
+      getEscrow: () => null,
+      updateEscrow: () => {},
       listEscrows: () => [],
-      createFeedback: () => {}, getFeedback: () => null, updateFeedback: () => {},
+      createFeedback: () => {},
+      getFeedback: () => null,
+      updateFeedback: () => {},
       listFeedback: () => [],
-      getReputationScore: () => null, upsertReputationScore: () => {},
-      createService: () => {}, getService: () => null, updateService: () => {},
+      getReputationScore: () => null,
+      upsertReputationScore: () => {},
+      createService: () => {},
+      getService: () => null,
+      updateService: () => {},
       listServices: () => [],
-      createDispute: () => {}, getDispute: () => null, updateDispute: () => {},
+      createDispute: () => {},
+      getDispute: () => null,
+      updateDispute: () => {},
       listDisputes: () => [],
-      createEvidence: () => {}, getEvidence: () => null, listEvidenceByDispute: () => [],
-      createSubscription: () => {}, getSubscription: () => null,
-      updateSubscription: () => {}, listSubscriptions: () => [],
-      getDueSubscriptions: () => [], getExpiredTrials: () => [],
-      createSplitPayment: () => {}, getSplitPayment: () => null,
-      updateSplitPayment: () => {}, listSplitPayments: () => [],
-      createSplitRecipient: () => {}, getSplitRecipient: () => null,
-      updateSplitRecipient: () => {}, listSplitRecipients: () => [],
-      createNotificationLog: () => {}, getNotificationLog: () => null,
-      updateNotificationLog: () => {}, listNotificationLog: () => [],
+      createEvidence: () => {},
+      getEvidence: () => null,
+      listEvidenceByDispute: () => [],
+      createSubscription: () => {},
+      getSubscription: () => null,
+      updateSubscription: () => {},
+      listSubscriptions: () => [],
+      getDueSubscriptions: () => [],
+      getExpiredTrials: () => [],
+      createSplitPayment: () => {},
+      getSplitPayment: () => null,
+      updateSplitPayment: () => {},
+      listSplitPayments: () => [],
+      createSplitRecipient: () => {},
+      getSplitRecipient: () => null,
+      updateSplitRecipient: () => {},
+      listSplitRecipients: () => [],
+      createNotificationLog: () => {},
+      getNotificationLog: () => null,
+      updateNotificationLog: () => {},
+      listNotificationLog: () => [],
       getPendingNotifications: () => [],
-      upsertWebhookConfig: () => {}, getWebhookConfig: () => null,
+      upsertWebhookConfig: () => {},
+      getWebhookConfig: () => null,
       listWebhookConfigs: () => [],
-      createEventSubscription: () => {}, getEventSubscription: () => null,
-      updateEventSubscription: () => {}, listEventSubscriptions: () => [],
-      createEventLog: () => {}, getEventLog: () => null, listEventLog: () => [],
+      createEventSubscription: () => {},
+      getEventSubscription: () => null,
+      updateEventSubscription: () => {},
+      listEventSubscriptions: () => [],
+      createEventLog: () => {},
+      getEventLog: () => null,
+      listEventLog: () => [],
     };
 
     const proxy = makeCommerceProxy(fakeStore);

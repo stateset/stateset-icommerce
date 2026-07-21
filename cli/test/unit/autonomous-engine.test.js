@@ -447,10 +447,7 @@ describe('AutonomousEngine', () => {
     });
 
     it('string condition supports nested paths', async () => {
-      assert.equal(
-        await engine.evaluateCondition('user.active', { user: { active: true } }),
-        true,
-      );
+      assert.equal(await engine.evaluateCondition('user.active', { user: { active: true } }), true);
     });
 
     it('returns true for policy condition when no evaluate method', async () => {
@@ -471,7 +468,9 @@ describe('AutonomousEngine', () => {
   describe('sendNotification', () => {
     it('emits notification event', async () => {
       let emitted;
-      engine.on('notification', (n) => { emitted = n; });
+      engine.on('notification', (n) => {
+        emitted = n;
+      });
       await engine.sendNotification({ message: 'test' });
       assert.equal(emitted.message, 'test');
     });
@@ -479,7 +478,9 @@ describe('AutonomousEngine', () => {
     it('calls notifier.sendNotification when notifier set', async () => {
       let called = false;
       engine.setNotifier({
-        sendNotification: async (msg) => { called = true; },
+        sendNotification: async (msg) => {
+          called = true;
+        },
       });
       await engine.sendNotification({ message: 'hi', type: 'alert' });
       assert.equal(called, true);
@@ -487,7 +488,9 @@ describe('AutonomousEngine', () => {
 
     it('does not throw when notifier fails', async () => {
       engine.setNotifier({
-        sendNotification: async () => { throw new Error('fail'); },
+        sendNotification: async () => {
+          throw new Error('fail');
+        },
       });
       // Should not throw
       await engine.sendNotification({ message: 'hi' });
@@ -570,14 +573,18 @@ describe('AutonomousEngine', () => {
 
     it('start emits started event', async () => {
       let emitted = false;
-      engine.on('started', () => { emitted = true; });
+      engine.on('started', () => {
+        emitted = true;
+      });
       await engine.start();
       assert.equal(emitted, true);
     });
 
     it('start is idempotent', async () => {
       let count = 0;
-      engine.on('started', () => { count++; });
+      engine.on('started', () => {
+        count++;
+      });
       await engine.start();
       await engine.start();
       assert.equal(count, 1);
@@ -592,14 +599,18 @@ describe('AutonomousEngine', () => {
     it('stop emits stopped event', async () => {
       await engine.start();
       let emitted = false;
-      engine.on('stopped', () => { emitted = true; });
+      engine.on('stopped', () => {
+        emitted = true;
+      });
       await engine.stop();
       assert.equal(emitted, true);
     });
 
     it('stop is idempotent', async () => {
       let count = 0;
-      engine.on('stopped', () => { count++; });
+      engine.on('stopped', () => {
+        count++;
+      });
       // not started, stop should be no-op
       await engine.stop();
       assert.equal(count, 0);

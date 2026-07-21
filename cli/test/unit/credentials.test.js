@@ -84,9 +84,7 @@ describe('CredentialStore', () => {
   it('supports reading legacy plaintext rows', () => {
     store = new CredentialStore({ dbPath: tmpDbPath() });
     store.db
-      .prepare(
-        `INSERT INTO provider_credentials (provider, api_key, updated_at) VALUES (?, ?, ?)`,
-      )
+      .prepare(`INSERT INTO provider_credentials (provider, api_key, updated_at) VALUES (?, ?, ?)`)
       .run('legacy-provider', 'legacy-plain-key', Date.now());
     assert.strictEqual(store.getApiKey('legacy-provider'), 'legacy-plain-key');
   });
@@ -94,9 +92,7 @@ describe('CredentialStore', () => {
   it('returns null when encrypted payload is malformed', () => {
     store = new CredentialStore({ dbPath: tmpDbPath() });
     store.db
-      .prepare(
-        `INSERT INTO provider_credentials (provider, api_key, updated_at) VALUES (?, ?, ?)`,
-      )
+      .prepare(`INSERT INTO provider_credentials (provider, api_key, updated_at) VALUES (?, ?, ?)`)
       .run('broken-provider', 'enc:v1:not-valid', Date.now());
     assert.strictEqual(store.getApiKey('broken-provider'), null);
   });
@@ -105,10 +101,7 @@ describe('CredentialStore', () => {
     const dir = tmpDbDir();
     const dbPath = path.join(dir, 'credentials.db');
     fs.writeFileSync(path.join(dir, 'credentials.key'), 'not-a-valid-key');
-    assert.throws(
-      () => new CredentialStore({ dbPath }),
-      /Credential key file is invalid/,
-    );
+    assert.throws(() => new CredentialStore({ dbPath }), /Credential key file is invalid/);
   });
 
   it('setApiKey returns false for empty provider', () => {

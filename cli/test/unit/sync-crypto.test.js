@@ -34,9 +34,16 @@ describe('DOMAIN constants', () => {
 
   it('has expected domain keys', () => {
     const expected = [
-      'PAYLOAD_PLAIN', 'PAYLOAD_AAD', 'PAYLOAD_CIPHER',
-      'RECIPIENTS', 'EVENTSIG', 'LEAF', 'NODE', 'PAD_LEAF',
-      'STREAM', 'RECEIPT',
+      'PAYLOAD_PLAIN',
+      'PAYLOAD_AAD',
+      'PAYLOAD_CIPHER',
+      'RECIPIENTS',
+      'EVENTSIG',
+      'LEAF',
+      'NODE',
+      'PAD_LEAF',
+      'STREAM',
+      'RECEIPT',
     ];
     for (const key of expected) {
       assert.ok(DOMAIN[key], `DOMAIN.${key} should exist`);
@@ -77,7 +84,7 @@ describe('u32BE', () => {
   });
 
   it('encodes max 32-bit value', () => {
-    const buf = u32BE(0xFFFFFFFF);
+    const buf = u32BE(0xffffffff);
     assert.deepEqual([...buf], [255, 255, 255, 255]);
   });
 });

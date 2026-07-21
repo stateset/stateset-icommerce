@@ -573,8 +573,14 @@ describe('currencyTools — format_currency handler', () => {
 // ============================================================================
 
 describe('currencyTools — error paths (empty commerce)', () => {
-  const readTools = ['get_exchange_rate', 'list_exchange_rates', 'convert_currency',
-    'get_currency_settings', 'check_currency_enabled', 'format_currency'];
+  const readTools = [
+    'get_exchange_rate',
+    'list_exchange_rates',
+    'convert_currency',
+    'get_currency_settings',
+    'check_currency_enabled',
+    'format_currency',
+  ];
 
   for (const toolName of readTools) {
     it(`${toolName} throws TypeError when commerce.currency is missing`, async () => {
@@ -606,7 +612,13 @@ describe('currencyTools — error paths (empty commerce)', () => {
       try {
         await tool.handler({
           commerce: {},
-          params: { baseCurrency: 'USD', quoteCurrency: 'EUR', rate: 0.92, currency: 'EUR', currencies: ['EUR'] },
+          params: {
+            baseCurrency: 'USD',
+            quoteCurrency: 'EUR',
+            rate: 0.92,
+            currency: 'EUR',
+            currencies: ['EUR'],
+          },
           allowApply: true,
         });
         assert.fail('should have thrown');

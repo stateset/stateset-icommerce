@@ -62,13 +62,21 @@ describe('Stablecoin Tools — definitions', () => {
 
   it('every tool has a handler function', () => {
     for (const tool of stablecoinTools) {
-      assert.strictEqual(typeof tool.handler, 'function', `${tool.name} handler should be a function`);
+      assert.strictEqual(
+        typeof tool.handler,
+        'function',
+        `${tool.name} handler should be a function`,
+      );
     }
   });
 
   it('every tool has an inputSchema object', () => {
     for (const tool of stablecoinTools) {
-      assert.strictEqual(typeof tool.inputSchema, 'object', `${tool.name} should have an inputSchema`);
+      assert.strictEqual(
+        typeof tool.inputSchema,
+        'object',
+        `${tool.name} should have an inputSchema`,
+      );
     }
   });
 });

@@ -39,22 +39,43 @@ describe('Slack adapter logic', () => {
   const slackIsOwnMessage = (event) => event.subtype === 'bot_message' || !!event.bot_id;
 
   it('extracts text from DM', () => {
-    const event = { text: 'check order status', channel_type: 'im', user: 'U_USER', channel: 'D123' };
+    const event = {
+      text: 'check order status',
+      channel_type: 'im',
+      user: 'U_USER',
+      channel: 'D123',
+    };
     assert.strictEqual(slackExtractText(event), 'check order status');
   });
 
   it('extracts text when mentioned in channel', () => {
-    const event = { text: `<@${BOT_USER_ID}> list orders`, channel_type: 'channel', user: 'U_USER', channel: 'C123' };
+    const event = {
+      text: `<@${BOT_USER_ID}> list orders`,
+      channel_type: 'channel',
+      user: 'U_USER',
+      channel: 'C123',
+    };
     assert.strictEqual(slackExtractText(event), 'list orders');
   });
 
   it('returns null when not mentioned in channel (non-thread)', () => {
-    const event = { text: 'hello everyone', channel_type: 'channel', user: 'U_USER', channel: 'C123' };
+    const event = {
+      text: 'hello everyone',
+      channel_type: 'channel',
+      user: 'U_USER',
+      channel: 'C123',
+    };
     assert.strictEqual(slackExtractText(event), null);
   });
 
   it('allows thread replies without mention', () => {
-    const event = { text: 'follow up', channel_type: 'channel', user: 'U_USER', channel: 'C123', thread_ts: '1234.5678' };
+    const event = {
+      text: 'follow up',
+      channel_type: 'channel',
+      user: 'U_USER',
+      channel: 'C123',
+      thread_ts: '1234.5678',
+    };
     assert.strictEqual(slackExtractText(event), 'follow up');
   });
 
@@ -106,17 +127,32 @@ describe('Discord adapter logic', () => {
   });
 
   it('extracts text when mentioned in guild', () => {
-    const msg = { content: `<@${BOT_ID}> show orders`, guild: true, author: { id: 'U1', bot: false }, channelId: 'C1' };
+    const msg = {
+      content: `<@${BOT_ID}> show orders`,
+      guild: true,
+      author: { id: 'U1', bot: false },
+      channelId: 'C1',
+    };
     assert.strictEqual(discordExtractText(msg), 'show orders');
   });
 
   it('returns null when not mentioned in guild', () => {
-    const msg = { content: 'random chat', guild: true, author: { id: 'U1', bot: false }, channelId: 'C1' };
+    const msg = {
+      content: 'random chat',
+      guild: true,
+      author: { id: 'U1', bot: false },
+      channelId: 'C1',
+    };
     assert.strictEqual(discordExtractText(msg), null);
   });
 
   it('strips nickname mention format <@!id>', () => {
-    const msg = { content: `<@!${BOT_ID}> inventory`, guild: true, author: { id: 'U1', bot: false }, channelId: 'C1' };
+    const msg = {
+      content: `<@!${BOT_ID}> inventory`,
+      guild: true,
+      author: { id: 'U1', bot: false },
+      channelId: 'C1',
+    };
     assert.strictEqual(discordExtractText(msg), 'inventory');
   });
 
@@ -209,7 +245,12 @@ describe('Teams adapter logic', () => {
   }
 
   it('extracts text stripping at-mention', () => {
-    const activity = { type: 'message', text: '<at>StateSet</at> show orders', from: { id: 'U1' }, conversation: { id: 'C1' } };
+    const activity = {
+      type: 'message',
+      text: '<at>StateSet</at> show orders',
+      from: { id: 'U1' },
+      conversation: { id: 'C1' },
+    };
     assert.strictEqual(teamsExtractText(activity), 'show orders');
   });
 
@@ -219,12 +260,20 @@ describe('Teams adapter logic', () => {
   });
 
   it('returns null for empty text after stripping', () => {
-    const activity = { type: 'message', text: '<at>StateSet</at>', from: { id: 'U1' }, conversation: { id: 'C1' } };
+    const activity = {
+      type: 'message',
+      text: '<at>StateSet</at>',
+      from: { id: 'U1' },
+      conversation: { id: 'C1' },
+    };
     assert.strictEqual(teamsExtractText(activity), null);
   });
 
   it('gets sender ID from AAD object ID', () => {
-    assert.strictEqual(teamsGetSenderId({ from: { aadObjectId: 'AAD-123', id: 'fallback', name: 'Alice' } }), 'AAD-123');
+    assert.strictEqual(
+      teamsGetSenderId({ from: { aadObjectId: 'AAD-123', id: 'fallback', name: 'Alice' } }),
+      'AAD-123',
+    );
   });
 
   it('falls back to id when no AAD', () => {
@@ -270,7 +319,12 @@ describe('Matrix adapter logic', () => {
   const matrixIsOwnMessage = (raw) => raw.sender === BOT_USER_ID;
 
   it('extracts text from m.room.message', () => {
-    const raw = { type: 'm.room.message', content: { msgtype: 'm.text', body: 'hello' }, sender: '@alice:matrix.org', room_id: '!room1' };
+    const raw = {
+      type: 'm.room.message',
+      content: { msgtype: 'm.text', body: 'hello' },
+      sender: '@alice:matrix.org',
+      room_id: '!room1',
+    };
     assert.strictEqual(matrixExtractText(raw), 'hello');
   });
 
@@ -280,7 +334,12 @@ describe('Matrix adapter logic', () => {
   });
 
   it('returns null for non-text messages (images)', () => {
-    const raw = { type: 'm.room.message', content: { msgtype: 'm.image', body: 'photo.jpg' }, sender: '@alice:matrix.org', room_id: '!room1' };
+    const raw = {
+      type: 'm.room.message',
+      content: { msgtype: 'm.image', body: 'photo.jpg' },
+      sender: '@alice:matrix.org',
+      room_id: '!room1',
+    };
     assert.strictEqual(matrixExtractText(raw), null);
   });
 
@@ -380,17 +439,31 @@ describe('Google Chat adapter logic', () => {
   const gchatGetTargetId = (event) => event.space?.name || '';
 
   it('extracts argumentText (mention stripped)', () => {
-    const event = { type: 'MESSAGE', message: { argumentText: ' show orders ', text: '@Bot show orders' }, user: { name: 'users/123' }, space: { name: 'spaces/abc' } };
+    const event = {
+      type: 'MESSAGE',
+      message: { argumentText: ' show orders ', text: '@Bot show orders' },
+      user: { name: 'users/123' },
+      space: { name: 'spaces/abc' },
+    };
     assert.strictEqual(gchatExtractText(event), 'show orders');
   });
 
   it('falls back to text when no argumentText', () => {
-    const event = { type: 'MESSAGE', message: { text: 'direct message' }, user: { name: 'users/123' }, space: { name: 'spaces/abc' } };
+    const event = {
+      type: 'MESSAGE',
+      message: { text: 'direct message' },
+      user: { name: 'users/123' },
+      space: { name: 'spaces/abc' },
+    };
     assert.strictEqual(gchatExtractText(event), 'direct message');
   });
 
   it('returns null for non-MESSAGE events', () => {
-    const event = { type: 'ADDED_TO_SPACE', user: { name: 'users/123' }, space: { name: 'spaces/abc' } };
+    const event = {
+      type: 'ADDED_TO_SPACE',
+      user: { name: 'users/123' },
+      space: { name: 'spaces/abc' },
+    };
     assert.strictEqual(gchatExtractText(event), null);
   });
 

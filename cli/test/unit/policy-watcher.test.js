@@ -17,9 +17,10 @@ function makeTmpDir() {
 
 function writePolicyFile(dir, filename, policyData) {
   const ext = path.extname(filename);
-  const content = ext === '.json'
-    ? JSON.stringify(policyData, null, 2)
-    : `name: ${policyData.name}\ndomain: ${policyData.domain}\nrules: []`;
+  const content =
+    ext === '.json'
+      ? JSON.stringify(policyData, null, 2)
+      : `name: ${policyData.name}\ndomain: ${policyData.domain}\nrules: []`;
   fs.writeFileSync(path.join(dir, filename), content, 'utf-8');
 }
 
@@ -155,7 +156,9 @@ describe('watchPolicies — reload', () => {
     let reloadInfo = null;
 
     const handle = watchPolicies(engine, tmpDir, {
-      onReload: (info) => { reloadInfo = info; },
+      onReload: (info) => {
+        reloadInfo = info;
+      },
     });
     handle.reload();
 
@@ -170,7 +173,9 @@ describe('watchPolicies — reload', () => {
     let errorCaught = null;
 
     const handle = watchPolicies(engine, tmpDir, {
-      onError: (err) => { errorCaught = err; },
+      onError: (err) => {
+        errorCaught = err;
+      },
     });
     handle.reload();
 
@@ -181,7 +186,9 @@ describe('watchPolicies — reload', () => {
   it('emits reloaded event on engine', () => {
     writePolicyFile(tmpDir, 'emit-policy.json', SAMPLE_POLICY);
     let emitted = null;
-    engine.on('reloaded', (info) => { emitted = info; });
+    engine.on('reloaded', (info) => {
+      emitted = info;
+    });
 
     const handle = watchPolicies(engine, tmpDir);
     handle.reload();

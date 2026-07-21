@@ -98,12 +98,8 @@ describe('extractEntityIds — customers', () => {
   });
 
   it('deduplicates the same email', () => {
-    const results = extractEntityIds(
-      'Send to alice@example.com and alice@example.com again',
-    );
-    const emails = results.filter(
-      (e) => e.type === 'customer' && e.id === 'alice@example.com',
-    );
+    const results = extractEntityIds('Send to alice@example.com and alice@example.com again');
+    const emails = results.filter((e) => e.type === 'customer' && e.id === 'alice@example.com');
     assert.strictEqual(emails.length, 1);
   });
 });
@@ -306,7 +302,9 @@ describe('MemoryInjector — formatEntityContext', () => {
     const mockStore = {
       searchByEntity: () => [],
     };
-    const result = inj.formatEntityContext(mockStore, 'cli', 'u1', [{ type: 'order', id: 'ORD-999' }]);
+    const result = inj.formatEntityContext(mockStore, 'cli', 'u1', [
+      { type: 'order', id: 'ORD-999' },
+    ]);
     assert.strictEqual(result, null);
   });
 
@@ -321,7 +319,9 @@ describe('MemoryInjector — formatEntityContext', () => {
         },
       ],
     };
-    const result = inj.formatEntityContext(mockStore, 'cli', 'u1', [{ type: 'order', id: 'ORD-1' }]);
+    const result = inj.formatEntityContext(mockStore, 'cli', 'u1', [
+      { type: 'order', id: 'ORD-1' },
+    ]);
     assert.ok(result.includes('<entity-context>'));
     assert.ok(result.includes('</entity-context>'));
     assert.ok(result.includes('[ORDER: ORD-1]'));
@@ -367,10 +367,24 @@ describe('MemoryInjector — formatEntityContext', () => {
     const mockStore = {
       searchByEntity: (_ch, _sid, type, id) => {
         if (type === 'order' && id === 'ORD-A') {
-          return [{ summary: 'Order A shipped', created_at: '2025-03-01T10:00:00Z', agent: null, facts: [] }];
+          return [
+            {
+              summary: 'Order A shipped',
+              created_at: '2025-03-01T10:00:00Z',
+              agent: null,
+              facts: [],
+            },
+          ];
         }
         if (type === 'customer' && id === 'CUST-B') {
-          return [{ summary: 'Customer B updated', created_at: '2025-03-01T10:00:00Z', agent: null, facts: [] }];
+          return [
+            {
+              summary: 'Customer B updated',
+              created_at: '2025-03-01T10:00:00Z',
+              agent: null,
+              facts: [],
+            },
+          ];
         }
         return [];
       },
@@ -410,7 +424,9 @@ describe('MemoryInjector — formatEntityContext', () => {
       searchByEntity: (_ch, _sid, type) => {
         callCount++;
         if (type === 'order') throw new Error('DB error');
-        return [{ summary: 'Customer found', created_at: '2025-03-01T10:00:00Z', agent: null, facts: [] }];
+        return [
+          { summary: 'Customer found', created_at: '2025-03-01T10:00:00Z', agent: null, facts: [] },
+        ];
       },
     };
     const entities = [
@@ -429,7 +445,9 @@ describe('MemoryInjector — formatEntityContext', () => {
         { summary: 'Something', created_at: '2025-03-01T10:00:00Z', agent: null, facts: [] },
       ],
     };
-    const result = inj.formatEntityContext(mockStore, 'cli', 'u1', [{ type: 'product', id: 'PROD-1' }]);
+    const result = inj.formatEntityContext(mockStore, 'cli', 'u1', [
+      { type: 'product', id: 'PROD-1' },
+    ]);
     assert.ok(result.includes('Entity-specific memory:'));
   });
 });

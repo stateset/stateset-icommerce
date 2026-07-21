@@ -65,7 +65,12 @@ describe('A2AStore column whitelist', { skip: !A2AStore && 'A2AStore not availab
     it('accepts valid quote columns including migration columns', () => {
       assert.doesNotThrow(() => {
         store._validateUpdateKeys('a2a_quotes', [
-          'status', 'items', 'negotiation_history', 'counter_count', 'max_rounds', 'escrow_id',
+          'status',
+          'items',
+          'negotiation_history',
+          'counter_count',
+          'max_rounds',
+          'escrow_id',
         ]);
       });
     });
@@ -79,37 +84,36 @@ describe('A2AStore column whitelist', { skip: !A2AStore && 'A2AStore not availab
     it('accepts valid subscription columns', () => {
       assert.doesNotThrow(() => {
         store._validateUpdateKeys('a2a_subscriptions', [
-          'status', 'next_billing_date', 'cancel_at_period_end', 'last_payment_id',
+          'status',
+          'next_billing_date',
+          'cancel_at_period_end',
+          'last_payment_id',
         ]);
       });
     });
 
     it('rejects unknown column names', () => {
-      assert.throws(
-        () => store._validateUpdateKeys('a2a_payments', ['status', 'evil_column']),
-        { message: /Column 'evil_column' is not allowed/ },
-      );
+      assert.throws(() => store._validateUpdateKeys('a2a_payments', ['status', 'evil_column']), {
+        message: /Column 'evil_column' is not allowed/,
+      });
     });
 
     it('rejects id column (immutable primary key)', () => {
-      assert.throws(
-        () => store._validateUpdateKeys('a2a_payments', ['id']),
-        { message: /Column 'id' is not allowed/ },
-      );
+      assert.throws(() => store._validateUpdateKeys('a2a_payments', ['id']), {
+        message: /Column 'id' is not allowed/,
+      });
     });
 
     it('rejects created_at column (immutable timestamp)', () => {
-      assert.throws(
-        () => store._validateUpdateKeys('a2a_payments', ['created_at']),
-        { message: /Column 'created_at' is not allowed/ },
-      );
+      assert.throws(() => store._validateUpdateKeys('a2a_payments', ['created_at']), {
+        message: /Column 'created_at' is not allowed/,
+      });
     });
 
     it('rejects SQL injection in column name', () => {
-      assert.throws(
-        () => store._validateUpdateKeys('a2a_payments', ['status = ?, id = ?; --']),
-        { message: /is not allowed/ },
-      );
+      assert.throws(() => store._validateUpdateKeys('a2a_payments', ['status = ?, id = ?; --']), {
+        message: /is not allowed/,
+      });
     });
 
     it('rejects DROP TABLE attempt', () => {
@@ -120,10 +124,9 @@ describe('A2AStore column whitelist', { skip: !A2AStore && 'A2AStore not availab
     });
 
     it('throws for unknown table', () => {
-      assert.throws(
-        () => store._validateUpdateKeys('nonexistent_table', ['status']),
-        { message: /Unknown table/ },
-      );
+      assert.throws(() => store._validateUpdateKeys('nonexistent_table', ['status']), {
+        message: /Unknown table/,
+      });
     });
 
     it('accepts empty key list (no-op update)', () => {

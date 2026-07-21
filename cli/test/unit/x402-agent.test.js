@@ -530,10 +530,7 @@ describe('x402Fetch — exact EVM flow', () => {
     assert.strictEqual(paymentPayload.accepted.network, 'eip155:8453');
     assert.ok(!('meta' in paymentPayload));
     assert.strictEqual(paymentPayload.payload.authorization.from, payerWallet.address);
-    assert.strictEqual(
-      paymentPayload.payload.authorization.to,
-      paymentRequired.accepts[0].payTo,
-    );
+    assert.strictEqual(paymentPayload.payload.authorization.to, paymentRequired.accepts[0].payTo);
   });
 
   it('fails legacy 402 handling without sequencer configuration', async () => {

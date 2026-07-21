@@ -25,8 +25,14 @@ import {
 describe('ApprovalStatus', () => {
   it('has all expected statuses', () => {
     const expected = [
-      'PENDING', 'APPROVED', 'REJECTED', 'ESCALATED',
-      'EXPIRED', 'AUTO_APPROVED', 'AUTO_REJECTED', 'CANCELLED',
+      'PENDING',
+      'APPROVED',
+      'REJECTED',
+      'ESCALATED',
+      'EXPIRED',
+      'AUTO_APPROVED',
+      'AUTO_REJECTED',
+      'CANCELLED',
     ];
     for (const s of expected) {
       assert.ok(s in ApprovalStatus, `missing status: ${s}`);
@@ -95,7 +101,8 @@ describe('ApprovalChain', () => {
 
   it('sorts tiers by level', () => {
     const chain = new ApprovalChain({
-      name: 'C', domain: 'orders',
+      name: 'C',
+      domain: 'orders',
       tiers: [
         { level: 3, name: 'T3' },
         { level: 1, name: 'T1' },
@@ -171,25 +178,58 @@ describe('ApprovalDecision', () => {
 
 describe('ApprovalRequest', () => {
   it('auto-generates id', () => {
-    const r = new ApprovalRequest({ chainId: 'c1', domain: 'orders', entityType: 'order', entityId: 'o1', title: 'T', requestedBy: 'agent' });
+    const r = new ApprovalRequest({
+      chainId: 'c1',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'T',
+      requestedBy: 'agent',
+    });
     assert.ok(r.id);
   });
 
   it('defaults to PENDING status', () => {
-    const r = new ApprovalRequest({ chainId: 'c1', domain: 'orders', entityType: 'order', entityId: 'o1', title: 'T', requestedBy: 'agent' });
+    const r = new ApprovalRequest({
+      chainId: 'c1',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'T',
+      requestedBy: 'agent',
+    });
     assert.equal(r.status, ApprovalStatus.PENDING);
   });
 
   it('isResolved returns false for pending', () => {
-    const r = new ApprovalRequest({ chainId: 'c1', domain: 'orders', entityType: 'order', entityId: 'o1', title: 'T', requestedBy: 'agent' });
+    const r = new ApprovalRequest({
+      chainId: 'c1',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'T',
+      requestedBy: 'agent',
+    });
     assert.equal(r.isResolved(), false);
   });
 
   it('isResolved returns true for terminal statuses', () => {
-    for (const status of ['approved', 'rejected', 'expired', 'auto_approved', 'auto_rejected', 'cancelled']) {
+    for (const status of [
+      'approved',
+      'rejected',
+      'expired',
+      'auto_approved',
+      'auto_rejected',
+      'cancelled',
+    ]) {
       const r = new ApprovalRequest({
-        chainId: 'c1', domain: 'orders', entityType: 'order', entityId: 'o1',
-        title: 'T', requestedBy: 'agent', status,
+        chainId: 'c1',
+        domain: 'orders',
+        entityType: 'order',
+        entityId: 'o1',
+        title: 'T',
+        requestedBy: 'agent',
+        status,
       });
       assert.equal(r.isResolved(), true, `${status} should be resolved`);
     }
@@ -197,8 +237,13 @@ describe('ApprovalRequest', () => {
 
   it('getCurrentTierApprovals filters correctly', () => {
     const r = new ApprovalRequest({
-      chainId: 'c1', domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'T', requestedBy: 'agent', currentTier: 2,
+      chainId: 'c1',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'T',
+      requestedBy: 'agent',
+      currentTier: 2,
       decisions: [
         { approverId: 'u1', action: 'approve', tier: 1 },
         { approverId: 'u2', action: 'approve', tier: 2 },
@@ -212,8 +257,13 @@ describe('ApprovalRequest', () => {
 
   it('toJSON serializes all fields', () => {
     const r = new ApprovalRequest({
-      chainId: 'c1', domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Big Order', requestedBy: 'agent', amount: 5000,
+      chainId: 'c1',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Big Order',
+      requestedBy: 'agent',
+      amount: 5000,
     });
     const json = r.toJSON();
     assert.equal(json.title, 'Big Order');
@@ -235,8 +285,20 @@ describe('ApprovalQueue', () => {
       name: 'Order Approval',
       domain: 'orders',
       tiers: [
-        { level: 1, name: 'Tier 1', approvers: ['mgr'], requiredApprovals: 1, canApproveAmount: 1000 },
-        { level: 2, name: 'Tier 2', approvers: ['dir'], requiredApprovals: 1, canApproveAmount: null },
+        {
+          level: 1,
+          name: 'Tier 1',
+          approvers: ['mgr'],
+          requiredApprovals: 1,
+          canApproveAmount: 1000,
+        },
+        {
+          level: 2,
+          name: 'Tier 2',
+          approvers: ['dir'],
+          requiredApprovals: 1,
+          canApproveAmount: null,
+        },
       ],
     });
   }
@@ -274,8 +336,11 @@ describe('ApprovalQueue', () => {
 
   it('createRequest returns { required: false } when no chain matches', async () => {
     const result = await queue.createRequest({
-      domain: 'unknown', entityType: 'x', entityId: '1',
-      title: 'T', requestedBy: 'agent',
+      domain: 'unknown',
+      entityType: 'x',
+      entityId: '1',
+      title: 'T',
+      requestedBy: 'agent',
     });
     assert.equal(result.required, false);
   });
@@ -283,8 +348,12 @@ describe('ApprovalQueue', () => {
   it('createRequest creates a pending request', async () => {
     registerOrderChain(queue);
     const { required, request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order #123', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order #123',
+      amount: 500,
+      requestedBy: 'bot',
     });
     assert.equal(required, true);
     assert.equal(request.status, ApprovalStatus.PENDING);
@@ -295,8 +364,12 @@ describe('ApprovalQueue', () => {
   it('createRequest routes high amount to correct tier', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o2',
-      title: 'Big Order', amount: 5000, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o2',
+      title: 'Big Order',
+      amount: 5000,
+      requestedBy: 'bot',
     });
     assert.equal(request.currentTier, 2);
   });
@@ -304,8 +377,12 @@ describe('ApprovalQueue', () => {
   it('approve resolves when enough approvals', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     const result = await queue.approve(request.id, 'mgr');
     assert.equal(result.status, ApprovalStatus.APPROVED);
@@ -315,8 +392,12 @@ describe('ApprovalQueue', () => {
   it('approve emits request:approved', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     const events = [];
     queue.on('request:approved', (e) => events.push(e));
@@ -327,8 +408,12 @@ describe('ApprovalQueue', () => {
   it('reject marks request as rejected', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     const result = await queue.reject(request.id, 'mgr', { reason: 'suspicious' });
     assert.equal(result.status, ApprovalStatus.REJECTED);
@@ -336,31 +421,33 @@ describe('ApprovalQueue', () => {
   });
 
   it('reject throws for unknown request', async () => {
-    await assert.rejects(
-      () => queue.reject('nonexistent', 'mgr'),
-      /not found/,
-    );
+    await assert.rejects(() => queue.reject('nonexistent', 'mgr'), /not found/);
   });
 
   it('reject throws for already resolved request', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     await queue.approve(request.id, 'mgr');
     // After approval, request is moved to history — reject throws "not found"
-    await assert.rejects(
-      () => queue.reject(request.id, 'mgr'),
-      /not found/,
-    );
+    await assert.rejects(() => queue.reject(request.id, 'mgr'), /not found/);
   });
 
   it('escalate moves to next tier', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     const result = await queue.escalate(request.id, 'mgr', 'needs director');
     assert.equal(result.currentTier, 2);
@@ -370,21 +457,26 @@ describe('ApprovalQueue', () => {
   it('escalate throws when at highest tier', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o2',
-      title: 'Big Order', amount: 5000, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o2',
+      title: 'Big Order',
+      amount: 5000,
+      requestedBy: 'bot',
     });
     // Request starts at tier 2 (highest)
-    await assert.rejects(
-      () => queue.escalate(request.id, 'dir', 'test'),
-      /No higher tier/,
-    );
+    await assert.rejects(() => queue.escalate(request.id, 'dir', 'test'), /No higher tier/);
   });
 
   it('cancel marks request as cancelled', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     const result = await queue.cancel(request.id, 'changed mind');
     assert.equal(result.status, ApprovalStatus.CANCELLED);
@@ -393,8 +485,12 @@ describe('ApprovalQueue', () => {
   it('autoApprove sets AUTO_APPROVED status', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     const result = await queue.autoApprove(request.id, 'timeout');
     assert.equal(result.status, ApprovalStatus.AUTO_APPROVED);
@@ -403,8 +499,12 @@ describe('ApprovalQueue', () => {
   it('autoReject sets AUTO_REJECTED status', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     const result = await queue.autoReject(request.id, 'timeout');
     assert.equal(result.status, ApprovalStatus.AUTO_REJECTED);
@@ -413,8 +513,12 @@ describe('ApprovalQueue', () => {
   it('getRequest finds pending requests', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     assert.ok(queue.getRequest(request.id));
   });
@@ -422,8 +526,12 @@ describe('ApprovalQueue', () => {
   it('getRequest finds resolved requests in history', async () => {
     registerOrderChain(queue);
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     await queue.approve(request.id, 'mgr');
     assert.ok(queue.getRequest(request.id));
@@ -432,8 +540,12 @@ describe('ApprovalQueue', () => {
   it('listPending filters by domain', async () => {
     registerOrderChain(queue);
     await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      amount: 500,
+      requestedBy: 'bot',
     });
     assert.equal(queue.listPending({ domain: 'orders' }).length, 1);
     assert.equal(queue.listPending({ domain: 'returns' }).length, 0);
@@ -442,12 +554,20 @@ describe('ApprovalQueue', () => {
   it('getHistory filters by status', async () => {
     registerOrderChain(queue);
     const { request: r1 } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order 1', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order 1',
+      amount: 500,
+      requestedBy: 'bot',
     });
     const { request: r2 } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o2',
-      title: 'Order 2', amount: 500, requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o2',
+      title: 'Order 2',
+      amount: 500,
+      requestedBy: 'bot',
     });
     await queue.approve(r1.id, 'mgr');
     await queue.reject(r2.id, 'mgr');
@@ -461,12 +581,17 @@ describe('ApprovalQueue', () => {
       executor: async (action, ctx) => executed.push({ action, ctx }),
     });
     q.registerChain({
-      name: 'C', domain: 'orders',
+      name: 'C',
+      domain: 'orders',
       tiers: [{ level: 1, name: 'T1', approvers: ['mgr'], requiredApprovals: 1 }],
     });
     const { request } = await q.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', requestedBy: 'bot', action: { type: 'fulfill' },
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      requestedBy: 'bot',
+      action: { type: 'fulfill' },
     });
     await q.approve(request.id, 'mgr');
     q.stop();
@@ -480,12 +605,16 @@ describe('ApprovalQueue', () => {
       notifier: async (data) => notifications.push(data),
     });
     q.registerChain({
-      name: 'C', domain: 'orders',
+      name: 'C',
+      domain: 'orders',
       tiers: [{ level: 1, name: 'T1', approvers: ['mgr'], requiredApprovals: 1 }],
     });
     await q.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      requestedBy: 'bot',
     });
     q.stop();
     assert.equal(notifications.length, 1);
@@ -504,16 +633,26 @@ describe('ApprovalQueue', () => {
   it('moveToHistory trims to 1000 entries', () => {
     // Fill history past limit
     for (let i = 0; i < 1005; i++) {
-      queue.history.push(new ApprovalRequest({
-        chainId: 'c', domain: 'orders', entityType: 'order',
-        entityId: `o${i}`, title: 'T', requestedBy: 'bot',
-        status: 'approved',
-      }));
+      queue.history.push(
+        new ApprovalRequest({
+          chainId: 'c',
+          domain: 'orders',
+          entityType: 'order',
+          entityId: `o${i}`,
+          title: 'T',
+          requestedBy: 'bot',
+          status: 'approved',
+        }),
+      );
     }
     // Add one more via moveToHistory
     const r = new ApprovalRequest({
-      chainId: 'c', domain: 'orders', entityType: 'order',
-      entityId: 'final', title: 'T', requestedBy: 'bot',
+      chainId: 'c',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'final',
+      title: 'T',
+      requestedBy: 'bot',
     });
     queue.requests.set(r.id, r);
     queue.moveToHistory(r);
@@ -570,7 +709,8 @@ describe('ApprovalQueue — conditional chains', () => {
   it('matches chain with conditions', () => {
     queue = new ApprovalQueue({});
     queue.registerChain({
-      name: 'VIP Orders', domain: 'orders',
+      name: 'VIP Orders',
+      domain: 'orders',
       conditions: { customerType: 'vip' },
       tiers: [{ level: 1, name: 'T1', approvers: ['mgr'], requiredApprovals: 1 }],
     });
@@ -582,7 +722,8 @@ describe('ApprovalQueue — conditional chains', () => {
   it('skips chain when conditions do not match', () => {
     queue = new ApprovalQueue({});
     queue.registerChain({
-      name: 'VIP Only', domain: 'orders',
+      name: 'VIP Only',
+      domain: 'orders',
       conditions: { customerType: 'vip' },
       tiers: [{ level: 1, name: 'T1', approvers: ['mgr'], requiredApprovals: 1 }],
     });
@@ -593,7 +734,9 @@ describe('ApprovalQueue — conditional chains', () => {
   it('skips disabled chains', () => {
     queue = new ApprovalQueue({});
     queue.registerChain({
-      name: 'Disabled', domain: 'orders', enabled: false,
+      name: 'Disabled',
+      domain: 'orders',
+      enabled: false,
       tiers: [{ level: 1, name: 'T1', approvers: ['mgr'], requiredApprovals: 1 }],
     });
     assert.equal(queue.getChainForDomain('orders'), null);
@@ -614,12 +757,16 @@ describe('ApprovalQueue — multi-approval tiers', () => {
   it('requires multiple approvals when configured', async () => {
     queue = new ApprovalQueue({});
     queue.registerChain({
-      name: 'C', domain: 'orders',
+      name: 'C',
+      domain: 'orders',
       tiers: [{ level: 1, name: 'T1', approvers: ['a', 'b'], requiredApprovals: 2 }],
     });
     const { request } = await queue.createRequest({
-      domain: 'orders', entityType: 'order', entityId: 'o1',
-      title: 'Order', requestedBy: 'bot',
+      domain: 'orders',
+      entityType: 'order',
+      entityId: 'o1',
+      title: 'Order',
+      requestedBy: 'bot',
     });
     // First approval: still pending
     const after1 = await queue.approve(request.id, 'a');

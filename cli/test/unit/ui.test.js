@@ -168,7 +168,10 @@ describe('ui', () => {
 
       try {
         await assert.rejects(
-          () => ui.withSpinner('Loading', async () => { throw new Error('fail'); }),
+          () =>
+            ui.withSpinner('Loading', async () => {
+              throw new Error('fail');
+            }),
           { message: 'fail' },
         );
       } finally {

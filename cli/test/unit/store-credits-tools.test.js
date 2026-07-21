@@ -300,8 +300,15 @@ describe('storeCreditTools -- list_store_credits handler', () => {
     });
     const c = result.credits[0];
     const expectedKeys = [
-      'id', 'customerId', 'originalAmount', 'currentBalance',
-      'currency', 'reason', 'status', 'expiresAt', 'createdAt',
+      'id',
+      'customerId',
+      'originalAmount',
+      'currentBalance',
+      'currency',
+      'reason',
+      'status',
+      'expiresAt',
+      'createdAt',
     ];
     for (const key of expectedKeys) {
       assert.ok(key in c, `missing key: ${key}`);

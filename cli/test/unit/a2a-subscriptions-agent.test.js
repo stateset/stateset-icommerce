@@ -315,15 +315,15 @@ describe('createSubscription', () => {
   });
 
   it('calculates nextBillingDate from billing interval when no trial', async () => {
-    const result = await svc.createSubscription(
-      validCreateParams({ billingInterval: 'weekly' }),
-    );
+    const result = await svc.createSubscription(validCreateParams({ billingInterval: 'weekly' }));
     const next = new Date(result.subscription.nextBillingDate);
     const now = new Date();
     // weekly = +7 days from creation time; allow ~1 day tolerance for timezone edge cases
     const diffDays = (next - now) / (1000 * 60 * 60 * 24);
-    assert.ok(diffDays >= 6.0 && diffDays <= 8.0,
-      `Expected ~7 days from now, got ${diffDays.toFixed(2)} days (${next.toISOString()})`);
+    assert.ok(
+      diffDays >= 6.0 && diffDays <= 8.0,
+      `Expected ~7 days from now, got ${diffDays.toFixed(2)} days (${next.toISOString()})`,
+    );
   });
 
   it('passes metadata as stringified JSON to store', async () => {
@@ -341,7 +341,10 @@ describe('createSubscription', () => {
   it('generates a UUID for the subscription id', async () => {
     const result = await svc.createSubscription(validCreateParams());
     // UUID v4 format: 8-4-4-4-12 hex chars
-    assert.match(result.subscription.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.match(
+      result.subscription.id,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
   });
 
   it('calls store.createSubscription exactly once', async () => {
@@ -358,75 +361,64 @@ describe('createSubscription', () => {
   });
 
   it('accepts a custom serviceId', async () => {
-    const result = await svc.createSubscription(
-      validCreateParams({ serviceId: 'svc-42' }),
-    );
+    const result = await svc.createSubscription(validCreateParams({ serviceId: 'svc-42' }));
     assert.strictEqual(result.subscription.serviceId, 'svc-42');
   });
 
   // --- Validation errors ---
 
   it('throws when subscriberAddress is missing', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ subscriberAddress: '' })),
-      { message: /subscriberAddress is required/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ subscriberAddress: '' })), {
+      message: /subscriberAddress is required/,
+    });
   });
 
   it('throws when providerAddress is missing', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ providerAddress: '' })),
-      { message: /providerAddress is required/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ providerAddress: '' })), {
+      message: /providerAddress is required/,
+    });
   });
 
   it('throws when planName is missing', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ planName: '' })),
-      { message: /planName is required/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ planName: '' })), {
+      message: /planName is required/,
+    });
   });
 
   it('throws when amount is missing', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ amount: undefined })),
-      { message: /amount is required/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ amount: undefined })), {
+      message: /amount is required/,
+    });
   });
 
   it('throws when amount is null', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ amount: null })),
-      { message: /amount is required/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ amount: null })), {
+      message: /amount is required/,
+    });
   });
 
   it('throws when amount is negative', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ amount: -5 })),
-      { message: /amount must be a positive number/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ amount: -5 })), {
+      message: /amount must be a positive number/,
+    });
   });
 
   it('throws when amount is zero', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ amount: 0 })),
-      { message: /amount must be a positive number/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ amount: 0 })), {
+      message: /amount must be a positive number/,
+    });
   });
 
   it('throws when amount is a string', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ amount: '49.99' })),
-      { message: /amount must be a positive number/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ amount: '49.99' })), {
+      message: /amount must be a positive number/,
+    });
   });
 
   it('throws when billingInterval is invalid', async () => {
-    await assert.rejects(
-      svc.createSubscription(validCreateParams({ billingInterval: 'daily' })),
-      { message: /Invalid billingInterval: daily/ },
-    );
+    await assert.rejects(svc.createSubscription(validCreateParams({ billingInterval: 'daily' })), {
+      message: /Invalid billingInterval: daily/,
+    });
   });
 });
 

@@ -9,11 +9,9 @@ const cliSrc = path.join(__dirname, '..', '..', 'src');
 
 const { A2AStore } = await import(path.join(cliSrc, 'a2a', 'store.js'));
 const { makeCommerceProxy } = await import(path.join(cliSrc, 'a2a', 'agent-runtime.js'));
-const {
-  SIMULATION_SCENARIOS,
-  runSimulationScenario,
-  withSimulatedClock,
-} = await import(path.join(cliSrc, 'a2a', 'simulator.js'));
+const { SIMULATION_SCENARIOS, runSimulationScenario, withSimulatedClock } = await import(
+  path.join(cliSrc, 'a2a', 'simulator.js')
+);
 
 let dbPath;
 let store;

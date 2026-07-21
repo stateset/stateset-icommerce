@@ -140,7 +140,12 @@ describe('DataImporter', () => {
 
   it('runs a basic import', async () => {
     const adapter = new MockAdapter({
-      customers: [[{ id: 1, email: 'a@b.com' }, { id: 2, email: 'c@d.com' }]],
+      customers: [
+        [
+          { id: 1, email: 'a@b.com' },
+          { id: 2, email: 'c@d.com' },
+        ],
+      ],
     });
     const commerce = createMockCommerce();
     const idMapStore = createMockIdMapStore();
@@ -188,7 +193,12 @@ describe('DataImporter', () => {
 
   it('skips existing records in incremental mode', async () => {
     const adapter = new MockAdapter({
-      customers: [[{ id: 1, email: 'a@b.com' }, { id: 2, email: 'c@d.com' }]],
+      customers: [
+        [
+          { id: 1, email: 'a@b.com' },
+          { id: 2, email: 'c@d.com' },
+        ],
+      ],
     });
     const commerce = createMockCommerce();
     const idMapStore = createMockIdMapStore();

@@ -25,7 +25,11 @@ function expectFail(schema, data, msg) {
 // Helper: assert parse success
 function expectPass(schema, data, msg) {
   const result = schema.safeParse(data);
-  assert.ok(result.success, msg || `Expected parse to pass for: ${JSON.stringify(data)}, errors: ${JSON.stringify(result.error?.issues)}`);
+  assert.ok(
+    result.success,
+    msg ||
+      `Expected parse to pass for: ${JSON.stringify(data)}, errors: ${JSON.stringify(result.error?.issues)}`,
+  );
 }
 
 describe('Zod validation constraints', () => {
@@ -126,7 +130,10 @@ describe('Zod validation constraints', () => {
     it('reserve_inventory rejects non-positive expiresInSeconds', async () => {
       const schema = getSchema(tools, 'reserve_inventory');
       expectFail(schema, {
-        sku: 'X', quantity: 1, referenceType: 'order', referenceId: 'abc',
+        sku: 'X',
+        quantity: 1,
+        referenceType: 'order',
+        referenceId: 'abc',
         expiresInSeconds: 0,
       });
     });
@@ -230,7 +237,11 @@ describe('Zod validation constraints', () => {
     it('add_cart_item rejects invalid imageUrl', async () => {
       const schema = getSchema(tools, 'add_cart_item');
       expectFail(schema, {
-        cartId: 'c1', sku: 'X', name: 'Y', quantity: 1, unitPrice: 10,
+        cartId: 'c1',
+        sku: 'X',
+        name: 'Y',
+        quantity: 1,
+        unitPrice: 10,
         imageUrl: 'not-a-url',
       });
     });
@@ -238,7 +249,11 @@ describe('Zod validation constraints', () => {
     it('add_cart_item accepts valid imageUrl', async () => {
       const schema = getSchema(tools, 'add_cart_item');
       expectPass(schema, {
-        cartId: 'c1', sku: 'X', name: 'Y', quantity: 1, unitPrice: 10,
+        cartId: 'c1',
+        sku: 'X',
+        name: 'Y',
+        quantity: 1,
+        unitPrice: 10,
         imageUrl: 'https://example.com/image.png',
       });
     });
@@ -251,16 +266,26 @@ describe('Zod validation constraints', () => {
     it('set_cart_shipping_address enforces name max length', async () => {
       const schema = getSchema(tools, 'set_cart_shipping_address');
       expectFail(schema, {
-        cartId: 'c1', firstName: 'x'.repeat(101), lastName: 'Y',
-        line1: '123 Main', city: 'Anytown', postalCode: '12345', country: 'US',
+        cartId: 'c1',
+        firstName: 'x'.repeat(101),
+        lastName: 'Y',
+        line1: '123 Main',
+        city: 'Anytown',
+        postalCode: '12345',
+        country: 'US',
       });
     });
 
     it('set_cart_shipping_address enforces country code length', async () => {
       const schema = getSchema(tools, 'set_cart_shipping_address');
       expectFail(schema, {
-        cartId: 'c1', firstName: 'A', lastName: 'B',
-        line1: '123 Main', city: 'Anytown', postalCode: '12345', country: 'X',
+        cartId: 'c1',
+        firstName: 'A',
+        lastName: 'B',
+        line1: '123 Main',
+        city: 'Anytown',
+        postalCode: '12345',
+        country: 'X',
       });
     });
 
@@ -314,7 +339,9 @@ describe('Zod validation constraints', () => {
     it('create_customer enforces firstName max length', async () => {
       const schema = getSchema(tools, 'create_customer');
       expectFail(schema, {
-        email: 'test@example.com', firstName: 'x'.repeat(101), lastName: 'Smith',
+        email: 'test@example.com',
+        firstName: 'x'.repeat(101),
+        lastName: 'Smith',
       });
     });
 
@@ -357,7 +384,8 @@ describe('Zod validation constraints', () => {
     it('create_return rejects non-integer quantity', async () => {
       const schema = getSchema(tools, 'create_return');
       expectFail(schema, {
-        orderId: 'o1', reason: 'defective',
+        orderId: 'o1',
+        reason: 'defective',
         items: [{ orderItemId: 'i1', quantity: 1.5 }],
       });
     });

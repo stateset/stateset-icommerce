@@ -217,11 +217,7 @@ describe('listIdentities', () => {
   });
 
   it('persists fallback identities across calls when SQLite is unavailable', () => {
-    registerIdentity(
-      dbPath,
-      baseInput({ agentWallet: '0xFALLBACK' }),
-      { databaseCtor: null },
-    );
+    registerIdentity(dbPath, baseInput({ agentWallet: '0xFALLBACK' }), { databaseCtor: null });
 
     assert.ok(fs.existsSync(`${dbPath}.fallback.json`));
 

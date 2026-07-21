@@ -77,7 +77,10 @@ describe('ToolDiscoveryEngine', () => {
 
       const limit = 3;
       const results = engine.discover('order', limit);
-      assert.ok(results.length <= limit, `Expected at most ${limit} results, got ${results.length}`);
+      assert.ok(
+        results.length <= limit,
+        `Expected at most ${limit} results, got ${results.length}`,
+      );
     });
   });
 
@@ -106,7 +109,10 @@ describe('ToolDiscoveryEngine', () => {
       assert.ok(Array.isArray(plan));
       assert.ok(plan.length > 0, 'Expected steps in full_checkout plan');
       assert.ok(plan.includes('create_cart'), 'Expected "create_cart" in full_checkout plan');
-      assert.ok(plan.includes('complete_checkout'), 'Expected "complete_checkout" in full_checkout plan');
+      assert.ok(
+        plan.includes('complete_checkout'),
+        'Expected "complete_checkout" in full_checkout plan',
+      );
     });
   });
 });

@@ -91,7 +91,9 @@ describe('WebhookSource', () => {
       const secret = 'secret';
       const body = 'data';
       const src = new WebhookSource({
-        name: 'test', path: '/x', secret,
+        name: 'test',
+        path: '/x',
+        secret,
         signaturePrefix: 'sha256=',
       });
       const sig = 'sha256=' + createHmac('sha256', secret).update(body).digest('hex');
@@ -136,7 +138,8 @@ describe('WebhookHandler', () => {
 
     it('evaluates conditions with nested field matching', () => {
       const h = new WebhookHandler({
-        name: 'test', sourceId: 's1',
+        name: 'test',
+        sourceId: 's1',
         conditions: { 'data.status': 'active' },
       });
       assert.ok(h.matches('event', { data: { status: 'active' } }));
@@ -145,7 +148,8 @@ describe('WebhookHandler', () => {
 
     it('fails when condition field is missing from payload', () => {
       const h = new WebhookHandler({
-        name: 'test', sourceId: 's1',
+        name: 'test',
+        sourceId: 's1',
         conditions: { 'data.status': 'active' },
       });
       assert.equal(h.matches('event', {}), false);
@@ -155,7 +159,8 @@ describe('WebhookHandler', () => {
   describe('toJSON', () => {
     it('includes all fields', () => {
       const h = new WebhookHandler({
-        name: 'test', sourceId: 's1',
+        name: 'test',
+        sourceId: 's1',
         action: { agent: 'orders', request: 'do something' },
       });
       const json = h.toJSON();
@@ -246,7 +251,9 @@ describe('WebhookServer', () => {
 
     it('emits source:registered event', () => {
       let emitted = null;
-      server.on('source:registered', (data) => { emitted = data; });
+      server.on('source:registered', (data) => {
+        emitted = data;
+      });
       server.registerSource({ name: 'test', path: '/x' });
       assert.ok(emitted);
       assert.equal(emitted.source.name, 'test');
@@ -256,7 +263,8 @@ describe('WebhookServer', () => {
   describe('registerHandler', () => {
     it('registers a handler from config object', () => {
       const h = server.registerHandler({
-        name: 'test', sourceId: 's1',
+        name: 'test',
+        sourceId: 's1',
         action: { agent: 'orders', request: 'test' },
       });
       assert.ok(server.handlers.has(h.id));
@@ -264,7 +272,9 @@ describe('WebhookServer', () => {
 
     it('emits handler:registered event', () => {
       let emitted = null;
-      server.on('handler:registered', (data) => { emitted = data; });
+      server.on('handler:registered', (data) => {
+        emitted = data;
+      });
       server.registerHandler({ name: 'test', sourceId: 's1' });
       assert.ok(emitted);
     });
@@ -291,8 +301,10 @@ describe('WebhookServer', () => {
   describe('processEvent', () => {
     it('completes with no matching handlers', async () => {
       const event = new WebhookEvent({
-        sourceId: 'unknown', sourceName: 'Test',
-        eventType: 'test', payload: {},
+        sourceId: 'unknown',
+        sourceName: 'Test',
+        eventType: 'test',
+        payload: {},
       });
       const result = await server.processEvent(event);
       assert.equal(result.status, 'completed');
@@ -302,15 +314,21 @@ describe('WebhookServer', () => {
     it('executes matching handlers', async () => {
       const src = server.registerSource({ name: 'test', path: '/x' });
       let executedAction = null;
-      server.executor = async (action) => { executedAction = action; return 'ok'; };
+      server.executor = async (action) => {
+        executedAction = action;
+        return 'ok';
+      };
       server.registerHandler({
-        name: 'h1', sourceId: src.id,
+        name: 'h1',
+        sourceId: src.id,
         eventTypes: ['order.created'],
         action: { agent: 'orders', request: 'process order' },
       });
       const event = new WebhookEvent({
-        sourceId: src.id, sourceName: 'Test',
-        eventType: 'order.created', payload: {},
+        sourceId: src.id,
+        sourceName: 'Test',
+        eventType: 'order.created',
+        payload: {},
       });
       const result = await server.processEvent(event);
       assert.equal(result.status, 'completed');
@@ -320,14 +338,19 @@ describe('WebhookServer', () => {
 
     it('records failed handler execution', async () => {
       const src = server.registerSource({ name: 'test', path: '/x' });
-      server.executor = async () => { throw new Error('exec failed'); };
+      server.executor = async () => {
+        throw new Error('exec failed');
+      };
       server.registerHandler({
-        name: 'h1', sourceId: src.id,
+        name: 'h1',
+        sourceId: src.id,
         action: { agent: 'orders', request: 'x' },
       });
       const event = new WebhookEvent({
-        sourceId: src.id, sourceName: 'Test',
-        eventType: 'test', payload: {},
+        sourceId: src.id,
+        sourceName: 'Test',
+        eventType: 'test',
+        payload: {},
       });
       const result = await server.processEvent(event);
       assert.ok(result.results.some((r) => r.success === false));
@@ -337,8 +360,10 @@ describe('WebhookServer', () => {
       const src = server.registerSource({ name: 'test', path: '/x' });
       server.registerHandler({ name: 'h1', sourceId: src.id });
       const event = new WebhookEvent({
-        sourceId: src.id, sourceName: 'Test',
-        eventType: 'test', payload: {},
+        sourceId: src.id,
+        sourceName: 'Test',
+        eventType: 'test',
+        payload: {},
       });
       await server.processEvent(event);
       assert.equal(server.eventHistory.length, 1);
@@ -349,8 +374,10 @@ describe('WebhookServer', () => {
     it('interpolates payload values into action strings', () => {
       const action = { agent: 'orders', request: 'Process order {order_id}' };
       const event = new WebhookEvent({
-        sourceId: 's1', sourceName: 'Test',
-        eventType: 'test', payload: { order_id: 'ORD-42' },
+        sourceId: 's1',
+        sourceName: 'Test',
+        eventType: 'test',
+        payload: { order_id: 'ORD-42' },
       });
       const result = server.interpolateAction(action, event);
       assert.equal(result.request, 'Process order ORD-42');
@@ -359,8 +386,10 @@ describe('WebhookServer', () => {
     it('preserves unmatched placeholders', () => {
       const action = { request: 'Unknown: {missing_field}' };
       const event = new WebhookEvent({
-        sourceId: 's1', sourceName: 'Test',
-        eventType: 'test', payload: {},
+        sourceId: 's1',
+        sourceName: 'Test',
+        eventType: 'test',
+        payload: {},
       });
       const result = server.interpolateAction(action, event);
       assert.equal(result.request, 'Unknown: {missing_field}');
@@ -369,8 +398,10 @@ describe('WebhookServer', () => {
     it('passes non-string values through unchanged', () => {
       const action = { agent: 'orders', count: 42 };
       const event = new WebhookEvent({
-        sourceId: 's1', sourceName: 'Test',
-        eventType: 'test', payload: {},
+        sourceId: 's1',
+        sourceName: 'Test',
+        eventType: 'test',
+        payload: {},
       });
       const result = server.interpolateAction(action, event);
       assert.equal(result.count, 42);
@@ -395,7 +426,12 @@ describe('WebhookServer', () => {
     it('filters by sourceId', async () => {
       const src = server.registerSource({ name: 'test', path: '/x' });
       server.registerHandler({ name: 'h1', sourceId: src.id });
-      const e1 = new WebhookEvent({ sourceId: src.id, sourceName: 'T', eventType: 'a', payload: {} });
+      const e1 = new WebhookEvent({
+        sourceId: src.id,
+        sourceName: 'T',
+        eventType: 'a',
+        payload: {},
+      });
       await server.processEvent(e1);
       const history = server.getHistory({ sourceId: src.id });
       assert.equal(history.length, 1);
@@ -405,7 +441,12 @@ describe('WebhookServer', () => {
       const src = server.registerSource({ name: 'test', path: '/x' });
       server.registerHandler({ name: 'h1', sourceId: src.id });
       for (let i = 0; i < 5; i++) {
-        const ev = new WebhookEvent({ sourceId: src.id, sourceName: 'T', eventType: 'a', payload: {} });
+        const ev = new WebhookEvent({
+          sourceId: src.id,
+          sourceName: 'T',
+          eventType: 'a',
+          payload: {},
+        });
         await server.processEvent(ev);
       }
       const history = server.getHistory({ limit: 2 });
@@ -476,7 +517,11 @@ describe('WebhookSourceTemplates', () => {
 describe('WebhookHandlerTemplates', () => {
   it('has stripePaymentSucceeded', () => {
     assert.ok(WebhookHandlerTemplates.stripePaymentSucceeded);
-    assert.ok(WebhookHandlerTemplates.stripePaymentSucceeded.eventTypes.includes('payment_intent.succeeded'));
+    assert.ok(
+      WebhookHandlerTemplates.stripePaymentSucceeded.eventTypes.includes(
+        'payment_intent.succeeded',
+      ),
+    );
   });
 
   it('has stripePaymentFailed', () => {
@@ -485,7 +530,9 @@ describe('WebhookHandlerTemplates', () => {
 
   it('has stripePaymentCanceled', () => {
     assert.ok(WebhookHandlerTemplates.stripePaymentCanceled);
-    assert.ok(WebhookHandlerTemplates.stripePaymentCanceled.eventTypes.includes('payment_intent.canceled'));
+    assert.ok(
+      WebhookHandlerTemplates.stripePaymentCanceled.eventTypes.includes('payment_intent.canceled'),
+    );
   });
 
   it('has shopifyOrderCreated', () => {
@@ -498,16 +545,26 @@ describe('WebhookHandlerTemplates', () => {
 
   it('has carrierHubTrackingEvent', () => {
     assert.ok(WebhookHandlerTemplates.carrierHubTrackingEvent);
-    assert.ok(WebhookHandlerTemplates.carrierHubTrackingEvent.eventTypes.includes('shipment.delivered'));
+    assert.ok(
+      WebhookHandlerTemplates.carrierHubTrackingEvent.eventTypes.includes('shipment.delivered'),
+    );
   });
 
   it('has avalaraTransactionCommitted', () => {
     assert.ok(WebhookHandlerTemplates.avalaraTransactionCommitted);
-    assert.ok(WebhookHandlerTemplates.avalaraTransactionCommitted.eventTypes.includes('transaction.committed'));
+    assert.ok(
+      WebhookHandlerTemplates.avalaraTransactionCommitted.eventTypes.includes(
+        'transaction.committed',
+      ),
+    );
   });
 
   it('has taxProviderTransactionVoided', () => {
     assert.ok(WebhookHandlerTemplates.taxProviderTransactionVoided);
-    assert.ok(WebhookHandlerTemplates.taxProviderTransactionVoided.eventTypes.includes('transaction.voided'));
+    assert.ok(
+      WebhookHandlerTemplates.taxProviderTransactionVoided.eventTypes.includes(
+        'transaction.voided',
+      ),
+    );
   });
 });

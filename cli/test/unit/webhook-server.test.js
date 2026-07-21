@@ -231,7 +231,11 @@ describe('WebhookSource', () => {
     });
 
     it('includes core fields', () => {
-      const src = new WebhookSource({ name: 'Stripe', path: '/webhooks/stripe', description: 'Stripe hooks' });
+      const src = new WebhookSource({
+        name: 'Stripe',
+        path: '/webhooks/stripe',
+        description: 'Stripe hooks',
+      });
       const json = src.toJSON();
       assert.equal(json.name, 'Stripe');
       assert.equal(json.path, '/webhooks/stripe');
@@ -553,7 +557,9 @@ describe('WebhookServer', () => {
 
     it('emits source:registered event', () => {
       let emitted = false;
-      server.on('source:registered', () => { emitted = true; });
+      server.on('source:registered', () => {
+        emitted = true;
+      });
       server.registerSource({ name: 'x', path: '/x' });
       assert.equal(emitted, true);
     });
@@ -576,7 +582,9 @@ describe('WebhookServer', () => {
 
     it('emits handler:registered event', () => {
       let emitted = false;
-      server.on('handler:registered', () => { emitted = true; });
+      server.on('handler:registered', () => {
+        emitted = true;
+      });
       server.registerHandler({ name: 'h', sourceId: 's', action: {} });
       assert.equal(emitted, true);
     });
@@ -650,7 +658,10 @@ describe('WebhookServer', () => {
       const s = new WebhookServer({
         port: 0,
         autoStart: false,
-        executor: async () => { executorCalled = true; return 'ok'; },
+        executor: async () => {
+          executorCalled = true;
+          return 'ok';
+        },
       });
       s.registerHandler({
         id: 'h1',
@@ -686,7 +697,9 @@ describe('WebhookServer', () => {
       const s = new WebhookServer({
         port: 0,
         autoStart: false,
-        executor: async () => { throw new Error('boom'); },
+        executor: async () => {
+          throw new Error('boom');
+        },
       });
       s.registerHandler({
         id: 'h1',
@@ -716,7 +729,9 @@ describe('WebhookServer', () => {
         autoStart: false,
         executor: async () => 'ok',
       });
-      s.on('handler:executed', () => { emitted = true; });
+      s.on('handler:executed', () => {
+        emitted = true;
+      });
       s.registerHandler({ id: 'h1', name: 'h', sourceId: 's1', action: { request: 'x' } });
       const ev = new WebhookEvent({ sourceId: 's1', eventType: 'e', payload: {} });
       await s.processEvent(ev);
@@ -728,9 +743,13 @@ describe('WebhookServer', () => {
       const s = new WebhookServer({
         port: 0,
         autoStart: false,
-        executor: async () => { throw new Error('fail'); },
+        executor: async () => {
+          throw new Error('fail');
+        },
       });
-      s.on('handler:failed', () => { emitted = true; });
+      s.on('handler:failed', () => {
+        emitted = true;
+      });
       s.registerHandler({ id: 'h1', name: 'h', sourceId: 's1', action: { request: 'x' } });
       const ev = new WebhookEvent({ sourceId: 's1', eventType: 'e', payload: {} });
       await s.processEvent(ev);
@@ -748,7 +767,9 @@ describe('WebhookServer', () => {
       server.registerHandler({ id: 'h1', name: 'h', sourceId: 's', action: {} });
       // Pre-populate with 1001 entries
       for (let i = 0; i < 1001; i++) {
-        server.eventHistory.push(new WebhookEvent({ sourceId: 's', eventType: 'e', payload: { i } }));
+        server.eventHistory.push(
+          new WebhookEvent({ sourceId: 's', eventType: 'e', payload: { i } }),
+        );
       }
       const ev = new WebhookEvent({ sourceId: 's', eventType: 'e', payload: {} });
       await server.processEvent(ev);
@@ -760,7 +781,9 @@ describe('WebhookServer', () => {
       const s = new WebhookServer({
         port: 0,
         autoStart: false,
-        executor: async (action) => { order.push(action.request); },
+        executor: async (action) => {
+          order.push(action.request);
+        },
       });
       s.registerHandler({
         id: 'low',
@@ -801,7 +824,9 @@ describe('WebhookServer', () => {
       const s = new WebhookServer({
         port: 0,
         autoStart: false,
-        executor: async () => { called = true; },
+        executor: async () => {
+          called = true;
+        },
       });
       s.registerHandler({ id: 'h1', name: 'h', sourceId: 's', action: null });
       const ev = new WebhookEvent({ sourceId: 's', eventType: 'e', payload: {} });
@@ -1033,7 +1058,9 @@ describe('WebhookServer integration: processEvent with conditions', () => {
     const s = new WebhookServer({
       port: 0,
       autoStart: false,
-      executor: async (action) => { calls.push(action.request); },
+      executor: async (action) => {
+        calls.push(action.request);
+      },
     });
 
     s.registerHandler({

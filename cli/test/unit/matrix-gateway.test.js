@@ -48,7 +48,7 @@ describe('Matrix Gateway', () => {
 
     it('source imports createSessionManager from channels/base', () => {
       assert.ok(source.includes('createSessionManager'));
-      assert.ok(source.includes("../channels/base.js"));
+      assert.ok(source.includes('../channels/base.js'));
     });
 
     it('source imports createMessageHandler from channels/base', () => {
@@ -57,7 +57,7 @@ describe('Matrix Gateway', () => {
 
     it('source imports getNotifier from channels/notifier', () => {
       assert.ok(source.includes('getNotifier'));
-      assert.ok(source.includes("../channels/notifier.js"));
+      assert.ok(source.includes('../channels/notifier.js'));
     });
 
     it('does not require any external SDK (uses built-in fetch)', () => {
@@ -70,11 +70,11 @@ describe('Matrix Gateway', () => {
 
   describe('environment validation', () => {
     it('requires MATRIX_HOMESERVER_URL env var', () => {
-      assert.ok(source.includes("process.env.MATRIX_HOMESERVER_URL"));
+      assert.ok(source.includes('process.env.MATRIX_HOMESERVER_URL'));
     });
 
     it('requires MATRIX_ACCESS_TOKEN env var', () => {
-      assert.ok(source.includes("process.env.MATRIX_ACCESS_TOKEN"));
+      assert.ok(source.includes('process.env.MATRIX_ACCESS_TOKEN'));
     });
 
     it('throws with helpful message when homeserver URL is missing', () => {
@@ -199,7 +199,7 @@ describe('Matrix Gateway', () => {
     });
 
     it('performs initial sync with timeline limit 0', () => {
-      assert.ok(source.includes("timeline: { limit: 0 }"));
+      assert.ok(source.includes('timeline: { limit: 0 }'));
     });
 
     it('long-polls with timeout of 30 seconds', () => {

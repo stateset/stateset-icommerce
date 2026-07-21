@@ -90,12 +90,8 @@ describe('createSplitPayment', () => {
     assert.equal(result.splitPayment.recipients.length, 2);
 
     // Verify amounts (60% and 40% of 100 USDC)
-    const alice = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xAlice',
-    );
-    const bob = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xBob',
-    );
+    const alice = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xAlice');
+    const bob = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xBob');
     assert.equal(alice.shareAmount, 60_000_000);
     assert.equal(alice.shareAmountDecimal, 60);
     assert.equal(alice.sharePercent, 60);
@@ -140,12 +136,8 @@ describe('createSplitPayment', () => {
     assert.equal(result.splitPayment.splitType, 'fixed');
     assert.equal(result.splitPayment.recipients.length, 2);
 
-    const alice = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xAlice',
-    );
-    const bob = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xBob',
-    );
+    const alice = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xAlice');
+    const bob = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xBob');
     assert.equal(alice.shareAmount, 60_000_000);
     assert.equal(bob.shareAmount, 40_000_000);
     // Fixed splits should not have percent
@@ -175,12 +167,8 @@ describe('createSplitPayment', () => {
     // There should be 3 recipients (Alice, Bob, Platform)
     assert.equal(result.splitPayment.recipients.length, 3);
 
-    const alice = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xAlice',
-    );
-    const bob = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xBob',
-    );
+    const alice = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xAlice');
+    const bob = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xBob');
     assert.equal(alice.shareAmount, 45_000_000);
     assert.equal(bob.shareAmount, 45_000_000);
   });
@@ -201,12 +189,8 @@ describe('createSplitPayment', () => {
     assert.equal(result.success, true);
     // Platform fee: 5% of 100 = 5 USDC; remaining = 95
     // 55 + 40 = 95 -- matches
-    const alice = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xAlice',
-    );
-    const bob = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xBob',
-    );
+    const alice = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xAlice');
+    const bob = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xBob');
     assert.equal(alice.shareAmount, 55_000_000);
     assert.equal(bob.shareAmount, 40_000_000);
   });
@@ -509,10 +493,7 @@ describe('createSplitPayment', () => {
         service.createSplitPayment({
           senderAddress: '0xSender',
           totalAmount: 100,
-          recipients: [
-            { address: '0xAlice', percent: 50 },
-            { percent: 50 },
-          ],
+          recipients: [{ address: '0xAlice', percent: 50 }, { percent: 50 }],
         }),
       { message: 'recipients[1].address is required' },
     );
@@ -525,10 +506,7 @@ describe('createSplitPayment', () => {
           senderAddress: '0xSender',
           totalAmount: 100,
           splitType: 'percentage',
-          recipients: [
-            { address: '0xAlice', percent: 50 },
-            { address: '0xBob' },
-          ],
+          recipients: [{ address: '0xAlice', percent: 50 }, { address: '0xBob' }],
         }),
       { message: 'recipients[1].percent is required for percentage splits' },
     );
@@ -541,10 +519,7 @@ describe('createSplitPayment', () => {
           senderAddress: '0xSender',
           totalAmount: 100,
           splitType: 'fixed',
-          recipients: [
-            { address: '0xAlice', amount: 50 },
-            { address: '0xBob' },
-          ],
+          recipients: [{ address: '0xAlice', amount: 50 }, { address: '0xBob' }],
         }),
       { message: 'recipients[1].amount is required for fixed splits' },
     );
@@ -663,10 +638,9 @@ describe('executeSplitPayment', () => {
   it('should throw when split payment is not found', async () => {
     const payFn = mock.fn(async () => ({ id: 'pay-123' }));
 
-    await assert.rejects(
-      () => service.executeSplitPayment('nonexistent-id', payFn),
-      { message: 'Split payment not found' },
-    );
+    await assert.rejects(() => service.executeSplitPayment('nonexistent-id', payFn), {
+      message: 'Split payment not found',
+    });
 
     assert.equal(payFn.mock.calls.length, 0);
   });
@@ -979,9 +953,7 @@ describe('USDC decimal precision', () => {
     assert.equal(result.success, true);
     assert.equal(result.splitPayment.totalAmount, Math.round(99.99 * 1_000_000));
 
-    const alice = result.splitPayment.recipients.find(
-      (r) => r.recipientAddress === '0xAlice',
-    );
+    const alice = result.splitPayment.recipients.find((r) => r.recipientAddress === '0xAlice');
     assert.equal(alice.shareAmount, Math.round(49.995 * 1_000_000));
   });
 

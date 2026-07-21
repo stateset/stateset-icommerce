@@ -153,7 +153,7 @@ describe('Condition', () => {
           shippingAddress: { country: 'US' },
           billingAddress: { country: 'US' },
         },
-      })
+      }),
     );
 
     assert.ok(
@@ -162,7 +162,7 @@ describe('Condition', () => {
           shippingAddress: { country: 'US' },
           billingAddress: { country: 'CA' },
         },
-      })
+      }),
     );
   });
 
@@ -177,7 +177,7 @@ describe('Condition', () => {
     assert.ok(
       !cond.evaluate({
         order: { shippingAddress: { country: 'US' } },
-      })
+      }),
     );
   });
 

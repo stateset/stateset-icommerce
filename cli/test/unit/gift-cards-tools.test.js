@@ -317,8 +317,15 @@ describe('giftCardTools -- list_gift_cards handler', () => {
     });
     const gc = result.giftCards[0];
     const expectedKeys = [
-      'id', 'code', 'initialBalance', 'currentBalance',
-      'currency', 'status', 'customerId', 'expiresAt', 'createdAt',
+      'id',
+      'code',
+      'initialBalance',
+      'currentBalance',
+      'currency',
+      'status',
+      'customerId',
+      'expiresAt',
+      'createdAt',
     ];
     for (const key of expectedKeys) {
       assert.ok(key in gc, `missing key: ${key}`);

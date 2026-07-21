@@ -311,89 +311,235 @@ function seedCommerceData(cdb) {
   const now = new Date().toISOString();
 
   // Customer
-  cdb.prepare(
-    `INSERT INTO customers (id, email, first_name, last_name, phone, metadata, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO customers (id, email, first_name, last_name, phone, metadata, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(CUSTOMER_ID, CUSTOMER_EMAIL, 'Alice', 'Johnson', '+1-555-0123', '{"vip":true}', now, now);
+    )
+    .run(CUSTOMER_ID, CUSTOMER_EMAIL, 'Alice', 'Johnson', '+1-555-0123', '{"vip":true}', now, now);
 
   // Addresses
-  cdb.prepare(
-    `INSERT INTO customer_addresses (id, customer_id, first_name, last_name, company, line1, city, state, postal_code, country, phone, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO customer_addresses (id, customer_id, first_name, last_name, company, line1, city, state, postal_code, country, phone, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('addr-1', CUSTOMER_ID, 'Alice', 'Johnson', 'Acme Inc', '123 Main St', 'Springfield', 'IL', '62701', 'US', '+1-555-0123', now, now);
+    )
+    .run(
+      'addr-1',
+      CUSTOMER_ID,
+      'Alice',
+      'Johnson',
+      'Acme Inc',
+      '123 Main St',
+      'Springfield',
+      'IL',
+      '62701',
+      'US',
+      '+1-555-0123',
+      now,
+      now,
+    );
 
-  cdb.prepare(
-    `INSERT INTO customer_addresses (id, customer_id, first_name, last_name, line1, city, postal_code, country, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO customer_addresses (id, customer_id, first_name, last_name, line1, city, postal_code, country, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('addr-2', CUSTOMER_ID, 'Alice', 'Johnson', '456 Oak Ave', 'Chicago', '60601', 'US', now, now);
+    )
+    .run(
+      'addr-2',
+      CUSTOMER_ID,
+      'Alice',
+      'Johnson',
+      '456 Oak Ave',
+      'Chicago',
+      '60601',
+      'US',
+      now,
+      now,
+    );
 
   // Orders
   const shippingAddr = JSON.stringify({
-    first_name: 'Alice', last_name: 'Johnson', line1: '123 Main St',
-    city: 'Springfield', state: 'IL', postal_code: '62701', country: 'US',
+    first_name: 'Alice',
+    last_name: 'Johnson',
+    line1: '123 Main St',
+    city: 'Springfield',
+    state: 'IL',
+    postal_code: '62701',
+    country: 'US',
   });
-  cdb.prepare(
-    `INSERT INTO orders (id, order_number, customer_id, total_amount, shipping_address, billing_address, notes, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO orders (id, order_number, customer_id, total_amount, shipping_address, billing_address, notes, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('ord-1', 'ORD-001', CUSTOMER_ID, '99.99', shippingAddr, shippingAddr, 'Gift wrap please', now, now);
+    )
+    .run(
+      'ord-1',
+      'ORD-001',
+      CUSTOMER_ID,
+      '99.99',
+      shippingAddr,
+      shippingAddr,
+      'Gift wrap please',
+      now,
+      now,
+    );
 
-  cdb.prepare(
-    `INSERT INTO orders (id, order_number, customer_id, total_amount, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO orders (id, order_number, customer_id, total_amount, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run('ord-2', 'ORD-002', CUSTOMER_ID, '49.50', now, now);
+    )
+    .run('ord-2', 'ORD-002', CUSTOMER_ID, '49.50', now, now);
 
   // Carts
-  cdb.prepare(
-    `INSERT INTO carts (id, cart_number, customer_id, customer_email, customer_phone, customer_name, shipping_address, notes, metadata, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO carts (id, cart_number, customer_id, customer_email, customer_phone, customer_name, shipping_address, notes, metadata, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('cart-1', 'CART-001', CUSTOMER_ID, CUSTOMER_EMAIL, '+1-555-0123', 'Alice Johnson', shippingAddr, 'Rush order', '{"source":"web"}', now, now);
+    )
+    .run(
+      'cart-1',
+      'CART-001',
+      CUSTOMER_ID,
+      CUSTOMER_EMAIL,
+      '+1-555-0123',
+      'Alice Johnson',
+      shippingAddr,
+      'Rush order',
+      '{"source":"web"}',
+      now,
+      now,
+    );
 
   // Payments
-  cdb.prepare(
-    `INSERT INTO payments (id, payment_number, customer_id, amount, billing_email, billing_name, billing_address, card_brand, card_last4, card_exp_month, card_exp_year, description, metadata, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO payments (id, payment_number, customer_id, amount, billing_email, billing_name, billing_address, card_brand, card_last4, card_exp_month, card_exp_year, description, metadata, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('pay-1', 'PAY-001', CUSTOMER_ID, '99.99', CUSTOMER_EMAIL, 'Alice Johnson', shippingAddr, 'visa', '4242', 12, 2028, 'Order payment', '{"ip":"192.168.1.1"}', now, now);
+    )
+    .run(
+      'pay-1',
+      'PAY-001',
+      CUSTOMER_ID,
+      '99.99',
+      CUSTOMER_EMAIL,
+      'Alice Johnson',
+      shippingAddr,
+      'visa',
+      '4242',
+      12,
+      2028,
+      'Order payment',
+      '{"ip":"192.168.1.1"}',
+      now,
+      now,
+    );
 
   // Payment methods
-  cdb.prepare(
-    `INSERT INTO payment_methods (id, customer_id, card_brand, card_last4, card_exp_month, card_exp_year, cardholder_name, billing_address, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO payment_methods (id, customer_id, card_brand, card_last4, card_exp_month, card_exp_year, cardholder_name, billing_address, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('pm-1', CUSTOMER_ID, 'visa', '4242', 12, 2028, 'Alice Johnson', shippingAddr, now, now);
+    )
+    .run('pm-1', CUSTOMER_ID, 'visa', '4242', 12, 2028, 'Alice Johnson', shippingAddr, now, now);
 
-  cdb.prepare(
-    `INSERT INTO payment_methods (id, customer_id, card_brand, card_last4, cardholder_name, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO payment_methods (id, customer_id, card_brand, card_last4, cardholder_name, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run('pm-2', CUSTOMER_ID, 'mastercard', '5555', 'Alice J', now, now);
+    )
+    .run('pm-2', CUSTOMER_ID, 'mastercard', '5555', 'Alice J', now, now);
 
   // Invoices
-  cdb.prepare(
-    `INSERT INTO invoices (id, invoice_number, customer_id, billing_name, billing_email, billing_address, billing_city, billing_state, billing_postal_code, billing_country, total, notes, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO invoices (id, invoice_number, customer_id, billing_name, billing_email, billing_address, billing_city, billing_state, billing_postal_code, billing_country, total, notes, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('inv-1', 'INV-001', CUSTOMER_ID, 'Alice Johnson', CUSTOMER_EMAIL, '123 Main St', 'Springfield', 'IL', '62701', 'US', '99.99', 'Net 30', now, now);
+    )
+    .run(
+      'inv-1',
+      'INV-001',
+      CUSTOMER_ID,
+      'Alice Johnson',
+      CUSTOMER_EMAIL,
+      '123 Main St',
+      'Springfield',
+      'IL',
+      '62701',
+      'US',
+      '99.99',
+      'Net 30',
+      now,
+      now,
+    );
 
   // Shipments
-  cdb.prepare(
-    `INSERT INTO shipments (id, shipment_number, order_id, recipient_name, recipient_email, recipient_phone, shipping_address, notes, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO shipments (id, shipment_number, order_id, recipient_name, recipient_email, recipient_phone, shipping_address, notes, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('ship-1', 'SHIP-001', 'ord-1', 'Alice Johnson', CUSTOMER_EMAIL, '+1-555-0123', shippingAddr, 'Handle with care', now, now);
+    )
+    .run(
+      'ship-1',
+      'SHIP-001',
+      'ord-1',
+      'Alice Johnson',
+      CUSTOMER_EMAIL,
+      '+1-555-0123',
+      shippingAddr,
+      'Handle with care',
+      now,
+      now,
+    );
 
   // Subscriptions
-  cdb.prepare(
-    `INSERT INTO subscriptions (id, subscription_number, customer_id, plan_id, plan_name, price, shipping_address, billing_address, metadata, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO subscriptions (id, subscription_number, customer_id, plan_id, plan_name, price, shipping_address, billing_address, metadata, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('sub-1', 'SUB-001', CUSTOMER_ID, 'plan-1', 'Monthly Coffee', '29.99', shippingAddr, shippingAddr, '{"size":"large"}', now, now);
+    )
+    .run(
+      'sub-1',
+      'SUB-001',
+      CUSTOMER_ID,
+      'plan-1',
+      'Monthly Coffee',
+      '29.99',
+      shippingAddr,
+      shippingAddr,
+      '{"size":"large"}',
+      now,
+      now,
+    );
 
   // Warranties
-  cdb.prepare(
-    `INSERT INTO warranties (id, warranty_number, customer_id, product_id, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO warranties (id, warranty_number, customer_id, product_id, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run('war-1', 'WAR-001', CUSTOMER_ID, 'prod-1', now, now);
+    )
+    .run('war-1', 'WAR-001', CUSTOMER_ID, 'prod-1', now, now);
 
   // Warranty claims
-  cdb.prepare(
-    `INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, issue_description, contact_phone, contact_email, shipping_address, customer_notes, created_at, updated_at)
+  cdb
+    .prepare(
+      `INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, issue_description, contact_phone, contact_email, shipping_address, customer_notes, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('claim-1', 'CLM-001', 'war-1', CUSTOMER_ID, 'Screen cracked', '+1-555-0123', CUSTOMER_EMAIL, shippingAddr, 'Happened during shipping', now, now);
+    )
+    .run(
+      'claim-1',
+      'CLM-001',
+      'war-1',
+      CUSTOMER_ID,
+      'Screen cracked',
+      '+1-555-0123',
+      CUSTOMER_EMAIL,
+      shippingAddr,
+      'Happened during shipping',
+      now,
+      now,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +601,9 @@ describe('GDPR Commerce Erasure', () => {
     it('deletes all customer addresses', () => {
       const result = svc.deleteGDPRData(CUSTOMER_ID);
 
-      const addrs = commerceDb.prepare('SELECT * FROM customer_addresses WHERE customer_id = ?').all(CUSTOMER_ID);
+      const addrs = commerceDb
+        .prepare('SELECT * FROM customer_addresses WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(addrs.length, 0, 'all addresses should be deleted');
 
       const addrDeleted = result.deleted.find((d) => d.table === 'customer_addresses');
@@ -466,7 +614,9 @@ describe('GDPR Commerce Erasure', () => {
     it('deletes all payment methods', () => {
       const result = svc.deleteGDPRData(CUSTOMER_ID);
 
-      const pms = commerceDb.prepare('SELECT * FROM payment_methods WHERE customer_id = ?').all(CUSTOMER_ID);
+      const pms = commerceDb
+        .prepare('SELECT * FROM payment_methods WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(pms.length, 0, 'all payment methods should be deleted');
 
       const pmDeleted = result.deleted.find((d) => d.table === 'payment_methods');
@@ -477,7 +627,9 @@ describe('GDPR Commerce Erasure', () => {
     it('anonymizes order shipping/billing addresses', () => {
       svc.deleteGDPRData(CUSTOMER_ID);
 
-      const orders = commerceDb.prepare('SELECT * FROM orders WHERE customer_id = ?').all(CUSTOMER_ID);
+      const orders = commerceDb
+        .prepare('SELECT * FROM orders WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(orders.length, 2, 'orders should still exist');
 
       // Order with addresses should be anonymized
@@ -491,7 +643,9 @@ describe('GDPR Commerce Erasure', () => {
     it('anonymizes cart PII', () => {
       svc.deleteGDPRData(CUSTOMER_ID);
 
-      const carts = commerceDb.prepare('SELECT * FROM carts WHERE customer_id = ?').all(CUSTOMER_ID);
+      const carts = commerceDb
+        .prepare('SELECT * FROM carts WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(carts.length, 1, 'cart should still exist');
       assert.equal(carts[0].customer_email, null);
       assert.equal(carts[0].customer_phone, null);
@@ -504,7 +658,9 @@ describe('GDPR Commerce Erasure', () => {
     it('anonymizes payment billing PII', () => {
       svc.deleteGDPRData(CUSTOMER_ID);
 
-      const payments = commerceDb.prepare('SELECT * FROM payments WHERE customer_id = ?').all(CUSTOMER_ID);
+      const payments = commerceDb
+        .prepare('SELECT * FROM payments WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(payments.length, 1, 'payment record should still exist');
       assert.equal(payments[0].billing_email, null);
       assert.equal(payments[0].billing_name, null);
@@ -522,7 +678,9 @@ describe('GDPR Commerce Erasure', () => {
     it('anonymizes invoice billing PII', () => {
       svc.deleteGDPRData(CUSTOMER_ID);
 
-      const invoices = commerceDb.prepare('SELECT * FROM invoices WHERE customer_id = ?').all(CUSTOMER_ID);
+      const invoices = commerceDb
+        .prepare('SELECT * FROM invoices WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(invoices.length, 1);
       assert.equal(invoices[0].billing_name, null);
       assert.equal(invoices[0].billing_email, null);
@@ -552,7 +710,9 @@ describe('GDPR Commerce Erasure', () => {
     it('anonymizes subscription addresses', () => {
       svc.deleteGDPRData(CUSTOMER_ID);
 
-      const subs = commerceDb.prepare('SELECT * FROM subscriptions WHERE customer_id = ?').all(CUSTOMER_ID);
+      const subs = commerceDb
+        .prepare('SELECT * FROM subscriptions WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(subs.length, 1);
       assert.equal(subs[0].shipping_address, null);
       assert.equal(subs[0].billing_address, null);
@@ -564,7 +724,9 @@ describe('GDPR Commerce Erasure', () => {
     it('anonymizes warranty claim contact PII', () => {
       svc.deleteGDPRData(CUSTOMER_ID);
 
-      const claims = commerceDb.prepare('SELECT * FROM warranty_claims WHERE customer_id = ?').all(CUSTOMER_ID);
+      const claims = commerceDb
+        .prepare('SELECT * FROM warranty_claims WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(claims.length, 1);
       assert.equal(claims[0].contact_phone, null);
       assert.equal(claims[0].contact_email, null);
@@ -582,17 +744,21 @@ describe('GDPR Commerce Erasure', () => {
       assert.equal(customer.first_name, '[REDACTED]');
 
       // Addresses should be deleted
-      const addrs = commerceDb.prepare('SELECT * FROM customer_addresses WHERE customer_id = ?').all(CUSTOMER_ID);
+      const addrs = commerceDb
+        .prepare('SELECT * FROM customer_addresses WHERE customer_id = ?')
+        .all(CUSTOMER_ID);
       assert.equal(addrs.length, 0);
     });
 
     it('handles cart lookup by email', () => {
       // Add a cart linked by email only (no customer_id)
       const now = new Date().toISOString();
-      commerceDb.prepare(
-        `INSERT INTO carts (id, cart_number, customer_email, customer_name, created_at, updated_at)
+      commerceDb
+        .prepare(
+          `INSERT INTO carts (id, cart_number, customer_email, customer_name, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run('cart-email-only', 'CART-EMAIL', CUSTOMER_EMAIL, 'Alice', now, now);
+        )
+        .run('cart-email-only', 'CART-EMAIL', CUSTOMER_EMAIL, 'Alice', now, now);
 
       svc.deleteGDPRData(CUSTOMER_EMAIL);
 
@@ -759,10 +925,12 @@ describe('GDPR Commerce Erasure', () => {
     it('handles customer with no related records', () => {
       // Create a customer with no orders, carts, payments, etc.
       const now = new Date().toISOString();
-      commerceDb.prepare(
-        `INSERT INTO customers (id, email, first_name, last_name, created_at, updated_at)
+      commerceDb
+        .prepare(
+          `INSERT INTO customers (id, email, first_name, last_name, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run('cust-lonely', 'lonely@example.com', 'Lonely', 'Person', now, now);
+        )
+        .run('cust-lonely', 'lonely@example.com', 'Lonely', 'Person', now, now);
 
       const result = svc.deleteGDPRData('cust-lonely');
       assert.ok(result.deletedAt);
@@ -773,15 +941,30 @@ describe('GDPR Commerce Erasure', () => {
     it('preserves other customers data', () => {
       // Add another customer
       const now = new Date().toISOString();
-      commerceDb.prepare(
-        `INSERT INTO customers (id, email, first_name, last_name, created_at, updated_at)
+      commerceDb
+        .prepare(
+          `INSERT INTO customers (id, email, first_name, last_name, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run('cust-other', 'bob@example.com', 'Bob', 'Smith', now, now);
+        )
+        .run('cust-other', 'bob@example.com', 'Bob', 'Smith', now, now);
 
-      commerceDb.prepare(
-        `INSERT INTO customer_addresses (id, customer_id, first_name, last_name, line1, city, postal_code, country, created_at, updated_at)
+      commerceDb
+        .prepare(
+          `INSERT INTO customer_addresses (id, customer_id, first_name, last_name, line1, city, postal_code, country, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run('addr-bob', 'cust-other', 'Bob', 'Smith', '789 Elm St', 'Denver', '80201', 'US', now, now);
+        )
+        .run(
+          'addr-bob',
+          'cust-other',
+          'Bob',
+          'Smith',
+          '789 Elm St',
+          'Denver',
+          '80201',
+          'US',
+          now,
+          now,
+        );
 
       // Delete Alice's data
       svc.deleteGDPRData(CUSTOMER_ID);
@@ -791,10 +974,11 @@ describe('GDPR Commerce Erasure', () => {
       assert.equal(bob.first_name, 'Bob');
       assert.equal(bob.email, 'bob@example.com');
 
-      const bobAddrs = commerceDb.prepare('SELECT * FROM customer_addresses WHERE customer_id = ?').all('cust-other');
+      const bobAddrs = commerceDb
+        .prepare('SELECT * FROM customer_addresses WHERE customer_id = ?')
+        .all('cust-other');
       assert.equal(bobAddrs.length, 1);
       assert.equal(bobAddrs[0].first_name, 'Bob');
     });
   });
 });
-

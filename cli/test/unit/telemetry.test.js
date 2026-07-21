@@ -42,12 +42,17 @@ describe('AgentTelemetry', () => {
       console.log = (...args) => logs.push(args.join(' '));
 
       const telemetry = new AgentTelemetry({ verbose: true, outputFormat: 'json' });
-      telemetry.logToolCall('test_tool', {
-        query: 'hello',
-        apiKey: 'sk-secret-123',
-        password: 'hunter2',
-        token: 'tok-abc',
-      }, { result: 'ok' }, 10);
+      telemetry.logToolCall(
+        'test_tool',
+        {
+          query: 'hello',
+          apiKey: 'sk-secret-123',
+          password: 'hunter2',
+          token: 'tok-abc',
+        },
+        { result: 'ok' },
+        10,
+      );
 
       console.log = origLog;
 
@@ -64,10 +69,15 @@ describe('AgentTelemetry', () => {
       console.log = (...args) => logs.push(args.join(' '));
 
       const telemetry = new AgentTelemetry({ verbose: true, outputFormat: 'json' });
-      telemetry.logToolCall('test_tool', {
-        query: 'hello world',
-        limit: 10,
-      }, { result: 'ok' }, 5);
+      telemetry.logToolCall(
+        'test_tool',
+        {
+          query: 'hello world',
+          limit: 10,
+        },
+        { result: 'ok' },
+        5,
+      );
 
       console.log = origLog;
 
@@ -90,7 +100,7 @@ describe('AgentTelemetry', () => {
       });
 
       // Check the recorded span event
-      const errorEvent = span.events.find(e => e.name === 'error');
+      const errorEvent = span.events.find((e) => e.name === 'error');
       assert.ok(errorEvent, 'should record error event');
       assert.equal(errorEvent.data.context.authorization, '[REDACTED]');
       assert.equal(errorEvent.data.context.credential, '[REDACTED]');
