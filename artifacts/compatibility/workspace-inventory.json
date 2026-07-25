@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.7.0",
+    "version": "1.22.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -221,6 +221,7 @@
         "stateset-authz",
         "stateset-core",
         "stateset-embedded",
+        "stateset-observability",
         "stateset-primitives"
       ],
       "stateset-icp-client": [],
@@ -384,9 +385,10 @@
       },
       {
         "name": "stateset-observability",
-        "dependentCount": 2,
+        "dependentCount": 3,
         "dependents": [
           "stateset-embedded",
+          "stateset-http",
           "stateset-sdk"
         ]
       },
@@ -549,7 +551,7 @@
     "topLevelSourceCounts": [
       {
         "name": "tools",
-        "count": 67
+        "count": 93
       },
       {
         "name": "commands",
@@ -574,6 +576,10 @@
       {
         "name": "sync",
         "count": 18
+      },
+      {
+        "name": "harness",
+        "count": 14
       },
       {
         "name": "utils",
@@ -637,6 +643,10 @@
       },
       {
         "name": "approvals",
+        "count": 2
+      },
+      {
+        "name": "coverage",
         "count": 2
       },
       {
@@ -737,10 +747,6 @@
       },
       {
         "name": "conversation-history.js",
-        "count": 1
-      },
-      {
-        "name": "coverage",
         "count": 1
       },
       {
@@ -952,7 +958,7 @@
         "count": 1
       }
     ],
-    "toolModuleCount": 67,
+    "toolModuleCount": 93,
     "a2aModuleCount": 44
   },
   "admin": {

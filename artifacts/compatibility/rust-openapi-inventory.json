@@ -7,18 +7,18 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 164,
-  "totalOperations": 236,
-  "totalSchemas": 214,
-  "totalTags": 45,
+  "totalPaths": 319,
+  "totalOperations": 432,
+  "totalSchemas": 415,
+  "totalTags": 61,
   "methods": [
     {
       "name": "DELETE",
-      "count": 20
+      "count": 24
     },
     {
       "name": "GET",
-      "count": 101
+      "count": 171
     },
     {
       "name": "PATCH",
@@ -26,11 +26,11 @@
     },
     {
       "name": "POST",
-      "count": 101
+      "count": 215
     },
     {
       "name": "PUT",
-      "count": 4
+      "count": 12
     }
   ],
   "tags": [
@@ -40,9 +40,34 @@
       "count": 8
     },
     {
+      "name": "accounts_payable",
+      "description": "Supplier bills, AP payments and allocations, payment runs, and AP aging",
+      "count": 14
+    },
+    {
+      "name": "accounts_receivable",
+      "description": "AR aging, payment application, credit memos, write-offs, dunning, and customer statements",
+      "count": 15
+    },
+    {
       "name": "activity_logs",
       "description": "Record-level activity history",
       "count": 4
+    },
+    {
+      "name": "backorders",
+      "description": "Backorder creation, fulfillment, and cancellation",
+      "count": 5
+    },
+    {
+      "name": "bom",
+      "description": "Bills of materials: BOM revisions, components, and status control",
+      "count": 8
+    },
+    {
+      "name": "carts",
+      "description": "Cart and checkout sessions: items, shipping, payment, completion",
+      "count": 10
     },
     {
       "name": "channels",
@@ -73,6 +98,21 @@
       "name": "events",
       "description": "Real-time event streaming",
       "count": 1
+    },
+    {
+      "name": "fixed_assets",
+      "description": "Fixed-asset register: acquisition, depreciation schedules, disposal, and write-off",
+      "count": 10
+    },
+    {
+      "name": "fulfillment",
+      "description": "Outbound fulfillment: waves, pick tasks, pack tasks and cartons, ship tasks",
+      "count": 13
+    },
+    {
+      "name": "general_ledger",
+      "description": "Chart of accounts, journal entries, accounting periods, and financial reports (trial balance, balance sheet, income statement)",
+      "count": 20
     },
     {
       "name": "gift_cards",
@@ -108,6 +148,11 @@
       "name": "invoices",
       "description": "Invoice management",
       "count": 5
+    },
+    {
+      "name": "lots",
+      "description": "Lot/batch tracking: creation, consumption, reservations, quarantine, and expiry queries",
+      "count": 9
     },
     {
       "name": "loyalty",
@@ -170,9 +215,24 @@
       "count": 5
     },
     {
+      "name": "purchase_orders",
+      "description": "Supplier procurement: purchase order lifecycle (draft → approval → send → acknowledge → receive → complete) and supplier management",
+      "count": 18
+    },
+    {
       "name": "purgatory",
       "description": "Quarantined record review",
       "count": 6
+    },
+    {
+      "name": "quality",
+      "description": "Quality control: inspections, non-conformance reports, and quality holds",
+      "count": 15
+    },
+    {
+      "name": "receiving",
+      "description": "Inbound receiving: goods receipts, item receipt, and put-away tasks",
+      "count": 12
     },
     {
       "name": "reports",
@@ -185,6 +245,11 @@
       "count": 4
     },
     {
+      "name": "revenue_recognition",
+      "description": "Revenue contracts, performance obligations, and recognition schedules (ASC 606)",
+      "count": 8
+    },
+    {
       "name": "reviews",
       "description": "Product review management",
       "count": 4
@@ -193,6 +258,11 @@
       "name": "segments",
       "description": "Customer segment management",
       "count": 6
+    },
+    {
+      "name": "serials",
+      "description": "Serial number tracking: creation, lookup, reservations, and lifecycle transitions",
+      "count": 8
     },
     {
       "name": "shipments",
@@ -250,6 +320,11 @@
       "count": 6
     },
     {
+      "name": "warehouse",
+      "description": "Warehouses, storage locations, and location-level inventory (adjust/move)",
+      "count": 18
+    },
+    {
       "name": "warranties",
       "description": "Product warranty management",
       "count": 3
@@ -258,36 +333,96 @@
       "name": "wishlists",
       "description": "Customer wishlist management",
       "count": 6
+    },
+    {
+      "name": "work_orders",
+      "description": "Manufacturing work order lifecycle and shop-floor tasks",
+      "count": 13
     }
   ],
   "schemas": [
+    "AcknowledgePurchaseOrderRequest",
     "ActivityLogListResponse",
     "ActivityLogResponse",
+    "AddCartItemRequest",
+    "AddCartonRequest",
     "AddWishlistItemRequest",
     "AddressDto",
+    "AdjustInventoryRequest",
     "AdjustStoreCreditRequest",
     "AgingBucketResponse",
     "AgingLayerRequest",
+    "ApAgingResponse",
+    "ApBillListResponse",
+    "ApBillResponse",
+    "ApPaymentAllocationRequest",
+    "ApPaymentResponse",
+    "ApPaymentRunResponse",
+    "ApplyArCreditMemoRequest",
+    "ApplyArPaymentRequest",
     "ApplyPrepaymentRequest",
     "ApplyStoreCreditRequest",
     "ApplyVendorCreditRequest",
+    "ApprovePaymentRunRequest",
+    "ApprovePurchaseOrderRequest",
+    "ArAgingResponse",
+    "ArCollectionActivityListResponse",
+    "ArCollectionActivityResponse",
+    "ArCreditMemoListResponse",
+    "ArCreditMemoResponse",
+    "ArCustomerAgingListResponse",
+    "ArCustomerAgingResponse",
+    "ArCustomerStatementResponse",
+    "ArDunningInvoiceListResponse",
+    "ArDunningInvoiceResponse",
+    "ArPaymentApplicationLineRequest",
+    "ArPaymentApplicationListResponse",
+    "ArPaymentApplicationResponse",
+    "ArStatementLineResponse",
+    "ArWriteOffResponse",
+    "AssignTaskRequest",
+    "BackorderListResponse",
+    "BackorderResponse",
+    "BalanceSheetLineResponse",
+    "BalanceSheetResponse",
+    "BomComponentListResponse",
+    "BomComponentResponse",
+    "BomListResponse",
+    "BomResponse",
     "BulkCreateRequest",
     "BulkDeleteRequest",
     "BulkResultResponse",
     "CaptureLineRequest",
     "CaptureRequest",
+    "CartAddressRequest",
+    "CartItemResponse",
+    "CartListResponse",
+    "CartResponse",
+    "CartonListResponse",
+    "CartonResponse",
     "ChannelListResponse",
     "ChannelResponse",
     "ChannelSalesRowResponse",
+    "CheckoutResultResponse",
     "CloseBooksInventoryRequest",
     "CloseBooksLineRequest",
     "CloseBooksRequest",
     "CloseBooksResponse",
+    "CloseMonthRequest",
+    "CloseMonthResponse",
+    "CloseMonthStepResponse",
+    "ClosePeriodRequest",
     "CogsLineRequest",
     "CogsRowResponse",
     "CompanyListResponse",
     "CompanyResponse",
     "CompleteJobRequest",
+    "CompletePickRequest",
+    "CompletePutAwayRequest",
+    "CompleteShipRequest",
+    "CompleteWorkOrderRequest",
+    "CompleteWorkOrderTaskRequest",
+    "ConsumeLotRequest",
     "ConsumptionRecordRequest",
     "ConsumptionRequest",
     "ConsumptionResponse",
@@ -297,21 +432,45 @@
     "ConversionRuleResponse",
     "ConvertCurrencyRequest",
     "CounterOfferRequest",
+    "CreateApBillItemRequest",
+    "CreateApBillRequest",
+    "CreateApPaymentRequest",
+    "CreateApPaymentRunRequest",
+    "CreateArCollectionActivityRequest",
+    "CreateArCreditMemoRequest",
+    "CreateArWriteOffRequest",
+    "CreateBackorderRequest",
+    "CreateBomComponentRequest",
+    "CreateBomRequest",
+    "CreateCartRequest",
     "CreateChannelRequest",
     "CreateCompanyRequest",
     "CreateContactRequest",
     "CreateConversionRuleRequest",
     "CreateCreditTermsRequest",
     "CreateCustomerRequest",
+    "CreateCycleCountLineRequest",
+    "CreateCycleCountRequest",
     "CreateEdiDocumentRequest",
     "CreateFieldMappingRequest",
+    "CreateFixedAssetRequest",
     "CreateGiftCardRequest",
+    "CreateGlAccountRequest",
+    "CreateGlPeriodRequest",
     "CreateInboundShipmentItemRequest",
     "CreateInboundShipmentRequest",
+    "CreateInspectionItemRequest",
+    "CreateInspectionRequest",
     "CreateIntegrationMappingRequest",
     "CreateInvoiceRequest",
+    "CreateJournalEntryLineRequest",
+    "CreateJournalEntryRequest",
+    "CreateLocationRequest",
+    "CreateLotRequest",
     "CreateLoyaltyProgramRequest",
+    "CreateNcrRequest",
     "CreateNegotiationRequest",
+    "CreateObligationRequest",
     "CreateOrderItemRequest",
     "CreateOrderRequest",
     "CreatePaymentObligationRequest",
@@ -322,15 +481,24 @@
     "CreateProductRequest",
     "CreateProductionBatchRequest",
     "CreatePromotionRequest",
+    "CreatePurchaseOrderItemRequest",
+    "CreatePurchaseOrderRequest",
+    "CreatePutAwayRequest",
+    "CreateQualityHoldRequest",
+    "CreateReceiptItemRequest",
+    "CreateReceiptRequest",
     "CreateRefundRequest",
     "CreateReturnItemRequest",
     "CreateReturnRequest",
+    "CreateRevenueContractRequest",
     "CreateReviewRequest",
     "CreateSegmentRequest",
+    "CreateSerialRequest",
     "CreateShipmentRequest",
     "CreateShippingZoneRequest",
     "CreateStoreCreditRequest",
     "CreateSubscriptionRequest",
+    "CreateSupplierRequest",
     "CreateSupplierSkuRequest",
     "CreateTransferOrderItemRequest",
     "CreateTransferOrderRequest",
@@ -339,13 +507,24 @@
     "CreateVendorCreditRequest",
     "CreateVendorReturnItemRequest",
     "CreateVendorReturnRequest",
+    "CreateWarehouseRequest",
     "CreateWarrantyRequest",
+    "CreateWaveRequest",
     "CreateWishlistRequest",
+    "CreateWorkOrderRequest",
+    "CreateWorkOrderTaskRequest",
     "CreditAmountRequest",
     "CreditTermsResponse",
     "CustomerListResponse",
     "CustomerResponse",
+    "CycleCountLineResponse",
+    "CycleCountListResponse",
+    "CycleCountResponse",
     "DashboardResponse",
+    "DepreciationEntryResponse",
+    "DepreciationScheduleResponse",
+    "DisposeFixedAssetRequest",
+    "DispositionNcrRequest",
     "EdiCountResponse",
     "EdiDocumentListResponse",
     "EdiDocumentResponse",
@@ -358,16 +537,27 @@
     "ExchangeRateResponse",
     "FieldMappingListResponse",
     "FieldMappingResponse",
+    "FixedAssetListResponse",
+    "FixedAssetResponse",
+    "FulfillBackorderRequest",
     "GiftCardAmountRequest",
     "GiftCardListResponse",
     "GiftCardResponse",
     "GiftCardTransactionResponse",
+    "GlAccountListResponse",
+    "GlAccountResponse",
+    "GlPeriodListResponse",
+    "GlPeriodResponse",
     "HealthResponse",
     "InboundShipmentItemResponse",
     "InboundShipmentListResponse",
     "InboundShipmentResponse",
+    "IncomeStatementLineResponse",
+    "IncomeStatementResponse",
     "IngestLineRequest",
     "IngestOrderRequest",
+    "InspectionListResponse",
+    "InspectionResponse",
     "IntegrationMappingListResponse",
     "IntegrationMappingResponse",
     "InventoryAdjustRequest",
@@ -379,23 +569,47 @@
     "InvoiceListResponse",
     "InvoiceResponse",
     "JobResponse",
+    "JournalEntryLineResponse",
+    "JournalEntryListResponse",
+    "JournalEntryResponse",
     "LinkBillRequest",
+    "LocationInventoryListResponse",
+    "LocationInventoryResponse",
+    "LocationListResponse",
+    "LocationResponse",
     "LockChannelRequest",
+    "LockPeriodRequest",
+    "LotListResponse",
+    "LotReservationResponse",
+    "LotResponse",
+    "LotTransactionResponse",
     "LoyaltyAccountResponse",
     "LoyaltyProgramListResponse",
     "LoyaltyProgramResponse",
     "MapLineRequest",
     "MessageResponse",
+    "MoveInventoryRequest",
+    "MovementResponse",
+    "NcrListResponse",
+    "NcrResponse",
     "NegotiationResponse",
     "OrderItemResponse",
     "OrderListResponse",
     "OrderResponse",
+    "PackTaskListResponse",
+    "PackTaskResponse",
     "PairResponse",
     "PairStationRequest",
     "PaymentListResponse",
     "PaymentObligationListResponse",
     "PaymentObligationResponse",
     "PaymentResponse",
+    "PerformanceObligationResponse",
+    "PickTaskListResponse",
+    "PickTaskResponse",
+    "PlaceInServiceRequest",
+    "PostDepreciationRequest",
+    "PostJournalEntryRequest",
     "PrepaymentListResponse",
     "PrepaymentResponse",
     "PriceLevelEntryResponse",
@@ -411,28 +625,71 @@
     "ProductionBatchResponse",
     "PromotionListResponse",
     "PromotionResponse",
+    "PurchaseOrderItemResponse",
+    "PurchaseOrderItemsResponse",
+    "PurchaseOrderListResponse",
+    "PurchaseOrderResponse",
     "PurgatoryLineResponse",
     "PurgatoryListResponse",
     "PurgatoryOrderResponse",
+    "PutAwayListResponse",
+    "PutAwayResponse",
+    "QualityHoldListResponse",
+    "QualityHoldResponse",
+    "QuarantineLotRequest",
     "ReadyResponse",
+    "ReceiptItemListResponse",
+    "ReceiptItemResponse",
+    "ReceiptListResponse",
+    "ReceiptResponse",
+    "ReceiveItemLineRequest",
+    "ReceiveItemsRequest",
     "ReceiveLineRequest",
+    "ReceivePurchaseOrderItemRequest",
+    "ReceivePurchaseOrderRequest",
+    "RecognizeRevenueRequest",
     "RecordActivityRequest",
+    "RecordCycleCountLineRequest",
+    "RecordCycleCountRequest",
+    "RecordInspectionResultRequest",
     "RecordInvoicePaymentRequest",
     "RecordPaymentRequest",
+    "ReleaseQualityHoldRequest",
+    "ReserveLotRequest",
+    "ReserveSerialRequest",
     "ResolveResponse",
     "ReturnListResponse",
     "ReturnResponse",
+    "ReturnSerialRequest",
+    "RevaluationLineResponse",
+    "RevaluationResponse",
+    "RevalueRequest",
+    "RevenueContractListResponse",
+    "RevenueContractResponse",
+    "RevenueScheduleEntryResponse",
+    "RevenueScheduleResponse",
+    "ReverseJournalEntryRequest",
     "ReviewListResponse",
     "ReviewResponse",
     "SalesByChannelRequest",
     "SalesByChannelResponse",
     "SalesRecordRequest",
+    "ScrapSerialRequest",
     "SegmentListResponse",
     "SegmentResponse",
+    "SendArDunningRequest",
     "SendMessageRequest",
+    "SerialListResponse",
+    "SerialReservationResponse",
+    "SerialResponse",
+    "SetCartPaymentRequest",
+    "SetCartShippingRequest",
     "SetEntryRequest",
     "SetExchangeRateRequest",
     "SetStatusRequest",
+    "ShipSerialRequest",
+    "ShipTaskListResponse",
+    "ShipTaskResponse",
     "ShipmentListResponse",
     "ShipmentResponse",
     "ShippingZoneListResponse",
@@ -447,33 +704,57 @@
     "StoreCreditTransactionResponse",
     "SubscriptionListResponse",
     "SubscriptionResponse",
+    "SupplierListResponse",
+    "SupplierResponse",
     "SupplierSkuListResponse",
     "SupplierSkuResponse",
     "TenantCacheResponse",
+    "ThreeWayMatchLineResponse",
+    "ThreeWayMatchResponse",
     "TransactionCogsRequest",
     "TransactionCogsResponse",
     "TransferOrderItemResponse",
     "TransferOrderListResponse",
     "TransferOrderResponse",
+    "TrialBalanceLineResponse",
+    "TrialBalanceResponse",
     "UnitClassResponse",
     "UnitOfMeasureResponse",
+    "UpdateBomRequest",
+    "UpdateCartItemRequest",
     "UpdateChannelRequest",
     "UpdateCustomerRequest",
     "UpdateFieldMappingRequest",
+    "UpdateFixedAssetRequest",
     "UpdateIntegrationMappingRequest",
     "UpdatePriceLevelRequest",
     "UpdateProductRequest",
+    "UpdatePurchaseOrderRequest",
+    "UpdateRevenueContractRequest",
+    "UpdateSupplierRequest",
+    "UpdateWarehouseRequest",
+    "UpdateWorkOrderRequest",
     "VendorCreditListResponse",
     "VendorCreditResponse",
     "VendorReturnListResponse",
     "VendorReturnResponse",
     "VersionResponse",
+    "WarehouseAddressBody",
+    "WarehouseListResponse",
+    "WarehouseResponse",
     "WarrantyListResponse",
     "WarrantyResponse",
+    "WaveListResponse",
+    "WaveResponse",
     "WishlistItemResponse",
     "WishlistListResponse",
     "WishlistResponse",
+    "WorkOrderListResponse",
+    "WorkOrderResponse",
+    "WorkOrderTaskListResponse",
+    "WorkOrderTaskResponse",
     "WorkOrdersRequest",
+    "WriteOffFixedAssetRequest",
     "ZeroValuationItemResponse"
   ],
   "operations": [
@@ -582,6 +863,474 @@
       "operationId": "activity_logs_history",
       "tags": [
         "activity_logs"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/aging",
+      "method": "GET",
+      "operationId": "ap_aging",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/bills",
+      "method": "GET",
+      "operationId": "ap_list_bills",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/bills",
+      "method": "POST",
+      "operationId": "ap_create_bill",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/bills/{id}",
+      "method": "GET",
+      "operationId": "ap_get_bill",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/bills/{id}/approve",
+      "method": "POST",
+      "operationId": "ap_approve_bill",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/bills/{id}/cancel",
+      "method": "POST",
+      "operationId": "ap_cancel_bill",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/bills/{id}/dispute",
+      "method": "POST",
+      "operationId": "ap_dispute_bill",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/bills/{id}/three-way-match",
+      "method": "GET",
+      "operationId": "ap_three_way_match_bill",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/payment-runs",
+      "method": "POST",
+      "operationId": "ap_create_payment_run",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/payment-runs/{id}/approve",
+      "method": "POST",
+      "operationId": "ap_approve_payment_run",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/payment-runs/{id}/cancel",
+      "method": "POST",
+      "operationId": "ap_cancel_payment_run",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/payment-runs/{id}/process",
+      "method": "POST",
+      "operationId": "ap_process_payment_run",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/payments",
+      "method": "POST",
+      "operationId": "ap_create_payment",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/payments/{id}/void",
+      "method": "POST",
+      "operationId": "ap_void_payment",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/aging",
+      "method": "GET",
+      "operationId": "ar_aging_summary",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/aging/customers",
+      "method": "GET",
+      "operationId": "ar_aging_report",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/aging/customers/{customer_id}",
+      "method": "GET",
+      "operationId": "ar_customer_aging",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/collection-activities",
+      "method": "GET",
+      "operationId": "ar_list_collection_activities",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/collection-activities",
+      "method": "POST",
+      "operationId": "ar_record_collection_activity",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/credit-memos",
+      "method": "GET",
+      "operationId": "ar_list_credit_memos",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/credit-memos",
+      "method": "POST",
+      "operationId": "ar_create_credit_memo",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/credit-memos/{id}/apply",
+      "method": "POST",
+      "operationId": "ar_apply_credit_memo",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/customers/{customer_id}/statement",
+      "method": "GET",
+      "operationId": "ar_customer_statement",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/dunning/due",
+      "method": "GET",
+      "operationId": "ar_invoices_due_for_dunning",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/invoices/{invoice_id}/dunning",
+      "method": "POST",
+      "operationId": "ar_send_dunning",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/payment-applications",
+      "method": "POST",
+      "operationId": "ar_apply_payment",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/payment-applications/{id}/unapply",
+      "method": "POST",
+      "operationId": "ar_unapply_payment",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/write-offs",
+      "method": "POST",
+      "operationId": "ar_create_write_off",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ar/write-offs/{id}/reverse",
+      "method": "POST",
+      "operationId": "ar_reverse_write_off",
+      "tags": [
+        "accounts_receivable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/backorders",
+      "method": "GET",
+      "operationId": "backorders_list",
+      "tags": [
+        "backorders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/backorders",
+      "method": "POST",
+      "operationId": "backorders_create",
+      "tags": [
+        "backorders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/backorders/{id}",
+      "method": "GET",
+      "operationId": "backorders_get_one",
+      "tags": [
+        "backorders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/backorders/{id}/cancel",
+      "method": "POST",
+      "operationId": "backorders_cancel",
+      "tags": [
+        "backorders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/backorders/{id}/fulfill",
+      "method": "POST",
+      "operationId": "backorders_fulfill",
+      "tags": [
+        "backorders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/boms",
+      "method": "GET",
+      "operationId": "bom_list",
+      "tags": [
+        "bom"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/boms",
+      "method": "POST",
+      "operationId": "bom_create",
+      "tags": [
+        "bom"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/boms/{id}",
+      "method": "DELETE",
+      "operationId": "bom_delete",
+      "tags": [
+        "bom"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/boms/{id}",
+      "method": "GET",
+      "operationId": "bom_get_one",
+      "tags": [
+        "bom"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/boms/{id}",
+      "method": "PUT",
+      "operationId": "bom_update",
+      "tags": [
+        "bom"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/boms/{id}/activate",
+      "method": "POST",
+      "operationId": "bom_activate",
+      "tags": [
+        "bom"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/boms/{id}/components",
+      "method": "GET",
+      "operationId": "bom_list_components",
+      "tags": [
+        "bom"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/boms/{id}/components",
+      "method": "POST",
+      "operationId": "bom_add_component",
+      "tags": [
+        "bom"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts",
+      "method": "GET",
+      "operationId": "carts_list",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts",
+      "method": "POST",
+      "operationId": "carts_create",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts/{id}",
+      "method": "GET",
+      "operationId": "carts_get_one",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts/{id}/cancel",
+      "method": "POST",
+      "operationId": "carts_cancel",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts/{id}/complete",
+      "method": "POST",
+      "operationId": "carts_complete",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts/{id}/items",
+      "method": "POST",
+      "operationId": "carts_add_item",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts/{id}/items/{item_id}",
+      "method": "DELETE",
+      "operationId": "carts_remove_item",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts/{id}/items/{item_id}",
+      "method": "PUT",
+      "operationId": "carts_update_item",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts/{id}/payment",
+      "method": "POST",
+      "operationId": "carts_set_payment",
+      "tags": [
+        "carts"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/carts/{id}/shipping",
+      "method": "POST",
+      "operationId": "carts_set_shipping",
+      "tags": [
+        "carts"
       ],
       "summary": ""
     },
@@ -766,6 +1515,69 @@
       "summary": "`PATCH /api/v1/customers/:id`"
     },
     {
+      "path": "/api/v1/cycle-counts",
+      "method": "GET",
+      "operationId": "cycle_count_list",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cycle-counts",
+      "method": "POST",
+      "operationId": "cycle_count_create",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cycle-counts/{id}",
+      "method": "GET",
+      "operationId": "cycle_count_get_one",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cycle-counts/{id}/cancel",
+      "method": "POST",
+      "operationId": "cycle_count_cancel",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cycle-counts/{id}/complete",
+      "method": "POST",
+      "operationId": "cycle_count_complete",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cycle-counts/{id}/counts",
+      "method": "POST",
+      "operationId": "cycle_count_record_counts",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cycle-counts/{id}/start",
+      "method": "POST",
+      "operationId": "cycle_count_start",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/edi-documents",
       "method": "GET",
       "operationId": "edi_documents_list",
@@ -820,6 +1632,213 @@
       "summary": "`GET /api/v1/events/stream` — SSE endpoint."
     },
     {
+      "path": "/api/v1/fixed-assets",
+      "method": "GET",
+      "operationId": "fixed_assets_list",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets",
+      "method": "POST",
+      "operationId": "fixed_assets_create",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets/{id}",
+      "method": "GET",
+      "operationId": "fixed_assets_get_one",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets/{id}",
+      "method": "PUT",
+      "operationId": "fixed_assets_update",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets/{id}/dispose",
+      "method": "POST",
+      "operationId": "fixed_assets_dispose",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets/{id}/place-in-service",
+      "method": "POST",
+      "operationId": "fixed_assets_place_in_service",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets/{id}/post-depreciation",
+      "method": "POST",
+      "operationId": "fixed_assets_post_depreciation",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets/{id}/schedule",
+      "method": "GET",
+      "operationId": "fixed_assets_get_schedule",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets/{id}/schedule",
+      "method": "POST",
+      "operationId": "fixed_assets_generate_schedule",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fixed-assets/{id}/write-off",
+      "method": "POST",
+      "operationId": "fixed_assets_write_off",
+      "tags": [
+        "fixed_assets"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/packs",
+      "method": "GET",
+      "operationId": "fulfillment_pack_list",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/packs/{id}/cartons",
+      "method": "GET",
+      "operationId": "fulfillment_carton_list",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/packs/{id}/cartons",
+      "method": "POST",
+      "operationId": "fulfillment_carton_add",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/packs/{id}/complete",
+      "method": "POST",
+      "operationId": "fulfillment_pack_complete",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/picks",
+      "method": "GET",
+      "operationId": "fulfillment_pick_list",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/picks/{id}/assign",
+      "method": "POST",
+      "operationId": "fulfillment_pick_assign",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/picks/{id}/complete",
+      "method": "POST",
+      "operationId": "fulfillment_pick_complete",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/ships",
+      "method": "GET",
+      "operationId": "fulfillment_ship_list",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/ships/{id}/complete",
+      "method": "POST",
+      "operationId": "fulfillment_ship_complete",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/waves",
+      "method": "GET",
+      "operationId": "fulfillment_wave_list",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/waves",
+      "method": "POST",
+      "operationId": "fulfillment_wave_create",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/waves/{id}",
+      "method": "GET",
+      "operationId": "fulfillment_wave_get_one",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/fulfillment/waves/{id}/release",
+      "method": "POST",
+      "operationId": "fulfillment_wave_release",
+      "tags": [
+        "fulfillment"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/gift-cards",
       "method": "GET",
       "operationId": "list_gift_cards",
@@ -872,6 +1891,186 @@
         "gift_cards"
       ],
       "summary": "`POST /api/v1/gift-cards/{id}/refund`"
+    },
+    {
+      "path": "/api/v1/gl/accounts",
+      "method": "GET",
+      "operationId": "general_ledger_list_accounts",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/accounts",
+      "method": "POST",
+      "operationId": "general_ledger_create_account",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/accounts/{id}",
+      "method": "GET",
+      "operationId": "general_ledger_get_account",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/balance-sheet",
+      "method": "GET",
+      "operationId": "general_ledger_balance_sheet",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/close-month",
+      "method": "POST",
+      "operationId": "general_ledger_close_month",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/income-statement",
+      "method": "GET",
+      "operationId": "general_ledger_income_statement",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/journal-entries",
+      "method": "GET",
+      "operationId": "general_ledger_list_journal_entries",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/journal-entries",
+      "method": "POST",
+      "operationId": "general_ledger_create_journal_entry",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/journal-entries/{id}",
+      "method": "GET",
+      "operationId": "general_ledger_get_journal_entry",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/journal-entries/{id}/post",
+      "method": "POST",
+      "operationId": "general_ledger_post_journal_entry",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/journal-entries/{id}/reverse",
+      "method": "POST",
+      "operationId": "general_ledger_reverse_journal_entry",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/journal-entries/{id}/void",
+      "method": "POST",
+      "operationId": "general_ledger_void_journal_entry",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/periods",
+      "method": "GET",
+      "operationId": "general_ledger_list_periods",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/periods",
+      "method": "POST",
+      "operationId": "general_ledger_create_period",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/periods/{id}/close",
+      "method": "POST",
+      "operationId": "general_ledger_close_period",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/periods/{id}/lock",
+      "method": "POST",
+      "operationId": "general_ledger_lock_period",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/periods/{id}/open",
+      "method": "POST",
+      "operationId": "general_ledger_open_period",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/periods/{id}/reopen",
+      "method": "POST",
+      "operationId": "general_ledger_reopen_period",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/revalue",
+      "method": "POST",
+      "operationId": "general_ledger_revalue",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/trial-balance",
+      "method": "GET",
+      "operationId": "general_ledger_trial_balance",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
     },
     {
       "path": "/api/v1/inbound-shipments",
@@ -1142,6 +2341,87 @@
         "invoices"
       ],
       "summary": "`POST /api/v1/invoices/:id/send`"
+    },
+    {
+      "path": "/api/v1/lots",
+      "method": "GET",
+      "operationId": "lots_list",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots",
+      "method": "POST",
+      "operationId": "lots_create",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/{id}",
+      "method": "GET",
+      "operationId": "lots_get_one",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/{id}/consume",
+      "method": "POST",
+      "operationId": "lots_consume",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/{id}/quarantine",
+      "method": "POST",
+      "operationId": "lots_quarantine",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/{id}/release-quarantine",
+      "method": "POST",
+      "operationId": "lots_release_quarantine",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/{id}/reserve",
+      "method": "POST",
+      "operationId": "lots_reserve",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/expiring",
+      "method": "GET",
+      "operationId": "lots_expiring",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/reservations/{reservation_id}/release",
+      "method": "POST",
+      "operationId": "lots_release_reservation",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
     },
     {
       "path": "/api/v1/loyalty/accounts/{id}",
@@ -1747,6 +3027,123 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/purchase-orders",
+      "method": "GET",
+      "operationId": "purchase_orders_list",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders",
+      "method": "POST",
+      "operationId": "purchase_orders_create",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}",
+      "method": "GET",
+      "operationId": "purchase_orders_get_one",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}",
+      "method": "PUT",
+      "operationId": "purchase_orders_update",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/acknowledge",
+      "method": "POST",
+      "operationId": "purchase_orders_acknowledge",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/approve",
+      "method": "POST",
+      "operationId": "purchase_orders_approve",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/cancel",
+      "method": "POST",
+      "operationId": "purchase_orders_cancel",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/complete",
+      "method": "POST",
+      "operationId": "purchase_orders_complete",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/hold",
+      "method": "POST",
+      "operationId": "purchase_orders_hold",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/items",
+      "method": "GET",
+      "operationId": "purchase_orders_get_items",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/receive",
+      "method": "POST",
+      "operationId": "purchase_orders_receive",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/send",
+      "method": "POST",
+      "operationId": "purchase_orders_send",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/purchase-orders/{id}/submit",
+      "method": "POST",
+      "operationId": "purchase_orders_submit",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/purgatory/orders",
       "method": "GET",
       "operationId": "purgatory_list",
@@ -1797,6 +3194,249 @@
       "operationId": "purgatory_post_order",
       "tags": [
         "purgatory"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/put-aways",
+      "method": "GET",
+      "operationId": "receiving_put_away_list",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/put-aways",
+      "method": "POST",
+      "operationId": "receiving_put_away_create",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/put-aways/{id}",
+      "method": "GET",
+      "operationId": "receiving_put_away_get_one",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/put-aways/{id}/complete",
+      "method": "POST",
+      "operationId": "receiving_put_away_complete",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/holds",
+      "method": "GET",
+      "operationId": "quality_list_holds",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/holds",
+      "method": "POST",
+      "operationId": "quality_create_hold",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/holds/{id}",
+      "method": "GET",
+      "operationId": "quality_get_hold",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/holds/{id}/release",
+      "method": "POST",
+      "operationId": "quality_release_hold",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/inspections",
+      "method": "GET",
+      "operationId": "quality_list_inspections",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/inspections",
+      "method": "POST",
+      "operationId": "quality_create_inspection",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/inspections/{id}",
+      "method": "GET",
+      "operationId": "quality_get_inspection",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/inspections/{id}/complete",
+      "method": "POST",
+      "operationId": "quality_complete_inspection",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/inspections/{id}/results",
+      "method": "POST",
+      "operationId": "quality_record_inspection_result",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/inspections/{id}/start",
+      "method": "POST",
+      "operationId": "quality_start_inspection",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/ncrs",
+      "method": "GET",
+      "operationId": "quality_list_ncrs",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/ncrs",
+      "method": "POST",
+      "operationId": "quality_create_ncr",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/ncrs/{id}",
+      "method": "GET",
+      "operationId": "quality_get_ncr",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/ncrs/{id}/close",
+      "method": "POST",
+      "operationId": "quality_close_ncr",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/quality/ncrs/{id}/disposition",
+      "method": "POST",
+      "operationId": "quality_disposition_ncr",
+      "tags": [
+        "quality"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts",
+      "method": "GET",
+      "operationId": "receiving_receipt_list",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts",
+      "method": "POST",
+      "operationId": "receiving_receipt_create",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts/{id}",
+      "method": "GET",
+      "operationId": "receiving_receipt_get_one",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts/{id}/cancel",
+      "method": "POST",
+      "operationId": "receiving_receipt_cancel",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts/{id}/complete",
+      "method": "POST",
+      "operationId": "receiving_receipt_complete",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts/{id}/items",
+      "method": "GET",
+      "operationId": "receiving_receipt_items",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts/{id}/receive",
+      "method": "POST",
+      "operationId": "receiving_receipt_receive_items",
+      "tags": [
+        "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts/{id}/start",
+      "method": "POST",
+      "operationId": "receiving_receipt_start",
+      "tags": [
+        "receiving"
       ],
       "summary": ""
     },
@@ -1880,6 +3520,78 @@
         "returns"
       ],
       "summary": "`PATCH /api/v1/returns/:id/approve`"
+    },
+    {
+      "path": "/api/v1/revenue-contracts",
+      "method": "GET",
+      "operationId": "revenue_recognition_list_contracts",
+      "tags": [
+        "revenue_recognition"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/revenue-contracts",
+      "method": "POST",
+      "operationId": "revenue_recognition_create_contract",
+      "tags": [
+        "revenue_recognition"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/revenue-contracts/{id}",
+      "method": "GET",
+      "operationId": "revenue_recognition_get_contract",
+      "tags": [
+        "revenue_recognition"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/revenue-contracts/{id}",
+      "method": "PUT",
+      "operationId": "revenue_recognition_update_contract",
+      "tags": [
+        "revenue_recognition"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/revenue-contracts/{id}/obligations",
+      "method": "GET",
+      "operationId": "revenue_recognition_list_obligations",
+      "tags": [
+        "revenue_recognition"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/revenue-obligations/{id}/recognize",
+      "method": "POST",
+      "operationId": "revenue_recognition_recognize",
+      "tags": [
+        "revenue_recognition"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/revenue-obligations/{id}/schedule",
+      "method": "GET",
+      "operationId": "revenue_recognition_get_schedule",
+      "tags": [
+        "revenue_recognition"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/revenue-obligations/{id}/schedule",
+      "method": "POST",
+      "operationId": "revenue_recognition_generate_schedule",
+      "tags": [
+        "revenue_recognition"
+      ],
+      "summary": ""
     },
     {
       "path": "/api/v1/reviews",
@@ -1968,6 +3680,78 @@
       "operationId": "add_member",
       "tags": [
         "segments"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/serials",
+      "method": "GET",
+      "operationId": "serials_list",
+      "tags": [
+        "serials"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/serials",
+      "method": "POST",
+      "operationId": "serials_create",
+      "tags": [
+        "serials"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/serials/{id}",
+      "method": "GET",
+      "operationId": "serials_get_one",
+      "tags": [
+        "serials"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/serials/{id}/reserve",
+      "method": "POST",
+      "operationId": "serials_reserve",
+      "tags": [
+        "serials"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/serials/{id}/return",
+      "method": "POST",
+      "operationId": "serials_return",
+      "tags": [
+        "serials"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/serials/{id}/scrap",
+      "method": "POST",
+      "operationId": "serials_scrap",
+      "tags": [
+        "serials"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/serials/{id}/ship",
+      "method": "POST",
+      "operationId": "serials_ship",
+      "tags": [
+        "serials"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/serials/reservations/{reservation_id}/release",
+      "method": "POST",
+      "operationId": "serials_release_reservation",
+      "tags": [
+        "serials"
       ],
       "summary": ""
     },
@@ -2224,6 +4008,51 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/suppliers",
+      "method": "GET",
+      "operationId": "purchase_orders_list_suppliers",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/suppliers",
+      "method": "POST",
+      "operationId": "purchase_orders_create_supplier",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/suppliers/{id}",
+      "method": "DELETE",
+      "operationId": "purchase_orders_delete_supplier",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/suppliers/{id}",
+      "method": "GET",
+      "operationId": "purchase_orders_get_supplier",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/suppliers/{id}",
+      "method": "PUT",
+      "operationId": "purchase_orders_update_supplier",
+      "tags": [
+        "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/topology-snapshots",
       "method": "GET",
       "operationId": "topology_snapshots_list",
@@ -2476,6 +4305,105 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/warehouse-inventory/adjust",
+      "method": "POST",
+      "operationId": "warehouse_inventory_adjust",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-inventory/move",
+      "method": "POST",
+      "operationId": "warehouse_inventory_move",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-locations",
+      "method": "GET",
+      "operationId": "warehouse_location_list",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-locations",
+      "method": "POST",
+      "operationId": "warehouse_location_create",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-locations/{id}",
+      "method": "GET",
+      "operationId": "warehouse_location_get_one",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-locations/{id}/inventory",
+      "method": "GET",
+      "operationId": "warehouse_location_inventory",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouses",
+      "method": "GET",
+      "operationId": "warehouse_list",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouses",
+      "method": "POST",
+      "operationId": "warehouse_create",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouses/{id}",
+      "method": "DELETE",
+      "operationId": "warehouse_delete",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouses/{id}",
+      "method": "GET",
+      "operationId": "warehouse_get_one",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouses/{id}",
+      "method": "PUT",
+      "operationId": "warehouse_update",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/warranties",
       "method": "GET",
       "operationId": "list_warranties",
@@ -2555,6 +4483,123 @@
         "wishlists"
       ],
       "summary": "`DELETE /api/v1/wishlists/{id}/items/{product_id}`"
+    },
+    {
+      "path": "/api/v1/work-orders",
+      "method": "GET",
+      "operationId": "work_orders_list",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders",
+      "method": "POST",
+      "operationId": "work_orders_create",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}",
+      "method": "GET",
+      "operationId": "work_orders_get_one",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}",
+      "method": "PUT",
+      "operationId": "work_orders_update",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}/cancel",
+      "method": "POST",
+      "operationId": "work_orders_cancel",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}/complete",
+      "method": "POST",
+      "operationId": "work_orders_complete",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}/hold",
+      "method": "POST",
+      "operationId": "work_orders_hold",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}/resume",
+      "method": "POST",
+      "operationId": "work_orders_resume",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}/start",
+      "method": "POST",
+      "operationId": "work_orders_start",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}/tasks",
+      "method": "GET",
+      "operationId": "work_orders_list_tasks",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}/tasks",
+      "method": "POST",
+      "operationId": "work_orders_add_task",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/tasks/{task_id}/complete",
+      "method": "POST",
+      "operationId": "work_orders_complete_task",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/tasks/{task_id}/start",
+      "method": "POST",
+      "operationId": "work_orders_start_task",
+      "tags": [
+        "work_orders"
+      ],
+      "summary": ""
     },
     {
       "path": "/health",

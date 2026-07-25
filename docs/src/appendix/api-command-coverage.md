@@ -13,15 +13,15 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 
 | Metric | Value |
 | --- | --- |
-| Tool modules | 61 |
+| Tool modules | 87 |
 | Command modules on disk | 61 |
 | Command modules in registry | 61 |
 | Tool-backed command modules | 0 |
-| Uncovered tool modules | 0 |
+| Uncovered tool modules | 26 |
 | Uncovered tool-backed actions | 0 |
 | Command-only modules | 0 |
 | Registry mismatches | 0 |
-| Fully covered | yes |
+| Fully covered | no |
 
 ## Module Coverage
 
@@ -93,7 +93,32 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 
 | Module | Status | Actions | Aliases |
 | --- | --- | --- | --- |
-| None | - | - | - |
+| `activity-logs` | missing command coverage | - | - |
+| `channels` | missing command coverage | - | - |
+| `companies` | missing command coverage | - | - |
+| `cycle-counts` | missing command coverage | - | - |
+| `edi-documents` | missing command coverage | - | - |
+| `fixed-assets` | missing command coverage | - | - |
+| `inbound-shipments` | missing command coverage | - | - |
+| `integration-field-mappings` | missing command coverage | - | - |
+| `integration-mappings` | missing command coverage | - | - |
+| `maintenance` | missing command coverage | - | - |
+| `payment-obligations` | missing command coverage | - | - |
+| `prepayments` | missing command coverage | - | - |
+| `price-levels` | missing command coverage | - | - |
+| `price-schedules` | missing command coverage | - | - |
+| `print-stations` | missing command coverage | - | - |
+| `production-batches` | missing command coverage | - | - |
+| `purgatory` | missing command coverage | - | - |
+| `revenue-recognition` | missing command coverage | - | - |
+| `search-config` | missing command coverage | - | - |
+| `stock-snapshots` | missing command coverage | - | - |
+| `supplier-skus` | missing command coverage | - | - |
+| `topology-snapshots` | missing command coverage | - | - |
+| `transfer-orders` | missing command coverage | - | - |
+| `units-of-measure` | missing command coverage | - | - |
+| `vendor-credits` | missing command coverage | - | - |
+| `vendor-returns` | missing command coverage | - | - |
 
 ## Uncovered Tool-Backed Actions
 

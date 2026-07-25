@@ -3,22 +3,27 @@
     "binding": "bindings/node/index.d.ts",
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
-  "totalDomainModules": 61,
-  "totalDomainTools": 704,
-  "totalCommerceGetters": 32,
-  "mappedCommerceGetters": 32,
+  "totalDomainModules": 87,
+  "totalDomainTools": 923,
+  "totalCommerceGetters": 67,
+  "mappedCommerceGetters": 67,
   "uncoveredCommerceGetters": [],
   "staleGetterMappings": [],
   "getters": [
     {
       "getter": "accountsPayable",
       "module": "accounts-payable",
-      "toolCount": 10
+      "toolCount": 11
     },
     {
       "getter": "accountsReceivable",
       "module": "accounts-receivable",
       "toolCount": 8
+    },
+    {
+      "getter": "activityLogs",
+      "module": "activity-logs",
+      "toolCount": 5
     },
     {
       "getter": "analytics",
@@ -39,6 +44,16 @@
       "getter": "carts",
       "module": "carts",
       "toolCount": 30
+    },
+    {
+      "getter": "channels",
+      "module": "channels",
+      "toolCount": 8
+    },
+    {
+      "getter": "companies",
+      "module": "companies",
+      "toolCount": 9
     },
     {
       "getter": "costAccounting",
@@ -63,7 +78,32 @@
     {
       "getter": "customers",
       "module": "customers",
-      "toolCount": 3
+      "toolCount": 11
+    },
+    {
+      "getter": "cycleCounts",
+      "module": "cycle-counts",
+      "toolCount": 7
+    },
+    {
+      "getter": "ediDocuments",
+      "module": "edi-documents",
+      "toolCount": 5
+    },
+    {
+      "getter": "erc8004",
+      "module": "erc8004",
+      "toolCount": 5
+    },
+    {
+      "getter": "fixedAssets",
+      "module": "fixed-assets",
+      "toolCount": 9
+    },
+    {
+      "getter": "fraud",
+      "module": "fraud",
+      "toolCount": 6
     },
     {
       "getter": "fulfillment",
@@ -73,7 +113,27 @@
     {
       "getter": "generalLedger",
       "module": "general-ledger",
-      "toolCount": 12
+      "toolCount": 17
+    },
+    {
+      "getter": "giftCards",
+      "module": "gift-cards",
+      "toolCount": 7
+    },
+    {
+      "getter": "inboundShipments",
+      "module": "inbound-shipments",
+      "toolCount": 8
+    },
+    {
+      "getter": "integrationFieldMappings",
+      "module": "integration-field-mappings",
+      "toolCount": 8
+    },
+    {
+      "getter": "integrationMappings",
+      "module": "integration-mappings",
+      "toolCount": 7
     },
     {
       "getter": "inventory",
@@ -91,9 +151,24 @@
       "toolCount": 11
     },
     {
+      "getter": "loyalty",
+      "module": "loyalty",
+      "toolCount": 8
+    },
+    {
+      "getter": "maintenance",
+      "module": "maintenance",
+      "toolCount": 5
+    },
+    {
       "getter": "orders",
       "module": "orders",
       "toolCount": 6
+    },
+    {
+      "getter": "paymentObligations",
+      "module": "payment-obligations",
+      "toolCount": 7
     },
     {
       "getter": "payments",
@@ -101,9 +176,34 @@
       "toolCount": 19
     },
     {
+      "getter": "prepayments",
+      "module": "prepayments",
+      "toolCount": 8
+    },
+    {
+      "getter": "priceLevels",
+      "module": "price-levels",
+      "toolCount": 9
+    },
+    {
+      "getter": "priceSchedules",
+      "module": "price-schedules",
+      "toolCount": 10
+    },
+    {
+      "getter": "printStations",
+      "module": "print-stations",
+      "toolCount": 8
+    },
+    {
+      "getter": "productionBatches",
+      "module": "production-batches",
+      "toolCount": 8
+    },
+    {
       "getter": "products",
       "module": "products",
-      "toolCount": 4
+      "toolCount": 14
     },
     {
       "getter": "promotions",
@@ -114,6 +214,11 @@
       "getter": "purchaseOrders",
       "module": "suppliers",
       "toolCount": 10
+    },
+    {
+      "getter": "purgatory",
+      "module": "purgatory",
+      "toolCount": 6
     },
     {
       "getter": "quality",
@@ -128,7 +233,27 @@
     {
       "getter": "returns",
       "module": "returns",
-      "toolCount": 5
+      "toolCount": 12
+    },
+    {
+      "getter": "revenueRecognition",
+      "module": "revenue-recognition",
+      "toolCount": 6
+    },
+    {
+      "getter": "reviews",
+      "module": "reviews",
+      "toolCount": 7
+    },
+    {
+      "getter": "searchConfig",
+      "module": "search-config",
+      "toolCount": 7
+    },
+    {
+      "getter": "segments",
+      "module": "segments",
+      "toolCount": 6
     },
     {
       "getter": "serials",
@@ -141,14 +266,59 @@
       "toolCount": 14
     },
     {
+      "getter": "shippingZones",
+      "module": "shipping-zones",
+      "toolCount": 7
+    },
+    {
+      "getter": "stockSnapshots",
+      "module": "stock-snapshots",
+      "toolCount": 5
+    },
+    {
+      "getter": "storeCredits",
+      "module": "store-credits",
+      "toolCount": 5
+    },
+    {
       "getter": "subscriptions",
       "module": "subscriptions",
       "toolCount": 17
     },
     {
+      "getter": "supplierSkus",
+      "module": "supplier-skus",
+      "toolCount": 7
+    },
+    {
       "getter": "tax",
       "module": "tax",
       "toolCount": 29
+    },
+    {
+      "getter": "topologySnapshots",
+      "module": "topology-snapshots",
+      "toolCount": 5
+    },
+    {
+      "getter": "transferOrders",
+      "module": "transfer-orders",
+      "toolCount": 7
+    },
+    {
+      "getter": "unitsOfMeasure",
+      "module": "units-of-measure",
+      "toolCount": 10
+    },
+    {
+      "getter": "vendorCredits",
+      "module": "vendor-credits",
+      "toolCount": 8
+    },
+    {
+      "getter": "vendorReturns",
+      "module": "vendor-returns",
+      "toolCount": 6
     },
     {
       "getter": "warehouse",
@@ -159,6 +329,11 @@
       "getter": "warranties",
       "module": "warranties",
       "toolCount": 7
+    },
+    {
+      "getter": "wishlists",
+      "module": "wishlists",
+      "toolCount": 6
     },
     {
       "getter": "workOrders",
@@ -172,16 +347,16 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 354,
-  "mappedAuditedMethods": 354,
+  "totalAuditedMethods": 386,
+  "mappedAuditedMethods": 386,
   "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
     {
       "className": "AccountsPayable",
-      "methodCount": 11,
-      "mappedMethodCount": 11,
+      "methodCount": 12,
+      "mappedMethodCount": 12,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -252,8 +427,8 @@
     },
     {
       "className": "Customers",
-      "methodCount": 5,
-      "mappedMethodCount": 5,
+      "methodCount": 13,
+      "mappedMethodCount": 13,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -276,8 +451,8 @@
     },
     {
       "className": "GeneralLedger",
-      "methodCount": 13,
-      "mappedMethodCount": 13,
+      "methodCount": 18,
+      "mappedMethodCount": 18,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -324,8 +499,8 @@
     },
     {
       "className": "Products",
-      "methodCount": 5,
-      "mappedMethodCount": 5,
+      "methodCount": 16,
+      "mappedMethodCount": 16,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -364,8 +539,8 @@
     },
     {
       "className": "Returns",
-      "methodCount": 6,
-      "mappedMethodCount": 6,
+      "methodCount": 13,
+      "mappedMethodCount": 13,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []

@@ -1,6 +1,6 @@
 [package]
 name = "stateset_embedded"
-version = "1.7.0"
+version = "1.22.0"
 edition = "2021"
 description = "Ruby bindings for StateSet Embedded Commerce"
 license = "MIT OR Apache-2.0"
@@ -23,7 +23,7 @@ runtime = [
 
 [dependencies]
 magnus = { version = "0.7", optional = true }
-stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.7.0", optional = true }
+stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.22.0", optional = true }
 serde_json = { version = "1.0", optional = true }
 
 [workspace]

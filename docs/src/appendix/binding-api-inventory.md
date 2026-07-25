@@ -34,16 +34,16 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Language | Ecosystem | Package | Version | Coverage | Summary |
 | --- | --- | --- | --- | --- | --- |
-| .NET | NuGet | `StateSet.Embedded` | `1.7.0` | `detailed` | 245 API methods |
+| .NET | NuGet | `StateSet.Embedded` | `1.22.0` | `detailed` | 245 API methods |
 | Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 80 API methods |
-| Java | Maven | `com.stateset:embedded` | `1.7.0` | `package-manifest` | manifest coverage |
-| Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.7.0` | `package-manifest` | manifest coverage |
-| Node.js | npm | `@stateset/embedded` | `1.7.0` | `detailed` | 6 export entrypoints |
-| PHP | Composer | `stateset/embedded` | `1.7.0` | `package-manifest` | manifest coverage |
-| Python | PyPI | `stateset-embedded` | `1.7.0` | `detailed` | 112 public symbols |
-| Ruby | RubyGems | `stateset_embedded` | `1.7.0` | `package-manifest` | manifest coverage |
+| Java | Maven | `com.stateset:embedded` | `1.22.0` | `package-manifest` | manifest coverage |
+| Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.22.0` | `package-manifest` | manifest coverage |
+| Node.js | npm | `@stateset/embedded` | `1.22.0` | `detailed` | 6 export entrypoints |
+| PHP | Composer | `stateset/embedded` | `1.22.0` | `package-manifest` | manifest coverage |
+| Python | PyPI | `stateset-embedded` | `1.22.0` | `detailed` | 244 public symbols |
+| Ruby | RubyGems | `stateset_embedded` | `1.22.0` | `package-manifest` | manifest coverage |
 | Swift | SwiftPM | `StateSet` | — | `detailed` | 71 API methods |
-| WASM | npm | `@stateset/embedded-wasm` | `1.7.0` | `package-manifest` | manifest coverage |
+| WASM | npm | `@stateset/embedded-wasm` | `1.22.0` | `package-manifest` | manifest coverage |
 
 ## Node.js Exports
 
@@ -678,18 +678,40 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Symbol |
 | --- |
 | `__version__` |
+| `ActivityLogEntry` |
+| `ActivityLogs` |
 | `AddCartItemInput` |
+| `AgentFeedback` |
+| `AgentIdentity` |
 | `AgentToolDescriptor` |
+| `AgentValidationRequest` |
+| `AgentValidationResponse` |
+| `AgentValidationStatus` |
 | `Analytics` |
+| `AssetDisposal` |
 | `Bom` |
 | `BomApi` |
 | `BomComponent` |
+| `BoostRule` |
+| `BoostRuleInput` |
+| `CaptureStockLineInput` |
 | `Cart` |
 | `CartAddress` |
 | `CartItem` |
 | `Carts` |
+| `Channel` |
+| `ChannelProductMapping` |
+| `ChannelProductSyncItem` |
+| `Channels` |
 | `CheckoutResult` |
+| `CloseMonthReport` |
+| `CloseMonthStep` |
 | `Commerce` |
+| `Companies` |
+| `Company` |
+| `CompanyPriceOverride` |
+| `CompanyShippingAddress` |
+| `Contact` |
 | `ConversionResult` |
 | `create_autogen_tools` |
 | `create_callable_registry` |
@@ -698,6 +720,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `create_langchain_tools` |
 | `create_openai_tools` |
 | `create_tool_descriptors` |
+| `CreateIntegrationMappingInput` |
 | `CreateOrderItemInput` |
 | `CreateProductVariantInput` |
 | `CreateReturnItemInput` |
@@ -711,19 +734,46 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `CustomObject` |
 | `CustomObjectsApi` |
 | `CustomObjectType` |
+| `CycleCount` |
+| `CycleCountLine` |
+| `CycleCountLineInput` |
+| `CycleCounts` |
 | `DemandForecast` |
+| `DepreciationEntry` |
+| `DepreciationSchedule` |
 | `EmbeddedAgentToolkit` |
 | `EmbeddingStats` |
+| `Erc8004` |
 | `ExchangeRate` |
 | `execute_openai_tool_call` |
 | `execute_openai_tool_calls` |
 | `execute_tool` |
 | `execute_tool_calls` |
+| `FacetConfig` |
+| `FacetConfigInput` |
+| `FeedbackSummary` |
+| `FixedAsset` |
+| `FixedAssets` |
 | `FrameworkToolFactory` |
+| `Fraud` |
+| `FraudAssessment` |
+| `FraudRule` |
+| `FraudSignal` |
+| `FraudSignalInput` |
 | `FulfillmentMetrics` |
 | `GiftCard` |
 | `GiftCards` |
 | `GiftCardTransaction` |
+| `GlPeriod` |
+| `InboundShipment` |
+| `InboundShipmentItem` |
+| `InboundShipmentItemInput` |
+| `InboundShipments` |
+| `IngestLineItemInput` |
+| `IntegrationFieldMapping` |
+| `IntegrationFieldMappings` |
+| `IntegrationMapping` |
+| `IntegrationMappings` |
 | `Inventory` |
 | `InventoryHealth` |
 | `InventoryItem` |
@@ -739,36 +789,91 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `LoyaltyTierInput` |
 | `LoyaltyTransaction` |
 | `merkle_root` |
+| `NewIntegrationFieldMapping` |
 | `Order` |
 | `OrderItem` |
 | `Orders` |
 | `OrderStatusBreakdown` |
+| `PairStationResult` |
 | `payload_plain_hash` |
 | `Payment` |
+| `PaymentObligation` |
+| `PaymentObligationDashboard` |
+| `PaymentObligations` |
 | `Payments` |
+| `PerformanceObligation` |
+| `PerformanceObligationInput` |
+| `Prepayment` |
+| `PrepaymentApplication` |
+| `Prepayments` |
+| `PriceLevel` |
+| `PriceLevelEntry` |
+| `PriceLevels` |
+| `PriceSchedule` |
+| `PriceScheduleEntry` |
+| `PriceSchedules` |
+| `PrintJob` |
+| `PrintStation` |
+| `PrintStations` |
 | `Product` |
+| `ProductionBatch` |
+| `ProductionBatches` |
 | `ProductPerformance` |
 | `Products` |
 | `ProductSearchResult` |
 | `ProductVariant` |
 | `PurchaseOrder` |
 | `PurchaseOrders` |
+| `Purgatory` |
+| `PurgatoryLineItem` |
+| `PurgatoryOrder` |
+| `RecordCycleCountLineInput` |
 | `Refund` |
 | `Reservation` |
 | `Return` |
 | `ReturnMetrics` |
 | `Returns` |
+| `RevaluationLine` |
+| `RevaluationResult` |
 | `RevenueByPeriod` |
+| `RevenueContract` |
 | `RevenueForecast` |
+| `RevenueRecognition` |
+| `RevenueSchedule` |
+| `RevenueScheduleEntry` |
+| `Review` |
+| `Reviews` |
+| `ReviewSummary` |
 | `Reward` |
 | `SalesSummary` |
+| `SearchConfig` |
+| `SearchConfigs` |
+| `SearchField` |
+| `SearchFieldInput` |
+| `Segment` |
+| `SegmentMembership` |
+| `SegmentRule` |
+| `SegmentRuleInput` |
+| `Segments` |
 | `SetExchangeRateInput` |
 | `Shipment` |
 | `Shipments` |
+| `ShippingCondition` |
 | `ShippingRate` |
+| `ShippingZone` |
+| `ShippingZones` |
 | `StockLevel` |
+| `StockSnapshot` |
+| `StockSnapshotLine` |
+| `StockSnapshots` |
+| `StoreCredit` |
+| `StoreCredits` |
+| `StoreCreditTransaction` |
 | `StoreCurrencySettings` |
 | `Supplier` |
+| `SupplierSku` |
+| `SupplierSkuBulkItemInput` |
+| `SupplierSkus` |
 | `SyncAcknowledgement` |
 | `SyncConfirmation` |
 | `SyncDeadLetter` |
@@ -781,14 +886,41 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `SyncRuntime` |
 | `SyncSnapshot` |
 | `SyncStatus` |
+| `SynonymGroup` |
+| `SynonymGroupInput` |
+| `ThreeWayMatchLine` |
+| `ThreeWayMatchResult` |
 | `TopCustomer` |
+| `TopologySnapshot` |
+| `TopologySnapshots` |
 | `TopProduct` |
+| `TransferOrder` |
+| `TransferOrderItem` |
+| `TransferOrderItemInput` |
+| `TransferOrders` |
+| `UnitClass` |
+| `UnitConversionRule` |
+| `UnitOfMeasure` |
+| `UnitsOfMeasure` |
+| `ValidationSummary` |
 | `VectorSearch` |
+| `VendorCredit` |
+| `VendorCreditApplication` |
+| `VendorCredits` |
+| `VendorReturn` |
+| `VendorReturnItem` |
+| `VendorReturnItemInput` |
+| `VendorReturns` |
 | `Warranties` |
 | `Warranty` |
 | `WarrantyClaim` |
+| `Wishlist` |
+| `WishlistItem` |
+| `Wishlists` |
 | `WorkOrder` |
 | `WorkOrders` |
+| `ZoneShippingMethod` |
+| `ZoneShippingRate` |
 
 ## Swift Surface Summary
 

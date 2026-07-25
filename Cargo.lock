@@ -3953,7 +3953,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-node"
-version = "1.7.0"
+version = "1.22.0"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -3975,7 +3975,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-python"
-version = "1.7.0"
+version = "1.22.0"
 dependencies = [
  "chrono",
  "hex",
@@ -3995,7 +3995,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-wasm"
-version = "1.7.0"
+version = "1.22.0"
 dependencies = [
  "chrono",
  "console_error_panic_hook",

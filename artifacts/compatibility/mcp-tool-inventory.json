@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 737,
+  "totalTools": 956,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 719
+      "count": 938
     },
     {
       "name": "stateset-scaffold",
@@ -19,7 +19,7 @@
       "count": 5
     }
   ],
-  "domainCount": 63,
+  "domainCount": 89,
   "domains": [
     {
       "name": "a2a",
@@ -43,11 +43,15 @@
     },
     {
       "name": "accounts_payable",
-      "count": 10
+      "count": 11
     },
     {
       "name": "accounts_receivable",
       "count": 8
+    },
+    {
+      "name": "activity_logs",
+      "count": 5
     },
     {
       "name": "agent_cards",
@@ -86,12 +90,20 @@
       "count": 6
     },
     {
+      "name": "channels",
+      "count": 8
+    },
+    {
       "name": "checkout",
       "count": 8
     },
     {
       "name": "circuit_breaker",
       "count": 8
+    },
+    {
+      "name": "companies",
+      "count": 9
     },
     {
       "name": "compliance",
@@ -119,11 +131,23 @@
     },
     {
       "name": "customers",
-      "count": 3
+      "count": 11
+    },
+    {
+      "name": "cycle_counts",
+      "count": 7
+    },
+    {
+      "name": "edi_documents",
+      "count": 5
     },
     {
       "name": "erc8004",
       "count": 5
+    },
+    {
+      "name": "fixed_assets",
+      "count": 9
     },
     {
       "name": "fraud",
@@ -135,7 +159,7 @@
     },
     {
       "name": "general_ledger",
-      "count": 12
+      "count": 17
     },
     {
       "name": "gift_cards",
@@ -144,6 +168,18 @@
     {
       "name": "import",
       "count": 10
+    },
+    {
+      "name": "inbound_shipments",
+      "count": 8
+    },
+    {
+      "name": "integration-field-mappings",
+      "count": 8
+    },
+    {
+      "name": "integration-mappings",
+      "count": 7
     },
     {
       "name": "inventory",
@@ -162,12 +198,20 @@
       "count": 8
     },
     {
+      "name": "maintenance",
+      "count": 5
+    },
+    {
       "name": "manufacturing",
       "count": 11
     },
     {
       "name": "orders",
       "count": 6
+    },
+    {
+      "name": "payment-obligations",
+      "count": 7
     },
     {
       "name": "payments",
@@ -178,8 +222,28 @@
       "count": 5
     },
     {
+      "name": "prepayments",
+      "count": 8
+    },
+    {
+      "name": "price_levels",
+      "count": 9
+    },
+    {
+      "name": "price_schedules",
+      "count": 10
+    },
+    {
+      "name": "print-stations",
+      "count": 8
+    },
+    {
+      "name": "production_batches",
+      "count": 8
+    },
+    {
       "name": "products",
-      "count": 4
+      "count": 14
     },
     {
       "name": "promotions",
@@ -188,6 +252,10 @@
     {
       "name": "proofs",
       "count": 7
+    },
+    {
+      "name": "purgatory",
+      "count": 6
     },
     {
       "name": "quality",
@@ -199,7 +267,11 @@
     },
     {
       "name": "returns",
-      "count": 5
+      "count": 12
+    },
+    {
+      "name": "revenue_recognition",
+      "count": 6
     },
     {
       "name": "reviews",
@@ -208,6 +280,10 @@
     {
       "name": "scaffold",
       "count": 13
+    },
+    {
+      "name": "search-config",
+      "count": 7
     },
     {
       "name": "segments",
@@ -230,12 +306,20 @@
       "count": 4
     },
     {
+      "name": "stock-snapshots",
+      "count": 5
+    },
+    {
       "name": "store_credits",
       "count": 5
     },
     {
       "name": "subscriptions",
       "count": 17
+    },
+    {
+      "name": "supplier_skus",
+      "count": 7
     },
     {
       "name": "suppliers",
@@ -250,12 +334,32 @@
       "count": 29
     },
     {
+      "name": "topology-snapshots",
+      "count": 5
+    },
+    {
+      "name": "transfer_orders",
+      "count": 7
+    },
+    {
       "name": "treasury",
       "count": 6
     },
     {
+      "name": "units-of-measure",
+      "count": 10
+    },
+    {
       "name": "vector",
       "count": 16
+    },
+    {
+      "name": "vendor_credits",
+      "count": 8
+    },
+    {
+      "name": "vendor-returns",
+      "count": 6
     },
     {
       "name": "warehouse",
@@ -285,18 +389,18 @@
     },
     {
       "name": "read",
-      "count": 382
+      "count": 474
     },
     {
       "name": "write",
-      "count": 287
+      "count": 414
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 382,
-    "write": 287
+    "read": 474,
+    "write": 414
   },
   "tools": [
     {
@@ -1560,6 +1664,15 @@
       "permission": "write"
     },
     {
+      "name": "activate_product",
+      "description": "Activate a product, making it available for purchase.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__activate_product",
+      "policyDomain": "products",
+      "permission": "write"
+    },
+    {
       "name": "activate_promotion",
       "description": "Activate a promotion to make it available for use.",
       "serverName": "stateset-commerce",
@@ -1593,6 +1706,42 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__add_cart_item",
       "policyDomain": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "add_customer_address",
+      "description": "Add an address to a customer address book.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__add_customer_address",
+      "policyDomain": "customers",
+      "permission": "write"
+    },
+    {
+      "name": "add_product_variant",
+      "description": "Add a variant to an existing product.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__add_product_variant",
+      "policyDomain": "products",
+      "permission": "write"
+    },
+    {
+      "name": "add_production_batch_work_orders",
+      "description": "Link work orders to a production batch.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__add_production_batch_work_orders",
+      "policyDomain": "production_batches",
+      "permission": "write"
+    },
+    {
+      "name": "add_return_tracking",
+      "description": "Add a return-shipping tracking number and mark the return in transit.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__add_return_tracking",
+      "policyDomain": "returns",
       "permission": "write"
     },
     {
@@ -2253,12 +2402,30 @@
       "permission": "write"
     },
     {
+      "name": "apply_prepayment",
+      "description": "Apply a prepayment against a bill or payment obligation.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__apply_prepayment",
+      "policyDomain": "prepayments",
+      "permission": "write"
+    },
+    {
       "name": "apply_store_credit",
       "description": "Apply store credit to an order.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__apply_store_credit",
       "policyDomain": "store_credits",
+      "permission": "write"
+    },
+    {
+      "name": "apply_vendor_credit",
+      "description": "Apply a vendor credit against a bill or payment obligation.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__apply_vendor_credit",
+      "policyDomain": "vendor_credits",
       "permission": "write"
     },
     {
@@ -2304,6 +2471,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__approve_warranty_claim",
       "policyDomain": "warranties",
+      "permission": "write"
+    },
+    {
+      "name": "archive_product",
+      "description": "Archive a product, removing it from sale.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__archive_product",
+      "policyDomain": "products",
       "permission": "write"
     },
     {
@@ -2379,12 +2555,57 @@
       "permission": "read"
     },
     {
+      "name": "backup_database",
+      "description": "Create a consistent, checksum-verified backup of the database plus a sidecar manifest. Safe to run while the store is being written to.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__backup_database",
+      "policyDomain": "maintenance",
+      "permission": "write"
+    },
+    {
       "name": "begin_cart_checkout",
       "description": "Begin the checkout process for a cart.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__begin_cart_checkout",
       "policyDomain": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "bulk_create_integration_field_mappings",
+      "description": "Bulk create integration field mappings.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__bulk_create_integration_field_mappings",
+      "policyDomain": "integration-field-mappings",
+      "permission": "write"
+    },
+    {
+      "name": "bulk_delete_integration_field_mappings",
+      "description": "Bulk delete integration field mappings by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__bulk_delete_integration_field_mappings",
+      "policyDomain": "integration-field-mappings",
+      "permission": "write"
+    },
+    {
+      "name": "bulk_upsert_integration_mappings",
+      "description": "Bulk upsert integration mappings.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__bulk_upsert_integration_mappings",
+      "policyDomain": "integration-mappings",
+      "permission": "write"
+    },
+    {
+      "name": "bulk_upsert_supplier_skus",
+      "description": "Bulk upsert supplier SKUs for a supplier, keyed by internal product.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__bulk_upsert_supplier_skus",
+      "policyDomain": "supplier_skus",
       "permission": "write"
     },
     {
@@ -2469,12 +2690,30 @@
       "permission": "delete"
     },
     {
+      "name": "cancel_cycle_count",
+      "description": "Cancel a cycle count.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__cancel_cycle_count",
+      "policyDomain": "cycle_counts",
+      "permission": "write"
+    },
+    {
       "name": "cancel_fulfillment_wave",
       "description": "Cancel a fulfillment wave.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__cancel_fulfillment_wave",
       "policyDomain": "fulfillment",
+      "permission": "write"
+    },
+    {
+      "name": "cancel_inbound_shipment",
+      "description": "Cancel an inbound shipment.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__cancel_inbound_shipment",
+      "policyDomain": "inbound_shipments",
       "permission": "write"
     },
     {
@@ -2532,6 +2771,15 @@
       "permission": "write"
     },
     {
+      "name": "cancel_return",
+      "description": "Cancel a return request.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__cancel_return",
+      "policyDomain": "returns",
+      "permission": "write"
+    },
+    {
       "name": "cancel_shipment",
       "description": "Cancel a shipment before delivery is completed.",
       "serverName": "stateset-commerce",
@@ -2548,6 +2796,33 @@
       "qualifiedName": "mcp__stateset-commerce__cancel_subscription",
       "policyDomain": "subscriptions",
       "permission": "delete"
+    },
+    {
+      "name": "cancel_transfer_order",
+      "description": "Cancel a transfer order.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__cancel_transfer_order",
+      "policyDomain": "transfer_orders",
+      "permission": "write"
+    },
+    {
+      "name": "cancel_vendor_credit",
+      "description": "Cancel a vendor credit.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__cancel_vendor_credit",
+      "policyDomain": "vendor_credits",
+      "permission": "write"
+    },
+    {
+      "name": "cancel_vendor_return",
+      "description": "Cancel a vendor return.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__cancel_vendor_return",
+      "policyDomain": "vendor-returns",
+      "permission": "write"
     },
     {
       "name": "cancel_work_order",
@@ -2568,6 +2843,24 @@
       "permission": "write"
     },
     {
+      "name": "capture_stock_snapshot",
+      "description": "Capture a stock snapshot; totals are computed from the supplied lines.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__capture_stock_snapshot",
+      "policyDomain": "stock-snapshots",
+      "permission": "write"
+    },
+    {
+      "name": "capture_topology_snapshot",
+      "description": "Capture a topology snapshot; health is derived from the supplied metrics.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__capture_topology_snapshot",
+      "policyDomain": "topology-snapshots",
+      "permission": "write"
+    },
+    {
       "name": "certify_wasm_connector",
       "description": "Issue marketplace certification metadata for a connector version using automated safety score + trust policy.",
       "serverName": "stateset-commerce",
@@ -2584,6 +2877,33 @@
       "qualifiedName": "mcp__stateset-commerce__charge_gift_card",
       "policyDomain": "gift_cards",
       "permission": "write"
+    },
+    {
+      "name": "check_activity_logs_supported",
+      "description": "Check whether the activity-logs backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_activity_logs_supported",
+      "policyDomain": "activity_logs",
+      "permission": "read"
+    },
+    {
+      "name": "check_channels_supported",
+      "description": "Check whether the channels backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_channels_supported",
+      "policyDomain": "channels",
+      "permission": "read"
+    },
+    {
+      "name": "check_companies_supported",
+      "description": "Check whether the companies backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_companies_supported",
+      "policyDomain": "companies",
+      "permission": "read"
     },
     {
       "name": "check_currency_enabled",
@@ -2622,6 +2942,15 @@
       "permission": "read"
     },
     {
+      "name": "check_inbound_shipments_supported",
+      "description": "Check whether the inbound-shipments backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_inbound_shipments_supported",
+      "policyDomain": "inbound_shipments",
+      "permission": "read"
+    },
+    {
       "name": "check_order_ready_to_pack",
       "description": "Check whether an order is ready to pack.",
       "serverName": "stateset-commerce",
@@ -2637,6 +2966,42 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__check_order_ready_to_ship",
       "policyDomain": "fulfillment",
+      "permission": "read"
+    },
+    {
+      "name": "check_prepayments_supported",
+      "description": "Check whether the prepayments backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_prepayments_supported",
+      "policyDomain": "prepayments",
+      "permission": "read"
+    },
+    {
+      "name": "check_price_levels_supported",
+      "description": "Check whether the price-levels backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_price_levels_supported",
+      "policyDomain": "price_levels",
+      "permission": "read"
+    },
+    {
+      "name": "check_price_schedules_supported",
+      "description": "Check whether the price-schedules backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_price_schedules_supported",
+      "policyDomain": "price_schedules",
+      "permission": "read"
+    },
+    {
+      "name": "check_production_batches_supported",
+      "description": "Check whether the production-batches backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_production_batches_supported",
+      "policyDomain": "production_batches",
       "permission": "read"
     },
     {
@@ -2658,12 +3023,39 @@
       "permission": "read"
     },
     {
+      "name": "check_supplier_skus_supported",
+      "description": "Check whether the supplier-SKUs backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_supplier_skus_supported",
+      "policyDomain": "supplier_skus",
+      "permission": "read"
+    },
+    {
       "name": "check_tax_enabled",
       "description": "Check whether tax calculation is currently enabled.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__check_tax_enabled",
       "policyDomain": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "check_transfer_orders_supported",
+      "description": "Check whether the transfer-orders backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_transfer_orders_supported",
+      "policyDomain": "transfer_orders",
+      "permission": "read"
+    },
+    {
+      "name": "check_vendor_credits_supported",
+      "description": "Check whether the vendor-credits backend is available on this engine build.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__check_vendor_credits_supported",
+      "policyDomain": "vendor_credits",
       "permission": "read"
     },
     {
@@ -2683,6 +3075,15 @@
       "qualifiedName": "mcp__stateset-commerce__clear_cart_items",
       "policyDomain": "carts",
       "permission": "delete"
+    },
+    {
+      "name": "close_month",
+      "description": "Close the month: post scheduled depreciation, recognize revenue through period end, revalue foreign-currency balances, then run the period close. Use dryRun to preview per-step counts and amounts without writing.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__close_month",
+      "policyDomain": "general_ledger",
+      "permission": "write"
     },
     {
       "name": "close_ncr",
@@ -2709,6 +3110,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__complete_checkout",
       "policyDomain": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "complete_cycle_count",
+      "description": "Complete a cycle count.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__complete_cycle_count",
+      "policyDomain": "cycle_counts",
       "permission": "write"
     },
     {
@@ -2739,12 +3149,30 @@
       "permission": "write"
     },
     {
+      "name": "complete_print_job",
+      "description": "Mark a print job printed or failed.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__complete_print_job",
+      "policyDomain": "print-stations",
+      "permission": "write"
+    },
+    {
       "name": "complete_receiving",
       "description": "Complete receiving against a receipt.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__complete_receiving",
       "policyDomain": "receiving",
+      "permission": "write"
+    },
+    {
+      "name": "complete_return",
+      "description": "Complete a return and process the refund.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__complete_return",
+      "policyDomain": "returns",
       "permission": "write"
     },
     {
@@ -2928,6 +3356,33 @@
       "permission": "write"
     },
     {
+      "name": "create_channel",
+      "description": "Create a sales channel.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_channel",
+      "policyDomain": "channels",
+      "permission": "write"
+    },
+    {
+      "name": "create_company",
+      "description": "Create a B2B company.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_company",
+      "policyDomain": "companies",
+      "permission": "write"
+    },
+    {
+      "name": "create_company_contact",
+      "description": "Create a contact linked to one or more companies.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_company_contact",
+      "policyDomain": "companies",
+      "permission": "write"
+    },
+    {
       "name": "create_coupon",
       "description": "Create a coupon code for a promotion.",
       "serverName": "stateset-commerce",
@@ -2982,6 +3437,33 @@
       "permission": "write"
     },
     {
+      "name": "create_cycle_count",
+      "description": "Create a cycle count.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_cycle_count",
+      "policyDomain": "cycle_counts",
+      "permission": "write"
+    },
+    {
+      "name": "create_edi_document",
+      "description": "Create / ingest an EDI document.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_edi_document",
+      "policyDomain": "edi_documents",
+      "permission": "write"
+    },
+    {
+      "name": "create_fixed_asset",
+      "description": "Create a fixed asset.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_fixed_asset",
+      "policyDomain": "fixed_assets",
+      "permission": "write"
+    },
+    {
       "name": "create_fraud_rule",
       "description": "Create a custom fraud detection rule.",
       "serverName": "stateset-commerce",
@@ -3018,12 +3500,48 @@
       "permission": "write"
     },
     {
+      "name": "create_gl_period",
+      "description": "Create an accounting period.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_gl_period",
+      "policyDomain": "general_ledger",
+      "permission": "write"
+    },
+    {
+      "name": "create_inbound_shipment",
+      "description": "Create an inbound shipment.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_inbound_shipment",
+      "policyDomain": "inbound_shipments",
+      "permission": "write"
+    },
+    {
       "name": "create_inspection",
       "description": "Create a quality inspection.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_inspection",
       "policyDomain": "quality",
+      "permission": "write"
+    },
+    {
+      "name": "create_integration_field_mapping",
+      "description": "Create an integration field mapping.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_integration_field_mapping",
+      "policyDomain": "integration-field-mappings",
+      "permission": "write"
+    },
+    {
+      "name": "create_integration_mapping",
+      "description": "Create an integration value mapping.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_integration_mapping",
+      "policyDomain": "integration-mappings",
       "permission": "write"
     },
     {
@@ -3117,6 +3635,15 @@
       "permission": "write"
     },
     {
+      "name": "create_payment_obligation",
+      "description": "Create a payment obligation.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_payment_obligation",
+      "policyDomain": "payment-obligations",
+      "permission": "write"
+    },
+    {
       "name": "create_payment_settlement_batch",
       "description": "Create a settlement batch for captured/refunded payment intents to simulate provider payout reconciliation.",
       "serverName": "stateset-commerce",
@@ -3126,12 +3653,48 @@
       "permission": "write"
     },
     {
+      "name": "create_prepayment",
+      "description": "Create a supplier prepayment.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_prepayment",
+      "policyDomain": "prepayments",
+      "permission": "write"
+    },
+    {
+      "name": "create_price_level",
+      "description": "Create a price level.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_price_level",
+      "policyDomain": "price_levels",
+      "permission": "write"
+    },
+    {
+      "name": "create_price_schedule",
+      "description": "Create a price schedule.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_price_schedule",
+      "policyDomain": "price_schedules",
+      "permission": "write"
+    },
+    {
       "name": "create_product",
       "description": "Create a new product with optional variants.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_product",
       "policyDomain": "products",
+      "permission": "write"
+    },
+    {
+      "name": "create_production_batch",
+      "description": "Create a production batch.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_production_batch",
+      "policyDomain": "production_batches",
       "permission": "write"
     },
     {
@@ -3198,6 +3761,15 @@
       "permission": "write"
     },
     {
+      "name": "create_revenue_contract",
+      "description": "Create a revenue recognition contract.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_revenue_contract",
+      "policyDomain": "revenue_recognition",
+      "permission": "write"
+    },
+    {
       "name": "create_review",
       "description": "Create a product review.",
       "serverName": "stateset-commerce",
@@ -3214,6 +3786,15 @@
       "qualifiedName": "mcp__stateset-commerce__create_reward",
       "policyDomain": "loyalty",
       "permission": "admin"
+    },
+    {
+      "name": "create_search_config",
+      "description": "Create a search configuration.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_search_config",
+      "policyDomain": "search-config",
+      "permission": "write"
     },
     {
       "name": "create_segment",
@@ -3315,6 +3896,15 @@
       "permission": "write"
     },
     {
+      "name": "create_supplier_sku",
+      "description": "Create a supplier SKU cross-reference.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_supplier_sku",
+      "policyDomain": "supplier_skus",
+      "permission": "write"
+    },
+    {
       "name": "create_tax_exemption",
       "description": "Create a tax exemption certificate for a customer.",
       "serverName": "stateset-commerce",
@@ -3339,6 +3929,60 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_tax_rate",
       "policyDomain": "tax",
+      "permission": "write"
+    },
+    {
+      "name": "create_transfer_order",
+      "description": "Create a transfer order between warehouses.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_transfer_order",
+      "policyDomain": "transfer_orders",
+      "permission": "write"
+    },
+    {
+      "name": "create_unit_class",
+      "description": "Create a unit class.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_unit_class",
+      "policyDomain": "units-of-measure",
+      "permission": "write"
+    },
+    {
+      "name": "create_unit_conversion_rule",
+      "description": "Create a unit conversion rule (system-wide or SKU-specific).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_unit_conversion_rule",
+      "policyDomain": "units-of-measure",
+      "permission": "write"
+    },
+    {
+      "name": "create_unit_of_measure",
+      "description": "Create a unit of measure within a unit class.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_unit_of_measure",
+      "policyDomain": "units-of-measure",
+      "permission": "write"
+    },
+    {
+      "name": "create_vendor_credit",
+      "description": "Create a vendor credit.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_vendor_credit",
+      "policyDomain": "vendor_credits",
+      "permission": "write"
+    },
+    {
+      "name": "create_vendor_return",
+      "description": "Create a draft vendor return.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__create_vendor_return",
+      "policyDomain": "vendor-returns",
       "permission": "write"
     },
     {
@@ -3414,6 +4058,24 @@
       "permission": "delete"
     },
     {
+      "name": "delete_channel",
+      "description": "Delete a sales channel.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_channel",
+      "policyDomain": "channels",
+      "permission": "write"
+    },
+    {
+      "name": "delete_company",
+      "description": "Delete a B2B company.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_company",
+      "policyDomain": "companies",
+      "permission": "write"
+    },
+    {
       "name": "delete_custom_object",
       "description": "Delete a custom object record by ID.",
       "serverName": "stateset-commerce",
@@ -3430,6 +4092,24 @@
       "qualifiedName": "mcp__stateset-commerce__delete_custom_object_type",
       "policyDomain": "custom_objects",
       "permission": "delete"
+    },
+    {
+      "name": "delete_customer",
+      "description": "Delete a customer (soft delete).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_customer",
+      "policyDomain": "customers",
+      "permission": "write"
+    },
+    {
+      "name": "delete_customer_address",
+      "description": "Delete a customer address.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_customer_address",
+      "policyDomain": "customers",
+      "permission": "write"
     },
     {
       "name": "delete_exchange_rate",
@@ -3450,6 +4130,87 @@
       "permission": "admin"
     },
     {
+      "name": "delete_integration_field_mapping",
+      "description": "Delete an integration field mapping.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_integration_field_mapping",
+      "policyDomain": "integration-field-mappings",
+      "permission": "write"
+    },
+    {
+      "name": "delete_integration_mapping",
+      "description": "Delete an integration mapping.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_integration_mapping",
+      "policyDomain": "integration-mappings",
+      "permission": "write"
+    },
+    {
+      "name": "delete_price_level",
+      "description": "Delete a price level and its entries.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_price_level",
+      "policyDomain": "price_levels",
+      "permission": "write"
+    },
+    {
+      "name": "delete_price_level_entry",
+      "description": "Remove a per-product entry from a price level.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_price_level_entry",
+      "policyDomain": "price_levels",
+      "permission": "write"
+    },
+    {
+      "name": "delete_price_schedule",
+      "description": "Delete a price schedule and its entries.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_price_schedule",
+      "policyDomain": "price_schedules",
+      "permission": "write"
+    },
+    {
+      "name": "delete_price_schedule_entry",
+      "description": "Remove a per-product entry from a price schedule.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_price_schedule_entry",
+      "policyDomain": "price_schedules",
+      "permission": "write"
+    },
+    {
+      "name": "delete_product",
+      "description": "Delete a product (archives it).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_product",
+      "policyDomain": "products",
+      "permission": "write"
+    },
+    {
+      "name": "delete_product_variant",
+      "description": "Delete a product variant.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_product_variant",
+      "policyDomain": "products",
+      "permission": "write"
+    },
+    {
+      "name": "delete_production_batch",
+      "description": "Delete a production batch.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_production_batch",
+      "policyDomain": "production_batches",
+      "permission": "write"
+    },
+    {
       "name": "delete_promotion",
       "description": "Delete a promotion. Requires --apply flag.",
       "serverName": "stateset-commerce",
@@ -3457,6 +4218,78 @@
       "qualifiedName": "mcp__stateset-commerce__delete_promotion",
       "policyDomain": "promotions",
       "permission": "delete"
+    },
+    {
+      "name": "delete_purgatory_order",
+      "description": "Delete a purgatory order.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_purgatory_order",
+      "policyDomain": "purgatory",
+      "permission": "write"
+    },
+    {
+      "name": "delete_search_config",
+      "description": "Delete a search configuration.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_search_config",
+      "policyDomain": "search-config",
+      "permission": "write"
+    },
+    {
+      "name": "delete_stock_snapshot",
+      "description": "Delete a stock snapshot.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_stock_snapshot",
+      "policyDomain": "stock-snapshots",
+      "permission": "write"
+    },
+    {
+      "name": "delete_supplier_sku",
+      "description": "Delete a supplier SKU.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_supplier_sku",
+      "policyDomain": "supplier_skus",
+      "permission": "write"
+    },
+    {
+      "name": "delete_topology_snapshot",
+      "description": "Delete a topology snapshot.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_topology_snapshot",
+      "policyDomain": "topology-snapshots",
+      "permission": "write"
+    },
+    {
+      "name": "delete_unit_class",
+      "description": "Delete a unit class.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_unit_class",
+      "policyDomain": "units-of-measure",
+      "permission": "write"
+    },
+    {
+      "name": "delete_unit_conversion_rule",
+      "description": "Delete a unit conversion rule.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_unit_conversion_rule",
+      "policyDomain": "units-of-measure",
+      "permission": "write"
+    },
+    {
+      "name": "delete_unit_of_measure",
+      "description": "Delete a unit of measure.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__delete_unit_of_measure",
+      "policyDomain": "units-of-measure",
+      "permission": "write"
     },
     {
       "name": "deliver_shipment",
@@ -3504,6 +4337,15 @@
       "permission": "read"
     },
     {
+      "name": "dispose_fixed_asset",
+      "description": "Dispose of a fixed asset.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__dispose_fixed_asset",
+      "policyDomain": "fixed_assets",
+      "permission": "write"
+    },
+    {
       "name": "earn_points",
       "description": "Award loyalty points to a customer account.",
       "serverName": "stateset-commerce",
@@ -3520,6 +4362,15 @@
       "qualifiedName": "mcp__stateset-commerce__enable_currencies",
       "policyDomain": "currency",
       "permission": "admin"
+    },
+    {
+      "name": "enqueue_print_job",
+      "description": "Enqueue a print job to a station.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__enqueue_print_job",
+      "policyDomain": "print-stations",
+      "permission": "write"
     },
     {
       "name": "enroll_customer",
@@ -3657,6 +4508,15 @@
       "permission": "read"
     },
     {
+      "name": "export_full_data",
+      "description": "Export the full store to a versioned JSON file (distinct from export_data, which dumps a single entity type for parity testing). Covers the core commerce and finance domains; see the maintenance module docs for exactly what is and is not included.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__export_full_data",
+      "policyDomain": "maintenance",
+      "permission": "read"
+    },
+    {
       "name": "export_gdpr_data",
       "description": "Export all personal data for a customer or agent (GDPR Article 20 — data portability). Returns personal data, payments, communications, and disputes.",
       "serverName": "stateset-commerce",
@@ -3672,6 +4532,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__express_checkout",
       "policyDomain": "checkout",
+      "permission": "write"
+    },
+    {
+      "name": "find_or_create_customer",
+      "description": "Find a customer by email, or create one if none exists. Returns the existing or newly created customer.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__find_or_create_customer",
+      "policyDomain": "customers",
       "permission": "write"
     },
     {
@@ -3702,6 +4571,15 @@
       "permission": "admin"
     },
     {
+      "name": "generate_depreciation_schedule",
+      "description": "Generate the depreciation schedule for a fixed asset.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__generate_depreciation_schedule",
+      "policyDomain": "fixed_assets",
+      "permission": "write"
+    },
+    {
       "name": "generate_inclusion_proof",
       "description": "Generate a Merkle inclusion proof for a specific event within a batch of events.",
       "serverName": "stateset-commerce",
@@ -3718,6 +4596,15 @@
       "qualifiedName": "mcp__stateset-commerce__generate_receipt_bundle",
       "policyDomain": "proofs",
       "permission": "read"
+    },
+    {
+      "name": "generate_revenue_schedule",
+      "description": "Generate the revenue recognition schedule for a contract.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__generate_revenue_schedule",
+      "policyDomain": "revenue_recognition",
+      "permission": "write"
     },
     {
       "name": "get_abandoned_carts",
@@ -3771,6 +4658,33 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_active_promotions",
       "policyDomain": "promotions",
+      "permission": "read"
+    },
+    {
+      "name": "get_active_search_config",
+      "description": "Get the currently active search configuration.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_active_search_config",
+      "policyDomain": "search-config",
+      "permission": "read"
+    },
+    {
+      "name": "get_activity_history_for_subject",
+      "description": "Get the activity history for a subject (e.g. an order or product).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_activity_history_for_subject",
+      "policyDomain": "activity_logs",
+      "permission": "read"
+    },
+    {
+      "name": "get_activity_log",
+      "description": "Get an activity log entry by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_activity_log",
+      "policyDomain": "activity_logs",
       "permission": "read"
     },
     {
@@ -3852,6 +4766,24 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_cart",
       "policyDomain": "carts",
+      "permission": "read"
+    },
+    {
+      "name": "get_channel",
+      "description": "Get a sales channel by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_channel",
+      "policyDomain": "channels",
+      "permission": "read"
+    },
+    {
+      "name": "get_company",
+      "description": "Get a company by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_company",
+      "policyDomain": "companies",
       "permission": "read"
     },
     {
@@ -3954,6 +4886,15 @@
       "permission": "read"
     },
     {
+      "name": "get_cycle_count",
+      "description": "Get a cycle count by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_cycle_count",
+      "policyDomain": "cycle_counts",
+      "permission": "read"
+    },
+    {
       "name": "get_days_sales_outstanding",
       "description": "Get days sales outstanding over a rolling window.",
       "serverName": "stateset-commerce",
@@ -3972,6 +4913,33 @@
       "permission": "read"
     },
     {
+      "name": "get_depreciation_schedule",
+      "description": "Get the depreciation schedule for a fixed asset.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_depreciation_schedule",
+      "policyDomain": "fixed_assets",
+      "permission": "read"
+    },
+    {
+      "name": "get_edi_document",
+      "description": "Get an EDI document by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_edi_document",
+      "policyDomain": "edi_documents",
+      "permission": "read"
+    },
+    {
+      "name": "get_edi_summary",
+      "description": "Get an aggregate summary of EDI documents (counts by status and type).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_edi_summary",
+      "policyDomain": "edi_documents",
+      "permission": "read"
+    },
+    {
       "name": "get_exchange_rate",
       "description": "Get the exchange rate between two currencies.",
       "serverName": "stateset-commerce",
@@ -3987,6 +4955,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_expired_carts",
       "policyDomain": "carts",
+      "permission": "read"
+    },
+    {
+      "name": "get_fixed_asset",
+      "description": "Get a fixed asset by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_fixed_asset",
+      "policyDomain": "fixed_assets",
       "permission": "read"
     },
     {
@@ -4044,6 +5021,15 @@
       "permission": "read"
     },
     {
+      "name": "get_inbound_shipment",
+      "description": "Get an inbound shipment by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_inbound_shipment",
+      "policyDomain": "inbound_shipments",
+      "permission": "read"
+    },
+    {
       "name": "get_income_statement",
       "description": "Get the income statement for a date range.",
       "serverName": "stateset-commerce",
@@ -4068,6 +5054,24 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_installed_connector",
       "policyDomain": "connectors",
+      "permission": "read"
+    },
+    {
+      "name": "get_integration_field_mapping",
+      "description": "Get an integration field mapping by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_integration_field_mapping",
+      "policyDomain": "integration-field-mappings",
+      "permission": "read"
+    },
+    {
+      "name": "get_integration_mapping",
+      "description": "Get an integration mapping by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_integration_mapping",
+      "policyDomain": "integration-mappings",
       "permission": "read"
     },
     {
@@ -4113,6 +5117,24 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_journal_entry",
       "policyDomain": "general_ledger",
+      "permission": "read"
+    },
+    {
+      "name": "get_latest_stock_snapshot",
+      "description": "Get the most recent stock snapshot.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_latest_stock_snapshot",
+      "policyDomain": "stock-snapshots",
+      "permission": "read"
+    },
+    {
+      "name": "get_latest_topology_snapshot",
+      "description": "Get the most recent topology snapshot.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_latest_topology_snapshot",
+      "policyDomain": "topology-snapshots",
       "permission": "read"
     },
     {
@@ -4224,6 +5246,24 @@
       "permission": "read"
     },
     {
+      "name": "get_payment_obligation",
+      "description": "Get a payment obligation by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_payment_obligation",
+      "policyDomain": "payment-obligations",
+      "permission": "read"
+    },
+    {
+      "name": "get_payment_obligation_dashboard",
+      "description": "Aggregate payment obligation dashboard as of a date.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_payment_obligation_dashboard",
+      "policyDomain": "payment-obligations",
+      "permission": "read"
+    },
+    {
       "name": "get_pick_task",
       "description": "Get a pick task by ID.",
       "serverName": "stateset-commerce",
@@ -4233,11 +5273,56 @@
       "permission": "read"
     },
     {
+      "name": "get_prepayment",
+      "description": "Get a prepayment by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_prepayment",
+      "policyDomain": "prepayments",
+      "permission": "read"
+    },
+    {
+      "name": "get_price_level",
+      "description": "Get a price level by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_price_level",
+      "policyDomain": "price_levels",
+      "permission": "read"
+    },
+    {
+      "name": "get_price_schedule",
+      "description": "Get a price schedule by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_price_schedule",
+      "policyDomain": "price_schedules",
+      "permission": "read"
+    },
+    {
+      "name": "get_print_station",
+      "description": "Get a print station by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_print_station",
+      "policyDomain": "print-stations",
+      "permission": "read"
+    },
+    {
       "name": "get_product",
       "description": "Get a specific product by ID.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_product",
+      "policyDomain": "products",
+      "permission": "read"
+    },
+    {
+      "name": "get_product_by_slug",
+      "description": "Get a specific product by its URL slug.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_product_by_slug",
       "policyDomain": "products",
       "permission": "read"
     },
@@ -4269,6 +5354,15 @@
       "permission": "read"
     },
     {
+      "name": "get_production_batch",
+      "description": "Get a production batch by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_production_batch",
+      "policyDomain": "production_batches",
+      "permission": "read"
+    },
+    {
       "name": "get_promotion",
       "description": "Get a promotion by ID or internal code.",
       "serverName": "stateset-commerce",
@@ -4284,6 +5378,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_purchase_order",
       "policyDomain": "suppliers",
+      "permission": "read"
+    },
+    {
+      "name": "get_purgatory_order",
+      "description": "Get a purgatory order by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_purgatory_order",
+      "policyDomain": "purgatory",
       "permission": "read"
     },
     {
@@ -4332,12 +5435,30 @@
       "permission": "read"
     },
     {
+      "name": "get_revenue_contract",
+      "description": "Get a revenue recognition contract by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_revenue_contract",
+      "policyDomain": "revenue_recognition",
+      "permission": "read"
+    },
+    {
       "name": "get_revenue_forecast",
       "description": "Get revenue forecast based on historical trends.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_revenue_forecast",
       "policyDomain": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_revenue_schedule",
+      "description": "Get the revenue recognition schedule for a contract.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_revenue_schedule",
+      "policyDomain": "revenue_recognition",
       "permission": "read"
     },
     {
@@ -4365,6 +5486,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_sales_summary",
       "policyDomain": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_search_config",
+      "description": "Get a search configuration by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_search_config",
+      "policyDomain": "search-config",
       "permission": "read"
     },
     {
@@ -4422,6 +5552,15 @@
       "permission": "read"
     },
     {
+      "name": "get_stock_snapshot",
+      "description": "Get a stock snapshot by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_stock_snapshot",
+      "policyDomain": "stock-snapshots",
+      "permission": "read"
+    },
+    {
       "name": "get_store_credit",
       "description": "Get store credit details by ID.",
       "serverName": "stateset-commerce",
@@ -4464,6 +5603,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_supplier",
       "policyDomain": "suppliers",
+      "permission": "read"
+    },
+    {
+      "name": "get_supplier_sku",
+      "description": "Get a supplier SKU by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_supplier_sku",
+      "policyDomain": "supplier_skus",
       "permission": "read"
     },
     {
@@ -4548,12 +5696,30 @@
       "permission": "read"
     },
     {
+      "name": "get_topology_snapshot",
+      "description": "Get a topology snapshot by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_topology_snapshot",
+      "policyDomain": "topology-snapshots",
+      "permission": "read"
+    },
+    {
       "name": "get_total_inventory_value",
       "description": "Get total inventory value.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_total_inventory_value",
       "policyDomain": "cost_accounting",
+      "permission": "read"
+    },
+    {
+      "name": "get_transfer_order",
+      "description": "Get a transfer order by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_transfer_order",
+      "policyDomain": "transfer_orders",
       "permission": "read"
     },
     {
@@ -4572,6 +5738,24 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_us_state_tax_info",
       "policyDomain": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "get_vendor_credit",
+      "description": "Get a vendor credit by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_vendor_credit",
+      "policyDomain": "vendor_credits",
+      "permission": "read"
+    },
+    {
+      "name": "get_vendor_return",
+      "description": "Get a vendor return by ID.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_vendor_return",
+      "policyDomain": "vendor-returns",
       "permission": "read"
     },
     {
@@ -4647,6 +5831,15 @@
       "permission": "write"
     },
     {
+      "name": "import_full_data",
+      "description": "Import a JSON export into this store. Records are replayed through the normal create paths, so IDs are re-minted and foreign keys remapped.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__import_full_data",
+      "policyDomain": "maintenance",
+      "permission": "write"
+    },
+    {
       "name": "import_json",
       "description": "Import data from a JSON file (Shopify REST API response format or array).",
       "serverName": "stateset-commerce",
@@ -4701,6 +5894,15 @@
       "permission": "write"
     },
     {
+      "name": "ingest_purgatory_order",
+      "description": "Ingest an external order into purgatory.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__ingest_purgatory_order",
+      "policyDomain": "purgatory",
+      "permission": "write"
+    },
+    {
       "name": "ingest_shipping_provider_webhook",
       "description": "Ingest a shipping provider webhook event and reconcile label/tracking state for shadow mode operations.",
       "serverName": "stateset-commerce",
@@ -4746,6 +5948,15 @@
       "permission": "write"
     },
     {
+      "name": "link_payment_obligation_bill",
+      "description": "Link an accounts-payable bill to a payment obligation.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__link_payment_obligation_bill",
+      "policyDomain": "payment-obligations",
+      "permission": "write"
+    },
+    {
       "name": "list_active_lots",
       "description": "List active lots for a SKU.",
       "serverName": "stateset-commerce",
@@ -4761,6 +5972,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_active_quality_holds",
       "policyDomain": "quality",
+      "permission": "read"
+    },
+    {
+      "name": "list_activity_logs",
+      "description": "List activity log entries with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_activity_logs",
+      "policyDomain": "activity_logs",
       "permission": "read"
     },
     {
@@ -4872,6 +6092,51 @@
       "permission": "read"
     },
     {
+      "name": "list_channel_product_mappings",
+      "description": "List product mappings for a sales channel.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_channel_product_mappings",
+      "policyDomain": "channels",
+      "permission": "read"
+    },
+    {
+      "name": "list_channels",
+      "description": "List sales channels with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_channels",
+      "policyDomain": "channels",
+      "permission": "read"
+    },
+    {
+      "name": "list_companies",
+      "description": "List B2B companies with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_companies",
+      "policyDomain": "companies",
+      "permission": "read"
+    },
+    {
+      "name": "list_company_addresses",
+      "description": "List shipping addresses for a company.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_company_addresses",
+      "policyDomain": "companies",
+      "permission": "read"
+    },
+    {
+      "name": "list_company_contacts",
+      "description": "List contacts for a company.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_company_contacts",
+      "policyDomain": "companies",
+      "permission": "read"
+    },
+    {
       "name": "list_connector_marketplace",
       "description": "List available WASM connectors in the local marketplace catalog.",
       "serverName": "stateset-commerce",
@@ -4926,6 +6191,15 @@
       "permission": "read"
     },
     {
+      "name": "list_customer_addresses",
+      "description": "List all addresses in a customer address book.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_customer_addresses",
+      "policyDomain": "customers",
+      "permission": "read"
+    },
+    {
       "name": "list_customer_carts",
       "description": "List carts for a specific customer.",
       "serverName": "stateset-commerce",
@@ -4941,6 +6215,24 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_customers",
       "policyDomain": "customers",
+      "permission": "read"
+    },
+    {
+      "name": "list_cycle_counts",
+      "description": "List cycle counts.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_cycle_counts",
+      "policyDomain": "cycle_counts",
+      "permission": "read"
+    },
+    {
+      "name": "list_edi_documents",
+      "description": "List EDI documents with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_edi_documents",
+      "policyDomain": "edi_documents",
       "permission": "read"
     },
     {
@@ -4968,6 +6260,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_expiring_lots",
       "policyDomain": "lots",
+      "permission": "read"
+    },
+    {
+      "name": "list_fixed_assets",
+      "description": "List fixed assets.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_fixed_assets",
+      "policyDomain": "fixed_assets",
       "permission": "read"
     },
     {
@@ -5007,6 +6308,15 @@
       "permission": "read"
     },
     {
+      "name": "list_gl_periods",
+      "description": "List accounting periods with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_gl_periods",
+      "policyDomain": "general_ledger",
+      "permission": "read"
+    },
+    {
       "name": "list_id_mappings",
       "description": "List external ID to StateSet ID mappings for a platform. Useful for verifying imported data.",
       "serverName": "stateset-commerce",
@@ -5016,8 +6326,17 @@
       "permission": "read"
     },
     {
+      "name": "list_inbound_shipments",
+      "description": "List inbound shipments with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_inbound_shipments",
+      "policyDomain": "inbound_shipments",
+      "permission": "read"
+    },
+    {
       "name": "list_inspections",
-      "description": "List quality inspections.",
+      "description": "List quality inspections, optionally filtered by type, status, reference, inspector or date range.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_inspections",
@@ -5031,6 +6350,33 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_installed_connectors",
       "policyDomain": "connectors",
+      "permission": "read"
+    },
+    {
+      "name": "list_integration_field_mappings",
+      "description": "List integration field mappings.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_integration_field_mappings",
+      "policyDomain": "integration-field-mappings",
+      "permission": "read"
+    },
+    {
+      "name": "list_integration_mapping_groups",
+      "description": "List the distinct mapping groups for an integration account.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_integration_mapping_groups",
+      "policyDomain": "integration-field-mappings",
+      "permission": "read"
+    },
+    {
+      "name": "list_integration_mappings",
+      "description": "List integration value mappings.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_integration_mappings",
+      "policyDomain": "integration-mappings",
       "permission": "read"
     },
     {
@@ -5080,7 +6426,7 @@
     },
     {
       "name": "list_ncrs",
-      "description": "List non-conformance reports.",
+      "description": "List non-conformance reports, optionally filtered by source, severity, status, SKU, lot, assignee or date range.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_ncrs",
@@ -5142,6 +6488,15 @@
       "permission": "read"
     },
     {
+      "name": "list_payment_obligations",
+      "description": "List payment obligations.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_payment_obligations",
+      "policyDomain": "payment-obligations",
+      "permission": "read"
+    },
+    {
       "name": "list_payment_providers",
       "description": "List available payment providers and capabilities for agentic payment flows.",
       "serverName": "stateset-commerce",
@@ -5178,6 +6533,15 @@
       "permission": "read"
     },
     {
+      "name": "list_pending_returns",
+      "description": "List returns awaiting approval (status requested).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_pending_returns",
+      "policyDomain": "returns",
+      "permission": "read"
+    },
+    {
       "name": "list_pick_tasks",
       "description": "List pick tasks.",
       "serverName": "stateset-commerce",
@@ -5205,6 +6569,105 @@
       "permission": "read"
     },
     {
+      "name": "list_portable_domains",
+      "description": "List the domains that data export and import can cover.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_portable_domains",
+      "policyDomain": "maintenance",
+      "permission": "read"
+    },
+    {
+      "name": "list_prepayment_applications",
+      "description": "List applications for a prepayment.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_prepayment_applications",
+      "policyDomain": "prepayments",
+      "permission": "read"
+    },
+    {
+      "name": "list_prepayments",
+      "description": "List supplier prepayments with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_prepayments",
+      "policyDomain": "prepayments",
+      "permission": "read"
+    },
+    {
+      "name": "list_price_level_entries",
+      "description": "List per-product entries for a price level.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_price_level_entries",
+      "policyDomain": "price_levels",
+      "permission": "read"
+    },
+    {
+      "name": "list_price_levels",
+      "description": "List price levels with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_price_levels",
+      "policyDomain": "price_levels",
+      "permission": "read"
+    },
+    {
+      "name": "list_price_schedule_entries",
+      "description": "List per-product entries for a price schedule.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_price_schedule_entries",
+      "policyDomain": "price_schedules",
+      "permission": "read"
+    },
+    {
+      "name": "list_price_schedules",
+      "description": "List price schedules with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_price_schedules",
+      "policyDomain": "price_schedules",
+      "permission": "read"
+    },
+    {
+      "name": "list_print_jobs",
+      "description": "List print jobs for a station.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_print_jobs",
+      "policyDomain": "print-stations",
+      "permission": "read"
+    },
+    {
+      "name": "list_print_stations",
+      "description": "List paired print stations.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_print_stations",
+      "policyDomain": "print-stations",
+      "permission": "read"
+    },
+    {
+      "name": "list_product_variants",
+      "description": "List all variants for a product.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_product_variants",
+      "policyDomain": "products",
+      "permission": "read"
+    },
+    {
+      "name": "list_production_batches",
+      "description": "List production batches with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_production_batches",
+      "policyDomain": "production_batches",
+      "permission": "read"
+    },
+    {
       "name": "list_products",
       "description": "List all products in the catalog.",
       "serverName": "stateset-commerce",
@@ -5224,11 +6687,20 @@
     },
     {
       "name": "list_purchase_orders",
-      "description": "List all purchase orders.",
+      "description": "List purchase orders, optionally filtered by supplier, status, date range or total.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_purchase_orders",
       "policyDomain": "suppliers",
+      "permission": "read"
+    },
+    {
+      "name": "list_purgatory_orders",
+      "description": "List staged purgatory orders.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_purgatory_orders",
+      "policyDomain": "purgatory",
       "permission": "read"
     },
     {
@@ -5268,6 +6740,33 @@
       "permission": "read"
     },
     {
+      "name": "list_returns_for_customer",
+      "description": "List all returns filed by a specific customer.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_returns_for_customer",
+      "policyDomain": "returns",
+      "permission": "read"
+    },
+    {
+      "name": "list_returns_for_order",
+      "description": "List all returns filed against a specific order.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_returns_for_order",
+      "policyDomain": "returns",
+      "permission": "read"
+    },
+    {
+      "name": "list_revenue_contracts",
+      "description": "List revenue recognition contracts.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_revenue_contracts",
+      "policyDomain": "revenue_recognition",
+      "permission": "read"
+    },
+    {
       "name": "list_reviews",
       "description": "List reviews with optional filters.",
       "serverName": "stateset-commerce",
@@ -5283,6 +6782,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_rewards",
       "policyDomain": "loyalty",
+      "permission": "read"
+    },
+    {
+      "name": "list_search_configs",
+      "description": "List search configurations.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_search_configs",
+      "policyDomain": "search-config",
       "permission": "read"
     },
     {
@@ -5349,6 +6857,15 @@
       "permission": "read"
     },
     {
+      "name": "list_stock_snapshots",
+      "description": "List stock snapshots (header level).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_stock_snapshots",
+      "policyDomain": "stock-snapshots",
+      "permission": "read"
+    },
+    {
       "name": "list_store_credits",
       "description": "List store credits with optional filters.",
       "serverName": "stateset-commerce",
@@ -5373,6 +6890,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_subscriptions",
       "policyDomain": "subscriptions",
+      "permission": "read"
+    },
+    {
+      "name": "list_supplier_skus",
+      "description": "List supplier SKUs with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_supplier_skus",
+      "policyDomain": "supplier_skus",
       "permission": "read"
     },
     {
@@ -5430,12 +6956,84 @@
       "permission": "read"
     },
     {
+      "name": "list_topology_snapshots",
+      "description": "List operational topology snapshots.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_topology_snapshots",
+      "policyDomain": "topology-snapshots",
+      "permission": "read"
+    },
+    {
+      "name": "list_transfer_orders",
+      "description": "List transfer orders with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_transfer_orders",
+      "policyDomain": "transfer_orders",
+      "permission": "read"
+    },
+    {
       "name": "list_unapplied_credits",
       "description": "List unapplied credits for a customer.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_unapplied_credits",
       "policyDomain": "accounts_receivable",
+      "permission": "read"
+    },
+    {
+      "name": "list_unit_classes",
+      "description": "List unit classes (e.g. weight, volume).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_unit_classes",
+      "policyDomain": "units-of-measure",
+      "permission": "read"
+    },
+    {
+      "name": "list_unit_conversion_rules",
+      "description": "List unit conversion rules.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_unit_conversion_rules",
+      "policyDomain": "units-of-measure",
+      "permission": "read"
+    },
+    {
+      "name": "list_units_of_measure",
+      "description": "List units of measure, optionally scoped to a unit class.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_units_of_measure",
+      "policyDomain": "units-of-measure",
+      "permission": "read"
+    },
+    {
+      "name": "list_vendor_credit_applications",
+      "description": "List applications for a vendor credit.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_vendor_credit_applications",
+      "policyDomain": "vendor_credits",
+      "permission": "read"
+    },
+    {
+      "name": "list_vendor_credits",
+      "description": "List vendor credits with optional filtering.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_vendor_credits",
+      "policyDomain": "vendor_credits",
+      "permission": "read"
+    },
+    {
+      "name": "list_vendor_returns",
+      "description": "List vendor returns.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_vendor_returns",
+      "policyDomain": "vendor-returns",
       "permission": "read"
     },
     {
@@ -5467,7 +7065,7 @@
     },
     {
       "name": "list_work_orders",
-      "description": "List all manufacturing work orders. Work orders track production runs.",
+      "description": "List manufacturing work orders (production runs), optionally filtered by product, BOM, status, priority, assignee or work center.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_work_orders",
@@ -5481,6 +7079,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__load_policy_file",
       "policyDomain": "policies",
+      "permission": "write"
+    },
+    {
+      "name": "map_purgatory_line",
+      "description": "Map a staged line to a product and/or toggle its flags.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__map_purgatory_line",
+      "policyDomain": "purgatory",
       "permission": "write"
     },
     {
@@ -5499,6 +7106,33 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__mark_failed_payment",
       "policyDomain": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "mark_inbound_shipment_arrived",
+      "description": "Mark an inbound shipment as arrived.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__mark_inbound_shipment_arrived",
+      "policyDomain": "inbound_shipments",
+      "permission": "write"
+    },
+    {
+      "name": "mark_inbound_shipment_in_transit",
+      "description": "Mark an inbound shipment as in transit.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__mark_inbound_shipment_in_transit",
+      "policyDomain": "inbound_shipments",
+      "permission": "write"
+    },
+    {
+      "name": "mark_return_received",
+      "description": "Mark a return as physically received at the warehouse.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__mark_return_received",
+      "policyDomain": "returns",
       "permission": "write"
     },
     {
@@ -5529,6 +7163,24 @@
       "permission": "read"
     },
     {
+      "name": "open_gl_period",
+      "description": "Open an accounting period so journal entries can be posted to it.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__open_gl_period",
+      "policyDomain": "general_ledger",
+      "permission": "write"
+    },
+    {
+      "name": "pair_print_station",
+      "description": "Pair a new print station. Returns a one-time pairing token.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__pair_print_station",
+      "policyDomain": "print-stations",
+      "permission": "write"
+    },
+    {
       "name": "pause_subscription",
       "description": "Pause a subscription (stops billing, can resume later). Requires --apply flag.",
       "serverName": "stateset-commerce",
@@ -5538,12 +7190,57 @@
       "permission": "write"
     },
     {
+      "name": "pick_up_next_print_job",
+      "description": "Pick up the next queued print job for a station.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__pick_up_next_print_job",
+      "policyDomain": "print-stations",
+      "permission": "write"
+    },
+    {
+      "name": "place_asset_in_service",
+      "description": "Place a fixed asset in service.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__place_asset_in_service",
+      "policyDomain": "fixed_assets",
+      "permission": "write"
+    },
+    {
+      "name": "post_depreciation",
+      "description": "Post depreciation for a period.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__post_depreciation",
+      "policyDomain": "fixed_assets",
+      "permission": "write"
+    },
+    {
       "name": "post_journal_entry",
       "description": "Post a journal entry.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__post_journal_entry",
       "policyDomain": "general_ledger",
+      "permission": "write"
+    },
+    {
+      "name": "post_purgatory_order",
+      "description": "Post a fully-resolved order out of purgatory.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__post_purgatory_order",
+      "policyDomain": "purgatory",
+      "permission": "write"
+    },
+    {
+      "name": "process_vendor_return",
+      "description": "Process a vendor return, optionally generating a vendor credit.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__process_vendor_return",
+      "policyDomain": "vendor-returns",
       "permission": "write"
     },
     {
@@ -5628,6 +7325,33 @@
       "permission": "write"
     },
     {
+      "name": "receive_inbound_shipment_line",
+      "description": "Receive a quantity against an inbound shipment line.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__receive_inbound_shipment_line",
+      "policyDomain": "inbound_shipments",
+      "permission": "write"
+    },
+    {
+      "name": "receive_transfer_order_line",
+      "description": "Receive a quantity against a transfer order line at the destination.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__receive_transfer_order_line",
+      "policyDomain": "transfer_orders",
+      "permission": "write"
+    },
+    {
+      "name": "recognize_revenue",
+      "description": "Recognize revenue for a contract period.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__recognize_revenue",
+      "policyDomain": "revenue_recognition",
+      "permission": "write"
+    },
+    {
       "name": "reconcile_payment_provider",
       "description": "Reconcile payment intents against settlement records to find pending settlement or over-settlement drift.",
       "serverName": "stateset-commerce",
@@ -5637,12 +7361,39 @@
       "permission": "read"
     },
     {
+      "name": "record_activity",
+      "description": "Record an activity log entry for a subject.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__record_activity",
+      "policyDomain": "activity_logs",
+      "permission": "write"
+    },
+    {
+      "name": "record_cycle_counts",
+      "description": "Record counted quantities for a cycle count.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__record_cycle_counts",
+      "policyDomain": "cycle_counts",
+      "permission": "write"
+    },
+    {
       "name": "record_invoice_payment",
       "description": "Record payment on an invoice.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__record_invoice_payment",
       "policyDomain": "invoices",
+      "permission": "write"
+    },
+    {
+      "name": "record_payment_obligation_payment",
+      "description": "Record a payment against an obligation.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__record_payment_obligation_payment",
+      "policyDomain": "payment-obligations",
       "permission": "write"
     },
     {
@@ -5670,6 +7421,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__refund_payment_intent",
       "policyDomain": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "refund_prepayment",
+      "description": "Refund the remaining balance of a prepayment, closing it.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__refund_prepayment",
+      "policyDomain": "prepayments",
       "permission": "write"
     },
     {
@@ -5790,6 +7550,15 @@
       "permission": "write"
     },
     {
+      "name": "remove_production_batch_work_order",
+      "description": "Remove a work order from a production batch.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__remove_production_batch_work_order",
+      "policyDomain": "production_batches",
+      "permission": "write"
+    },
+    {
       "name": "reserve_cart_inventory",
       "description": "Reserve inventory for all cart items.",
       "serverName": "stateset-commerce",
@@ -5808,6 +7577,15 @@
       "permission": "write"
     },
     {
+      "name": "resolve_integration_mapping",
+      "description": "Resolve the internal value for an external value.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__resolve_integration_mapping",
+      "policyDomain": "integration-mappings",
+      "permission": "read"
+    },
+    {
       "name": "resolve_payment_link",
       "description": "Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status.",
       "serverName": "stateset-commerce",
@@ -5817,12 +7595,57 @@
       "permission": "read"
     },
     {
+      "name": "resolve_scheduled_price",
+      "description": "Resolve the effective scheduled price for a product at an instant (defaults to now).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__resolve_scheduled_price",
+      "policyDomain": "price_schedules",
+      "permission": "read"
+    },
+    {
+      "name": "restore_database",
+      "description": "Restore a backup to a target path. Verifies the manifest checksum, refuses backups from a newer engine, and refuses to overwrite an existing database unless overwrite is set.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__restore_database",
+      "policyDomain": "maintenance",
+      "permission": "write"
+    },
+    {
       "name": "resume_subscription",
       "description": "Resume a paused subscription. Requires --apply flag.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__resume_subscription",
       "policyDomain": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "revalue_gl",
+      "description": "Revalue foreign-currency general ledger balances as of a date.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__revalue_gl",
+      "policyDomain": "general_ledger",
+      "permission": "write"
+    },
+    {
+      "name": "reverse_prepayment_application",
+      "description": "Reverse a previously-recorded prepayment application.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__reverse_prepayment_application",
+      "policyDomain": "prepayments",
+      "permission": "write"
+    },
+    {
+      "name": "reverse_vendor_credit_application",
+      "description": "Reverse a previously-recorded vendor credit application.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__reverse_vendor_credit_application",
+      "policyDomain": "vendor_credits",
       "permission": "write"
     },
     {
@@ -5844,6 +7667,24 @@
       "permission": "write"
     },
     {
+      "name": "revoke_print_station",
+      "description": "Revoke a paired print station.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__revoke_print_station",
+      "policyDomain": "print-stations",
+      "permission": "write"
+    },
+    {
+      "name": "search_products",
+      "description": "Search active products by name or description.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__search_products",
+      "policyDomain": "products",
+      "permission": "read"
+    },
+    {
       "name": "send_invoice",
       "description": "Send an invoice to the customer.",
       "serverName": "stateset-commerce",
@@ -5862,6 +7703,15 @@
       "permission": "write"
     },
     {
+      "name": "set_active_search_config",
+      "description": "Make a search configuration active, deactivating the current one.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_active_search_config",
+      "policyDomain": "search-config",
+      "permission": "write"
+    },
+    {
       "name": "set_base_currency",
       "description": "Set the store's base currency.",
       "serverName": "stateset-commerce",
@@ -5869,6 +7719,15 @@
       "qualifiedName": "mcp__stateset-commerce__set_base_currency",
       "policyDomain": "currency",
       "permission": "admin"
+    },
+    {
+      "name": "set_base_unit_of_measure",
+      "description": "Mark a unit of measure as the base unit for its class.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_base_unit_of_measure",
+      "policyDomain": "units-of-measure",
+      "permission": "write"
     },
     {
       "name": "set_cart_billing_address",
@@ -5916,6 +7775,33 @@
       "permission": "write"
     },
     {
+      "name": "set_channel_lock",
+      "description": "Lock or unlock a sales channel for API writes.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_channel_lock",
+      "policyDomain": "channels",
+      "permission": "write"
+    },
+    {
+      "name": "set_default_customer_address",
+      "description": "Set a customer address as the default for shipping, billing, or both.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_default_customer_address",
+      "policyDomain": "customers",
+      "permission": "write"
+    },
+    {
+      "name": "set_edi_document_status",
+      "description": "Update the status of an EDI document.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_edi_document_status",
+      "policyDomain": "edi_documents",
+      "permission": "write"
+    },
+    {
       "name": "set_exchange_rate",
       "description": "Set or update an exchange rate between two currencies.",
       "serverName": "stateset-commerce",
@@ -5940,6 +7826,33 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__set_item_cost",
       "policyDomain": "cost_accounting",
+      "permission": "write"
+    },
+    {
+      "name": "set_payment_obligation_status",
+      "description": "Set the status of a payment obligation.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_payment_obligation_status",
+      "policyDomain": "payment-obligations",
+      "permission": "write"
+    },
+    {
+      "name": "set_price_level_entry",
+      "description": "Upsert a per-product fixed price entry on a price level.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_price_level_entry",
+      "policyDomain": "price_levels",
+      "permission": "write"
+    },
+    {
+      "name": "set_price_schedule_entry",
+      "description": "Upsert a per-product scheduled price on a price schedule.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_price_schedule_entry",
+      "policyDomain": "price_schedules",
       "permission": "write"
     },
     {
@@ -5970,6 +7883,15 @@
       "permission": "write"
     },
     {
+      "name": "ship_transfer_order",
+      "description": "Mark a transfer order as shipped from the source warehouse.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__ship_transfer_order",
+      "policyDomain": "transfer_orders",
+      "permission": "write"
+    },
+    {
       "name": "sign_wasm_connector_attestation",
       "description": "Sign a marketplace connector attestation using local signing key material for trustable install/execute verification.",
       "serverName": "stateset-commerce",
@@ -5995,6 +7917,15 @@
       "qualifiedName": "mcp__stateset-commerce__soc2_evidence",
       "policyDomain": "compliance",
       "permission": "admin"
+    },
+    {
+      "name": "start_cycle_count",
+      "description": "Start a cycle count.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__start_cycle_count",
+      "policyDomain": "cycle_counts",
+      "permission": "write"
     },
     {
       "name": "start_inspection",
@@ -6039,6 +7970,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__submit_purchase_order",
       "policyDomain": "suppliers",
+      "permission": "write"
+    },
+    {
+      "name": "submit_vendor_return",
+      "description": "Submit a draft vendor return to the supplier.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__submit_vendor_return",
+      "policyDomain": "vendor-returns",
       "permission": "write"
     },
     {
@@ -6186,6 +8126,15 @@
       "permission": "read"
     },
     {
+      "name": "three_way_match_bill",
+      "description": "Run a three-way match (bill vs purchase order vs receipt) for a bill.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__three_way_match_bill",
+      "policyDomain": "accounts_payable",
+      "permission": "read"
+    },
+    {
       "name": "track_shipping_label",
       "description": "Track a shipping label by label ID or tracking number.",
       "serverName": "stateset-commerce",
@@ -6285,6 +8234,24 @@
       "permission": "write"
     },
     {
+      "name": "update_channel",
+      "description": "Update a sales channel.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_channel",
+      "policyDomain": "channels",
+      "permission": "write"
+    },
+    {
+      "name": "update_company",
+      "description": "Update a B2B company.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_company",
+      "policyDomain": "companies",
+      "permission": "write"
+    },
+    {
       "name": "update_currency_settings",
       "description": "Update store currency settings including enabled currencies and rounding behavior.",
       "serverName": "stateset-commerce",
@@ -6312,6 +8279,24 @@
       "permission": "write"
     },
     {
+      "name": "update_customer",
+      "description": "Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_customer",
+      "policyDomain": "customers",
+      "permission": "write"
+    },
+    {
+      "name": "update_customer_address",
+      "description": "Update an existing customer address.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_customer_address",
+      "policyDomain": "customers",
+      "permission": "write"
+    },
+    {
       "name": "update_fraud_rule",
       "description": "Update a fraud detection rule.",
       "serverName": "stateset-commerce",
@@ -6319,6 +8304,24 @@
       "qualifiedName": "mcp__stateset-commerce__update_fraud_rule",
       "policyDomain": "fraud",
       "permission": "admin"
+    },
+    {
+      "name": "update_integration_field_mapping",
+      "description": "Update an integration field mapping.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_integration_field_mapping",
+      "policyDomain": "integration-field-mappings",
+      "permission": "write"
+    },
+    {
+      "name": "update_integration_mapping",
+      "description": "Update an integration mapping.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_integration_mapping",
+      "policyDomain": "integration-mappings",
+      "permission": "write"
     },
     {
       "name": "update_order_status",
@@ -6330,12 +8333,66 @@
       "permission": "write"
     },
     {
+      "name": "update_price_level",
+      "description": "Update a price level.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_price_level",
+      "policyDomain": "price_levels",
+      "permission": "write"
+    },
+    {
+      "name": "update_price_schedule",
+      "description": "Update a price schedule.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_price_schedule",
+      "policyDomain": "price_schedules",
+      "permission": "write"
+    },
+    {
+      "name": "update_product",
+      "description": "Update an existing product. Only the fields provided are changed (name, slug, description, status).",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_product",
+      "policyDomain": "products",
+      "permission": "write"
+    },
+    {
+      "name": "update_product_variant",
+      "description": "Update an existing product variant.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_product_variant",
+      "policyDomain": "products",
+      "permission": "write"
+    },
+    {
+      "name": "update_production_batch",
+      "description": "Update a production batch.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_production_batch",
+      "policyDomain": "production_batches",
+      "permission": "write"
+    },
+    {
       "name": "update_promotion",
       "description": "Update an existing promotion. Requires --apply flag.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_promotion",
       "policyDomain": "promotions",
+      "permission": "write"
+    },
+    {
+      "name": "update_search_config",
+      "description": "Update a search configuration. Collection fields replace the existing values.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_search_config",
+      "policyDomain": "search-config",
       "permission": "write"
     },
     {
@@ -6372,6 +8429,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_subscription_plan",
       "policyDomain": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "update_supplier_sku",
+      "description": "Update a supplier SKU.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_supplier_sku",
+      "policyDomain": "supplier_skus",
       "permission": "write"
     },
     {
@@ -6634,6 +8700,15 @@
       "qualifiedName": "mcp__stateset-commerce__void_tax_transaction",
       "policyDomain": "tax",
       "permission": "delete"
+    },
+    {
+      "name": "write_off_fixed_asset",
+      "description": "Write off a fixed asset.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__write_off_fixed_asset",
+      "policyDomain": "fixed_assets",
+      "permission": "write"
     },
     {
       "name": "x402_circuit_status",

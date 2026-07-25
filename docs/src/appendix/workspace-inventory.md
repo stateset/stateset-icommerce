@@ -13,7 +13,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.7.0` |
+| Workspace version | `1.22.0` |
 | Workspace members | 30 |
 | Default members | 19 |
 | Rust crates in workspace | 22 |
@@ -47,7 +47,7 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 | `stateset-embedded` | 10 |
 | `stateset-primitives` | 6 |
 | `stateset-db` | 4 |
-| `stateset-observability` | 2 |
+| `stateset-observability` | 3 |
 | `stateset-pricing` | 2 |
 | `stateset-sdk` | 2 |
 | `stateset-a2a` | 1 |
@@ -80,8 +80,8 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 101 |
-| Tool modules | 67 |
+| Top-level source groups | 102 |
+| Tool modules | 93 |
 | A2A modules | 44 |
 | JS dependencies | 10 |
 | Optional integrations | 15 |
@@ -90,13 +90,14 @@ workspace membership because they require host runtimes or headers.
 
 | Group | Files |
 | --- | --- |
-| `tools` | 67 |
+| `tools` | 93 |
 | `commands` | 62 |
 | `a2a` | 44 |
 | `channels` | 29 |
 | `adapters` | 20 |
 | `mcp` | 19 |
 | `sync` | 18 |
+| `harness` | 14 |
 | `utils` | 14 |
 | `chains` | 9 |
 | `x402` | 9 |
@@ -113,6 +114,7 @@ workspace membership because they require host runtimes or headers.
 | `voice` | 3 |
 | `workflows` | 3 |
 | `approvals` | 2 |
+| `coverage` | 2 |
 | `webhooks` | 2 |
 | `whatsapp` | 2 |
 | `agent-catalog.js` | 1 |
@@ -138,7 +140,6 @@ workspace membership because they require host runtimes or headers.
 | `context-guard.js` | 1 |
 | `context.js` | 1 |
 | `conversation-history.js` | 1 |
-| `coverage` | 1 |
 | `credentials.js` | 1 |
 | `database.js` | 1 |
 | `discord` | 1 |
