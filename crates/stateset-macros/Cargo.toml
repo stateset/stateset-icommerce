@@ -1,6 +1,7 @@
 [package]
 name = "stateset-macros"
 description = "Procedural macros for StateSet iCommerce domain model generation"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

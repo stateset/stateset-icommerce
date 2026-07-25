@@ -1,42 +1,33 @@
 # stateset-sync
 
-Event-sourcing sync engine for StateSet iCommerce.
+[![crates.io](https://img.shields.io/crates/v/stateset-sync.svg)](https://crates.io/crates/stateset-sync)
+[![docs.rs](https://docs.rs/stateset-sync/badge.svg)](https://docs.rs/stateset-sync)
 
-Provides the core sync primitives for managing network state between local
-SQLite stores and the remote VES sequencer:
+Event-sourcing sync engine for StateSet iCommerce — the primitives for reconciling a
+local store with a remote VES sequencer.
 
-- **Outbox** -- append-only log for provisional local mutations before sequencing
-- **EventBuffer** -- bounded FIFO buffer for pulled remote events
-- **ConflictResolver** -- pluggable strategies (`RemoteWins`, `LocalWins`, `LastWriterWins`)
-- **Transport** -- async trait abstracting push/pull over any network protocol
-- **SequencerHttpTransport** -- concrete Rust HTTP transport for the documented sequencer REST API
-- **SyncEngine** -- orchestrator tying outbox, buffer, conflict resolution, and transport together
+Local writes land in an append-only outbox immediately, so the engine keeps working
+offline. Canonical ordering comes from the sequencer, which acknowledges each event
+with a remote sequence number and a receipt handle. That split — local FIFO position
+versus canonical order — is the crate's central idea, and conflating the two is how
+sync engines silently lose or duplicate events.
 
-`SyncEvent` carries the core VES envelope metadata needed for push/pull parity, including `command_id`, `base_version`, `source_agent_id`, and `agent_key_id`. The HTTP transport forwards those fields when present and only falls back to its configured agent identity when a local event does not specify them.
+## Components
 
-Authority contract:
+- **`Outbox`** — append-only log for provisional local mutations before sequencing
+- **`EventBuffer`** — bounded FIFO buffer for pulled remote events
+- **`ConflictResolver`** — pluggable strategies (`RemoteWins`, `LocalWins`, `LastWriterWins`)
+- **`Transport`** — async trait abstracting push/pull over any protocol
+- **`SequencerHttpTransport`** — concrete HTTP transport for the sequencer REST API
+- **`SyncEngine`** — orchestrator tying outbox, buffer, conflict resolution, and transport together
+- **`attestation` / `commitment` / `convergence`** — verifiable settlement proofs anchored in remote commitments
 
-- Local outbox sequence numbers are only FIFO positions inside one agent's pending queue.
-- Canonical cross-agent ordering comes from the sequencer and must be treated separately.
-- Successful pushes can return per-event acknowledgements mapping local event ids to canonical remote sequence numbers.
-- When acknowledgements are present, the engine removes exactly the acknowledged local events instead of draining by prefix count.
-- Explicit non-retryable rejections move those events out of the outbox into a dead-letter queue; retryable rejections stay pending.
-- When per-event acknowledgements are available, `stateset-sync` retains a bounded confirmation log mapping local event ids to canonical remote sequences and receipt handles.
-- Pull pagination must keep the observed canonical remote sequence separate from any server continuation cursor for the next request.
+`SyncEvent` carries the VES envelope metadata needed for push/pull parity —
+`command_id`, `base_version`, `source_agent_id`, `agent_key_id`. The HTTP transport
+forwards those when present and only falls back to its configured agent identity when
+a local event doesn't specify them.
 
-Durability contract:
-
-- `outbox_path` persists pending local events.
-- `state_path` persists remote cursor state, latest remote head metadata (`state_root`, `last_commitment_id`), highest acknowledged remote sequence, any retained push confirmations, any retained dead-letter entries, and any in-progress pull continuation cursor.
-- If `state_path` is omitted but `outbox_path` is present, the engine stores a sibling snapshot next to the outbox file.
-- `SyncEngine::dead_letters()`, `SyncEngine::dead_letter_for_event`, `SyncEngine::dead_letters_for_command`, `SyncEngine::dead_letters_for_entity`, `SyncEngine::latest_dead_letter_for_command`, and `SyncEngine::latest_dead_letter_for_entity` expose retained dead-letter entries for operator inspection.
-- `SyncEngine::requeue_dead_letter` and `SyncEngine::discard_dead_letter` let operator workflows resolve retained dead-letter entries explicitly.
-- `confirmation_capacity` bounds how many sequencer confirmations are retained durably for inspection after outbox drain.
-- `SyncEngine::confirmations()` and `SyncEngine::drain_confirmations()` expose the retained local-to-canonical mapping.
-- `SyncEngine::confirmation_for_event`, `SyncEngine::confirmation_for_remote_sequence`, `SyncEngine::confirmations_for_receipt`, `SyncEngine::confirmations_for_command`, `SyncEngine::confirmations_for_entity`, `SyncEngine::latest_confirmation_for_command`, and `SyncEngine::latest_confirmation_for_entity` provide direct lookup over the retained confirmation log.
-- `SyncEngine::status()` exposes `caught_up`, `next_pull_cursor`, and `retained_confirmations` for pagination-aware health checks.
-
-Rust transport example:
+## Usage
 
 ```rust
 use stateset_sync::{SequencerHttpTransport, SyncConfig, SyncEngine};
@@ -60,3 +51,44 @@ let engine = SyncEngine::new(config)?;
 # let _ = engine;
 # Ok::<(), stateset_sync::SyncError>(())
 ```
+
+## Authority Contract
+
+- Local outbox sequence numbers are only FIFO positions inside one agent's pending
+  queue. Canonical cross-agent ordering comes from the sequencer and is tracked
+  separately.
+- Successful pushes may return per-event acknowledgements mapping local event ids to
+  canonical remote sequence numbers. When acknowledgements are present, the engine
+  removes exactly the acknowledged events instead of draining by prefix count.
+- Explicit non-retryable rejections move events into a dead-letter queue; retryable
+  rejections stay pending.
+- Pull pagination keeps the observed canonical remote sequence separate from the
+  server continuation cursor for the next request.
+
+## Durability Contract
+
+- `outbox_path` persists pending local events.
+- `state_path` persists remote cursor state, latest remote head metadata
+  (`state_root`, `last_commitment_id`), the highest acknowledged remote sequence,
+  retained push confirmations and dead-letter entries, and any in-progress pull
+  cursor. If omitted while `outbox_path` is set, a sibling snapshot is written next to
+  the outbox file.
+- `confirmation_capacity` bounds how many sequencer confirmations are retained for
+  inspection after the outbox drains.
+
+`SyncEngine` exposes lookup and operator surfaces over both logs — confirmations and
+dead letters can be queried by event id, remote sequence, receipt handle, command, or
+entity, then requeued or discarded — and `status()` reports `caught_up`,
+`next_pull_cursor`, and `retained_confirmations` for pagination-aware health checks.
+See the [API docs](https://docs.rs/stateset-sync) for the full method list.
+
+## Part of StateSet iCommerce
+
+Uses [`stateset-crypto`](https://crates.io/crates/stateset-crypto) for event signing
+and attestation. Available through
+[`stateset-sdk`](https://crates.io/crates/stateset-sdk)'s `sync` feature, which wraps
+it in a higher-level `SyncRuntime`.
+
+## License
+
+MIT OR Apache-2.0

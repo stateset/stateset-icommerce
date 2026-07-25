@@ -125,3 +125,9 @@ pub fn derive_generate_dto(input: TokenStream) -> TokenStream {
 pub fn derive_json_schema(input: TokenStream) -> TokenStream {
     json_schema::derive(input.into()).into()
 }
+
+/// Compiles the code examples in `README.md` as doctests, so the crates.io
+/// landing page can never drift from the real API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

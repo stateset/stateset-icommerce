@@ -1,6 +1,7 @@
 [package]
 name = "stateset-sync"
 description = "Event-sourcing sync engine for StateSet iCommerce — outbox, conflict resolution, and transport abstraction"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

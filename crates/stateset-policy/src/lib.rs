@@ -110,3 +110,9 @@ pub use loader::*;
 pub use operator::*;
 pub use policy_set::*;
 pub use rule::*;
+
+/// Compiles the code examples in `README.md` as doctests, so the crates.io
+/// landing page can never drift from the real API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

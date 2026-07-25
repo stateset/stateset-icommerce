@@ -81,3 +81,9 @@ pub use tax::{
     TaxAppliesTo, TaxContext, TaxLine, TaxResult, TaxRule, TaxableItem, calculate_tax,
     try_calculate_tax,
 };
+
+/// Compiles the code examples in `README.md` as doctests, so the crates.io
+/// landing page can never drift from the real API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

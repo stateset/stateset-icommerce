@@ -1,6 +1,7 @@
 [package]
 name = "stateset-jobs"
 description = "Background job scheduler for StateSet iCommerce — cron, interval, and event-driven job execution with retry and backoff"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

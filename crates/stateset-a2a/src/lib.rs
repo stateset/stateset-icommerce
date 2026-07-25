@@ -77,3 +77,9 @@ pub mod subscriptions;
 
 // Re-export top-level error type for convenience.
 pub use error::{A2AError, A2AResult};
+
+/// Compiles the code examples in `README.md` as doctests, so the crates.io
+/// landing page can never drift from the real API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

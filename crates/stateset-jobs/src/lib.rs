@@ -83,3 +83,9 @@ pub use queue::JobQueue;
 pub use scheduler::{Scheduler, SchedulerStatus, TickAction};
 pub use state::{JobInstance, JobOutput, JobStatus};
 pub use store::{FileJobStore, InMemoryJobStore, JobStore};
+
+/// Compiles the code examples in `README.md` as doctests, so the crates.io
+/// landing page can never drift from the real API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

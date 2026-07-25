@@ -8,6 +8,9 @@ homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "VES v1.0 cryptographic operations for StateSet Commerce"
+readme = "README.md"
+keywords = ["cryptography", "ed25519", "post-quantum", "jcs", "merkle"]
+categories = ["cryptography"]
 
 [lints]
 workspace = true

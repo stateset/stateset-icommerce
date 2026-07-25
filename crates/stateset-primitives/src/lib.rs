@@ -61,3 +61,9 @@ mod sku;
 pub use id::*;
 pub use money::*;
 pub use sku::*;
+
+/// Compiles the code examples in `README.md` as doctests, so the crates.io
+/// landing page can never drift from the real API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

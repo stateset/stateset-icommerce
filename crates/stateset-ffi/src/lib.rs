@@ -72,3 +72,9 @@ pub use types::{
     FfiCustomer, FfiInventoryLevel, FfiMoney, FfiOrder, FfiOrderStatus, FfiProduct, FfiUuid,
 };
 pub use version::ABI_VERSION;
+
+/// Compiles the code examples in `README.md` as doctests, so the crates.io
+/// landing page can never drift from the real API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

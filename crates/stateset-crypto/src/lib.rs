@@ -55,3 +55,9 @@ pub mod domain {
 
 /// 32 bytes of zeros -- used for plaintext payloads in cipher hash field
 pub const ZERO_HASH: [u8; 32] = [0u8; 32];
+
+/// Compiles the code examples in `README.md` as doctests, so the crates.io
+/// landing page can never drift from the real API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

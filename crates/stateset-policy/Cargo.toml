@@ -1,6 +1,7 @@
 [package]
 name = "stateset-policy"
 description = "Declarative policy engine for StateSet iCommerce — conditions, rules, deny-overrides, and explainable denials"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

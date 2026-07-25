@@ -1,5 +1,8 @@
 # stateset-observability
 
+[![crates.io](https://img.shields.io/crates/v/stateset-observability.svg)](https://crates.io/crates/stateset-observability)
+[![docs.rs](https://docs.rs/stateset-observability/badge.svg)](https://docs.rs/stateset-observability)
+
 Observability primitives for StateSet iCommerce:
 
 - Structured tracing bootstrap (`init_tracing`)
@@ -60,6 +63,21 @@ assert!(report.requests >= 2);
   - `outcome`
 
 Use `normalize_name`, `operation_span_name`, and `operation_metric_label` to keep cardinality stable.
+
+## Feature Flags
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `otel` | OpenTelemetry OTLP export via `tracing-opentelemetry` | No |
+
+The tracing bootstrap is deliberately lightweight and imposes no backend on
+downstream applications; counters are `AtomicU64` and safe to clone across threads.
+
+## Part of StateSet iCommerce
+
+Wired into [`stateset-embedded`](https://crates.io/crates/stateset-embedded) so engine
+operations are instrumented by default. Part of the
+[StateSet iCommerce](https://github.com/stateset/stateset-icommerce) engine.
 
 ## License
 

@@ -1,6 +1,7 @@
 [package]
 name = "stateset-sdk"
 description = "Rust SDK facade for StateSet iCommerce with feature-gated re-exports"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

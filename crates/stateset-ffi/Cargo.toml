@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["ffi", "commerce", "c-api", "bindings", "interop"]
+categories = ["external-ffi-bindings"]
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
