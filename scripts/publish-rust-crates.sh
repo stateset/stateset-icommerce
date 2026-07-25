@@ -20,25 +20,30 @@ if [[ "$MODE" == "--publish" && -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
   exit 1
 fi
 
-# Publish order is dependency-aware to avoid crates.io index resolution failures.
+# Publish order is dependency-aware to avoid crates.io index resolution failures:
+# a crate may only appear after every workspace crate it depends on. This is the
+# topological order of the intra-workspace dependency graph (leaves first).
+#
+# Verify after adding a dependency edge with:
+#   cargo metadata --locked --format-version 1 --no-deps
 CRATES=(
   stateset-primitives
-  stateset-core
   stateset-crypto
   stateset-observability
   stateset-macros
   stateset-policy
-  stateset-db
   stateset-pricing
   stateset-a2a
   stateset-sync
   stateset-jobs
   stateset-migrations
   stateset-authz
+  stateset-core
+  stateset-db
   stateset-embedded
   stateset-http
-  stateset-ffi
   stateset-sdk
+  stateset-ffi
 )
 
 run_dry_run_checks() {
