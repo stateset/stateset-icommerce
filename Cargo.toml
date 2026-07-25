@@ -205,7 +205,11 @@ stateset-db = { path = "crates/stateset-db", version = "1.22.0" }
 stateset-embedded = { path = "crates/stateset-embedded", version = "1.22.0" }
 stateset-observability = { path = "crates/stateset-observability", version = "1.22.0" }
 stateset-crypto = { path = "crates/stateset-crypto", version = "1.22.0" }
-stateset-test-utils = { path = "crates/stateset-test-utils", version = "1.22.0" }
+# Intentionally version-less: stateset-test-utils is `publish = false`, and cargo
+# only strips a path dev-dependency when it carries no version requirement. With a
+# version here, packaging any publishable crate that dev-depends on it fails with
+# "no matching package named `stateset-test-utils` found".
+stateset-test-utils = { path = "crates/stateset-test-utils" }
 stateset-macros = { path = "crates/stateset-macros", version = "1.22.0" }
 stateset-policy = { path = "crates/stateset-policy", version = "1.22.0" }
 stateset-a2a = { path = "crates/stateset-a2a", version = "1.22.0" }
