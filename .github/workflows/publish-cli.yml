@@ -175,18 +175,16 @@ jobs:
           path: bindings/node/artifacts
           pattern: bindings-*
 
-      - name: Move artifacts
+      - name: Move artifacts into platform packages
         working-directory: bindings/node
-        # This package ships every platform's .node flat inside ONE tarball
-        # (`files: *.node`; index.js probes __dirname) — there are no npm/
-        # per-platform subpackages, so `napi artifacts` (which populates them)
-        # is the wrong tool here and fails with ENOENT. Flatten the downloaded
-        # artifact directories into the package root instead.
+        # Per-platform distribution: napi artifacts routes each downloaded
+        # .node into its npm/<platform>/ subpackage. The main package ships no
+        # binaries and declares the platform packages as optionalDependencies,
+        # so npm installs exactly one (~20-26 MB) instead of a 184 MB bundle.
         run: |
           npm ci
-          find artifacts -name '*.node' -exec cp -v {} . \;
-          rm -rf artifacts
-          ls -l -- *.node
+          npx napi artifacts
+          ls -l npm/*/
 
       # check:package imports @stateset/embedded/agent-toolkit, whose published
       # @stateset/cli peer is not on npm yet at publish time, so it falls back
@@ -200,17 +198,15 @@ jobs:
         run: npm run check:package
 
       - name: Generate release checksums
-        # The .node files are flattened into bindings/node (the fat-package
-        # layout npm pack consumes); the artifacts/ staging dir is gone.
         run: |
           cd bindings/node
-          sha256sum -- *.node > release-checksums.txt
+          sha256sum -- npm/*/*.node > release-checksums.txt
 
       - name: Attest artifacts
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
-            bindings/node/*.node
+            bindings/node/npm/*/*.node
             bindings/node/release-checksums.txt
 
       - name: Publish checksums
