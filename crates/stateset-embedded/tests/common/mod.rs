@@ -18,7 +18,7 @@ use stateset_embedded::AsyncGeneralLedger;
 /// period_number)`, the unique-constraint conflict is resolved by looking the
 /// period up by date instead. `open_period` is a no-op on an already-open
 /// period, so calling it unconditionally is safe.
-pub async fn ensure_open_period(gl: &AsyncGeneralLedger, input: CreateGlPeriod) -> GlPeriod {
+pub(crate) async fn ensure_open_period(gl: &AsyncGeneralLedger, input: CreateGlPeriod) -> GlPeriod {
     let probe_date = input.start_date;
     let period = match gl.create_period(input).await {
         Ok(p) => p,
@@ -32,7 +32,11 @@ pub async fn ensure_open_period(gl: &AsyncGeneralLedger, input: CreateGlPeriod) 
 }
 
 /// Convenience wrapper: build the `CreateGlPeriod` from parts.
-pub async fn ensure_open_month(gl: &AsyncGeneralLedger, fiscal_year: i32, month: u32) -> GlPeriod {
+pub(crate) async fn ensure_open_month(
+    gl: &AsyncGeneralLedger,
+    fiscal_year: i32,
+    month: u32,
+) -> GlPeriod {
     let start = NaiveDate::from_ymd_opt(fiscal_year, month, 1).expect("valid month start");
     let end = if month == 12 {
         NaiveDate::from_ymd_opt(fiscal_year + 1, 1, 1)

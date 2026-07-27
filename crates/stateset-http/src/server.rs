@@ -740,7 +740,7 @@ impl ServerBuilder {
     /// a resource/action pair bypass authorization (authentication still
     /// applies). When strict mode is enabled, such requests are denied with
     /// HTTP 403 instead. Only takes effect when authorization is configured
-    /// via [`Self::with_authz`].
+    /// via [`Self::with_authz_engine`].
     #[must_use]
     pub const fn with_strict_authz(mut self) -> Self {
         self.authz_strict = true;

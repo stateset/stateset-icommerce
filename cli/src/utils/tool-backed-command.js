@@ -127,11 +127,23 @@ export function createToolBackedCommand(domain, tools) {
     return result;
   }
 
+  // Registry metadata contract: { name, aliases, actions: { action: { args, description } } }
+  const metadataActions = {};
+  for (const [action, tool] of [...actions.entries()].sort()) {
+    const keys = Object.keys(tool.inputSchema || {});
+    metadataActions[action] = {
+      args: keys.length > 0 ? ['[key=value ...]'] : [],
+      description: tool.description,
+    };
+  }
+
   return {
     execute,
     metadata: {
+      name: domain,
+      aliases: [],
       description: `${domain} operations (tool-backed)`,
-      actions: [...actions.keys()].sort(),
+      actions: metadataActions,
     },
     // Same shape as the hand-written tool-backed modules (a2a, x402, ...):
     // lets the tool-backed coverage test assert every tool maps exactly once.

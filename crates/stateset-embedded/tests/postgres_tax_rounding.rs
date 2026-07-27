@@ -24,19 +24,26 @@ async fn postgres_calculate_tax_honors_configured_rounding_mode() {
     let commerce =
         AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
 
-    // Unique jurisdiction per run so repeated runs against the same database do
-    // not collide. No country-level "ZZ" jurisdiction exists, so only this
-    // state rate applies.
+    // Unique jurisdiction AND country per run: other parity binaries create
+    // country-level "ZZ" rates on the shared database (see
+    // postgres_tax_jurisdiction_order), which would stack onto this state rate
+    // and double the tax. A per-run country keeps exactly one rate applicable.
     let unique = uuid::Uuid::new_v4().to_string();
     let state = format!("R{}", &unique[..6]).to_uppercase();
+    let country: String = unique
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .take(2)
+        .map(|c| char::from(b'G' + (c.to_digit(16).unwrap() as u8)))
+        .collect();
     let jur = commerce
         .tax()
         .create_jurisdiction(CreateTaxJurisdiction {
             parent_id: None,
             name: format!("Test State {state}"),
-            code: format!("ZZ-{state}"),
+            code: format!("{country}-{state}"),
             level: JurisdictionLevel::State,
-            country_code: "ZZ".into(),
+            country_code: country.clone(),
             state_code: Some(state.clone()),
             county: None,
             city: None,
@@ -84,7 +91,7 @@ async fn postgres_calculate_tax_honors_configured_rounding_mode() {
             city: None,
             state: Some(state),
             postal_code: None,
-            country: "ZZ".into(),
+            country: country.clone(),
         },
         billing_address: None,
         customer_id: None,

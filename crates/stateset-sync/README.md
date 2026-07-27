@@ -29,7 +29,7 @@ a local event doesn't specify them.
 
 ## Usage
 
-```rust
+```rust,no_run
 use stateset_sync::{SequencerHttpTransport, SyncConfig, SyncEngine};
 
 let config = SyncConfig::new(

@@ -61,7 +61,7 @@
 //! - **The long tail of ~50 other domains** (carts, subscriptions, promotions,
 //!   loyalty, quality, lots, serials, EDI, fixed assets, revenue recognition,
 //!   …). They are exportable in principle; the registry is designed to be
-//!   extended one [`DomainSpec`] at a time.
+//!   extended one `DomainSpec` at a time.
 //!
 //! # Import semantics and the ID caveat
 //!
@@ -69,7 +69,7 @@
 //! every invariant, validation rule and derived-field computation the engine
 //! enforces is applied. The consequence is that **IDs are not preserved**:
 //! `CreateCustomer` and friends have no `id` field, and the repository mints a
-//! new one. Import therefore maintains an [`IdRemap`] and rewrites foreign keys
+//! new one. Import therefore maintains an `IdRemap` and rewrites foreign keys
 //! as it goes (customer → order, product → order item, supplier → purchase
 //! order, GL account → journal entry line), inserting domains in dependency
 //! order.

@@ -91,7 +91,7 @@ pub fn api_router_with_body_limit(max_body_bytes: usize) -> Router<AppState> {
     api_router_with_idempotency(max_body_bytes, IdempotencyLayer::new())
 }
 
-/// Build the full API router with an explicit [`IdempotencyLayer`].
+/// Build the full API router with an explicit `IdempotencyLayer`.
 ///
 /// Used by [`crate::server::ServerBuilder`] to wire a durable, database-backed
 /// idempotency store and the required-key (HTTP 428) gate; the plain
