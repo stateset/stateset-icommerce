@@ -17,7 +17,9 @@ This project follows Keep a Changelog and Semantic Versioning.
   customer and manage its address book, search products and manage
   variants and lifecycle (activate/archive), and run the full RMA
   return workflow (mark received, complete, cancel, add tracking, list
-  by order/customer/pending). 923 tools across 87 domains.
+  by order/customer/pending). See the generated
+  [tool inventory](docs/src/appendix/mcp-tool-inventory.md) for current
+  tool and domain counts.
 
 ### Notes
 - `update_return` is intentionally not exposed as a single tool (its
@@ -83,6 +85,31 @@ This project follows Keep a Changelog and Semantic Versioning.
   payments, and bills are export-only (their state-machine history
   cannot be replayed through a single `create`). Coverage is
   documented in the module docs.
+
+## [1.20.0] - 2026-07-21
+
+*Backfilled 2026-07-26 — this release shipped (tag `v1.20.0`, commit
+`077f2ea3`) but its changelog entry was never written.*
+
+### Added
+- **Backup, restore, and portable export/import — the recovery layer.**
+  `VACUUM INTO` snapshots with a verified checksum + schema manifest;
+  restore refuses schema-too-new, non-empty targets, and the live
+  database, swapping atomically. Versioned JSON `export_all` /
+  `import_all` proven by an export → import → re-export round trip.
+  Exposed via the embedded accessor, the Node binding, and 5 MCP tools.
+- **Admin Operations console**: purchasing, warehouse, and manufacturing
+  sections (937 admin tests).
+- **Python binding parity** for all 16 domains the Node binding gained in
+  this line (pytest 103 → 138).
+- New CLI skills: commerce-finance, commerce-warehouse, commerce-edi.
+
+### Changed
+- Two fail-closed drift gates with demonstrated failures:
+  capability-matrix-vs-store-files (Rust) and
+  binding-vs-embedded-accessors (Node).
+- SQLite migration-count test derives from the registry instead of a
+  hardcoded number that had gone stale three times.
 
 ## [1.19.0] - 2026-07-21
 

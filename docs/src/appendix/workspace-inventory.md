@@ -91,14 +91,14 @@ workspace membership because they require host runtimes or headers.
 | Group | Files |
 | --- | --- |
 | `tools` | 93 |
-| `commands` | 62 |
+| `commands` | 88 |
 | `a2a` | 44 |
 | `channels` | 29 |
 | `adapters` | 20 |
 | `mcp` | 19 |
 | `sync` | 18 |
+| `utils` | 15 |
 | `harness` | 14 |
-| `utils` | 14 |
 | `chains` | 9 |
 | `x402` | 9 |
 | `knowledge` | 6 |
