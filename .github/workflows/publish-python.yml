@@ -55,10 +55,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-24.04-arm covers linux-aarch64; macos-13 is the last Intel
-        # runner and covers darwin-x64. Python 3.8 is EOL (Oct 2024) — users
-        # there fall back to the sdist.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-13, windows-latest]
+        # ubuntu-24.04-arm covers linux-aarch64. Intel macOS wheels are
+        # cross-compiled from the arm64 runner below (macos-13 Intel runners
+        # queue indefinitely). Python 3.8 is EOL (Oct 2024) — users there fall
+        # back to the sdist.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
@@ -88,6 +89,15 @@ jobs:
       - name: Build wheel
         working-directory: bindings/python
         run: maturin build --release --compatibility pypi -o dist
+
+      # darwin-x64 wheels, cross-compiled: Apple's toolchain links fat-capable
+      # objects from arm64 hosts, and maturin handles the target plumbing.
+      - name: Build Intel macOS wheel (cross)
+        if: matrix.os == 'macos-latest'
+        working-directory: bindings/python
+        run: |
+          rustup target add x86_64-apple-darwin
+          maturin build --release --compatibility pypi -o dist --target x86_64-apple-darwin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
