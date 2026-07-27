@@ -75,6 +75,9 @@ jobs:
             target: aarch64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
+    # musl targets build inside the napi-rs alpine image (matrix.docker), which
+    # ships node + rustup with musl toolchains. Empty for the other targets.
+    container: ${{ matrix.docker }}
     name: Build - ${{ matrix.target }}
 
     steps:
@@ -83,15 +86,24 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
+        if: ${{ !matrix.docker }}
         uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
 
       - name: Install Rust
+        if: ${{ !matrix.docker }}
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
+      # rust-toolchain.toml pins the repo toolchain, so cargo uses THAT toolchain,
+      # not the one the action installed targets into. Add the target std to
+      # whatever toolchain is active — this is what failed every cross build
+      # with `can't find crate for core`.
+      - name: Add target to the active (pinned) toolchain
+        run: rustup target add ${{ matrix.target }}
 
       - name: Install dependencies (Linux ARM)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -101,6 +113,8 @@ jobs:
 
       - name: Build native module
         working-directory: bindings/node
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |
           npm ci
           npm run build -- --target ${{ matrix.target }}

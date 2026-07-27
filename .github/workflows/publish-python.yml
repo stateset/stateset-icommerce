@@ -195,10 +195,12 @@ jobs:
       - name: Validate artifacts
         run: |
           python ./scripts/ci/check_python_binding_package.py bindings/python python --dist-dir dist
-          python -m twine check --strict dist/*
+          # Only real distributions: release-checksums.txt lives in dist/ too,
+          # and twine rejects it as an "unknown distribution format".
+          python -m twine check --strict dist/*.tar.gz dist/*.whl
 
       - name: Publish
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: python -m twine upload --non-interactive dist/*
+        run: python -m twine upload --non-interactive dist/*.tar.gz dist/*.whl
