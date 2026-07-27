@@ -222,7 +222,7 @@ version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cbindgen]]
-version = "0.27.0"
+version = "0.29.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.cc]]
@@ -1030,7 +1030,7 @@ version = "0.1.20"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_spanned]]
-version = "0.6.9"
+version = "1.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_urlencoded]]
@@ -1182,19 +1182,11 @@ version = "0.7.18"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml]]
-version = "0.8.23"
-criteria = "safe-to-deploy"
-
-[[exemptions.toml_datetime]]
-version = "0.6.11"
+version = "0.9.12+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml_datetime]]
 version = "1.0.1+spec-1.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.toml_edit]]
-version = "0.22.27"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml_edit]]
@@ -1205,8 +1197,8 @@ criteria = "safe-to-deploy"
 version = "1.0.10+spec-1.1.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.toml_write]]
-version = "0.1.2"
+[[exemptions.toml_writer]]
+version = "1.1.2+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tonic]]
