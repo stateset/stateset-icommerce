@@ -177,9 +177,16 @@ jobs:
 
       - name: Move artifacts
         working-directory: bindings/node
+        # This package ships every platform's .node flat inside ONE tarball
+        # (`files: *.node`; index.js probes __dirname) — there are no npm/
+        # per-platform subpackages, so `napi artifacts` (which populates them)
+        # is the wrong tool here and fails with ENOENT. Flatten the downloaded
+        # artifact directories into the package root instead.
         run: |
           npm ci
-          npm run artifacts
+          find artifacts -name '*.node' -exec cp -v {} . \;
+          rm -rf artifacts
+          ls -l -- *.node
 
       - name: Validate assembled package
         working-directory: bindings/node
