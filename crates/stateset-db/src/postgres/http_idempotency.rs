@@ -41,7 +41,7 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
             // Lazy cleanup: drop an expired row for this key before reading.
             sqlx::query(
                 "DELETE FROM http_idempotency_keys
-                 WHERE tenant = $1 AND idempotency_key = $2 AND created_at < $3",
+                 WHERE tenant = $1 AND idempotency_key = $2 AND created_at <= $3",
             )
             .bind(tenant)
             .bind(key)

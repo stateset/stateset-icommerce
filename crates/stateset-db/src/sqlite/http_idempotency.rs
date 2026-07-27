@@ -38,9 +38,13 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
     ) -> Result<Option<HttpIdempotencyRecord>> {
         let conn = self.conn()?;
         // Lazy cleanup: drop an expired row for this key before reading.
+        // `<=` matches the in-memory expiry (`age >= ttl`): an entry created
+        // exactly at the cutoff is expired. With `<` and a zero TTL, a row
+        // written in the same millisecond as the lookup replayed after it
+        // should have expired (flaky under coverage instrumentation).
         conn.execute(
             "DELETE FROM http_idempotency_keys
-             WHERE tenant = ?1 AND idempotency_key = ?2 AND created_at < ?3",
+             WHERE tenant = ?1 AND idempotency_key = ?2 AND created_at <= ?3",
             rusqlite::params![tenant, key, expired_before.timestamp_millis()],
         )
         .map_err(map_err)?;
@@ -200,5 +204,19 @@ mod tests {
         let purged = repo.purge_expired(now - Duration::hours(24)).unwrap();
         assert_eq!(purged, 2);
         assert!(repo.get("tenant-a", "fresh", now - Duration::hours(24)).unwrap().is_some());
+    }
+    #[test]
+    fn entry_created_exactly_at_cutoff_is_expired() {
+        // Boundary contract with the in-memory cache (`age >= ttl` = expired):
+        // an entry whose created_at equals the cutoff must NOT be returned.
+        // With a zero TTL (cutoff == now), a same-millisecond write used to
+        // survive the strict `<` cleanup and replay a response that the memory
+        // path had already declared expired.
+        let repo = repo();
+        let created = Utc::now();
+        assert!(repo.put(&record("boundary", created)).unwrap());
+
+        let hit = repo.get("tenant-a", "boundary", created).unwrap();
+        assert!(hit.is_none(), "created_at == cutoff must be expired: {hit:?}");
     }
 }
