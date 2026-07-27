@@ -145,9 +145,11 @@ jobs:
 
       - name: Resolve release version
         id: version
-        env:
-          RELEASE_VERSION: ${{ inputs.version || '' }}
-        run: bash ./scripts/ci/check_release_hygiene.sh --github-output "$GITHUB_OUTPUT"
+        # Parse straight from the workspace manifest: the full hygiene script
+        # needs the Node toolchain + npm ci, which this thin job doesn't have.
+        run: |
+          version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke the published sdk from a fresh project
         run: bash ./scripts/ci/registry_smoke.sh "${{ steps.version.outputs.version }}"
