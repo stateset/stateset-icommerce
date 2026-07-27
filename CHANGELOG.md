@@ -6,6 +6,42 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-07-27
+
+The trunk-health release: first-ever green core CI on master, plus the
+engine and CLI fixes that surfaced on the way there.
+
+### Fixed
+- **GL auto-posting config was nondeterministic on PostgreSQL**:
+  `set_auto_posting_config` inserted a new active row every call without
+  deactivating prior rows (SQLite deactivates first), and the getter had
+  no ORDER BY — so which config governed auto-posting was arbitrary. Now
+  deactivate-then-insert in one transaction with a deterministic getter.
+- **AR `get_average_days_to_pay` failed on PostgreSQL 14+**: sqlx refuses
+  to decode `numeric` (from `EXTRACT(EPOCH ...)`) into `f64`; the query
+  now casts to double precision.
+- **Durable HTTP idempotency expiry boundary**: the durable store kept a
+  row whose `created_at` equals the cutoff while the in-memory cache
+  expired it (`age >= ttl`), so a same-millisecond write could replay a
+  dead response. Both backends now use `<=`, matching memory semantics.
+- 219 tools were missing from the CLI permission map; synced from the
+  tool modules' own permission metadata (0 conflicts).
+- CodeQL queue cleared: 4 real fixes (2 ReDoS-prone regexes, one
+  polynomial trim, docs-table escaping) and 125 individually verified
+  dismissals, recorded in `docs/security/codeql-triage.md`.
+
+### Added
+- **26 tool domains gained CLI command modules** via a tool-backed
+  command factory: same zod validation and `--apply` guard as the MCP
+  tools, actions derived from tool names, key=value parameters. API
+  command coverage reports fullyCovered=true for the first time.
+- `AsyncGeneralLedger` exported from the stateset-embedded crate root.
+- `PostgresDatabase::embedded_migration_count()` so tests derive the
+  migration count instead of hardcoding it.
+- Source-lint test forbidding raw SQL arithmetic on TEXT money columns.
+- Every published crate now ships a real README with compile-verified
+  examples (245 doctests), keywords, and categories.
+
 ## [1.22.0] - 2026-07-21
 
 ### Added
