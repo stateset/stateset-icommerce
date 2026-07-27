@@ -7,10 +7,14 @@ use stateset_crypto::hash::compute_payload_plain_hash;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(value) = serde_json::from_slice::<serde_json::Value>(data) {
-        if let Ok(h1) = compute_payload_plain_hash(&value) {
-            // Determinism: hashing the same value twice must yield the same digest.
-            let h2 = compute_payload_plain_hash(&value).expect("second pass also succeeds");
-            assert_eq!(h1, h2, "compute_payload_plain_hash is not deterministic");
+        // Exercise both the unsalted and salted paths; the salt participates in
+        // the digest, so the two must be deterministic independently.
+        for salt in [None, Some(&[0x5au8; 16])] {
+            if let Ok(h1) = compute_payload_plain_hash(&value, salt) {
+                // Determinism: hashing the same value twice must yield the same digest.
+                let h2 = compute_payload_plain_hash(&value, salt).expect("second pass also succeeds");
+                assert_eq!(h1, h2, "compute_payload_plain_hash is not deterministic");
+            }
         }
     }
 });

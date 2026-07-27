@@ -13,6 +13,8 @@
 
 #![cfg(feature = "postgres")]
 
+mod common;
+
 use chrono::NaiveDate;
 use rust_decimal_macros::dec;
 use stateset_core::{
@@ -37,24 +39,28 @@ async fn postgres_list_periods_orders_by_fiscal_year_and_period_number() {
     // LATER start date than period 2, so ordering by start_date vs (fiscal_year,
     // period_number) disagree.
     let year = 2099;
-    gl.create_period(CreateGlPeriod {
-        period_name: "p1".into(),
-        fiscal_year: year,
-        period_number: 1,
-        start_date: NaiveDate::from_ymd_opt(year, 6, 1).unwrap(),
-        end_date: NaiveDate::from_ymd_opt(year, 6, 30).unwrap(),
-    })
-    .await
-    .expect("create period 1");
-    gl.create_period(CreateGlPeriod {
-        period_name: "p2".into(),
-        fiscal_year: year,
-        period_number: 2,
-        start_date: NaiveDate::from_ymd_opt(year, 1, 1).unwrap(),
-        end_date: NaiveDate::from_ymd_opt(year, 1, 31).unwrap(),
-    })
-    .await
-    .expect("create period 2");
+    common::ensure_open_period(
+        &gl,
+        CreateGlPeriod {
+            period_name: "p1".into(),
+            fiscal_year: year,
+            period_number: 1,
+            start_date: NaiveDate::from_ymd_opt(year, 6, 1).unwrap(),
+            end_date: NaiveDate::from_ymd_opt(year, 6, 30).unwrap(),
+        },
+    )
+    .await;
+    common::ensure_open_period(
+        &gl,
+        CreateGlPeriod {
+            period_name: "p2".into(),
+            fiscal_year: year,
+            period_number: 2,
+            start_date: NaiveDate::from_ymd_opt(year, 1, 1).unwrap(),
+            end_date: NaiveDate::from_ymd_opt(year, 1, 31).unwrap(),
+        },
+    )
+    .await;
 
     let periods = gl
         .list_periods(GlPeriodFilter { fiscal_year: Some(year), ..Default::default() })
@@ -81,18 +87,21 @@ async fn postgres_list_journal_entries_break_ties_by_entry_number() {
     let cash = gl.get_account_by_number("1010").await.unwrap().unwrap().id;
     let revenue = gl.get_account_by_number("4010").await.unwrap().unwrap().id;
 
-    let entry_date = NaiveDate::from_ymd_opt(2099, 3, 10).unwrap();
-    let period = gl
-        .create_period(CreateGlPeriod {
+    // Fiscal 2097, NOT 2099: the sibling test in this binary asserts that
+    // fiscal-2099 contains exactly its own two periods, and both tests run
+    // concurrently — sharing the year made that count race (2 vs 3).
+    let entry_date = NaiveDate::from_ymd_opt(2097, 3, 10).unwrap();
+    common::ensure_open_period(
+        &gl,
+        CreateGlPeriod {
             period_name: "je".into(),
-            fiscal_year: 2099,
+            fiscal_year: 2097,
             period_number: 3,
-            start_date: NaiveDate::from_ymd_opt(2099, 3, 1).unwrap(),
-            end_date: NaiveDate::from_ymd_opt(2099, 3, 31).unwrap(),
-        })
-        .await
-        .expect("create period");
-    gl.open_period(period.id).await.expect("open period");
+            start_date: NaiveDate::from_ymd_opt(2097, 3, 1).unwrap(),
+            end_date: NaiveDate::from_ymd_opt(2097, 3, 31).unwrap(),
+        },
+    )
+    .await;
 
     // Several entries on the SAME date; entry_number is the only tiebreaker.
     let token = uuid::Uuid::new_v4().simple().to_string();
