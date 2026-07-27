@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -79,6 +79,49 @@ function unpackTarball(tarballPath, targetDir) {
     0,
     `tar should extract ${tarballPath}.\n${extracted.stderr || extracted.stdout}`,
   );
+}
+
+
+function hostPlatformDir() {
+  const arch = os.arch();
+  if (process.platform === 'linux') {
+    const isMusl = (() => {
+      try {
+        const report = process.report?.getReport();
+        return report ? !report.header?.glibcVersionRuntime : false;
+      } catch {
+        return false;
+      }
+    })();
+    return `linux-${arch}-${isMusl ? 'musl' : 'gnu'}`;
+  }
+  if (process.platform === 'darwin') return `darwin-${arch}`;
+  if (process.platform === 'win32') return `win32-${arch}-msvc`;
+  return null;
+}
+
+function stageHostNativeBinding(packageDir) {
+  const platform = hostPlatformDir();
+  assert.ok(platform, `Unsupported validation host: ${process.platform}/${os.arch()}`);
+  const candidates = [
+    path.join(bindingDir, 'npm', platform, `stateset-embedded.${platform}.node`),
+    path.join(bindingDir, `stateset-embedded.${platform}.node`),
+  ];
+  const found = candidates.find((candidate) => {
+    try {
+      readFileSync(candidate);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  assert.ok(
+    found,
+    `No built native binding for validation host (looked in ${candidates.join(', ')}). ` +
+      'Run `npm run build` or `napi artifacts` first.',
+  );
+  const target = path.join(packageDir, path.basename(found));
+  writeFileSync(target, readFileSync(found));
 }
 
 async function verifyPackedImports(packageDir) {
@@ -191,9 +234,18 @@ async function main() {
     assert.ok(packedFiles.has(requiredFile), `Packed Node binding is missing ${requiredFile}.`);
   }
 
+  // Per-platform distribution: the main tarball must NOT bundle binaries;
+  // each platform's .node ships in its @stateset/embedded-<platform>
+  // optionalDependency (the old fat tarball was 184 MB unpacked).
   assert.ok(
-    Array.from(packedFiles).some((file) => file.endsWith('.node')),
-    'Packed Node binding should include at least one native .node binary.',
+    !Array.from(packedFiles).some((file) => file.endsWith('.node')),
+    'Main package must not bundle .node binaries — platform packages carry them.',
+  );
+  const optionalDeps = Object.keys(packageJson.optionalDependencies || {});
+  assert.ok(
+    optionalDeps.length >= 8 &&
+      optionalDeps.every((name) => name.startsWith('@stateset/embedded-')),
+    `optionalDependencies must list the platform packages, got: ${optionalDeps}`,
   );
 
   for (const [subpath, target] of Object.entries(packageJson.exports || {})) {
@@ -222,6 +274,12 @@ async function main() {
     const unpackDir = path.join(tempRoot, 'unpacked');
     mkdirSync(unpackDir, { recursive: true });
     unpackTarball(tarballPath, unpackDir);
+    // The main tarball ships no binaries; at install time npm provides the
+    // host's @stateset/embedded-<platform> optionalDependency. Simulate that
+    // by staging the host platform's freshly built .node (from its npm/
+    // platform dir, or the legacy flat location) next to the unpacked loader,
+    // which probes __dirname first.
+    stageHostNativeBinding(path.join(unpackDir, 'package'));
     await verifyPackedImports(path.join(unpackDir, 'package'));
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

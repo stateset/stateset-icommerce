@@ -20,7 +20,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "1.23.2"
+//! stateset-sdk = "1.23.3"
 //! ```
 //!
 //! ```rust,ignore

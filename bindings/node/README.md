@@ -424,3 +424,13 @@ The library uses SQLite under the hood with automatic schema migrations. Your da
 ## License
 
 MIT OR Apache-2.0
+
+## Platform support
+
+Prebuilt binaries install automatically via platform-specific optional
+dependencies (one ~20-25 MB package per platform, not a fat bundle):
+Linux x64/arm64 (glibc **2.33+** and musl), macOS x64/arm64, Windows
+x64/arm64. On glibc older than 2.33 (e.g. Ubuntu 20.04, past EOL) use the
+musl build in a container, or the Python package (`pip install
+stateset-embedded`), whose manylinux wheels and source fallback support
+older systems.

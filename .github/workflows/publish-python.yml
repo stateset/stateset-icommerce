@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g., 1.23.2)"
+        description: "Version to release (e.g., 1.23.3)"
         required: true
 
 env:
@@ -55,8 +55,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        # ubuntu-24.04-arm covers linux-aarch64; macos-13 is the last Intel
+        # runner and covers darwin-x64. Python 3.8 is EOL (Oct 2024) — users
+        # there fall back to the sdist.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-13, windows-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v6

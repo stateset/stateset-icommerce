@@ -31,6 +31,8 @@ kotlin_maven_artifact="$(extract_with_regex '^[[:space:]]*artifactId = "[^"]+"$'
 dotnet_binding_version="$(extract_with_regex '^[[:space:]]*<Version>[0-9]+\.[0-9]+\.[0-9]+</Version>$' bindings/dotnet/dotnet/StateSet/StateSet.csproj 's/^[^>]*>([^<]+).*/\1/')"
 generator_spec_version="$(extract_with_regex '^version: "[0-9]+\.[0-9]+\.[0-9]+"' bindings/generator/spec.yaml 's/^[^"]*"([^"]+)".*$/\1/')"
 cli_embedded_dep_version="$(extract_with_regex '^[[:space:]]*"@stateset/embedded":[[:space:]]*"\^?[0-9]+\.[0-9]+\.[0-9]+"' cli/package.json 's/^[^:]+:[[:space:]]*"\^?([^"]+)".*$/\1/')"
+embedded_cli_peer_version="$(extract_with_regex '^[[:space:]]*"@stateset/cli":[[:space:]]*"\^?[0-9]+\.[0-9]+\.[0-9]+"' bindings/node/package.json 's/^[^:]+:[[:space:]]*"\^?([^"]+)".*$/\1/')"
+embedded_platform_pkg_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/node/npm/linux-x64-gnu/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
 admin_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' admin/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
 
 if [[ -z "$workspace_version" || -z "$cli_version" || -z "$cli_runtime_version" || -z "$node_binding_version" || -z "$wasm_binding_version" || -z "$python_binding_version" || -z "$python_wrapper_version" || -z "$ruby_binding_version" || -z "$ruby_gemspec_version" || -z "$php_binding_version" || -z "$php_stub_version" || -z "$php_branch_alias" || -z "$java_binding_version" || -z "$java_maven_artifact" || -z "$java_jar_basename" || -z "$kotlin_binding_version" || -z "$kotlin_maven_artifact" || -z "$dotnet_binding_version" || -z "$generator_spec_version" || -z "$cli_embedded_dep_version" || -z "$admin_version" ]]; then
@@ -128,6 +130,18 @@ fi
 
 if [[ "$workspace_version" != "$cli_embedded_dep_version" ]]; then
   echo "::error file=cli/package.json::CLI embedded dependency (${cli_embedded_dep_version}) does not match workspace version (${workspace_version})"
+  fail=1
+fi
+
+# The reverse direction went unchecked for months: embedded's peer pin on the
+# CLI sat at ^1.7.0 while everything else moved to 1.23.x.
+if [[ "$workspace_version" != "$embedded_cli_peer_version" ]]; then
+  echo "::error file=bindings/node/package.json::Embedded @stateset/cli peer (${embedded_cli_peer_version}) does not match workspace version (${workspace_version})"
+  fail=1
+fi
+
+if [[ "$workspace_version" != "$embedded_platform_pkg_version" ]]; then
+  echo "::error file=bindings/node/npm/linux-x64-gnu/package.json::Platform package version (${embedded_platform_pkg_version}) does not match workspace version (${workspace_version})"
   fail=1
 fi
 

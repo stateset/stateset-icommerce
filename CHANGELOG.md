@@ -6,6 +6,37 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.23.3] - 2026-07-27
+
+The registries-to-A release: per-platform npm distribution, wider Python
+wheel coverage, and release gates that prevent the fresh-consumer
+regressions this line just fixed.
+
+### Changed
+- **npm: per-platform distribution.** `@stateset/embedded` no longer
+  bundles all eight native binaries (184 MB unpacked); each platform's
+  `.node` ships in its own `@stateset/embedded-<platform>` package
+  declared as an optionalDependency (~20-26 MB installed). The loader
+  already probed these packages; publishing now uses them.
+- **npm: `@stateset/cli` is now an optional peerDependency** of
+  `@stateset/embedded` instead of a hard dependency — the agent-toolkit
+  entrypoint already treated it as optional with a graceful error, but
+  the hard dependency dragged the CLI (agent SDK, ethers, MCP) into
+  every engine install. The stale `^1.7.0` pin is fixed and the
+  version-sync gate now checks this direction plus the platform
+  package versions.
+- **Python: wheel coverage extended** to CPython 3.13, linux-aarch64
+  (ubuntu-24.04-arm), and Intel macOS (macos-13). Python 3.8 (EOL
+  Oct 2024) wheels dropped; `requires-python` is now `>=3.9` (the sdist
+  still builds anywhere with a Rust toolchain).
+
+### Added
+- Publish pipeline gates: an unlocked-resolution check (fresh dependency
+  resolution with no lockfile — what docs.rs and every `cargo add` do)
+  before publishing, and a fresh-consumer registry smoke (new cargo
+  project, `cargo add stateset-sdk --features full`, real commerce
+  operation) after publishing.
+
 ## [1.23.2] - 2026-07-27
 
 ### Fixed

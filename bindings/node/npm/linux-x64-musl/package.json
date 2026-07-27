@@ -1,0 +1,41 @@
+{
+  "name": "@stateset/embedded-linux-x64-musl",
+  "version": "1.23.3",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "stateset-embedded.linux-x64-musl.node",
+  "files": [
+    "stateset-embedded.linux-x64-musl.node"
+  ],
+  "description": "The SQLite of commerce - embeddable commerce library powered by Rust",
+  "keywords": [
+    "commerce",
+    "ecommerce",
+    "orders",
+    "inventory",
+    "embedded",
+    "sqlite",
+    "rust",
+    "napi"
+  ],
+  "author": "StateSet <support@stateset.com>",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=20.20.0",
+    "npm": ">=10.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stateset/stateset-icommerce"
+  },
+  "libc": [
+    "musl"
+  ]
+}

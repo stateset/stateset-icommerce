@@ -1,0 +1,38 @@
+{
+  "name": "@stateset/embedded-darwin-x64",
+  "version": "1.23.3",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "stateset-embedded.darwin-x64.node",
+  "files": [
+    "stateset-embedded.darwin-x64.node"
+  ],
+  "description": "The SQLite of commerce - embeddable commerce library powered by Rust",
+  "keywords": [
+    "commerce",
+    "ecommerce",
+    "orders",
+    "inventory",
+    "embedded",
+    "sqlite",
+    "rust",
+    "napi"
+  ],
+  "author": "StateSet <support@stateset.com>",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=20.20.0",
+    "npm": ">=10.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stateset/stateset-icommerce"
+  }
+}

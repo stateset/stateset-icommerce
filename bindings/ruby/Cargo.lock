@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-crypto"
-version = "1.23.2"
+version = "1.23.3"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1066,7 +1066,7 @@ dependencies = [
 
 [[package]]
 name = "stateset_embedded"
-version = "1.23.2"
+version = "1.23.3"
 dependencies = [
  "magnus",
  "serde_json",
@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.23.2"
+version = "1.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
