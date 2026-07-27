@@ -21,6 +21,7 @@ export const TOOLS_DOC_PATH = resolve(__dirname, '..', 'docs', 'TOOLS.md');
 
 function escapeCell(text) {
   return String(text ?? '')
+    .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
     .replace(/\s+/g, ' ')
     .trim();

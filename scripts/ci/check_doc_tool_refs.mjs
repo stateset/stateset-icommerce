@@ -62,7 +62,7 @@ const LINE_PATTERNS = [
 
 function normalizeToolName(name) {
   const trimmed = name.trim();
-  const prefixedMatch = /^mcp__[^_]+(?:-[^_]+)*__(.+)$/.exec(trimmed);
+  const prefixedMatch = /^mcp__[^_-]+(?:-[^_-]+)*__(.+)$/.exec(trimmed);
   return prefixedMatch ? prefixedMatch[1] : trimmed;
 }
 

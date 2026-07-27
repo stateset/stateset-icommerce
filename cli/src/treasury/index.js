@@ -59,7 +59,9 @@ async function loadSolanaSdk() {
 function trimTrailingZeros(value) {
   if (!value || typeof value !== 'string') return value;
   if (!value.includes('.')) return value;
-  return value.replace(/\.?0+$/, '');
+  // Two linear passes (strip zeros, then a bare trailing dot) instead of the
+  // ambiguous /\.?0+$/, which CodeQL flags as polynomial-time (js/polynomial-redos).
+  return value.replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function formatSmallest(amountSmallest, decimals) {

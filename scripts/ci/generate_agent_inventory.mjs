@@ -53,7 +53,7 @@ function buildInventory() {
       const unknownTools = tools.filter((toolName) => !supportedToolNames.has(toolName));
       const serverCounts = {};
       for (const toolName of tools) {
-        const match = toolName.match(/^mcp__([^_]+(?:-[^_]+)*)__.+$/);
+        const match = toolName.match(/^mcp__([^_-]+(?:-[^_-]+)*)__.+$/);
         const serverName = match?.[1] ?? 'unknown';
         serverCounts[serverName] = (serverCounts[serverName] ?? 0) + 1;
       }
