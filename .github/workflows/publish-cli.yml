@@ -224,15 +224,33 @@ jobs:
         working-directory: bindings/node
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        # Publishes each npm/<platform> package and stamps the main package's
-        # optionalDependencies to the release version.
-        run: npx napi prepublish -t npm --skip-gh-release
+        # Explicit per-directory publish: `napi prepublish` (v2 CLI) exited in
+        # 0.4s without publishing anything in the 1.23.3 run. Idempotent so a
+        # partially published release can be resumed.
+        run: |
+          for dir in npm/*/; do
+            name=$(node -p "require('./${dir}package.json').name")
+            version=$(node -p "require('./${dir}package.json').version")
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already published; skipping"
+              continue
+            fi
+            ls "${dir}"*.node >/dev/null 2>&1 || { echo "missing binary in ${dir}" >&2; exit 1; }
+            (cd "${dir}" && npm publish --access public --provenance)
+          done
 
       - name: Publish to npm
         working-directory: bindings/node
-        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "${name}@${version} already published; skipping"
+          else
+            npm publish --access public --provenance
+          fi
 
   # Publish @stateset/cli
   publish-cli:
@@ -285,6 +303,12 @@ jobs:
 
       - name: Publish to npm
         working-directory: cli
-        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "@stateset/cli@${version}" version >/dev/null 2>&1; then
+            echo "@stateset/cli@${version} already published; skipping"
+          else
+            npm publish --access public --provenance
+          fi
