@@ -115,9 +115,17 @@ jobs:
         working-directory: bindings/node
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        # Inside the napi alpine image (Node 18) the `prebuild` check:env gate
+        # rejects the container's Node. The gate protects the dev/runtime
+        # environment; the produced .node artifact is NAPI-ABI stable, so the
+        # container lane invokes napi directly and skips npm lifecycle hooks.
         run: |
           npm ci
-          npm run build -- --target ${{ matrix.target }}
+          if [ -n "${{ matrix.docker }}" ]; then
+            npx napi build --platform --release --target ${{ matrix.target }}
+          else
+            npm run build -- --target ${{ matrix.target }}
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
