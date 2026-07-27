@@ -42,7 +42,7 @@ pub fn verify_event_signature(
 /// Generate a new Ed25519 keypair
 ///
 /// Returns (`private_key`, `public_key`). The private key is wrapped in
-/// [`Zeroizing`] so it is scrubbed from memory on drop; it derefs to
+/// [`Zeroizing`](zeroize::Zeroizing) so it is scrubbed from memory on drop; it derefs to
 /// `[u8; 32]` for use with the signing APIs. Callers that copy the bytes
 /// out of the wrapper own the hygiene of that copy.
 #[must_use]

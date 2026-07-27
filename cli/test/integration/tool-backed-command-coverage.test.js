@@ -1,38 +1,57 @@
 /**
  * Integration test for tool-backed command action coverage.
+ *
+ * Dynamically enumerates every command module that exports a `toolActionMap`
+ * and pairs it with the same-named tools module, then asserts every tool maps
+ * to exactly one action. Dynamic on purpose: the earlier hardcoded list only
+ * covered the eight original a2a/x402 modules, so the twenty-six tool-backed
+ * modules added later would have shipped without this invariant.
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentCardTools } from '../../src/tools/agent-cards.js';
-import { agentRuntimeTools } from '../../src/tools/agent-runtime.js';
-import { a2aPlatformTools } from '../../src/tools/a2a-platform.js';
-import { a2aObservabilityTools } from '../../src/tools/a2a-observability.js';
-import { a2aIntelligenceTools } from '../../src/tools/a2a-intelligence.js';
-import { a2aAutomationTools } from '../../src/tools/a2a-automation.js';
-import { a2aTools } from '../../src/tools/a2a.js';
-import { x402Tools } from '../../src/tools/x402.js';
-import { toolActionMap as agentCardsToolActionMap } from '../../src/commands/agent-cards.js';
-import { toolActionMap as agentRuntimeToolActionMap } from '../../src/commands/agent-runtime.js';
-import { toolActionMap as a2aPlatformToolActionMap } from '../../src/commands/a2a-platform.js';
-import { toolActionMap as a2aObservabilityToolActionMap } from '../../src/commands/a2a-observability.js';
-import { toolActionMap as a2aIntelligenceToolActionMap } from '../../src/commands/a2a-intelligence.js';
-import { toolActionMap as a2aAutomationToolActionMap } from '../../src/commands/a2a-automation.js';
-import { toolActionMap as a2aToolActionMap } from '../../src/commands/a2a.js';
-import { toolActionMap as x402ToolActionMap } from '../../src/commands/x402.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const TOOL_BACKED_MODULES = [
-  ['agent-cards', agentCardTools, agentCardsToolActionMap],
-  ['agent-runtime', agentRuntimeTools, agentRuntimeToolActionMap],
-  ['a2a-platform', a2aPlatformTools, a2aPlatformToolActionMap],
-  ['a2a-observability', a2aObservabilityTools, a2aObservabilityToolActionMap],
-  ['a2a-intelligence', a2aIntelligenceTools, a2aIntelligenceToolActionMap],
-  ['a2a-automation', a2aAutomationTools, a2aAutomationToolActionMap],
-  ['a2a', a2aTools, a2aToolActionMap],
-  ['x402', x402Tools, x402ToolActionMap],
-];
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const commandsDir = path.resolve(__dirname, '../../src/commands');
+const toolsDir = path.resolve(__dirname, '../../src/tools');
+
+async function collectToolBackedModules() {
+  const modules = [];
+  for (const entry of fs.readdirSync(commandsDir).sort()) {
+    if (!entry.endsWith('.js') || entry === 'index.js') continue;
+    const name = entry.replace(/\.js$/, '');
+    const command = await import(pathToFileURL(path.join(commandsDir, entry)).href);
+    if (!Array.isArray(command.toolActionMap)) continue;
+
+    const toolsPath = path.join(toolsDir, entry);
+    assert.ok(
+      fs.existsSync(toolsPath),
+      `${name}: exports toolActionMap but has no matching tools module`,
+    );
+    const toolsModule = await import(pathToFileURL(toolsPath).href);
+    const tools = Object.values(toolsModule).find(
+      (value) => Array.isArray(value) && value.every((tool) => tool?.name && tool?.handler),
+    );
+    assert.ok(tools, `${name}: no tool array export found in tools module`);
+    modules.push([name, tools, command.toolActionMap]);
+  }
+  return modules;
+}
+
+const TOOL_BACKED_MODULES = await collectToolBackedModules();
 
 describe('tool-backed command coverage', () => {
+  it('discovers a sensible number of tool-backed modules', () => {
+    // 8 original (a2a*, agent-cards, agent-runtime, x402) + 26 generated.
+    assert.ok(
+      TOOL_BACKED_MODULES.length >= 34,
+      `expected >= 34 tool-backed modules, found ${TOOL_BACKED_MODULES.length}`,
+    );
+  });
+
   for (const [moduleName, tools, toolActionMap] of TOOL_BACKED_MODULES) {
     it(`${moduleName} should map every tool exactly once`, () => {
       const toolNames = tools.map((tool) => tool.name).sort();
@@ -40,7 +59,10 @@ describe('tool-backed command coverage', () => {
 
       assert.deepStrictEqual(mappedToolNames, toolNames);
       assert.strictEqual(new Set(mappedToolNames).size, mappedToolNames.length);
-      assert.strictEqual(new Set(toolActionMap.map((entry) => entry.action)).size, toolActionMap.length);
+      assert.strictEqual(
+        new Set(toolActionMap.map((entry) => entry.action)).size,
+        toolActionMap.length,
+      );
     });
   }
 });

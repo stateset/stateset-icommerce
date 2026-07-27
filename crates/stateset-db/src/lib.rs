@@ -1236,7 +1236,7 @@ impl DatabaseConfig {
     }
 
     /// Resolve a pool size from `STATESET_DB_MAX_CONNECTIONS`, falling back to
-    /// `default` when the variable is unset or unparseable.
+    /// `default` when the variable is unset or unparsable.
     ///
     /// The compiled-in defaults suit embedded and single-node use; server
     /// deployments serving concurrent traffic will usually need a larger pool

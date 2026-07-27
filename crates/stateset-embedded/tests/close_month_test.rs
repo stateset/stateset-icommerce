@@ -1,6 +1,9 @@
 //! Integration tests for the month-end close orchestration
 //! (`general_ledger().close_month`), against the SQLite backend.
 
+// Uses the sync `Commerce` engine, which only exists with the sqlite backend.
+#![cfg(feature = "sqlite")]
+
 use chrono::NaiveDate;
 use rust_decimal_macros::dec;
 use stateset_core::{

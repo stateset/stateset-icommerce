@@ -1127,7 +1127,8 @@ impl PgGeneralLedgerRepository {
                     shipping_revenue_account_id, cogs_account_id, bad_debt_expense_account_id,
                     fx_gain_loss_account_id, auto_post_depreciation, auto_post_revenue_recognition,
                     is_active, created_at, updated_at
-             FROM gl_auto_posting_config WHERE is_active = TRUE LIMIT 1",
+             FROM gl_auto_posting_config WHERE is_active = TRUE
+             ORDER BY created_at DESC LIMIT 1",
         )
         .fetch_optional(&self.pool)
         .await
@@ -1142,6 +1143,18 @@ impl PgGeneralLedgerRepository {
     ) -> Result<AutoPostingConfig> {
         let id = Uuid::new_v4();
         let now = Utc::now();
+
+        // Deactivate-then-insert in one transaction, matching the SQLite
+        // backend. Without the deactivation this accumulated multiple
+        // `is_active` rows and the un-ordered getter returned an arbitrary
+        // one — so "setting" the config did not reliably change which config
+        // governed auto-posting.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        sqlx::query("UPDATE gl_auto_posting_config SET is_active = FALSE WHERE is_active = TRUE")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
 
         sqlx::query(
             "INSERT INTO gl_auto_posting_config (id, config_name, cash_account_id, accounts_receivable_account_id,
@@ -1168,9 +1181,11 @@ impl PgGeneralLedgerRepository {
         .bind(true)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_auto_posting_config_async().await?.ok_or(CommerceError::NotFound)
     }

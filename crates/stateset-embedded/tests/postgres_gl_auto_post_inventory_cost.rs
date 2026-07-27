@@ -20,6 +20,8 @@ use rust_decimal_macros::dec;
 use stateset_core::{CostTransactionType, CreateAutoPostingConfig, CreateGlPeriod};
 use stateset_embedded::AsyncCommerce;
 
+mod common;
+
 fn postgres_url() -> Option<String> {
     std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
 }
@@ -47,17 +49,17 @@ async fn postgres_auto_post_inventory_cost_issue_posts_cogs_debit() {
     };
 
     let today = Utc::now().date_naive();
-    let period = gl
-        .create_period(CreateGlPeriod {
+    let _period = common::ensure_open_period(
+        &gl,
+        CreateGlPeriod {
             period_name: format!("{}-full", today.year()),
             fiscal_year: today.year(),
             period_number: 1,
             start_date: NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap(),
             end_date: NaiveDate::from_ymd_opt(today.year(), 12, 31).unwrap(),
-        })
-        .await
-        .expect("create period");
-    gl.open_period(period.id).await.expect("open period");
+        },
+    )
+    .await;
 
     gl.set_auto_posting_config(CreateAutoPostingConfig {
         config_name: "default".into(),

@@ -66,11 +66,63 @@ import * as suppliers from './suppliers.js';
 import * as invoices from './invoices.js';
 import * as warranties from './warranties.js';
 import * as x402 from './x402.js';
+import * as activityLogs from './activity-logs.js';
+import * as channels from './channels.js';
+import * as companies from './companies.js';
+import * as cycleCounts from './cycle-counts.js';
+import * as ediDocuments from './edi-documents.js';
+import * as fixedAssets from './fixed-assets.js';
+import * as inboundShipments from './inbound-shipments.js';
+import * as integrationFieldMappings from './integration-field-mappings.js';
+import * as integrationMappings from './integration-mappings.js';
+import * as maintenance from './maintenance.js';
+import * as paymentObligations from './payment-obligations.js';
+import * as prepayments from './prepayments.js';
+import * as priceLevels from './price-levels.js';
+import * as priceSchedules from './price-schedules.js';
+import * as printStations from './print-stations.js';
+import * as productionBatches from './production-batches.js';
+import * as purgatory from './purgatory.js';
+import * as revenueRecognition from './revenue-recognition.js';
+import * as searchConfig from './search-config.js';
+import * as stockSnapshots from './stock-snapshots.js';
+import * as supplierSkus from './supplier-skus.js';
+import * as topologySnapshots from './topology-snapshots.js';
+import * as transferOrders from './transfer-orders.js';
+import * as unitsOfMeasure from './units-of-measure.js';
+import * as vendorCredits from './vendor-credits.js';
+import * as vendorReturns from './vendor-returns.js';
 
 /**
  * All registered commands
  */
 export const commands = {
+  'activity-logs': activityLogs,
+  channels: channels,
+  companies: companies,
+  'cycle-counts': cycleCounts,
+  'edi-documents': ediDocuments,
+  'fixed-assets': fixedAssets,
+  'inbound-shipments': inboundShipments,
+  'integration-field-mappings': integrationFieldMappings,
+  'integration-mappings': integrationMappings,
+  maintenance: maintenance,
+  'payment-obligations': paymentObligations,
+  prepayments: prepayments,
+  'price-levels': priceLevels,
+  'price-schedules': priceSchedules,
+  'print-stations': printStations,
+  'production-batches': productionBatches,
+  purgatory: purgatory,
+  'revenue-recognition': revenueRecognition,
+  'search-config': searchConfig,
+  'stock-snapshots': stockSnapshots,
+  'supplier-skus': supplierSkus,
+  'topology-snapshots': topologySnapshots,
+  'transfer-orders': transferOrders,
+  'units-of-measure': unitsOfMeasure,
+  'vendor-credits': vendorCredits,
+  'vendor-returns': vendorReturns,
   customers,
   orders,
   products,

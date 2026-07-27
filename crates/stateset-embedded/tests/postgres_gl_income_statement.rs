@@ -16,6 +16,8 @@ use rust_decimal_macros::dec;
 use stateset_core::{CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine};
 use stateset_embedded::AsyncCommerce;
 
+mod common;
+
 fn postgres_url() -> Option<String> {
     std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
 }
@@ -31,19 +33,19 @@ async fn postgres_income_statement_sums_revenue_exactly() {
 
     gl.initialize_chart_of_accounts().await.expect("init chart of accounts");
 
-    let start = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-    let end = NaiveDate::from_ymd_opt(2026, 1, 31).unwrap();
-    let period = gl
-        .create_period(CreateGlPeriod {
-            period_name: "2026-01".into(),
-            fiscal_year: 2026,
+    let start = NaiveDate::from_ymd_opt(2098, 1, 1).unwrap();
+    let end = NaiveDate::from_ymd_opt(2098, 1, 31).unwrap();
+    let _period = common::ensure_open_period(
+        &gl,
+        CreateGlPeriod {
+            period_name: "2098-01".into(),
+            fiscal_year: 2098,
             period_number: 1,
             start_date: start,
             end_date: end,
-        })
-        .await
-        .expect("create period");
-    gl.open_period(period.id).await.expect("open period");
+        },
+    )
+    .await;
 
     let cash =
         gl.get_account_by_number("1010").await.expect("query cash").expect("cash account exists");
@@ -53,7 +55,11 @@ async fn postgres_income_statement_sums_revenue_exactly() {
         .expect("query revenue")
         .expect("sales revenue account exists");
 
-    let entry_date = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+    // Delta-based assertions: the shared parity database persists across local
+    // reruns, so prior runs' entries may already be in the 2098-01 range.
+    let before = gl.get_income_statement(start, end).await.expect("income statement (before)");
+
+    let entry_date = NaiveDate::from_ymd_opt(2098, 1, 15).unwrap();
     for amount in [dec!(0.10), dec!(0.20)] {
         let entry = gl
             .create_journal_entry(CreateJournalEntry {
@@ -74,7 +80,7 @@ async fn postgres_income_statement_sums_revenue_exactly() {
     }
 
     let statement = gl.get_income_statement(start, end).await.expect("income statement");
-    assert_eq!(statement.total_revenue, dec!(0.30));
-    assert_eq!(statement.total_expenses, dec!(0));
-    assert_eq!(statement.net_income, dec!(0.30));
+    assert_eq!(statement.total_revenue - before.total_revenue, dec!(0.30));
+    assert_eq!(statement.total_expenses - before.total_expenses, dec!(0));
+    assert_eq!(statement.net_income - before.net_income, dec!(0.30));
 }

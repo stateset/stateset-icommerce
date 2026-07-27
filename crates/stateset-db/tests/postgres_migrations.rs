@@ -33,7 +33,10 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         .fetch_one(&pool)
         .await
         .expect("count _migrations");
-    let expected = if cfg!(feature = "saga") { 58 } else { 57 };
+    // Derived from the engine's own migration list — never hardcode this count:
+    // a stale literal kept the Postgres parity CI lane red for weeks after
+    // migrations landed without anyone bumping the number.
+    let expected = PostgresDatabase::embedded_migration_count() as i64;
     assert_eq!(applied, expected, "expected all embedded migrations to apply");
 
     let mut tables = vec![

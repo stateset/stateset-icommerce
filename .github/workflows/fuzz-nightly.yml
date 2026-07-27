@@ -49,7 +49,11 @@ jobs:
           workspaces: crates/${{ matrix.crate }}/fuzz
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        # `+nightly`: a bare `cargo install` resolves through the repo's pinned
+        # toolchain (rust-toolchain.toml), and cargo-fuzz's dependency tree now
+        # requires a newer rustc than that pin — which failed every nightly run.
+        # The fuzz step below already runs `cargo +nightly fuzz`.
+        run: cargo +nightly install cargo-fuzz --locked
 
       - name: Run fuzz target (90 seconds soak)
         working-directory: crates/${{ matrix.crate }}

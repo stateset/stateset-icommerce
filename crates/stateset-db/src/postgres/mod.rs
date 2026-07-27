@@ -263,24 +263,18 @@ impl PostgresDatabase {
         result
     }
 
-    /// Apply pending migrations. Callers must hold the migration advisory lock
-    /// (see [`Self::run_migrations`]).
-    async fn apply_migrations(pool: &PgPool) -> Result<(), CommerceError> {
-        // Create migrations table if not exists
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS _migrations (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                checksum TEXT,
-                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    /// The number of embedded migrations for the active feature set.
+    ///
+    /// Exposed so integration tests can assert "all embedded migrations
+    /// applied" without hardcoding a count that rots every time a migration
+    /// lands (a stale hardcoded count kept the Postgres parity CI lane red).
+    #[must_use]
+    pub fn embedded_migration_count() -> usize {
+        Self::embedded_migrations().len()
+    }
 
+    /// The ordered list of embedded migrations for the active feature set.
+    fn embedded_migrations() -> Vec<(&'static str, &'static str)> {
         // Get list of migrations
         let mut migrations = vec![
             ("001_initial_schema", include_str!("migrations/001_initial_schema.sql")),
@@ -399,7 +393,28 @@ impl PostgresDatabase {
             include_str!("migrations/071_topology_snapshots.sql"),
         ));
 
-        for (name, sql) in migrations {
+        migrations
+    }
+
+    /// Apply pending migrations. Callers must hold the migration advisory lock
+    /// (see [`Self::run_migrations`]).
+    async fn apply_migrations(pool: &PgPool) -> Result<(), CommerceError> {
+        // Create migrations table if not exists
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS _migrations (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                checksum TEXT,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        for (name, sql) in Self::embedded_migrations() {
             let mut tx =
                 pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             let checksum = Self::compute_migration_checksum(sql);

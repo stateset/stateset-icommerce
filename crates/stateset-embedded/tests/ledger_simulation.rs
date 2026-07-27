@@ -10,6 +10,9 @@
 //! PRNG. Override the seed with the `LEDGER_SIM_SEED` env var (u64) to
 //! explore other trajectories; the default is fixed so CI runs are stable.
 
+// Uses the sync `Commerce` engine, which only exists with the sqlite backend.
+#![cfg(feature = "sqlite")]
+
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;

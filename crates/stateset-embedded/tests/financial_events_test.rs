@@ -1,3 +1,5 @@
+// Uses the sync `Commerce` engine, which only exists with the sqlite backend.
+#![cfg(feature = "sqlite")]
 #![cfg(all(feature = "sqlite", feature = "events"))]
 
 //! Event emission tests for the finance/operations domains: fixed assets,

@@ -14,14 +14,14 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | Metric | Value |
 | --- | --- |
 | Tool modules | 87 |
-| Command modules on disk | 61 |
-| Command modules in registry | 61 |
+| Command modules on disk | 87 |
+| Command modules in registry | 87 |
 | Tool-backed command modules | 0 |
-| Uncovered tool modules | 26 |
+| Uncovered tool modules | 0 |
 | Uncovered tool-backed actions | 0 |
 | Command-only modules | 0 |
 | Registry mismatches | 0 |
-| Fully covered | no |
+| Fully covered | yes |
 
 ## Module Coverage
 
@@ -88,37 +88,38 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `undefined` |  | undefined | undefined | - |
 | `undefined` |  | undefined | undefined | - |
 | `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
+| `undefined` |  | undefined | undefined | - |
 
 ## Uncovered Tool Modules
 
 | Module | Status | Actions | Aliases |
 | --- | --- | --- | --- |
-| `activity-logs` | missing command coverage | - | - |
-| `channels` | missing command coverage | - | - |
-| `companies` | missing command coverage | - | - |
-| `cycle-counts` | missing command coverage | - | - |
-| `edi-documents` | missing command coverage | - | - |
-| `fixed-assets` | missing command coverage | - | - |
-| `inbound-shipments` | missing command coverage | - | - |
-| `integration-field-mappings` | missing command coverage | - | - |
-| `integration-mappings` | missing command coverage | - | - |
-| `maintenance` | missing command coverage | - | - |
-| `payment-obligations` | missing command coverage | - | - |
-| `prepayments` | missing command coverage | - | - |
-| `price-levels` | missing command coverage | - | - |
-| `price-schedules` | missing command coverage | - | - |
-| `print-stations` | missing command coverage | - | - |
-| `production-batches` | missing command coverage | - | - |
-| `purgatory` | missing command coverage | - | - |
-| `revenue-recognition` | missing command coverage | - | - |
-| `search-config` | missing command coverage | - | - |
-| `stock-snapshots` | missing command coverage | - | - |
-| `supplier-skus` | missing command coverage | - | - |
-| `topology-snapshots` | missing command coverage | - | - |
-| `transfer-orders` | missing command coverage | - | - |
-| `units-of-measure` | missing command coverage | - | - |
-| `vendor-credits` | missing command coverage | - | - |
-| `vendor-returns` | missing command coverage | - | - |
+| None | - | - | - |
 
 ## Uncovered Tool-Backed Actions
 

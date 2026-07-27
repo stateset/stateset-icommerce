@@ -1392,7 +1392,7 @@ This project follows Keep a Changelog and Semantic Versioning.
   operations and both backends.
 - **Concurrent credit reservations could over-reserve past the credit line
   (SQLite).** `reserve_credit` checks the requested hold against available
-  credit (limit − balance − holds), then INSERTs the reservation and bumps
+  credit (limit − balance − holds), then inserts the reservation and bumps
   `hold_amount` — a check-then-act the SQLite backend ran without serialization
   (the read used a lock-free pooled connection, and it held that connection
   while calling `recalculate_available_credit`, which under concurrency

@@ -11,6 +11,8 @@
 
 use chrono::NaiveDate;
 use rust_decimal_macros::dec;
+
+mod common;
 use stateset_core::{
     CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, JournalEntryFilter,
 };
@@ -45,17 +47,17 @@ async fn postgres_list_journal_entries_applies_account_and_search_filters() {
     let revenue = acct("4010").await;
 
     let entry_date = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
-    let period = gl
-        .create_period(CreateGlPeriod {
+    let _period = common::ensure_open_period(
+        &gl,
+        CreateGlPeriod {
             period_name: "2026-03".into(),
             fiscal_year: 2026,
             period_number: 3,
             start_date: NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
             end_date: NaiveDate::from_ymd_opt(2026, 3, 31).unwrap(),
-        })
-        .await
-        .expect("create period");
-    gl.open_period(period.id).await.expect("open period");
+        },
+    )
+    .await;
 
     // Use a unique description token so the search assertion is isolated on a
     // shared database.

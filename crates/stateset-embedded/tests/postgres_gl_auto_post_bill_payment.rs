@@ -14,6 +14,8 @@
 
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal_macros::dec;
+
+mod common;
 use stateset_core::{
     CreateAutoPostingConfig, CreateBill, CreateBillItem, CreateBillPayment, CreateGlPeriod,
     PaymentAllocationInput, PaymentMethodAP,
@@ -47,17 +49,17 @@ async fn postgres_auto_post_bill_payment_posts_balanced_entry() {
     };
 
     let payment_date: DateTime<Utc> = "2026-03-10T14:30:00Z".parse().expect("parse date");
-    let period = gl
-        .create_period(CreateGlPeriod {
+    let _period = common::ensure_open_period(
+        &gl,
+        CreateGlPeriod {
             period_name: "2026-03".into(),
             fiscal_year: 2026,
             period_number: 3,
             start_date: NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
             end_date: NaiveDate::from_ymd_opt(2026, 3, 31).unwrap(),
-        })
-        .await
-        .expect("create period");
-    gl.open_period(period.id).await.expect("open period");
+        },
+    )
+    .await;
 
     gl.set_auto_posting_config(CreateAutoPostingConfig {
         config_name: "default".into(),

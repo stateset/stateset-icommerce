@@ -440,15 +440,20 @@ jobs:
           cargo test -p stateset-crypto -p stateset-sync
 
       - name: Mutation Testing (Core)
+        # Label-triggered only: a full mutation run over stateset-core takes hours,
+        # far beyond what a per-push gate can afford. (The old master-push variant
+        # also passed flags cargo-mutants does not have — `--test-threads`,
+        # `--in-cargo-test-dir` — so it failed on argument parsing on every push
+        # and made trunk permanently red.)
         if: >
-          (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
-          (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci-mutants'))
+          github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci-mutants')
         run: |
           # Pin + --locked: newer cargo-mutants releases (27.x) resolve transitive
           # deps that raise the effective MSRV above the runner's stable rustc.
           # 25.3.1 declares MSRV 1.78 and builds clean against its committed lockfile.
           cargo install cargo-mutants --version 25.3.1 --locked
-          cargo mutants -p stateset-core --test-threads 1 --in-cargo-test-dir
+          # Second `--` forwards --test-threads to the test binaries themselves.
+          cargo mutants -p stateset-core --timeout 300 -- -- --test-threads=1
 
   node-bindings:
     name: Node Bindings

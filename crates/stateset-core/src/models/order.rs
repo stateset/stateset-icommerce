@@ -261,7 +261,7 @@ pub(crate) const MONEY_SCALE: u32 = 2;
 impl OrderItem {
     /// Calculate a line item's money total, rounded to the currency minor unit.
     ///
-    /// The result is rounded to [`MONEY_SCALE`] decimal places so the stored
+    /// The result is rounded to `MONEY_SCALE` (2) decimal places so the stored
     /// line total is a real money amount and an order's `total_amount` (the sum
     /// of these line totals) foots exactly to its line items. All order-creation
     /// paths on both backends route through this function so they agree to the

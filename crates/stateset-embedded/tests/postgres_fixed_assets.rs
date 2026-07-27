@@ -9,6 +9,8 @@
 
 #![cfg(feature = "postgres")]
 
+mod common;
+
 use chrono::{Datelike, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -176,18 +178,17 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
     }
     .pred_opt()
     .expect("previous day");
-    if let Ok(period) = gl
-        .create_period(CreateGlPeriod {
+    common::ensure_open_period(
+        &gl,
+        CreateGlPeriod {
             period_name: format!("{}-{:02}", today.year(), today.month()),
             fiscal_year: today.year(),
             period_number: today.month() as i32,
             start_date: start,
             end_date: end,
-        })
-        .await
-    {
-        gl.open_period(period.id).await.expect("open period");
-    }
+        },
+    )
+    .await;
 
     gl.set_auto_posting_config(CreateAutoPostingConfig {
         config_name: "default".into(),

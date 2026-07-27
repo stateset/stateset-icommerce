@@ -1571,8 +1571,10 @@ impl PgAccountsReceivableRepository {
         // SQLite backend's `JULIANDAY(applied) - JULIANDAY(invoice)`. `EXTRACT(DAY
         // FROM interval)` returns only the whole-day component, dropping the hours,
         // which floors each invoice's latency before averaging and diverges.
+        // `::double precision`: EXTRACT(EPOCH FROM interval) yields `numeric`
+        // (PostgreSQL 14+), and sqlx refuses to decode numeric into f64.
         let avg: Option<f64> = sqlx::query_scalar(
-            "SELECT AVG(EXTRACT(EPOCH FROM (pa.applied_date - i.invoice_date)) / 86400.0)
+            "SELECT AVG(EXTRACT(EPOCH FROM (pa.applied_date - i.invoice_date)) / 86400.0)::double precision
              FROM ar_payment_applications pa
              JOIN invoices i ON pa.invoice_id = i.id
              WHERE i.customer_id = $1 AND i.status = 'paid'",
