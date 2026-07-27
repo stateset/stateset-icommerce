@@ -8,8 +8,8 @@
  * - Order processing
  * - Analytics
  *
- * Compile with: javac -d . -cp stateset-embedded-1.23.1.jar BasicUsage.java
- * Run with: java -cp .:stateset-embedded-1.23.1.jar com.stateset.examples.BasicUsage
+ * Compile with: javac -d . -cp stateset-embedded-1.23.2.jar BasicUsage.java
+ * Run with: java -cp .:stateset-embedded-1.23.2.jar com.stateset.examples.BasicUsage
  */
 
 package com.stateset.examples;

@@ -6,6 +6,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.23.2] - 2026-07-27
+
+### Fixed
+- **docs.rs builds** for the 14 crates carrying
+  `#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]`: nightly 1.92
+  removed `doc_auto_cfg` (merged into `doc_cfg`), turning the attribute
+  into a hard error on docs.rs. Now `feature(doc_cfg)` only; verified
+  with `cargo +nightly doc --cfg docsrs` locally.
+
 ## [1.23.1] - 2026-07-27
 
 ### Fixed

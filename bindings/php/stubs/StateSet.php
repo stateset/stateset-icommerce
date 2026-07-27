@@ -6,7 +6,7 @@
  * Do not include this file at runtime - the extension provides the actual classes.
  *
  * @package StateSet\Embedded
- * @version 1.23.1
+ * @version 1.23.2
  */
 
 namespace StateSet;
