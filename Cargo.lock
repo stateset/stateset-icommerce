@@ -858,6 +858,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77727bb15fa921304124b128af125e7e3b968275d1b108b379190264f4423710"
 dependencies = [
+ "getrandom 0.4.2",
  "hybrid-array",
  "rand_core 0.10.0",
 ]
@@ -1885,9 +1886,9 @@ dependencies = [
 
 [[package]]
 name = "kem"
-version = "0.3.0-rc.6"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3ae2c3347ff4a7af4f679a9e397c2c7e6034a00b773dd2dd3c001d7f40897c9"
+checksum = "01737161ba802849cfd486b5bd209d38ba4943494c249a8126005170c7621edd"
 dependencies = [
  "crypto-common 0.2.1",
  "rand_core 0.10.0",
@@ -2062,30 +2063,31 @@ dependencies = [
 
 [[package]]
 name = "ml-dsa"
-version = "0.1.0-rc.8"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5b2bb0ad6fa2b40396775bd56f51345171490fef993f46f91a876ecdbdaea55"
+checksum = "add6b9d92e496f16f4526d68ff29da1483aba4b119baeab8bed3b9e3544a6f3d"
 dependencies = [
  "const-oid 0.10.2",
+ "crypto-common 0.2.1",
  "ctutils",
  "hybrid-array",
  "module-lattice",
- "pkcs8 0.11.0-rc.11",
- "rand_core 0.10.0",
- "sha3",
- "signature 3.0.0-rc.10",
+ "pkcs8 0.11.0",
+ "shake",
+ "signature 3.0.0",
  "zeroize",
 ]
 
 [[package]]
 name = "ml-kem"
-version = "0.3.0-rc.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8198b5db27ac9773534c371751a59dc18aec8b80aa141e69abfdd1dec2e3f78c"
+checksum = "5e15f3e5b957493873e396a66914e83e616b6afe335cdef7efe5c6e1216aba66"
 dependencies = [
  "hybrid-array",
  "kem",
  "module-lattice",
+ "pkcs8 0.11.0",
  "rand_core 0.10.0",
  "sha3",
  "zeroize",
@@ -2093,9 +2095,9 @@ dependencies = [
 
 [[package]]
 name = "module-lattice"
-version = "0.2.0"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cbdc2ac6ead7d0889a5d96e70b7f11a8812702a100ca7c65c5c71fdf076e182"
+checksum = "0c61b87c9683ab7cb1c6871d261ad5479b6b10ceb52c4352aaca3b5d35a8febe"
 dependencies = [
  "ctutils",
  "hybrid-array",
@@ -2422,12 +2424,12 @@ dependencies = [
 
 [[package]]
 name = "pkcs8"
-version = "0.11.0-rc.11"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12922b6296c06eb741b02d7b5161e3aaa22864af38dfa025a1a3ba3f68c84577"
+checksum = "451913da69c775a56034ea8d9003d27ee8948e12443eae7c038ba100a4f21cb7"
 dependencies = [
  "der 0.8.0",
- "spki 0.8.0-rc.4",
+ "spki 0.8.0",
 ]
 
 [[package]]
@@ -3430,12 +3432,23 @@ dependencies = [
 
 [[package]]
 name = "sha3"
-version = "0.11.0-rc.9"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b233a7d59d7bfc027208506a33ffc9532b2acb24ddc61fe7e758dc2250db431"
+checksum = "be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1"
 dependencies = [
  "digest 0.11.2",
  "keccak",
+]
+
+[[package]]
+name = "shake"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09057cb2149ad4cbd2da1e26b351f9a4c354219421229c69c3063e6f61947c4a"
+dependencies = [
+ "digest 0.11.2",
+ "keccak",
+ "sponge-cursor",
 ]
 
 [[package]]
@@ -3465,9 +3478,9 @@ dependencies = [
 
 [[package]]
 name = "signature"
-version = "3.0.0-rc.10"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f1880df446116126965eeec169136b2e0251dba37c6223bcc819569550edea3"
+checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
 dependencies = [
  "digest 0.11.2",
  "rand_core 0.10.0",
@@ -3547,13 +3560,19 @@ dependencies = [
 
 [[package]]
 name = "spki"
-version = "0.8.0-rc.4"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8baeff88f34ed0691978ec34440140e1572b68c7dd4a495fd14a3dc1944daa80"
+checksum = "1d9efca8738c78ee9484207732f728b1ef517bbb1833d6fc0879ca898a522f6f"
 dependencies = [
  "base64ct",
  "der 0.8.0",
 ]
+
+[[package]]
+name = "sponge-cursor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
 
 [[package]]
 name = "sqlx"
@@ -3764,7 +3783,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stateset-a2a"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "hex",
@@ -3781,7 +3800,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-authz"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "serde",
@@ -3792,7 +3811,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-benches"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "axum 0.8.8",
  "chrono",
@@ -3816,7 +3835,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-core"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "auto_impl",
  "base64 0.22.1",
@@ -3847,7 +3866,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-crypto"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -3873,7 +3892,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-db"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "criterion",
@@ -3899,7 +3918,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-dotnet"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "libc",
@@ -3915,7 +3934,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "criterion",
@@ -3947,7 +3966,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-node"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -3969,7 +3988,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-python"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "hex",
@@ -3989,7 +4008,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-wasm"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -4012,7 +4031,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-ffi"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4030,7 +4049,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-go"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "libc",
@@ -4046,7 +4065,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-http"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "axum 0.8.8",
  "base64 0.22.1",
@@ -4078,7 +4097,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-icp-client"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -4094,7 +4113,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-icp-iut"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -4108,7 +4127,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-integration-tests"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "rust_decimal",
@@ -4130,7 +4149,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-java"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "jni",
@@ -4147,7 +4166,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-jobs"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "serde",
@@ -4160,7 +4179,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-kotlin"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "jni",
@@ -4176,7 +4195,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-macros"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4188,7 +4207,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-migrations"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "insta",
@@ -4201,7 +4220,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-observability"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
@@ -4214,7 +4233,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-policy"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "insta",
@@ -4233,7 +4252,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-pricing"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "proptest",
@@ -4246,7 +4265,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-primitives"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "proptest",
  "proptest-derive",
@@ -4261,7 +4280,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-sdk"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4283,7 +4302,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-swift"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "cbindgen",
  "chrono",
@@ -4300,7 +4319,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-sync"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4319,7 +4338,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-test-utils"
-version = "1.23.0"
+version = "1.23.1"
 dependencies = [
  "chrono",
  "rust_decimal",
@@ -4443,7 +4462,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

@@ -69,7 +69,7 @@ assert_eq!(root, compute_node_hash(&leaves[0], &leaves[1]));
 Disable default features for a classical-only build:
 
 ```toml
-stateset-crypto = { version = "1.23.0", default-features = false }
+stateset-crypto = { version = "1.23.1", default-features = false }
 ```
 
 ## Post-Quantum Scope

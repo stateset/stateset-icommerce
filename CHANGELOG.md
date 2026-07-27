@@ -6,6 +6,20 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-07-27
+
+### Fixed
+- **Every published version of the Rust crates was uncompilable for fresh
+  consumers** with default features: stateset-crypto depended on
+  pre-release `ml-dsa 0.1.0-rc.8` / `ml-kem 0.3.0-rc.1`, and cargo's
+  pre-release semver matching resolved fresh (unlocked) builds to newer
+  releases that removed `ml_dsa::KeyGen` — so `cargo add stateset-sdk`
+  failed with E0432, and every docs.rs build back to 0.8.1 was red.
+  The workspace lockfile masked this locally and in CI. Migrated to the
+  stable `ml-dsa 0.1.1` / `ml-kem 0.3.2` API (`SigningKey::from_seed`);
+  all 258 crypto tests including cross-binding wire-format vectors pass
+  unchanged, so VES compatibility is preserved.
+
 ## [1.23.0] - 2026-07-27
 
 The trunk-health release: first-ever green core CI on master, plus the

@@ -35,8 +35,8 @@ ryu-js = "0.2"
 aes-gcm = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 hkdf = "0.12"
-ml-kem = { version = "0.3.0-rc.1", features = ["zeroize"], optional = true }
-ml-dsa = { version = "0.1.0-rc.8", features = ["zeroize"], optional = true }
+ml-kem = { version = "0.3.2", features = ["zeroize"], optional = true }
+ml-dsa = { version = "0.1.1", features = ["zeroize"], optional = true }
 rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 subtle = "2"

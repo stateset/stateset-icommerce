@@ -1,6 +1,6 @@
 use ml_dsa::signature::{Keypair, Signer, Verifier};
 use ml_dsa::{
-    EncodedVerifyingKey as MlDsaEncodedVerifyingKey, KeyGen, MlDsa65, Signature as MlDsaSignature,
+    EncodedVerifyingKey as MlDsaEncodedVerifyingKey, MlDsa65, Signature as MlDsaSignature,
     SigningKey as InnerMlDsaSigningKey, VerifyingKey as InnerMlDsaVerifyingKey,
 };
 use ml_kem::kem::{Decapsulate, KeyExport, TryKeyInit};
@@ -16,7 +16,7 @@ pub(crate) struct MlDsa65SigningKey(InnerMlDsaSigningKey<MlDsa65>);
 
 impl MlDsa65SigningKey {
     pub(crate) fn from_seed(seed: &[u8; 32]) -> Self {
-        Self(<MlDsa65 as KeyGen>::from_seed(&(*seed).into()))
+        Self(InnerMlDsaSigningKey::<MlDsa65>::from_seed(&(*seed).into()))
     }
 
     pub(crate) fn verifying_key_bytes(&self) -> Vec<u8> {

@@ -7,7 +7,7 @@ description: >
   payments, subscriptions, analytics, agent-to-agent commerce, and more.
   The SQLite of Commerce — embedded, portable, zero-dependency.
 
-version: 1.23.0
+version: 1.23.1
 license: MIT OR Apache-2.0
 
 startCommand:
