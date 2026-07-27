@@ -188,6 +188,13 @@ jobs:
           rm -rf artifacts
           ls -l -- *.node
 
+      # check:package imports @stateset/embedded/agent-toolkit, whose published
+      # @stateset/cli peer is not on npm yet at publish time, so it falls back
+      # to the workspace CLI — which needs the CLI's own dependencies.
+      - name: Install CLI dependencies (workspace toolkit fallback)
+        working-directory: cli
+        run: npm ci
+
       - name: Validate assembled package
         working-directory: bindings/node
         run: npm run check:package
