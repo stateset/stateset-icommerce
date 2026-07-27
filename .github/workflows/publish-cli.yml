@@ -111,8 +111,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
+      # napi cross-links the aarch64 musl lane through zig, which the alpine
+      # image does not ship; without it the build silently falls back to the
+      # host linker and dies at link time.
+      - name: Install zig (aarch64 musl cross-link)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: apk add --no-cache zig
+
       - name: Build native module
         working-directory: bindings/node
+        # bash explicitly: the docker branch uses POSIX [ -n ] tests, and the
+        # Windows runners default to PowerShell.
+        shell: bash
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         # Inside the napi alpine image (Node 18) the `prebuild` check:env gate
@@ -122,7 +132,11 @@ jobs:
         run: |
           npm ci
           if [ -n "${{ matrix.docker }}" ]; then
-            npx napi build --platform --release --target ${{ matrix.target }}
+            napi_args="--platform --release --target ${{ matrix.target }}"
+            if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+              napi_args="$napi_args --zig"
+            fi
+            npx napi build $napi_args
           else
             npm run build -- --target ${{ matrix.target }}
           fi
