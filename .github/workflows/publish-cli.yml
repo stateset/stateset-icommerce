@@ -200,15 +200,17 @@ jobs:
         run: npm run check:package
 
       - name: Generate release checksums
+        # The .node files are flattened into bindings/node (the fat-package
+        # layout npm pack consumes); the artifacts/ staging dir is gone.
         run: |
-          cd bindings/node/artifacts
-          sha256sum -- *.node > ../release-checksums.txt
+          cd bindings/node
+          sha256sum -- *.node > release-checksums.txt
 
       - name: Attest artifacts
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
-            bindings/node/artifacts/*.node
+            bindings/node/*.node
             bindings/node/release-checksums.txt
 
       - name: Publish checksums
