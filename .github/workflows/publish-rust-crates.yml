@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.23.3)'
+        description: 'Version to release (e.g., 1.23.4)'
         required: true
       publish:
         description: 'Publish to crates.io (false runs dry-run only)'

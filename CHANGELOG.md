@@ -6,6 +6,34 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.23.4] - 2026-07-28
+
+### Added
+- **`stateset-mcp`** — the canonical stdio MCP server binary. The docs
+  and the Smithery listing have referenced this command for several
+  releases without it existing; it now serves the full commerce tool
+  surface over stdio (verified via a live initialize/tools-list/
+  tools-call round trip), with writes preview-only unless `--apply`.
+- Agent discovery surfaces: repo-root `AGENTS.md` and `llms.txt`, a
+  corrected Smithery listing, and a one-line MCP connect snippet in the
+  README.
+
+### Fixed
+- `:memory:` databases are now backed by private temp files instead of
+  SQLite shared-cache, whose table-level locks do not fully serialize
+  read-modify-write transactions — an intermittent weighted-average-cost
+  lost update caught by the concurrency suite. Production file databases
+  were never affected. Side effect: the embedded test suite runs ~5x
+  faster.
+
+### Changed
+- `async_commerce` decomposed from a single 5,828-line file into nine
+  thematic modules; fourteen async accessors (Tax, Promotions, Quality,
+  Warehouse, AP/AR, and more) are now exported at the crate root.
+- Version bumps are a reviewed two-phase script
+  (`scripts/release-bump.sh`), replacing the ad-hoc seds that caused
+  four self-inflicted CI breakages during the 1.23.x line.
+
 ## [1.23.3] - 2026-07-27
 
 The registries-to-A release: per-platform npm distribution, wider Python

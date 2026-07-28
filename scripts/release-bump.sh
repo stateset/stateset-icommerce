@@ -2,7 +2,7 @@
 # Version-bump every synced release surface, in the right order, with the
 # exclusions that hand-run seds kept getting wrong.
 #
-#   scripts/release-bump.sh 1.23.3 1.24.0
+#   scripts/release-bump.sh 1.23.4 1.24.0
 #
 # What this encodes (each learned the hard way during the 1.23.x line):
 #   * Never touch ANY Cargo.lock with the sed — including the STANDALONE
