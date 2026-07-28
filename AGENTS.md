@@ -26,6 +26,18 @@ preview-only by default** — tools describe what they would do; add `--apply`
 to the args to enable mutations. The generated tool catalog is
 [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md).
 
+**Over HTTP instead** (hosted sandboxes, remote agents): `stateset-mcp-http`
+serves the same tools via MCP Streamable HTTP with an isolated, demo-seeded
+store per session — writes are safe because every session gets its own
+ephemeral database:
+
+```json
+{ "mcpServers": { "stateset-sandbox": { "url": "http://localhost:8090/mcp" } } }
+```
+
+Run it with `npx -y -p @stateset/cli stateset-mcp-http` (add
+`--host 0.0.0.0` to expose, `--read-only` to disable writes).
+
 ## If you are building an application (coding agent)
 
 Pick the ecosystem; every install below is published, current, and verified:

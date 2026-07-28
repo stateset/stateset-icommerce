@@ -44,7 +44,8 @@ gem install stateset_embedded -v 1.23.4   # Ruby
 900+ commerce tools, writes gated behind `--apply`):
 
 ```bash
-npx -y -p @stateset/cli stateset-mcp --db ./store.db
+npx -y -p @stateset/cli stateset-mcp --db ./store.db        # stdio, your database
+npx -y -p @stateset/cli stateset-mcp-http                   # HTTP sandbox: isolated, demo-seeded store per session
 ```
 
 **Zero to commerce in 5 lines:**

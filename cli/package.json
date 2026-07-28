@@ -21,6 +21,7 @@
     "stateset-update": "bin/stateset-update.js",
     "stateset-events": "bin/stateset-events.js",
     "stateset-mcp": "bin/stateset-mcp.js",
+    "stateset-mcp-http": "bin/stateset-mcp-http.js",
     "stateset-mcp-events": "bin/stateset-mcp-events.js",
     "stateset-sync": "bin/stateset-sync.js",
     "stateset-completion": "bin/stateset-completion.js",
