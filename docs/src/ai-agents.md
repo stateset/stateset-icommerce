@@ -301,7 +301,7 @@ The setup creates a configuration entry in your MCP client's config file:
     "mcpServers": {
         "stateset-commerce": {
             "command": "npx",
-            "args": ["@stateset/cli@1.23.4", "stateset-mcp", "--db", "./store.db"]
+            "args": ["-y", "-p", "@stateset/cli@1.23.4", "stateset-mcp", "--db", "./store.db"]
         }
     }
 }

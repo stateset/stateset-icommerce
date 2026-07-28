@@ -28,7 +28,7 @@ startCommand:
   commandFunction: |-
     (config) => ({
       command: 'npx',
-      args: ['-y', '@stateset/cli@latest', 'stateset-mcp', '--db', config.DB_PATH || './store.db'],
+      args: ['-y', '-p', '@stateset/cli@latest', 'stateset-mcp', '--db', config.DB_PATH || './store.db'],
       env: {}
     })
 

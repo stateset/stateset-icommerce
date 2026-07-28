@@ -37,7 +37,7 @@ EXAMPLES:
   # Claude Desktop / Cursor config:
   # { "mcpServers": { "stateset-commerce": {
   #     "command": "npx",
-  #     "args": ["-y", "@stateset/cli", "stateset-mcp", "--db", "./store.db"] } } }
+  #     "args": ["-y", "-p", "@stateset/cli", "stateset-mcp", "--db", "./store.db"] } } }
 `;
 
 async function main() {

@@ -15,7 +15,7 @@ end-to-end; every mutation is auditable.
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "@stateset/cli", "stateset-mcp", "--db", "./store.db"]
+      "args": ["-y", "-p", "@stateset/cli", "stateset-mcp", "--db", "./store.db"]
     }
   }
 }

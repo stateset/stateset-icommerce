@@ -11,7 +11,7 @@ Install (all published and verified):
 - Rust: `cargo add stateset-sdk --features full`
 - Node: `npm install @stateset/embedded`
 - Python: `pip install stateset-embedded`
-- MCP (Claude Desktop/Cursor): `npx -y @stateset/cli stateset-mcp --db ./store.db`
+- MCP (Claude Desktop/Cursor): `npx -y -p @stateset/cli stateset-mcp --db ./store.db`
   (900+ tools; writes need `--apply`)
 
 ## Docs

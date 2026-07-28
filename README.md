@@ -44,7 +44,7 @@ gem install stateset_embedded -v 1.23.4   # Ruby
 900+ commerce tools, writes gated behind `--apply`):
 
 ```bash
-npx -y @stateset/cli stateset-mcp --db ./store.db
+npx -y -p @stateset/cli stateset-mcp --db ./store.db
 ```
 
 **Zero to commerce in 5 lines:**
@@ -267,7 +267,7 @@ The exact current count and policy-domain breakdown are generated from code in t
 
 **One-command onboarding (including OpenClaw):**
 ```bash
-npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
+npx -y -p @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
 This writes an MCP config at `.openclaw/mcp.json` and wires `stateset-mcp-events` automatically.
@@ -276,7 +276,7 @@ It also installs starter guardrail policies + an agent prompt pack under `./.sta
 It also generates `./.stateset/agent-starters/start-mcp.sh` and `check-mcp.sh` for launch + health checks.
 For a fully explicit run, use:
 ```bash
-npx -y @stateset/cli@latest stateset-setup --yes --demo --agent openclaw --starter-pack ops --print-handoff --verify --db ./store.db
+npx -y -p @stateset/cli@latest stateset-setup --yes --demo --agent openclaw --starter-pack ops --print-handoff --verify --db ./store.db
 ```
 Use `--agent claude`, `--agent cursor`, or `--agent windsurf` for those clients, or pass
 `--mcp-config <path>` for any MCP-compatible agent runtime.
@@ -290,7 +290,7 @@ Use `--verify-strict` in CI to fail setup if any readiness warnings are present.
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "@stateset/cli@latest", "stateset-mcp-events"],
+      "args": ["-y", "-p", "@stateset/cli@latest", "stateset-mcp-events"],
       "env": { "DB_PATH": "./store.db" }
     }
   }
@@ -303,7 +303,7 @@ Use `--verify-strict` in CI to fail setup if any readiness warnings are present.
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "@stateset/cli@latest", "stateset-mcp-events"],
+      "args": ["-y", "-p", "@stateset/cli@latest", "stateset-mcp-events"],
       "env": { "DB_PATH": "./store.db" }
     }
   }
