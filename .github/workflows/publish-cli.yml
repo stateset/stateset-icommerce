@@ -132,11 +132,11 @@ jobs:
         run: |
           npm ci
           if [ -n "${{ matrix.docker }}" ]; then
-            napi_args="--platform --release --target ${{ matrix.target }}"
+            extra_args=()
             if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-              napi_args="$napi_args --zig"
+              extra_args+=(--zig)
             fi
-            npx napi build $napi_args
+            npx napi build --platform --release --target "${{ matrix.target }}" "${extra_args[@]}"
           else
             npm run build -- --target ${{ matrix.target }}
           fi
