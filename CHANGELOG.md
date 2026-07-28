@@ -6,6 +6,17 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.23.5] - 2026-07-28
+
+### Added
+- **`stateset-mcp-http`** — hosted agent sandbox: the full commerce tool
+  surface over MCP Streamable HTTP with an isolated, demo-seeded store
+  per session. Writes are enabled by default because every session gets
+  its own ephemeral database; `--read-only`, `--no-seed`,
+  `--session-ttl`, and `--max-sessions` tune it, `/health` reports for
+  deploy probes. Cross-session isolation is integration-tested against
+  the real binary.
+
 ## [1.23.4] - 2026-07-28
 
 ### Added

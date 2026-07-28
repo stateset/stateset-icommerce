@@ -34,10 +34,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.23.4     # Python
-npm install @stateset/embedded@1.23.4     # Node.js
-npm install -g @stateset/cli@1.23.4       # CLI
-gem install stateset_embedded -v 1.23.4   # Ruby
+pip install stateset-embedded==1.23.5     # Python
+npm install @stateset/embedded@1.23.5     # Node.js
+npm install -g @stateset/cli@1.23.5       # CLI
+gem install stateset_embedded -v 1.23.5   # Ruby
 ```
 
 **Connect an AI agent in one line** (Claude Desktop, Cursor, any MCP client —
@@ -84,7 +84,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.23.4](#whats-new-in-v1234)
+- [What's New in v1.23.5](#whats-new-in-v1235)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -182,7 +182,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.23.4 @stateset/cli@1.23.4
+npm install @stateset/embedded@1.23.5 @stateset/cli@1.23.5
 ```
 
 ```javascript
@@ -332,9 +332,9 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.23.4
+## What's New in v1.23.5
 
-**v1.23.4 completes the registry repair**: per-platform npm packages
+**v1.23.5 completes the registry repair**: per-platform npm packages
 (~20 MB installs instead of a 184 MB bundle), Python wheels for 3.13 /
 linux-arm64 / Intel macOS, and publish gates that catch fresh-consumer
 breakage before it ships. **v1.23.1/.2 were critical fixes for Rust
@@ -345,12 +345,12 @@ docs.rs had never built). Now on stable `ml-dsa`/`ml-kem` with
 wire-format vectors verified unchanged.
 
 
-**The v1.17.0 → v1.23.4 series makes the platform whole: full backend
+**The v1.17.0 → v1.23.5 series makes the platform whole: full backend
 parity, complete language-binding coverage, a real disaster-recovery
 story, a broad operator console, and a complete core-commerce tool
 surface — closing the gaps the back-office build-out left behind.**
 
-- **Trunk health and financial-correctness fixes (v1.23.4).** First
+- **Trunk health and financial-correctness fixes (v1.23.5).** First
   fully-green core CI; two real GL/AR PostgreSQL bugs fixed
   (nondeterministic auto-posting config, numeric decode); durable
   idempotency expiry boundary aligned across backends; 26 domains gained
@@ -408,7 +408,7 @@ surface — closing the gaps the back-office build-out left behind.**
   by a store-level test.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the full per-release entries
-(v1.17.0 – v1.23.4).
+(v1.17.0 – v1.23.5).
 
 ---
 
@@ -1305,7 +1305,7 @@ Platform-specific notes that don't fit either:
   <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.23.4</version>
+    <version>1.23.5</version>
   </dependency>
   ```
 
@@ -1315,7 +1315,7 @@ Platform-specific notes that don't fit either:
   the autoloaded stubs throw at runtime.
 
 - **Swift** — Swift Package Manager is the supported path. CocoaPods is
-  community-maintained at `pod 'StateSet', '~> 1.23.4'`.
+  community-maintained at `pod 'StateSet', '~> 1.23.5'`.
 
 - **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
   that, `stateset --help` works anywhere.
@@ -1328,16 +1328,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.23.4"` | [docs.rs](https://docs.rs/stateset-sdk) |
-| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.23.4` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.23.5"` | [docs.rs](https://docs.rs/stateset-sdk) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.23.5` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
-| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.23.4'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
-| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.23.4")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
-| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.23.4")` | [GitHub](https://github.com/stateset/stateset-swift) |
-| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.23.4` / `<PackageReference Include="StateSet.Embedded" Version="1.23.4" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
-| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.23.4` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.23.5'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.23.5")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.23.5")` | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.23.5` / `<PackageReference Include="StateSet.Embedded" Version="1.23.5" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.23.5` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use

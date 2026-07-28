@@ -1,6 +1,6 @@
 {
   "name": "stateset-admin",
-  "version": "1.23.4",
+  "version": "1.23.5",
   "private": true,
   "engines": {
     "node": ">=20.20.0",

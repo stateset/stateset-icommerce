@@ -12,9 +12,9 @@ name = "stateset_dotnet"
 crate-type = ["cdylib"]
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", version = "1.23.4" }
-stateset-core = { path = "../../crates/stateset-core", version = "1.23.4" }
-stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.23.4" }
+stateset-embedded = { path = "../../crates/stateset-embedded", version = "1.23.5" }
+stateset-core = { path = "../../crates/stateset-core", version = "1.23.5" }
+stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.23.5" }
 
 # Serialization
 serde = { workspace = true }
