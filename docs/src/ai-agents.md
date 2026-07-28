@@ -307,6 +307,36 @@ The setup creates a configuration entry in your MCP client's config file:
 }
 ```
 
+### Streamable HTTP (hosted sandboxes, remote agents)
+
+`stateset-mcp-http` serves the same tool surface over MCP Streamable HTTP,
+with an **isolated, demo-seeded store per session** — every session gets its
+own ephemeral database, so writes are enabled by default and cannot leak
+between agents or persist beyond the session TTL:
+
+```bash
+npx -y -p @stateset/cli stateset-mcp-http           # http://127.0.0.1:8090/mcp
+```
+
+```json
+{ "mcpServers": { "stateset-sandbox": { "url": "http://localhost:8090/mcp" } } }
+```
+
+Flags: `--host 0.0.0.0` to expose, `--read-only` to disable writes,
+`--no-seed` for an empty store, `--session-ttl` / `--max-sessions` for
+hosting limits. `GET /health` reports status for deploy probes. There is
+deliberately no auth (sandbox design); front it with your proxy for private
+hosting.
+
+### Which MCP entrypoint?
+
+| Binary | Transport | Store | Writes |
+|---|---|---|---|
+| `stateset-mcp` | stdio | your database | preview-only unless `--apply` |
+| `stateset-mcp-http` | Streamable HTTP | per-session, seeded, ephemeral | enabled (isolated) |
+| `stateset-mcp-events` | stdio + HTTP event sidecar | your database | preview-only unless `--apply` |
+| `stateset-x402-mcp` | stdio | x402 payment tools only | per its flags |
+
 ## Which Approach Should I Use?
 
 | Scenario | Recommended |
