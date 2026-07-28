@@ -172,6 +172,23 @@ pub struct SqliteDatabase {
     pool: Pool<SqliteConnectionManager>,
 }
 
+/// Best-effort cleanup for `:memory:` databases, which are backed by private
+/// temp files (see the pool construction below for why).
+#[derive(Debug)]
+struct EphemeralDbGuard {
+    path: std::path::PathBuf,
+}
+
+impl Drop for EphemeralDbGuard {
+    fn drop(&mut self) {
+        for suffix in ["", "-wal", "-shm"] {
+            let mut p = self.path.as_os_str().to_owned();
+            p.push(suffix);
+            let _ = std::fs::remove_file(std::path::PathBuf::from(p));
+        }
+    }
+}
+
 /// Database health status returned by [`SqliteDatabase::health_check`].
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DbHealthStatus {
@@ -258,21 +275,27 @@ impl SqliteDatabase {
         // Counter to generate unique database names for each in-memory instance
         static MEMORY_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-        // For in-memory databases, use shared-cache mode with a unique URI to allow multiple
-        // connections to access the same in-memory database. Each Commerce instance gets its
-        // own unique database name to ensure test isolation.
+        // `:memory:` databases are backed by a PRIVATE TEMP FILE, not SQLite
+        // shared-cache. Shared-cache (the only way a connection pool can see
+        // one true in-memory database) uses table-level locks whose semantics
+        // differ from file databases — BEGIN IMMEDIATE does not fully
+        // serialize read-modify-write transactions there, which surfaced as a
+        // rare lost update in the weighted-average-cost concurrency test. A
+        // temp file gets the exact production locking model (WAL, IMMEDIATE
+        // serialization, full pool concurrency); on Linux, tmp is typically
+        // RAM-backed anyway. The files are deleted when the last handle drops.
         let is_memory = config.url == ":memory:";
+        let mut ephemeral = None;
         let (manager, max_connections) = if is_memory {
-            // Generate unique database name for this instance
             let db_id = MEMORY_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let uri = format!("file:memdb_{db_id}?mode=memory&cache=shared");
-            let manager = SqliteConnectionManager::file(&uri).with_flags(
+            let path = std::env::temp_dir()
+                .join(format!("stateset_memdb_{}_{db_id}.db", std::process::id()));
+            ephemeral = Some(std::sync::Arc::new(EphemeralDbGuard { path: path.clone() }));
+            let manager = SqliteConnectionManager::file(&path).with_flags(
                 OpenFlags::SQLITE_OPEN_READ_WRITE
                     | OpenFlags::SQLITE_OPEN_CREATE
-                    | OpenFlags::SQLITE_OPEN_FULL_MUTEX
-                    | OpenFlags::SQLITE_OPEN_URI,
+                    | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
             );
-            // Respect configured pool size; ensure at least one connection.
             (manager, config.max_connections.max(1))
         } else {
             let manager = SqliteConnectionManager::file(&config.url).with_flags(
@@ -283,14 +306,18 @@ impl SqliteDatabase {
             (manager, config.max_connections)
         };
         let manager = manager.with_init(move |conn| {
+            // Keep the ephemeral-file guard alive as long as the POOL does
+            // (the init closure lives inside the connection manager). Tying
+            // it to `SqliteDatabase` instead deleted the temp file while
+            // accessor repos still held pool clones — lazily opened
+            // connections then recreated an EMPTY database ("no such table").
+            let _keep_ephemeral_alive = &ephemeral;
             // Use longer busy_timeout for high concurrency scenarios
             conn.execute_batch(&format!(
                 "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = {};",
                 crate::DEFAULT_TRANSACTION_TIMEOUT_MS
             ))?;
-            if !is_memory {
-                conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-            }
+            conn.execute_batch("PRAGMA journal_mode = WAL;")?;
             // Performance tuning: reduce fsync overhead and increase cache
             conn.execute_batch(
                 "PRAGMA synchronous = NORMAL;\
