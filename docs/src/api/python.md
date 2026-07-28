@@ -19,6 +19,10 @@ pip install "stateset-embedded[autogen]"
 pip install "stateset-embedded[agents]"
 ```
 
+Supported: CPython 3.9–3.13, with prebuilt wheels for Linux x64/aarch64,
+macOS Intel/Apple Silicon, and Windows x64; other environments build
+from the sdist wherever a Rust toolchain is available.
+
 ## Quick Start
 
 ```python

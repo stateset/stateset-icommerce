@@ -1,5 +1,8 @@
 # @stateset/embedded
 
+[![npm](https://img.shields.io/npm/v/@stateset/embedded.svg)](https://www.npmjs.com/package/@stateset/embedded)
+[![node](https://img.shields.io/node/v/@stateset/embedded.svg)](https://nodejs.org)
+
 The SQLite of commerce - an embeddable commerce library powered by Rust.
 
 ## Features
@@ -16,7 +19,16 @@ The SQLite of commerce - an embeddable commerce library powered by Rust.
 npm install @stateset/embedded
 ```
 
-Requires Node `20.20.0+`.
+Requires Node `20.20.0+`. npm resolves your platform's prebuilt native
+binary automatically via one optional dependency
+(`@stateset/embedded-<platform>`, ~20-26 MB) — the install stays small
+instead of bundling every platform.
+
+**Supported platforms:** Linux x64/arm64 (glibc 2.33+ and musl),
+macOS x64/arm64 (11+), Windows x64/arm64. On older glibc (e.g. Ubuntu
+20.04, past EOL) use the musl build in a container, or the Python package
+(`pip install stateset-embedded`), whose manylinux wheels and source
+fallback reach further back.
 
 ## Development
 
@@ -91,8 +103,10 @@ console.log(`$100 USD = €${conversion.convertedAmount} EUR`);
 
 ## Agent Framework Embedding
 
-If you need the full advanced runtime for server-side agents, install the CLI
-peer alongside the binding and use the dedicated toolkit entrypoint:
+`@stateset/cli` is an **optional peer dependency** — the core engine never
+pulls it in. Install it alongside the binding only when you want the full
+advanced runtime for server-side agents, then use the dedicated toolkit
+entrypoint:
 
 ```bash
 npm install @stateset/embedded @stateset/cli
@@ -424,13 +438,3 @@ The library uses SQLite under the hood with automatic schema migrations. Your da
 ## License
 
 MIT OR Apache-2.0
-
-## Platform support
-
-Prebuilt binaries install automatically via platform-specific optional
-dependencies (one ~20-25 MB package per platform, not a fat bundle):
-Linux x64/arm64 (glibc **2.33+** and musl), macOS x64/arm64, Windows
-x64/arm64. On glibc older than 2.33 (e.g. Ubuntu 20.04, past EOL) use the
-musl build in a container, or the Python package (`pip install
-stateset-embedded`), whose manylinux wheels and source fallback support
-older systems.

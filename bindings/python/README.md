@@ -1,5 +1,8 @@
 # stateset-embedded
 
+[![PyPI](https://img.shields.io/pypi/v/stateset-embedded.svg)](https://pypi.org/project/stateset-embedded/)
+[![Python](https://img.shields.io/pypi/pyversions/stateset-embedded.svg)](https://pypi.org/project/stateset-embedded/)
+
 Local-first embedded commerce library for Python, powered by Rust.
 
 ## Installation
@@ -7,6 +10,11 @@ Local-first embedded commerce library for Python, powered by Rust.
 ```bash
 pip install stateset-embedded
 ```
+
+**Supported environments:** CPython 3.9-3.13. Prebuilt wheels ship for
+Linux x64/aarch64 (manylinux), macOS Intel/Apple Silicon, and Windows
+x64; everything else (including older glibc systems) builds from the
+sdist automatically wherever a Rust toolchain is available.
 
 Optional framework adapters:
 

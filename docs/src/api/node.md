@@ -12,6 +12,10 @@ yarn add @stateset/embedded
 pnpm add @stateset/embedded
 ```
 
+Requires Node 20.20+. Your platform's prebuilt native binary installs
+automatically as one small optional dependency (Linux x64/arm64 with
+glibc 2.33+ or musl, macOS x64/arm64, Windows x64/arm64).
+
 ## Quick Start
 
 ```javascript

@@ -8,6 +8,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/stateset/stateset-icommerce/actions/workflows/ci.yml/badge.svg)](https://github.com/stateset/stateset-icommerce/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/stateset/stateset-icommerce/graph/badge.svg)](https://codecov.io/gh/stateset/stateset-icommerce)
+[![crates.io](https://img.shields.io/crates/v/stateset-sdk.svg?label=crates.io)](https://crates.io/crates/stateset-sdk)
+[![docs.rs](https://docs.rs/stateset-sdk/badge.svg)](https://docs.rs/stateset-sdk)
+[![npm](https://img.shields.io/npm/v/@stateset/embedded.svg?label=npm)](https://www.npmjs.com/package/@stateset/embedded)
+[![PyPI](https://img.shields.io/pypi/v/stateset-embedded.svg?label=PyPI)](https://pypi.org/project/stateset-embedded/)
 
 > **Looking to accept ChatGPT checkout?** iCommerce 1.0 pairs with
 > [`stateset-acp-handler`](https://github.com/stateset/stateset-acp-handler)
