@@ -3,9 +3,14 @@
 
 name: stateset-commerce
 description: >
-  AI-powered commerce engine with 256 MCP tools for orders, inventory,
-  payments, subscriptions, analytics, agent-to-agent commerce, and more.
-  The SQLite of Commerce — embedded, portable, zero-dependency.
+  The SQLite of Commerce — an embedded commerce engine serving 900+ MCP
+  tools across 89 domains: orders, inventory, customers, products, carts
+  and checkout, payments and refunds, returns/RMA, subscriptions,
+  promotions, analytics and forecasting, a full finance suite (GL,
+  month-end close, AP/AR, fixed assets, revenue recognition), warehouse
+  management, traceability, EDI, and agent-to-agent commerce (x402,
+  agent cards, escrow). Local-first: no API keys, no rate limits — the
+  engine and its database run inside the server process.
 
 version: 1.23.3
 license: MIT OR Apache-2.0
@@ -23,7 +28,7 @@ startCommand:
   commandFunction: |-
     (config) => ({
       command: 'npx',
-      args: ['-y', '@stateset/cli@latest', 'stateset-mcp-events', '--db', config.DB_PATH || './store.db'],
+      args: ['-y', '@stateset/cli@latest', 'stateset-mcp', '--db', config.DB_PATH || './store.db'],
       env: {}
     })
 
@@ -58,7 +63,8 @@ tools:
   - discover_agents
   - a2a_pay
   - a2a_request_quote
-  # ... and 226 more tools (256 total)
+  # ... representative sample — 900+ tools total; the generated catalog
+  # lives at https://github.com/stateset/stateset-icommerce/blob/master/cli/docs/TOOLS.md
 
 keywords:
   - commerce

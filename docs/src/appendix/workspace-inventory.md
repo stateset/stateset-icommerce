@@ -19,7 +19,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 | Rust crates in workspace | 22 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
-| CLI binaries | 50 |
+| CLI binaries | 51 |
 | CLI optional dependencies | 15 |
 | Admin local embedded binding | `file:../bindings/node` |
 

@@ -40,6 +40,13 @@ npm install -g @stateset/cli@1.23.3       # CLI
 gem install stateset_embedded -v 1.23.3   # Ruby
 ```
 
+**Connect an AI agent in one line** (Claude Desktop, Cursor, any MCP client —
+900+ commerce tools, writes gated behind `--apply`):
+
+```bash
+npx -y @stateset/cli stateset-mcp --db ./store.db
+```
+
 **Zero to commerce in 5 lines:**
 ```rust
 use stateset_sdk::prelude::*;

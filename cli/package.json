@@ -1,7 +1,7 @@
 {
   "name": "@stateset/cli",
   "version": "1.23.3",
-  "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
+  "description": "AI-powered local-first commerce engine \u2014 orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
     "ss": "bin/stateset.js",
@@ -20,6 +20,7 @@
     "stateset-doctor": "bin/stateset-doctor.js",
     "stateset-update": "bin/stateset-update.js",
     "stateset-events": "bin/stateset-events.js",
+    "stateset-mcp": "bin/stateset-mcp.js",
     "stateset-mcp-events": "bin/stateset-mcp-events.js",
     "stateset-sync": "bin/stateset-sync.js",
     "stateset-completion": "bin/stateset-completion.js",

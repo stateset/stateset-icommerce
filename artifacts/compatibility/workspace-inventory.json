@@ -545,7 +545,7 @@
     }
   ],
   "cli": {
-    "binaryCount": 50,
+    "binaryCount": 51,
     "dependencyCount": 10,
     "optionalDependencyCount": 15,
     "topLevelSourceCounts": [

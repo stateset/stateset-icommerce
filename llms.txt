@@ -1,0 +1,30 @@
+# StateSet iCommerce
+
+> The SQLite of commerce: an embedded, local-first commerce engine for AI
+> agents and applications. Orders, inventory, customers, products, carts,
+> payments, returns, subscriptions, promotions, analytics, full finance
+> (GL, month-end close, AP/AR, fixed assets, revenue recognition), warehouse
+> management, and traceability — in-process, one database file, exact-decimal
+> money, no external services.
+
+Install (all published and verified):
+- Rust: `cargo add stateset-sdk --features full`
+- Node: `npm install @stateset/embedded`
+- Python: `pip install stateset-embedded`
+- MCP (Claude Desktop/Cursor): `npx -y @stateset/cli stateset-mcp --db ./store.db`
+  (900+ tools; writes need `--apply`)
+
+## Docs
+
+- [Agent quickstart](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/ai-agents.md): MCP + OpenAI/LangChain/Vercel-AI/CrewAI adapters with working code
+- [Getting started](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/getting-started.md): install + first commerce operations per language
+- [Tool catalog](https://github.com/stateset/stateset-icommerce/blob/master/cli/docs/TOOLS.md): generated list of every MCP tool and its schema
+- [Rust API](https://docs.rs/stateset-sdk): crate docs (all 17 crates build green)
+- [Money contract](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/money.md): why money is exact-decimal and how that is enforced
+- [Trust foundation](https://github.com/stateset/stateset-icommerce/blob/master/TRUST_FOUNDATION.md): verifiability, audit, and compatibility guarantees
+
+## Optional
+
+- [AGENTS.md](https://github.com/stateset/stateset-icommerce/blob/master/AGENTS.md): condensed agent-facing guide to this repo
+- [Full docs site](https://docs.stateset.com): rendered documentation
+- [Architecture](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/architecture.md): Rust kernel, bindings, operator runtime
