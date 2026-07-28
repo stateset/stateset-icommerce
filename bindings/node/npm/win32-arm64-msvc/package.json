@@ -1,6 +1,6 @@
 {
   "name": "@stateset/embedded-win32-arm64-msvc",
-  "version": "1.23.5",
+  "version": "1.23.6",
   "os": [
     "win32"
   ],

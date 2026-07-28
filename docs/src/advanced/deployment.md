@@ -83,7 +83,7 @@ spec:
     spec:
       containers:
         - name: icommerce
-          image: stateset/icommerce:1.23.5
+          image: stateset/icommerce:1.23.6
           ports:
             - containerPort: 8080
           env:

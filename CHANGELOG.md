@@ -6,6 +6,11 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.23.6] - 2026-07-28
+
+Maintenance release: no functional changes. Aligns all release surfaces
+and lockfiles after the 1.23.4/1.23.5 distribution work.
+
 ## [1.23.5] - 2026-07-28
 
 ### Added
