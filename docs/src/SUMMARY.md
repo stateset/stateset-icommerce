@@ -119,6 +119,7 @@
 - [Logging & Debugging](guides/logging.md)
 - [Testing Strategy](advanced/testing.md)
 - [Database Schema](advanced/database-schema.md)
+- [Money: Storage & Arithmetic](advanced/money.md)
 - [Compliance & Audit](advanced/compliance.md)
 - [Admin Dashboard](advanced/admin-dashboard.md)
 - [Deployment](advanced/deployment.md)
