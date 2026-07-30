@@ -6,6 +6,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+- **The stdio MCP entrypoints now serve protocol revision 2026-07-28 too.**
+  `stateset-mcp` and `stateset-mcp-events` are built on the MCP SDK's
+  `serveStdio`, which owns the era decision for the connection: the opening
+  exchange selects it, one server instance is pinned for the connection
+  lifetime, and 2025-era clients are served from the same tool factory as
+  modern ones. Both gain `--strict-protocol` for a modern-only server.
+  With this, every MCP entrypoint we ship is on 2026-07-28.
+
 ## [1.24.0] - 2026-07-30
 
 ### Changed

@@ -40,6 +40,7 @@ OPTIONS:
   --history-limit <n>     In-memory event history size (default: 500)
   --stream-name <name>    Event stream name (default: stateset-mcp)
   --structured-tool-results  Include machine-readable _agentic metadata in MCP tool results
+  --strict-protocol          Serve ONLY 2026-07-28; reject 2025-era clients
   --help, -h              Show this help message
   --version, -v           Show version
 
@@ -181,6 +182,7 @@ async function main() {
       'history-limit': { type: 'string', default: '500' },
       'stream-name': { type: 'string', default: 'stateset-mcp' },
       'structured-tool-results': { type: 'boolean', short: 's', default: false },
+      'strict-protocol': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -199,13 +201,15 @@ async function main() {
 
   const [
     { Commerce },
-    { StdioServerTransport },
+    { serveStdio },
     { createStatesetMcpServer },
+    { createStatesetV2McpServer },
     { createMcpEventStreamer },
   ] = await Promise.all([
     import('@stateset/embedded'),
-    import('@modelcontextprotocol/sdk/server/stdio.js'),
+    import('@modelcontextprotocol/server/stdio'),
     import('../src/mcp-server.js'),
+    import('../src/mcp/v2-server.js'),
     import('../src/mcp-event-streamer.js'),
   ]);
 
@@ -229,20 +233,22 @@ async function main() {
     streamName,
   });
 
-  const mcpServer = createStatesetMcpServer({
-    commerce,
-    dbPath,
-    structuredToolResults: values['structured-tool-results'],
-    mcpEventStream: eventStreamer,
-  });
-  const mcpInstance = mcpServer?.instance || mcpServer?.server || mcpServer;
-  if (!mcpInstance || typeof mcpInstance.connect !== 'function') {
-    throw new Error('Failed to initialize MCP server instance');
-  }
-
-  const transport = new StdioServerTransport();
-  await mcpInstance.connect(transport);
-  runtime.mcpInstance = mcpInstance;
+  // `serveStdio` pins one instance per connection and owns the era decision;
+  // 2025-era clients are served from the same factory as 2026-07-28 ones.
+  runtime.mcpHandle = serveStdio(
+    () =>
+      createStatesetV2McpServer({
+        createServer: createStatesetMcpServer,
+        commerce,
+        dbPath,
+        structuredToolResults: values['structured-tool-results'],
+        mcpEventStream: eventStreamer,
+      }),
+    {
+      legacy: values['strict-protocol'] ? 'reject' : 'serve',
+      onerror: (error) => console.error(`[stateset-mcp-events] ${error.message}`),
+    },
+  );
   const server = createServer((req, res) => {
     void (async () => {
       const requestUrl = new URL(req.url || '/', `http://${host}:${port}`);
@@ -446,7 +452,7 @@ async function main() {
 runMain('stateset-mcp-events', main, {
   cleanup: async () => {
     const server = runtime.server;
-    const mcpInstance = runtime.mcpInstance;
+    const mcpHandle = runtime.mcpHandle;
 
     if (server && server.listening) {
       await new Promise((resolve) => {
@@ -454,8 +460,9 @@ runMain('stateset-mcp-events', main, {
       });
     }
 
-    if (mcpInstance?.close) {
-      await mcpInstance.close();
+    // Closes the pinned server instance and the underlying stdio transport.
+    if (mcpHandle?.close) {
+      await mcpHandle.close();
     }
   },
 });

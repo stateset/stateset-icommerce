@@ -87,15 +87,20 @@ function registerAdaptedTool(server, toolDef) {
 /**
  * Build a protocol-2026-07-28 MCP server exposing the full commerce tool surface.
  *
+ * Use this as the factory for either v2 serving entry point — `createMcpHandler`
+ * (HTTP, one instance per request) or `serveStdio` (one instance pinned per
+ * connection).
+ *
  * @param {object} options
- * @param {object} options.commerce - An open `Commerce` handle (shared or per-request).
- * @param {string} options.dbPath
- * @param {boolean} options.allowApply - Whether write tools are enabled.
  * @param {Function} options.createServer - Injected `createStatesetMcpServer`.
+ * @param {...any} options.serverOptions - Everything else is forwarded verbatim
+ *   to `createStatesetMcpServer` (`commerce`, `dbPath`, `allowApply`,
+ *   `structuredToolResults`, …), so callers are not gated on this bridge
+ *   knowing every option.
  * @returns {import('@modelcontextprotocol/server').McpServer}
  */
-export function createStatesetV2McpServer({ commerce, dbPath, allowApply, createServer }) {
-  const stateset = createServer({ commerce, dbPath, allowApply });
+export function createStatesetV2McpServer({ createServer, ...serverOptions }) {
+  const stateset = createServer(serverOptions);
   const tools = stateset.getAdaptedTools();
 
   const server = new McpServer({ name: 'stateset-commerce', version: CLI_VERSION });

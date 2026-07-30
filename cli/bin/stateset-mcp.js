@@ -31,6 +31,7 @@ OPTIONS:
   --db <path>                SQLite database path (default: ./store.db, env DB_PATH)
   --apply                    Enable write tools (default: preview-only)
   --structured-tool-results  Emit structured content blocks in tool results
+  --strict-protocol          Serve ONLY 2026-07-28; reject 2025-era clients
   -h, --help                 Show this help
 
 EXAMPLES:
@@ -46,6 +47,7 @@ async function main() {
       db: { type: 'string' },
       apply: { type: 'boolean', default: false },
       'structured-tool-results': { type: 'boolean', default: false },
+      'strict-protocol': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -55,11 +57,13 @@ async function main() {
     process.exit(0);
   }
 
-  const [{ Commerce }, { StdioServerTransport }, { createStatesetMcpServer }] = await Promise.all([
-    import('@stateset/embedded'),
-    import('@modelcontextprotocol/sdk/server/stdio.js'),
-    import('../src/mcp-server.js'),
-  ]);
+  const [{ Commerce }, { serveStdio }, { createStatesetMcpServer }, { createStatesetV2McpServer }] =
+    await Promise.all([
+      import('@stateset/embedded'),
+      import('@modelcontextprotocol/server/stdio'),
+      import('../src/mcp-server.js'),
+      import('../src/mcp/v2-server.js'),
+    ]);
 
   const dbPath = values.db || process.env.DB_PATH || './store.db';
 
@@ -71,22 +75,28 @@ async function main() {
     process.exit(1);
   }
 
-  const mcpServer = createStatesetMcpServer({
-    commerce,
-    dbPath,
-    allowApply: values.apply,
-    structuredToolResults: values['structured-tool-results'],
-  });
-  const mcpInstance = mcpServer?.instance || mcpServer?.server || mcpServer;
-  if (!mcpInstance || typeof mcpInstance.connect !== 'function') {
-    throw new Error('Failed to initialize MCP server instance');
-  }
+  // `serveStdio` owns the era decision: the opening exchange selects it, one
+  // instance from this factory is pinned for the connection, and everything
+  // after passes straight through. 2025-era clients are served from the same
+  // factory, so both revisions expose an identical tool surface.
+  serveStdio(
+    () =>
+      createStatesetV2McpServer({
+        createServer: createStatesetMcpServer,
+        commerce,
+        dbPath,
+        allowApply: values.apply,
+        structuredToolResults: values['structured-tool-results'],
+      }),
+    {
+      legacy: values['strict-protocol'] ? 'reject' : 'serve',
+      onerror: (error) => console.error(`[stateset-mcp] ${error.message}`),
+    },
+  );
 
-  const transport = new StdioServerTransport();
-  await mcpInstance.connect(transport);
   // stderr only: stdout belongs to the MCP protocol.
   console.error(
-    `[stateset-mcp] serving commerce tools over stdio (db: ${dbPath}, writes: ${
+    `[stateset-mcp] serving commerce tools over stdio (protocol 2026-07-28, db: ${dbPath}, writes: ${
       values.apply ? 'ENABLED' : 'preview-only, pass --apply to enable'
     })`,
   );
