@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.23.6",
+    "version": "1.24.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -546,7 +546,7 @@
   ],
   "cli": {
     "binaryCount": 52,
-    "dependencyCount": 10,
+    "dependencyCount": 13,
     "optionalDependencyCount": 15,
     "topLevelSourceCounts": [
       {
@@ -571,7 +571,7 @@
       },
       {
         "name": "mcp",
-        "count": 19
+        "count": 20
       },
       {
         "name": "sync",

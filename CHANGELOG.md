@@ -6,6 +6,41 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-07-30
+
+### Changed
+- **`stateset-mcp-http` now serves MCP protocol revision 2026-07-28, and
+  is stateless.** The server is built on the MCP SDK's `createMcpHandler`,
+  which serves that revision from a per-request server factory: every
+  exchange gets a freshly constructed MCP server, no `Mcp-Session-Id` is
+  issued, and nothing is retained between requests, so the endpoint scales
+  across replicas behind a load balancer. There is no `initialize`
+  handshake on the modern path — each request carries its own `_meta`
+  envelope plus `Mcp-Method` / `Mcp-Name` headers. Serving is per-request
+  in both eras, so the 2025 session verbs `GET` and `DELETE` answer `405`.
+- **2025-era clients keep working** on the SDK's stateless legacy leg,
+  driven by the *same* tool factory so the two revisions cannot drift
+  apart. `--strict-protocol` makes the endpoint modern-only.
+- **The commerce store replaces the session as the unit of state.** All
+  requests share one store (`--db`, default `:memory:`, seeded with demo
+  data once at boot). Writes stay enabled for an ephemeral `:memory:`
+  store; a durable `--db` requires an explicit `--apply`, because this
+  server ships no authentication of its own.
+- DNS-rebinding protection is applied on loopback binds, or wherever
+  `--allowed-host` is given.
+
+### Removed
+- **`--session-ttl` / `--max-sessions`, and the per-session isolated store
+  they configured.** Sessions were per-process state that prevented
+  horizontal scaling; the legacy leg now serves those clients statelessly.
+
+### Added
+- `@modelcontextprotocol/server` + `@modelcontextprotocol/node` (v2)
+  alongside the existing v1 SDK, and `src/mcp/v2-server.js`, which
+  registers the existing tool surface on a v2 server. Tool schemas are
+  converted from Zod 3 to JSON Schema and wrapped with `fromJsonSchema()`
+  (v2 rejects Zod 3 directly), memoized per tool name.
+
 ## [1.23.6] - 2026-07-28
 
 Maintenance release: no functional changes. Aligns all release surfaces

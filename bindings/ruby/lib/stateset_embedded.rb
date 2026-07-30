@@ -7,5 +7,5 @@ rescue LoadError
 end
 
 module StateSet
-  VERSION = '1.23.6'
+  VERSION = '1.24.0'
 end

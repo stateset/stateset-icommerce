@@ -15,21 +15,21 @@ crate without the facade re-exports.
 ### Node.js
 
 ```bash
-npm install @stateset/embedded@1.23.6
+npm install @stateset/embedded@1.24.0
 ```
 
 ### Python
 
 ```bash
-pip install stateset-embedded==1.23.6
+pip install stateset-embedded==1.24.0
 # or install optional framework adapters as well
-pip install "stateset-embedded[agents]==1.23.6"
+pip install "stateset-embedded[agents]==1.24.0"
 ```
 
 ### CLI (global)
 
 ```bash
-npm install -g @stateset/cli@1.23.6
+npm install -g @stateset/cli@1.24.0
 stateset-init --quickstart
 ```
 
@@ -120,7 +120,7 @@ stateset "find products similar to wireless earbuds"
 ### Embedded Toolkit (OpenAI, Vercel AI SDK, LangChain, Python runtimes)
 
 ```bash
-npm install @stateset/cli@1.23.6 @stateset/embedded@1.23.6
+npm install @stateset/cli@1.24.0 @stateset/embedded@1.24.0
 ```
 
 ```javascript
