@@ -3180,11 +3180,19 @@ export function createStatesetMcpServer({
   // Build and return the MCP server
   // ---------------------------------------------------------------------------
 
+  // The adapted tool list is the single source of truth for every transport we
+  // serve. The agent-sdk consumes it in-process; `createStatesetV2McpServer`
+  // (src/mcp/v2-server.js) registers the same objects on a protocol-2026-07-28
+  // server, so the two can never drift apart.
+  const adaptedTools = ALL_TOOL_DEFS.map(adaptTool);
+
   const server = createSdkMcpServer({
     name: 'stateset-commerce',
     version: '1.0.0',
-    tools: ALL_TOOL_DEFS.map(adaptTool),
+    tools: adaptedTools,
   });
+
+  server.getAdaptedTools = () => adaptedTools;
 
   server.mcpEventStream = activeMcpEventStream;
   server.getToolDefinitions = getToolDefinitions;

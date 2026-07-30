@@ -26,17 +26,20 @@ preview-only by default** — tools describe what they would do; add `--apply`
 to the args to enable mutations. The generated tool catalog is
 [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md).
 
-**Over HTTP instead** (hosted sandboxes, remote agents): `stateset-mcp-http`
-serves the same tools via MCP Streamable HTTP with an isolated, demo-seeded
-store per session — writes are safe because every session gets its own
-ephemeral database:
+**Over HTTP instead** (hosted deployments, remote agents): `stateset-mcp-http`
+serves the same tools via MCP Streamable HTTP at protocol revision 2026-07-28,
+stateless by construction — no session ids, no per-client state, a fresh server
+per request, so it scales across replicas. 2025-era clients are still served.
+Writes go to one shared store (`--db`, default an ephemeral demo-seeded
+`:memory:`):
 
 ```json
 { "mcpServers": { "stateset-sandbox": { "url": "http://localhost:8090/mcp" } } }
 ```
 
 Run it with `npx -y -p @stateset/cli stateset-mcp-http` (add
-`--host 0.0.0.0` to expose, `--read-only` to disable writes).
+`--host 0.0.0.0` to expose, `--read-only` to disable writes, or
+`--strict-protocol` to refuse pre-2026-07-28 clients).
 
 ## If you are building an application (coding agent)
 

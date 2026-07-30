@@ -14,14 +14,14 @@ MCP-native clients.
 ## Install
 
 ```bash
-npm install @stateset/cli@1.23.6 @stateset/embedded@1.23.6
+npm install @stateset/cli@1.24.0 @stateset/embedded@1.24.0
 ```
 
 For Python runtimes:
 
 ```bash
-pip install stateset-embedded==1.23.6
-pip install "stateset-embedded[agents]==1.23.6"
+pip install stateset-embedded==1.24.0
+pip install "stateset-embedded[agents]==1.24.0"
 ```
 
 From the repo checkout, the examples under `examples/agents/` also run against
@@ -301,7 +301,7 @@ The setup creates a configuration entry in your MCP client's config file:
     "mcpServers": {
         "stateset-commerce": {
             "command": "npx",
-            "args": ["-y", "-p", "@stateset/cli@1.23.6", "stateset-mcp", "--db", "./store.db"]
+            "args": ["-y", "-p", "@stateset/cli@1.24.0", "stateset-mcp", "--db", "./store.db"]
         }
     }
 }
@@ -309,10 +309,13 @@ The setup creates a configuration entry in your MCP client's config file:
 
 ### Streamable HTTP (hosted sandboxes, remote agents)
 
-`stateset-mcp-http` serves the same tool surface over MCP Streamable HTTP,
-with an **isolated, demo-seeded store per session** — every session gets its
-own ephemeral database, so writes are enabled by default and cannot leak
-between agents or persist beyond the session TTL:
+`stateset-mcp-http` serves the same tool surface over MCP Streamable HTTP at
+**protocol revision 2026-07-28**, and is **stateless by construction**: the SDK
+serves that revision from a per-request server factory, so every exchange gets a
+freshly built MCP server, no `Mcp-Session-Id` is issued, and nothing is retained
+between requests. Any request can be served by any replica, so it scales
+horizontally behind a load balancer. All requests share one store (`--db`,
+default `:memory:`, seeded with demo data once at boot):
 
 ```bash
 npx -y -p @stateset/cli stateset-mcp-http           # http://127.0.0.1:8090/mcp
@@ -322,18 +325,29 @@ npx -y -p @stateset/cli stateset-mcp-http           # http://127.0.0.1:8090/mcp
 { "mcpServers": { "stateset-sandbox": { "url": "http://localhost:8090/mcp" } } }
 ```
 
-Flags: `--host 0.0.0.0` to expose, `--read-only` to disable writes,
-`--no-seed` for an empty store, `--session-ttl` / `--max-sessions` for
-hosting limits. `GET /health` reports status for deploy probes. There is
-deliberately no auth (sandbox design); front it with your proxy for private
-hosting.
+Because serving is per-request, only `POST /mcp` is supported — the 2025 session
+verbs `GET` and `DELETE` return `405`. There is no `initialize` handshake on the
+modern path: each request carries its own `_meta` envelope plus the `Mcp-Method`
+and `Mcp-Name` headers.
+
+Flags: `--host 0.0.0.0` to expose, `--db <path>` for a durable store (writes
+then require `--apply`), `--read-only` to disable writes, `--no-seed` for an
+empty store, `--strict-protocol` to refuse 2025-era clients, `--allowed-host`
+to set the DNS-rebinding allowlist.
+`GET /health` reports status for deploy probes. There is deliberately no auth;
+front it with your proxy for private hosting.
+
+2025-era clients (those predating the `_meta` envelope) are still served, on the
+SDK's stateless legacy leg, from the **same** tool factory — the two eras cannot
+drift apart. Pass `--strict-protocol` for a modern-only endpoint that rejects
+them with an unsupported-protocol-version error.
 
 ### Which MCP entrypoint?
 
 | Binary | Transport | Store | Writes |
 |---|---|---|---|
 | `stateset-mcp` | stdio | your database | preview-only unless `--apply` |
-| `stateset-mcp-http` | Streamable HTTP | per-session, seeded, ephemeral | enabled (isolated) |
+| `stateset-mcp-http` | Streamable HTTP, 2026-07-28, stateless | shared `--db`, seeded when `:memory:` | enabled on `:memory:`, else `--apply` |
 | `stateset-mcp-events` | stdio + HTTP event sidecar | your database | preview-only unless `--apply` |
 | `stateset-x402-mcp` | stdio | x402 payment tools only | per its flags |
 

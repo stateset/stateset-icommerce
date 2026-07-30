@@ -1,38 +1,39 @@
 #!/usr/bin/env node
 /**
- * StateSet Commerce MCP Server — Streamable HTTP (sandbox mode)
+ * StateSet Commerce MCP Server — Streamable HTTP, protocol revision 2026-07-28
  *
- * The hosted-agent entrypoint: serve the full commerce tool surface over the
- * MCP Streamable HTTP transport, with an ISOLATED, demo-seeded commerce store
- * per session. An agent (Claude, Cursor, any MCP-over-HTTP client) points at
- * the URL and immediately has a working store it can freely read AND write —
- * every session gets its own ephemeral database, so nothing leaks between
- * agents and nothing persists beyond the session.
+ * The hosted-agent entrypoint. It is STATELESS by construction: `createMcpHandler`
+ * serves the 2026-07-28 revision from a per-request server factory, so every
+ * exchange gets a freshly built MCP server, no `Mcp-Session-Id` is issued, and
+ * nothing is retained between requests. Any request can land on any replica.
  *
  *   stateset-mcp-http --host 0.0.0.0 --port 8090
- *   →  POST/GET/DELETE http://host:8090/mcp   (MCP Streamable HTTP)
- *   →  GET  http://host:8090/health           (JSON status)
+ *   →  POST http://host:8090/mcp     (MCP Streamable HTTP)
+ *   →  GET  http://host:8090/health  (JSON status)
+ *
+ * 2025-era clients (those that predate the `_meta` envelope) are still served,
+ * on the SDK's stateless legacy leg, from the SAME tool factory — the two eras
+ * cannot drift apart. Pass `--strict-protocol` for a modern-only endpoint that
+ * rejects them. Because serving is per-request in both eras, the 2025 session
+ * operations `GET` and `DELETE` answer `405`.
+ *
+ * The protocol layer holds no state, so the commerce store is the only state,
+ * and it is shared by every request: `--db` (default `:memory:`, a private
+ * temp-file-backed store seeded with demo data once at boot). Point `--db` at a
+ * real file to serve a durable store; writes are then disabled unless you pass
+ * `--apply`, since this server has no auth of its own.
  *
  * Contrast with the siblings:
  *   - `stateset-mcp`         stdio, one shared database, writes need --apply
  *   - `stateset-mcp-events`  stdio + HTTP event-stream sidecar
- *
- * Because each session's store is ephemeral and isolated, writes are ENABLED
- * by default here (that is the sandbox's point); pass --read-only to serve a
- * look-but-don't-touch sandbox instead.
- *
- * There is deliberately no auth: this is a public-sandbox design. To host a
- * private instance, put it behind your proxy of choice; the default bind is
- * loopback so nothing is exposed unless you ask for it.
  */
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { runMain } from '../src/graceful-shutdown.js';
 import { CLI_VERSION } from '../src/config.js';
 
 const HELP = `
-StateSet Commerce MCP Server — Streamable HTTP sandbox  v${CLI_VERSION}
+StateSet Commerce MCP Server — Streamable HTTP (protocol 2026-07-28)  v${CLI_VERSION}
 
 USAGE:
   stateset-mcp-http [options]
@@ -40,14 +41,17 @@ USAGE:
 OPTIONS:
   --host <host>          Bind host (default: 127.0.0.1; use 0.0.0.0 to expose)
   --port <port>          Bind port (default: 8090)
-  --no-seed              Start sessions with an EMPTY store (default: seeded demo data)
-  --read-only            Disable write tools (default: writes enabled, per-session isolation)
-  --session-ttl <min>    Idle minutes before a session is evicted (default: 60)
-  --max-sessions <n>     Concurrent session cap (default: 100)
+  --db <path>            Shared store path (default: :memory:, seeded at boot)
+  --apply                Enable write tools against a durable --db
+  --read-only            Disable write tools (default for a durable --db)
+  --no-seed              Start with an EMPTY store (default: seeded demo data)
+  --strict-protocol      Serve ONLY 2026-07-28; reject 2025-era clients
+  --allowed-host <host>  Allowed Host header (repeatable); enables DNS-rebinding
+                         protection. Default: localhost-only on a loopback bind.
   -h, --help             Show this help
 
 CONNECT (Claude Desktop / any Streamable-HTTP MCP client):
-  { "mcpServers": { "stateset-sandbox": { "url": "http://localhost:8090/mcp" } } }
+  { "mcpServers": { "stateset": { "url": "http://localhost:8090/mcp" } } }
 `;
 
 async function main() {
@@ -55,10 +59,12 @@ async function main() {
     options: {
       host: { type: 'string' },
       port: { type: 'string' },
-      'no-seed': { type: 'boolean', default: false },
+      db: { type: 'string' },
+      apply: { type: 'boolean', default: false },
       'read-only': { type: 'boolean', default: false },
-      'session-ttl': { type: 'string' },
-      'max-sessions': { type: 'string' },
+      'no-seed': { type: 'boolean', default: false },
+      'strict-protocol': { type: 'boolean', default: false },
+      'allowed-host': { type: 'string', multiple: true },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -70,68 +76,77 @@ async function main() {
 
   const [
     { Commerce },
-    { StreamableHTTPServerTransport },
+    { createMcpHandler },
+    { toNodeHandler, hostHeaderValidation, localhostHostValidation },
     { createStatesetMcpServer },
+    { createStatesetV2McpServer },
     { seedDemoData },
   ] = await Promise.all([
     import('@stateset/embedded'),
-    import('@modelcontextprotocol/sdk/server/streamableHttp.js'),
+    import('@modelcontextprotocol/server'),
+    import('@modelcontextprotocol/node'),
     import('../src/mcp-server.js'),
+    import('../src/mcp/v2-server.js'),
     import('../src/seeds/demo.js'),
   ]);
 
   const host = values.host || '127.0.0.1';
   const port = Number.parseInt(values.port || '8090', 10);
+  const dbPath = values.db || ':memory:';
+  const ephemeralDb = dbPath === ':memory:';
   const seed = !values['no-seed'];
-  const allowApply = !values['read-only'];
-  const ttlMs = Math.max(1, Number.parseInt(values['session-ttl'] || '60', 10)) * 60_000;
-  const maxSessions = Math.max(1, Number.parseInt(values['max-sessions'] || '100', 10));
 
-  /** @type {Map<string, {transport: any, lastSeen: number}>} */
-  const sessions = new Map();
+  // Writes are safe by default only when the store is ephemeral. A durable --db
+  // needs explicit --apply, because this server ships no authentication.
+  const allowApply = values['read-only'] ? false : ephemeralDb || values.apply;
+
+  // DNS-rebinding protection: a browser on a victim's machine must not reach a
+  // loopback MCP server by resolving an attacker domain to 127.0.0.1. Only
+  // meaningful for a loopback bind — an exposed server usually sits behind a
+  // proxy whose Host header we cannot guess, so there we require an explicit
+  // --allowed-host rather than rejecting every real request.
+  const explicitHosts = values['allowed-host'] ?? [];
+  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  const validateHost =
+    explicitHosts.length > 0
+      ? hostHeaderValidation(explicitHosts)
+      : loopback
+        ? localhostHostValidation()
+        : null;
+
+  // The store is the only state, shared by every request.
+  const commerce = new Commerce(dbPath);
+  if (seed && ephemeralDb) {
+    await seedDemoData(commerce, { quiet: true });
+  }
+
+  // Per-request server factory: this is what makes the endpoint stateless. The
+  // same factory backs both the 2026-07-28 path and the legacy stateless leg.
+  const handler = createMcpHandler(
+    () =>
+      createStatesetV2McpServer({
+        commerce,
+        dbPath,
+        allowApply,
+        createServer: createStatesetMcpServer,
+      }),
+    {
+      legacy: values['strict-protocol'] ? 'reject' : 'stateless',
+      onerror: (error) => console.error(`[stateset-mcp-http] ${error.message}`),
+    },
+  );
+  const mcpHandler = toNodeHandler(handler);
+
+  // Build one server at boot so the first real request does not pay for the
+  // ~940 one-time schema conversions cached inside the factory.
+  createStatesetV2McpServer({
+    commerce,
+    dbPath,
+    allowApply,
+    createServer: createStatesetMcpServer,
+  });
+
   const startedAt = Date.now();
-
-  async function createSession() {
-    // Each session gets its own ephemeral store (`:memory:` is backed by a
-    // private temp file with full WAL semantics; it is deleted when the pool
-    // drops with the session).
-    const commerce = new Commerce(':memory:');
-    if (seed) {
-      await seedDemoData(commerce, { quiet: true });
-    }
-    const mcpServer = createStatesetMcpServer({ commerce, dbPath: ':memory:', allowApply });
-    const mcpInstance = mcpServer?.instance || mcpServer?.server || mcpServer;
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (sessionId) => {
-        sessions.set(sessionId, { transport, lastSeen: Date.now() });
-        console.error(
-          `[stateset-mcp-http] session ${sessionId.slice(0, 8)} started (${sessions.size} active)`,
-        );
-      },
-      onsessionclosed: (sessionId) => {
-        sessions.delete(sessionId);
-        console.error(
-          `[stateset-mcp-http] session ${sessionId.slice(0, 8)} closed (${sessions.size} active)`,
-        );
-      },
-    });
-    await mcpInstance.connect(transport);
-    return transport;
-  }
-
-  function evictIdleSessions() {
-    const cutoff = Date.now() - ttlMs;
-    for (const [id, entry] of sessions) {
-      if (entry.lastSeen < cutoff) {
-        sessions.delete(id);
-        entry.transport.close?.().catch?.(() => {});
-        console.error(`[stateset-mcp-http] session ${id.slice(0, 8)} evicted after idle TTL`);
-      }
-    }
-  }
-  const sweeper = setInterval(evictIdleSessions, 60_000);
-  sweeper.unref();
 
   function sendJson(res, status, body) {
     res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -146,9 +161,12 @@ async function main() {
         sendJson(res, 200, {
           status: 'ok',
           version: CLI_VERSION,
-          sessions: sessions.size,
-          seeded: seed,
-          writes: allowApply ? 'per-session-isolated' : 'read-only',
+          protocol: '2026-07-28',
+          legacy: values['strict-protocol'] ? 'reject' : 'stateless',
+          stateless: true,
+          db: dbPath,
+          seeded: seed && ephemeralDb,
+          writes: allowApply ? 'shared-store' : 'read-only',
           uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
         });
         return;
@@ -159,29 +177,11 @@ async function main() {
         return;
       }
 
-      const sessionId = req.headers['mcp-session-id'];
-      const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
+      // Guards run in front of the handler: the SDK entry is deliberately
+      // validation-free. A guard that rejects has already written the response.
+      if (validateHost && !validateHost(req, res)) return;
 
-      if (existing) {
-        existing.lastSeen = Date.now();
-        await existing.transport.handleRequest(req, res);
-        return;
-      }
-
-      // No (valid) session: only an initialize POST may open one.
-      if (req.method !== 'POST') {
-        sendJson(res, 400, {
-          error: 'unknown or expired session',
-          hint: 'send initialize to open a new one',
-        });
-        return;
-      }
-      if (sessions.size >= maxSessions) {
-        sendJson(res, 503, { error: 'session capacity reached, try again shortly' });
-        return;
-      }
-      const transport = await createSession();
-      await transport.handleRequest(req, res);
+      await mcpHandler(req, res);
     })().catch((error) => {
       console.error(`[stateset-mcp-http] request error: ${error.message}`);
       if (!res.headersSent) {
@@ -198,9 +198,10 @@ async function main() {
   });
 
   console.error(
-    `[stateset-mcp-http] sandbox listening on http://${host}:${port}/mcp ` +
-      `(seed: ${seed ? 'demo data' : 'empty'}, writes: ${allowApply ? 'per-session' : 'read-only'}, ` +
-      `ttl: ${ttlMs / 60_000}m, max sessions: ${maxSessions})`,
+    `[stateset-mcp-http] stateless MCP (protocol 2026-07-28) on http://${host}:${port}/mcp ` +
+      `(db: ${dbPath}, seed: ${seed && ephemeralDb ? 'demo data' : 'none'}, ` +
+      `writes: ${allowApply ? 'enabled' : 'read-only'}, ` +
+      `legacy 2025 clients: ${values['strict-protocol'] ? 'rejected' : 'served statelessly'})`,
   );
 }
 
