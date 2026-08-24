@@ -62,7 +62,9 @@ pub fn router() -> Router<AppState> {
 pub struct CreateCreditTermsRequest {
     pub creditor_agent_id: String,
     pub debtor_agent_id: String,
-    pub credit_limit: f64,
+    /// Credit limit (exact decimal; accepts a JSON string or number).
+    #[schema(value_type = String)]
+    pub credit_limit: Decimal,
     pub currency: Option<String>,
     pub payment_terms: Option<String>,
 }
@@ -70,7 +72,9 @@ pub struct CreateCreditTermsRequest {
 /// Request body for charging or paying.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreditAmountRequest {
-    pub amount: f64,
+    /// Amount (exact decimal; accepts a JSON string or number).
+    #[schema(value_type = String)]
+    pub amount: Decimal,
     pub reference_id: Option<String>,
     pub notes: Option<String>,
 }
@@ -114,8 +118,7 @@ pub(crate) async fn create_terms(
     Json(req): Json<CreateCreditTermsRequest>,
     store: CreditStore,
 ) -> Result<(StatusCode, Json<CreditTermsResponse>), HttpError> {
-    let limit = Decimal::try_from(req.credit_limit)
-        .map_err(|e| HttpError::BadRequest(format!("Invalid credit_limit: {e}")))?;
+    let limit = req.credit_limit;
 
     let payment_terms = match req.payment_terms.as_deref() {
         Some("net_15") => PaymentTerms::Net15,
@@ -193,8 +196,7 @@ pub(crate) async fn charge_credit(
     Json(req): Json<CreditAmountRequest>,
     store: CreditStore,
 ) -> Result<Json<CreditTermsResponse>, HttpError> {
-    let amount = Decimal::try_from(req.amount)
-        .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?;
+    let amount = req.amount;
 
     let mut guard = store.write().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
     let terms = guard
@@ -221,8 +223,7 @@ pub(crate) async fn record_payment(
     Json(req): Json<CreditAmountRequest>,
     store: CreditStore,
 ) -> Result<Json<CreditTermsResponse>, HttpError> {
-    let amount = Decimal::try_from(req.amount)
-        .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?;
+    let amount = req.amount;
 
     let mut guard = store.write().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
     let terms = guard
@@ -236,4 +237,29 @@ pub(crate) async fn record_payment(
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    #[test]
+    fn credit_dtos_accept_string_and_number_amounts_exactly() {
+        let from_str: CreditAmountRequest =
+            serde_json::from_str(r#"{"amount":"0.10"}"#).expect("string amount");
+        assert_eq!(from_str.amount, dec!(0.10));
+        let from_num: CreditAmountRequest =
+            serde_json::from_str(r#"{"amount":0.1}"#).expect("number amount");
+        assert_eq!(from_num.amount, dec!(0.1));
+
+        let terms: CreateCreditTermsRequest = serde_json::from_str(
+            r#"{"creditor_agent_id":"a","debtor_agent_id":"b","credit_limit":"1000.005"}"#,
+        )
+        .expect("terms");
+        assert_eq!(terms.credit_limit, dec!(1000.005));
+    }
+
+    #[test]
+    fn credit_dtos_reject_non_numeric_amounts() {
+        assert!(serde_json::from_str::<CreditAmountRequest>(r#"{"amount":"abc"}"#).is_err());
+        assert!(serde_json::from_str::<CreditAmountRequest>(r#"{"amount":true}"#).is_err());
+    }
+}

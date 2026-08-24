@@ -765,7 +765,23 @@ impl ServerBuilder {
     /// Requests exceeding the limit receive HTTP 429.
     #[must_use]
     pub const fn with_rate_limit(mut self, requests_per_second: u64, burst_size: u64) -> Self {
-        self.rate_limit = Some(RateLimitConfig { requests_per_second, burst_size });
+        self.rate_limit =
+            Some(RateLimitConfig { requests_per_second, burst_size, trust_proxy_headers: false });
+        self
+    }
+
+    /// Key the rate limiter by the client IP reported in `X-Forwarded-For` /
+    /// `Forwarded` rather than the TCP peer address.
+    ///
+    /// Only enable this when every request reaches this server through a
+    /// proxy you control that sets those headers; otherwise clients can choose
+    /// their own bucket. Has no effect unless [`Self::with_rate_limit`] is
+    /// also called.
+    #[must_use]
+    pub const fn with_rate_limit_trusting_proxy_headers(mut self, trust: bool) -> Self {
+        if let Some(config) = self.rate_limit.as_mut() {
+            config.trust_proxy_headers = trust;
+        }
         self
     }
 

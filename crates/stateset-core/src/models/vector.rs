@@ -121,7 +121,7 @@ pub struct EmbeddingRequest {
 }
 
 /// Configuration for the embedding service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EmbeddingConfig {
     /// API key for embedding service
     pub api_key: String,
@@ -129,6 +129,17 @@ pub struct EmbeddingConfig {
     pub model: String,
     /// Number of dimensions (default: 1536 for text-embedding-3-small)
     pub dimensions: usize,
+}
+
+impl fmt::Debug for EmbeddingConfig {
+    /// `api_key` is a credential and is never rendered, even in debug output.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EmbeddingConfig")
+            .field("api_key", &"[REDACTED]")
+            .field("model", &self.model)
+            .field("dimensions", &self.dimensions)
+            .finish()
+    }
 }
 
 impl Default for EmbeddingConfig {
@@ -181,6 +192,17 @@ mod tests {
         assert_eq!("products".parse::<EntityType>().unwrap(), EntityType::Product);
         assert_eq!("customer".parse::<EntityType>().unwrap(), EntityType::Customer);
         assert_eq!("inventory".parse::<EntityType>().unwrap(), EntityType::InventoryItem);
+    }
+
+    #[test]
+    fn embedding_config_debug_redacts_api_key() {
+        // Deliberately fake, low-entropy placeholder (not a credential). gitleaks:allow
+        let probe = "unit-test-placeholder-not-a-secret";
+        let config = EmbeddingConfig { api_key: probe.to_string(), ..Default::default() };
+        let rendered = format!("{config:?}");
+        assert!(!rendered.contains(probe), "api key leaked: {rendered}");
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(rendered.contains("text-embedding-3-small"));
     }
 
     #[test]

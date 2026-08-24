@@ -250,7 +250,7 @@ mod tests {
             #[dto(update)]
             pub struct Product {
                 pub name: String,
-                pub price: f64,
+                pub price: Decimal,
             }
         };
 
@@ -262,7 +262,7 @@ mod tests {
             "should generate UpdateProduct struct"
         );
         assert!(output_str.contains("Option < String >"), "name should be Option<String>");
-        assert!(output_str.contains("Option < f64 >"), "price should be Option<f64>");
+        assert!(output_str.contains("Option < Decimal >"), "price should be Option<Decimal>");
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
             pub struct Invoice {
                 #[dto(skip_create)]
                 pub id: InvoiceId,
-                pub amount: f64,
+                pub amount: Decimal,
             }
         };
 
@@ -307,7 +307,7 @@ mod tests {
 
         assert!(output_str.contains("struct CreateInvoice"), "should generate CreateInvoice");
         assert!(!output_str.contains("id : InvoiceId"), "id should be skipped in Create DTO");
-        assert!(output_str.contains("pub amount : f64"), "amount should be present");
+        assert!(output_str.contains("pub amount : Decimal"), "amount should be present");
     }
 
     #[test]

@@ -4084,6 +4084,7 @@ dependencies = [
  "stateset-embedded",
  "stateset-observability",
  "stateset-primitives",
+ "subtle",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",

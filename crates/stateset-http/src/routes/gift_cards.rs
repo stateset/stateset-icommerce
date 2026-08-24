@@ -21,8 +21,9 @@ use crate::state::{AppState, tenant_id_from_headers};
 /// Request body for `POST /api/v1/gift-cards`.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateGiftCardRequest {
-    /// Initial balance.
-    pub initial_balance: f64,
+    /// Initial balance (exact decimal; accepts a JSON string or number).
+    #[schema(value_type = String)]
+    pub initial_balance: Decimal,
     /// ISO currency code (default: USD).
     pub currency: Option<String>,
     /// Optional recipient email.
@@ -155,7 +156,7 @@ pub(crate) async fn create_gift_card(
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
-    if req.initial_balance <= 0.0 {
+    if req.initial_balance <= Decimal::ZERO {
         return Err(HttpError::BadRequest("initial_balance must be positive".to_string()));
     }
 
@@ -176,8 +177,7 @@ pub(crate) async fn create_gift_card(
 
     let gift_card = commerce.gift_cards().create(stateset_core::CreateGiftCard {
         code: None,
-        initial_balance: Decimal::try_from(req.initial_balance)
-            .map_err(|e| HttpError::BadRequest(format!("Invalid initial_balance: {e}")))?,
+        initial_balance: req.initial_balance,
         currency,
         recipient_email: req.recipient_email,
         sender_name: None,
@@ -408,6 +408,27 @@ mod tests {
         let status = resp.status();
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
+    }
+
+    #[tokio::test]
+    async fn create_accepts_string_balance_without_float_drift() {
+        let app = app();
+        let (status, card) =
+            post_json(&app, "/gift-cards", serde_json::json!({"initial_balance": "0.10"})).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(card["initial_balance"], "0.10");
+        assert_eq!(card["current_balance"], "0.10");
+    }
+
+    #[tokio::test]
+    async fn create_rejects_non_positive_balance() {
+        let app = app();
+        let (status, _) =
+            post_json(&app, "/gift-cards", serde_json::json!({"initial_balance": "0"})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) =
+            post_json(&app, "/gift-cards", serde_json::json!({"initial_balance": -1})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

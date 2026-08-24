@@ -18,6 +18,7 @@ use axum::{
 
 use crate::dto::{HealthResponse, ReadyResponse, VersionResponse};
 use crate::error::{ErrorBody, HttpError};
+use crate::middleware::constant_time_eq;
 use crate::state::{AppState, MetricsHeaderLimits};
 
 /// Build the health-check router.
@@ -642,21 +643,6 @@ fn parse_bearer_token_from_header(value: &str) -> Result<&str, MetricsAuthHeader
 #[cfg(test)]
 fn bearer_token_from_header(value: &str) -> Option<&str> {
     parse_bearer_token_from_header(value).ok()
-}
-
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-    let mut diff = a_bytes.len() ^ b_bytes.len();
-    let max_len = a_bytes.len().max(b_bytes.len());
-    let mut idx = 0usize;
-    while idx < max_len {
-        let left = a_bytes.get(idx).copied().unwrap_or(0);
-        let right = b_bytes.get(idx).copied().unwrap_or(0);
-        diff |= usize::from(left ^ right);
-        idx += 1;
-    }
-    diff == 0
 }
 
 fn prometheus_metrics(state: &AppState) -> String {
