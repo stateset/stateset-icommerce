@@ -559,7 +559,7 @@
       },
       {
         "name": "a2a",
-        "count": 44
+        "count": 61
       },
       {
         "name": "channels",
@@ -959,7 +959,7 @@
       }
     ],
     "toolModuleCount": 93,
-    "a2aModuleCount": 44
+    "a2aModuleCount": 61
   },
   "admin": {
     "dependencyCount": 26,
