@@ -91,7 +91,19 @@ jobs:
         # RUSTSEC-2026-0097 affects `rand` when custom logging calls `rand::rng()`;
         # this workspace does not install such a logger. Keep this ignored until
         # upstream `rand` consumers converge on patched releases.
-        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0097
+        # RUSTSEC-2026-0258 affects `h2` 0.3 (via tonic 0.11 / hyper 0.14), which only
+        # enters the graph through stateset-observability's optional `otel` feature
+        # (opentelemetry-otlp 0.16). Not compiled by default; clears when the OTLP
+        # stack moves to opentelemetry-otlp >= 0.27 / tonic 0.12 (tracked upgrade).
+        # RUSTSEC-2026-0235 affects `rkyv` 0.7, an OPTIONAL dependency of rust_decimal
+        # that is present in Cargo.lock but never enabled by this workspace (we use
+        # only the `serde` feature), so the vulnerable code is never compiled.
+        run: >-
+          cargo audit
+          --ignore RUSTSEC-2023-0071
+          --ignore RUSTSEC-2026-0097
+          --ignore RUSTSEC-2026-0258
+          --ignore RUSTSEC-2026-0235
 
   deny:
     name: Dependency Policy

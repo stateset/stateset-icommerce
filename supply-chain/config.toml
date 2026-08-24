@@ -602,7 +602,7 @@ version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.kem]]
-version = "0.3.0-rc.6"
+version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.libc]]
@@ -666,15 +666,15 @@ version = "1.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ml-dsa]]
-version = "0.1.0-rc.8"
+version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ml-kem]]
-version = "0.3.0-rc.1"
+version = "0.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.module-lattice]]
-version = "0.2.0"
+version = "0.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi]]
@@ -766,7 +766,7 @@ version = "0.10.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.pkcs8]]
-version = "0.11.0-rc.11"
+version = "0.11.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.plain]]
@@ -1029,10 +1029,6 @@ criteria = "safe-to-deploy"
 version = "0.1.20"
 criteria = "safe-to-deploy"
 
-[[exemptions.serde_spanned]]
-version = "1.1.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.serde_urlencoded]]
 version = "0.7.1"
 criteria = "safe-to-deploy"
@@ -1042,11 +1038,15 @@ version = "0.9.34+deprecated"
 criteria = "safe-to-deploy"
 
 [[exemptions.sha3]]
-version = "0.11.0-rc.9"
+version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.shake]]
+version = "0.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.signature]]
-version = "3.0.0-rc.10"
+version = "3.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.simd-adler32]]
@@ -1078,7 +1078,11 @@ version = "0.7.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.spki]]
-version = "0.8.0-rc.4"
+version = "0.8.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.sponge-cursor]]
+version = "0.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.sqlx]]
@@ -1583,8 +1587,4 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zerovec]]
 version = "0.11.5"
-criteria = "safe-to-deploy"
-
-[[exemptions.zmij]]
-version = "1.0.21"
 criteria = "safe-to-deploy"
