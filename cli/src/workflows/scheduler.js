@@ -28,7 +28,7 @@ const DEFAULT_TICK_INTERVAL_MS = 60_000; // 1 minute
  * @typedef {{ agent?: string, request?: string, [key: string]: unknown }} JobAction
  * @typedef {{ id?: string, name: string, description?: string, type?: JobType, schedule?: string | number | null, action: JobAction, enabled?: boolean, maxRetries?: number, retryDelay?: number, timeout?: number, metadata?: Record<string, unknown>, createdAt?: string, lastRunAt?: string | null, nextRunAt?: string | null, runCount?: number, failCount?: number, lastError?: string | null, status?: JobStatusValue }} JobInput
  * @typedef {{ jobId: string, runId?: string, status: JobStatusValue, startedAt: string, completedAt?: string | null, duration?: number | null, output?: unknown, error?: string | null, retryCount?: number }} JobResultInput
- * @typedef {{ storePath?: string | null, tickInterval?: number, maxConcurrentJobs?: number, executor?: ((action: JobAction, context: { jobId: string, runId: string, signal: AbortSignal, metadata: Record<string, unknown> }) => Promise<unknown>) | null }} SchedulerOptions
+ * @typedef {{ storePath?: string | null, tickInterval?: number, maxConcurrentJobs?: number, defaultJobTimeout?: number, executor?: ((action: JobAction, context: { jobId: string, runId: string, signal: AbortSignal, metadata: Record<string, unknown> }) => Promise<unknown>) | null }} SchedulerOptions
  */
 
 /**
@@ -403,6 +403,27 @@ export class JobResult {
 }
 
 /**
+ * A promise that rejects with an AbortError when `signal` aborts (and never
+ * resolves). Listener is `once`, so it is released as soon as it fires.
+ * @param {AbortSignal} signal
+ * @returns {Promise<never>}
+ */
+function rejectOnAbort(signal) {
+  return new Promise((_resolve, reject) => {
+    const fail = () => {
+      const abortError = new Error('Job aborted');
+      abortError.name = 'AbortError';
+      reject(abortError);
+    };
+    if (signal.aborted) {
+      fail();
+      return;
+    }
+    signal.addEventListener('abort', fail, { once: true });
+  });
+}
+
+/**
  * Autonomous Scheduler
  *
  * Manages job scheduling, execution, and persistence
@@ -418,12 +439,15 @@ export class Scheduler extends EventEmitter {
       tickInterval = DEFAULT_TICK_INTERVAL_MS,
       maxConcurrentJobs = 5,
       executor = null, // Function to execute job actions
+      defaultJobTimeout = DEFAULT_JOB_TIMEOUT_MS,
     } = param0;
 
     this.storePath = storePath;
     this.tickInterval = tickInterval;
     this.maxConcurrentJobs = maxConcurrentJobs;
     this.executor = executor;
+    /** Executor timeout applied to jobs added without an explicit `timeout`. */
+    this.defaultJobTimeout = defaultJobTimeout;
 
     /** @type {Map<string, Job>} */
     this.jobs = new Map();
@@ -508,7 +532,10 @@ export class Scheduler extends EventEmitter {
    * @returns {Job}
    */
   addJob(jobConfig) {
-    const job = jobConfig instanceof Job ? jobConfig : new Job(jobConfig);
+    const job =
+      jobConfig instanceof Job
+        ? jobConfig
+        : new Job({ timeout: this.defaultJobTimeout, ...jobConfig });
 
     // Calculate initial next run time
     job.nextRunAt = job.calculateNextRun()?.toISOString() || null;
@@ -687,15 +714,21 @@ export class Scheduler extends EventEmitter {
         timeoutId.unref();
       }
 
-      // Execute the action
+      // Execute the action, racing it against the abort signal so a timeout or
+      // cancel is enforced even when the executor ignores `signal`. A late
+      // settlement from such an executor is discarded.
       let output;
       if (this.executor) {
-        output = await this.executor(job.action, {
-          jobId: job.id,
-          runId,
-          signal: abortController.signal,
-          metadata: job.metadata,
-        });
+        const execution = Promise.resolve(
+          this.executor(job.action, {
+            jobId: job.id,
+            runId,
+            signal: abortController.signal,
+            metadata: job.metadata,
+          }),
+        );
+        execution.catch(() => {});
+        output = await Promise.race([execution, rejectOnAbort(abortController.signal)]);
       } else {
         throw new Error('No executor configured');
       }

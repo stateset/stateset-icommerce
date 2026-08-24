@@ -427,12 +427,79 @@ describe('Scheduler', () => {
     assert.equal(scheduler.getHistory({ jobId: j1.id }).length, 1);
   });
 
+  it('applies the production default job timeout of 5 minutes', () => {
+    const job = scheduler.addJob({
+      name: 'default-timeout',
+      type: 'interval',
+      schedule: 60000,
+      action: { agent: 'test' },
+    });
+    assert.equal(job.timeout, 5 * 60 * 1000);
+  });
+
+  it('defaultJobTimeout applies to jobs added without an explicit timeout', () => {
+    const custom = new Scheduler({ storePath: null, defaultJobTimeout: 250 });
+    const inherited = custom.addJob({
+      name: 'inherits',
+      type: 'interval',
+      schedule: 60000,
+      action: { agent: 'test' },
+    });
+    const explicit = custom.addJob({
+      name: 'explicit',
+      type: 'interval',
+      schedule: 60000,
+      timeout: 9000,
+      action: { agent: 'test' },
+    });
+    assert.equal(inherited.timeout, 250);
+    assert.equal(explicit.timeout, 9000);
+  });
+
+  it('defaultJobTimeout bounds an executor that ignores the abort signal', async () => {
+    // The executor's timer stays ref'd (the scheduler's own timeout timer is
+    // unref'd, so an unref'd executor would let the event loop drain mid-test)
+    // and is cleared afterwards so it cannot outlive the test.
+    let executorTimer = null;
+    const stubborn = new Scheduler({
+      storePath: null,
+      defaultJobTimeout: 100,
+      executor: () =>
+        new Promise((resolve) => {
+          executorTimer = setTimeout(() => resolve({ ok: true }), 60000);
+        }),
+    });
+    const job = stubborn.addJob({
+      name: 'stubborn',
+      type: 'interval',
+      schedule: 60000,
+      maxRetries: 0,
+      action: { agent: 'test' },
+    });
+    const started = Date.now();
+    try {
+      const result = await stubborn.executeJob(job);
+      assert.equal(result.status, JobStatus.FAILED);
+      assert.equal(result.error, 'Job timed out');
+      assert.ok(
+        Date.now() - started < 2000,
+        'must resolve on the configured timeout, not the executor',
+      );
+    } finally {
+      clearTimeout(executorTimer);
+      stubborn.stop();
+    }
+  });
+
   it('cancelJob cancels running job', async () => {
+    // The scheduler-level timeout is the safety net: even if a regression stops
+    // the abort signal from reaching the executor, this test cannot hang.
     const slowScheduler = new Scheduler({
       storePath: null,
+      defaultJobTimeout: 500,
       executor: async (action, { signal }) =>
         new Promise((resolve, reject) => {
-          const timer = setTimeout(() => resolve({ ok: true }), 60000);
+          const timer = setTimeout(() => resolve({ ok: true }), 1000);
           const onAbort = () => {
             clearTimeout(timer);
             const abortError = new Error('aborted');
@@ -455,10 +522,13 @@ describe('Scheduler', () => {
     // Give it a moment to start
     await new Promise((r) => setTimeout(r, 50));
 
+    const started = Date.now();
     assert.ok(slowScheduler.cancelJob(job.id));
     assert.equal(job.status, JobStatus.CANCELLED);
 
-    await execPromise.catch(() => {});
+    const result = await execPromise;
+    assert.equal(result.status, JobStatus.CANCELLED);
+    assert.ok(Date.now() - started < 2000, 'cancellation must not wait for the executor timer');
     slowScheduler.stop();
   });
 
