@@ -215,3 +215,147 @@ describe('mcp http — --strict-protocol', () => {
     assert.ok(init.json.error, 'a legacy initialize must be refused in strict mode');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Browser-origin and bind-safety guards
+// ---------------------------------------------------------------------------
+
+const ORIGIN_PORT = DEFAULT_PORT + 800;
+const ANY_HOST_PORT = DEFAULT_PORT + 1200;
+
+/** Collect stderr and the exit code of a server that is expected to die. */
+function spawnAndCollect(args) {
+  return new Promise((resolve) => {
+    const child = spawnServer(args);
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    const killer = setTimeout(() => child.kill('SIGKILL'), 20_000);
+    child.once('close', (code) => {
+      clearTimeout(killer);
+      resolve({ code, stderr });
+    });
+  });
+}
+
+const listWithOrigin = (base, origin) =>
+  fetch(`${base}/mcp`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      'Mcp-Method': 'tools/list',
+      ...(origin ? { Origin: origin } : {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+      params: { _meta: ENVELOPE },
+    }),
+  });
+
+describe('mcp http — Origin validation', () => {
+  const BASE = `http://127.0.0.1:${ORIGIN_PORT}`;
+  let child;
+
+  before(async () => {
+    child = spawnServer([
+      '--port',
+      String(ORIGIN_PORT),
+      '--allowed-origin',
+      'https://agent.example.com',
+      '--allowed-origin',
+      'http://studio.example.net:3000',
+    ]);
+    await waitForHealth(BASE);
+  });
+
+  after(() => {
+    child?.kill('SIGTERM');
+  });
+
+  it('rejects a browser request from an unlisted Origin with 403', async () => {
+    const res = await listWithOrigin(BASE, 'https://evil.example.org');
+    assert.equal(res.status, 403);
+    const body = await res.json();
+    assert.match(body.error.message, /Invalid Origin/);
+  });
+
+  it('rejects an unparseable Origin with 403', async () => {
+    const res = await listWithOrigin(BASE, 'not a url');
+    assert.equal(res.status, 403);
+  });
+
+  it('serves a request from an allowed Origin', async () => {
+    const res = await listWithOrigin(BASE, 'https://agent.example.com');
+    assert.equal(res.status, 200);
+    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+  });
+
+  it('matches allowed origins by hostname, ignoring scheme and port', async () => {
+    const res = await listWithOrigin(BASE, 'https://studio.example.net');
+    assert.equal(res.status, 200);
+  });
+
+  it('serves a request with no Origin header (non-browser client)', async () => {
+    const res = await listWithOrigin(BASE, null);
+    assert.equal(res.status, 200);
+    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+  });
+});
+
+describe('mcp http — default Origin policy on a loopback bind', () => {
+  const BASE = `http://127.0.0.1:${DEFAULT_PORT}`;
+  let child;
+
+  before(async () => {
+    child = spawnServer(['--port', String(DEFAULT_PORT)]);
+    await waitForHealth(BASE);
+  });
+
+  after(() => {
+    child?.kill('SIGTERM');
+  });
+
+  it('rejects a cross-origin browser request when no --allowed-origin is set', async () => {
+    const res = await listWithOrigin(BASE, 'https://evil.example.org');
+    assert.equal(res.status, 403);
+  });
+
+  it('accepts a localhost Origin', async () => {
+    const res = await listWithOrigin(BASE, 'http://localhost:5173');
+    assert.equal(res.status, 200);
+  });
+});
+
+describe('mcp http — non-loopback bind fails closed', () => {
+  it('exits non-zero without --allowed-host and names the fix', async () => {
+    const { code, stderr } = await spawnAndCollect([
+      '--host',
+      '0.0.0.0',
+      '--port',
+      String(ANY_HOST_PORT),
+    ]);
+    assert.notEqual(code, 0, 'a non-loopback bind with no Host allowlist must not start');
+    assert.match(stderr, /--allowed-host/);
+    assert.match(stderr, /--insecure-allow-any-host/);
+  });
+
+  it('starts with --insecure-allow-any-host', async () => {
+    const child = spawnServer([
+      '--host',
+      '0.0.0.0',
+      '--port',
+      String(ANY_HOST_PORT),
+      '--insecure-allow-any-host',
+    ]);
+    try {
+      const health = await waitForHealth(`http://127.0.0.1:${ANY_HOST_PORT}`);
+      assert.equal(health.status, 'ok');
+    } finally {
+      child.kill('SIGTERM');
+    }
+  });
+});
