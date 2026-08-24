@@ -106,7 +106,6 @@ workspace membership because they require host runtimes or headers.
 | `skills` | 5 |
 | `treasury` | 5 |
 | `providers` | 4 |
-| `autonomous` | 3 |
 | `heartbeat` | 3 |
 | `mpp` | 3 |
 | `plugins` | 3 |
@@ -114,6 +113,7 @@ workspace membership because they require host runtimes or headers.
 | `voice` | 3 |
 | `workflows` | 3 |
 | `approvals` | 2 |
+| `autonomous` | 2 |
 | `coverage` | 2 |
 | `webhooks` | 2 |
 | `whatsapp` | 2 |

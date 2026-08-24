@@ -614,10 +614,6 @@
         "count": 4
       },
       {
-        "name": "autonomous",
-        "count": 3
-      },
-      {
         "name": "heartbeat",
         "count": 3
       },
@@ -643,6 +639,10 @@
       },
       {
         "name": "approvals",
+        "count": 2
+      },
+      {
+        "name": "autonomous",
         "count": 2
       },
       {
