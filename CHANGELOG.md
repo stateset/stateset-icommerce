@@ -34,6 +34,14 @@ This project follows Keep a Changelog and Semantic Versioning.
   `initialize` no longer pays the tool-schema build under a client timeout.
 
 ### Changed
+- `stateset-ffi::sync_api` split from one 2,885-line file into a directory module (`handles`,
+  `executor`, `lifecycle`, `record`, `transport`, `status`, `confirmations`, `dead_letters`, `buffer`,
+  `tests`). All 42 `extern "C"` symbols and signatures are unchanged; every non-test `unsafe` block
+  now carries a `// SAFETY:` comment (was 2 of 22).
+- `cli/src/a2a/store.js` split from 3,632 lines into `cli/src/a2a/store/` domain modules (schema,
+  agents, escrow, payments, notifications, subscriptions, splits, events, disputes, quotes,
+  marketplace, reputation, SLA, workflows) mixed onto `A2AStore.prototype`; method descriptors,
+  DDL and migration order are byte-identical. `store.js` remains the import path.
 - `stateset-sync::engine` split from one 4,294-line file into a directory module
   (`types`, `lifecycle`, `persistence`, `record`, `push`, `pull`, `remote_head`, `commitment`,
   `receipts`, `confirmations`, `dead_letters`, `tests`). Public paths are unchanged.

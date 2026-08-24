@@ -82,7 +82,7 @@ workspace membership because they require host runtimes or headers.
 | --- | --- |
 | Top-level source groups | 102 |
 | Tool modules | 93 |
-| A2A modules | 44 |
+| A2A modules | 61 |
 | JS dependencies | 13 |
 | Optional integrations | 15 |
 
@@ -92,7 +92,7 @@ workspace membership because they require host runtimes or headers.
 | --- | --- |
 | `tools` | 93 |
 | `commands` | 88 |
-| `a2a` | 44 |
+| `a2a` | 61 |
 | `channels` | 29 |
 | `mcp` | 29 |
 | `adapters` | 20 |
