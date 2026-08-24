@@ -34,6 +34,13 @@ This project follows Keep a Changelog and Semantic Versioning.
   `initialize` no longer pays the tool-schema build under a client timeout.
 
 ### Changed
+- `stateset-sync::engine` split from one 4,294-line file into a directory module
+  (`types`, `lifecycle`, `persistence`, `record`, `push`, `pull`, `remote_head`, `commitment`,
+  `receipts`, `confirmations`, `dead_letters`, `tests`). Public paths are unchanged.
+- `cli/src/mcp-server.js` reduced from 3,222 to 603 lines: permission gating, MPP payment
+  context, tool catalog, plan simulation/execution/rollback, tool dispatch and the A2A service
+  binding now live in `cli/src/mcp/` as dependency-injected factories with their own unit tests
+  (72 new). Exports, telemetry event names and audit-envelope shapes are unchanged.
 - `stateset-core::traits` split from one 4,641-line file into 16 domain modules
   (`orders`, `inventory`, `customers`, `catalog`, `payments`, `returns`, `finance`, `fulfillment`,
   `warehouse`, `purchasing`, `manufacturing`, `analytics`, `agentic`, `platform`, `events`,
