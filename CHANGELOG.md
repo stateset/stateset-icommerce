@@ -6,7 +6,41 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Security
+- **`stateset-mcp-http` validates browser `Origin`** via the MCP SDK guard: requests carrying an
+  `Origin` are rejected with 403 unless allowed (`--allowed-origin`, repeatable; localhost origins on a
+  loopback bind by default). Requests with no `Origin` (every non-browser MCP client) are unaffected.
+- **`stateset-mcp-http` fails closed on a non-loopback bind**: `--host` other than loopback now
+  requires `--allowed-host` (DNS-rebinding protection) and refuses to start without it;
+  `--insecure-allow-any-host` is the explicit, loudly-warned escape hatch.
+- HTTP bearer-token comparison now hashes both sides (SHA-256) and compares with
+  `subtle::ConstantTimeEq`, removing the length early-exit; the duplicate compare in the health
+  routes was removed in favour of the shared helper.
+- `EmbeddingConfig` and `BearerAuthBinding` implement a redacting `Debug` so `api_key` / `token`
+  can never reach logs via `{:?}`.
+- Rate limiter: new `RateLimitConfig.trust_proxy_headers` (default `false`) keys buckets on the
+  trusted `X-Forwarded-For` / `Forwarded` client IP; when no client address is derivable a one-time
+  warning explains that limiting is per-process. `ServerBuilder::with_rate_limit_trusting_proxy_headers`.
+
+### Fixed
+- **Money at the HTTP edge is `Decimal`, not `f64`**: gift-card `initial_balance`, A2A credit
+  `credit_limit` / `amount` now parse exactly (JSON string or number; OpenAPI documents `string`).
+- SQLite analytics: average order value, average lifetime value and top-customer AOV are computed
+  with `decimal_sum` + exact `Decimal` division instead of SQLite's float `SUM`/`AVG`.
+- Workflow scheduler: `job.timeout` is now enforced even when an executor ignores the abort
+  signal (the executor is raced against the signal; late settlement is discarded). New
+  `Scheduler({ defaultJobTimeout })` option; production default unchanged at 5 minutes.
+- `stateset-mcp-events` builds its MCP server before advertising readiness, so the first
+  `initialize` no longer pays the tool-schema build under a client timeout.
+
 ### Changed
+- `stateset-core::traits` split from one 4,641-line file into 16 domain modules
+  (`orders`, `inventory`, `customers`, `catalog`, `payments`, `returns`, `finance`, `fulfillment`,
+  `warehouse`, `purchasing`, `manufacturing`, `analytics`, `agentic`, `platform`, `events`,
+  `repository`). Public paths are unchanged (`stateset_core::traits::X` and `stateset_core::X`).
+- `master` is branch-protected: every non-Admin CI job is a required status check (see RELEASING.md).
+- Archived `STATUS.md`, `PRD_2026.md`, `ICOMMERCE.md` under `docs/archive/`.
+- Removed the dead `cli/src/autonomous/mcp-tools.js` (unreferenced, not exported).
 - **The stdio MCP entrypoints now serve protocol revision 2026-07-28 too.**
   `stateset-mcp` and `stateset-mcp-events` are built on the MCP SDK's
   `serveStdio`, which owns the era decision for the connection: the opening

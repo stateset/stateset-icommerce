@@ -13,6 +13,10 @@ This guide covers publishing Rust crates and language bindings. It also captures
    mdBook with snapshot-specific versioning text.
    It also validates that GitHub workflow `needs:` edges only reference real jobs.
 5. Push the release commit and require a green `CI Success` job from `.github/workflows/ci.yml` on that exact commit.
+   `master` is branch-protected (since 2026-08-24): every non-Admin job in `ci.yml` is a required
+   status check, admins included, and force-pushes/deletions are refused. The two `Admin *` lanes
+   and the `CI Success` aggregate are deliberately NOT required until `@stateset/design` resolves in CI;
+   re-add them with `gh api -X PUT repos/stateset/stateset-icommerce/branches/master/protection` when it does.
 6. Create a versioned docs snapshot: `./docs/scripts/snapshot-version.sh vX.Y.Z`.
 7. (Optional) Generate API docs into `docs/api/` with `./docs/scripts/generate-api.sh`.
 8. Create annotated tags and push them.
@@ -20,7 +24,7 @@ This guide covers publishing Rust crates and language bindings. It also captures
 ## Authoritative Gates
 
 - Local preflight: `npm run check:release`
-- Remote release gate: the `CI Success` aggregate job in `.github/workflows/ci.yml`
+- Remote release gate: the `CI Success` aggregate job in `.github/workflows/ci.yml` (branch protection currently enforces its constituent jobs individually; see step 5)
 - Git hooks are convenience checks only; they do not replace the local preflight or the protected CI aggregate
 
 ## Tag Prefixes
