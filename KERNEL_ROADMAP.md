@@ -3,7 +3,7 @@
 **Mission: make StateSet iCommerce the kernel for how agents on the internet
 buy, sell, and participate in global commerce together.**
 
-*Successor to [PRD_2026.md](./PRD_2026.md). Written 2026-07-14, against
+*Successor to [PRD_2026.md](./docs/archive/PRD_2026.md). Written 2026-07-14, against
 v1.7.0. This is a campaign plan, not a feature list: a kernel wins by
 adoption, and adoption is earned in a specific order.*
 

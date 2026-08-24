@@ -40,4 +40,3 @@ Operate the autonomous engine that runs scheduled jobs, workflows, policies, and
 ## References
 - references/autonomous-ops.md
 - /home/dom/stateset-icommerce/cli/bin/stateset-autonomous.js
-- /home/dom/stateset-icommerce/cli/src/autonomous/mcp-tools.js
