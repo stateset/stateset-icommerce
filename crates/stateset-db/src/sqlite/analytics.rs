@@ -115,6 +115,14 @@ impl SqliteAnalyticsRepository {
     }
 }
 
+/// Exact decimal average of `total` over `count` items; zero when `count <= 0`.
+fn decimal_average(total: Decimal, count: i64) -> Decimal {
+    if count <= 0 {
+        return Decimal::ZERO;
+    }
+    total.checked_div(Decimal::from(count)).unwrap_or(Decimal::ZERO)
+}
+
 fn parse_decimal_value(value: &str, field: &str) -> Result<Decimal> {
     parse_decimal_with_context(value, "analytics", field)
 }
@@ -133,10 +141,6 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 SELECT
                     decimal_sum(total_amount) as revenue,
                     COUNT(*) as order_count,
-                    -- avg_order is an average, so the float coercion in the
-                    -- built-in SUM/divide is immaterial here; only the exact
-                    -- reconciled totals use decimal_sum.
-                    CAST(COALESCE(SUM(total_amount) / NULLIF(COUNT(*), 0), 0) AS TEXT) as avg_order,
                     COUNT(DISTINCT customer_id) as unique_customers
                 FROM orders
                 WHERE created_at >= ?1 AND created_at <= ?2
@@ -145,10 +149,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .map_err(map_db_error)?;
 
-        let (revenue, order_count, avg_order, unique_customers): (String, i64, String, i64) = stmt
-            .query_row([&start_str, &end_str], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })
+        let (revenue, order_count, unique_customers): (String, i64, i64) = stmt
+            .query_row([&start_str, &end_str], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .map_err(map_db_error)?;
 
         // Get items sold
@@ -214,7 +216,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         Ok(SalesSummary {
             total_revenue: current_revenue,
             order_count: order_count as u64,
-            average_order_value: parse_decimal_value(&avg_order, "average_order_value")?,
+            // Exact decimal average: decimal_sum revenue / count, no float SUM.
+            average_order_value: decimal_average(current_revenue, order_count),
             items_sold: items_sold as u64,
             unique_customers: unique_customers as u64,
             revenue_change_percent,
@@ -404,21 +407,20 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .unwrap_or(0);
 
-        // Average lifetime value
-        let avg_ltv: String = conn
+        // Average lifetime value: exact decimal revenue across all purchasing
+        // customers divided by the number of those customers (equivalent to
+        // AVG of per-customer SUMs, without SQLite's float SUM/AVG).
+        let (ltv_revenue, ltv_customers): (String, i64) = conn
             .query_row(
                 r"
-                SELECT CAST(COALESCE(AVG(total), 0) AS TEXT) FROM (
-                    SELECT customer_id, SUM(total_amount) as total
-                    FROM orders
-                    WHERE status NOT IN ('cancelled', 'refunded')
-                    GROUP BY customer_id
-                )
+                SELECT decimal_sum(total_amount), COUNT(DISTINCT customer_id)
+                FROM orders
+                WHERE status NOT IN ('cancelled', 'refunded')
                 ",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .unwrap_or_else(|_| "0".to_string());
+            .unwrap_or_else(|_| ("0".to_string(), 0));
 
         // Average orders per customer
         let avg_orders: String = conn
@@ -435,7 +437,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .unwrap_or_else(|_| "0".to_string());
 
-        let average_lifetime_value = parse_decimal_value(&avg_ltv, "average_lifetime_value")?;
+        let average_lifetime_value =
+            decimal_average(parse_decimal_value(&ltv_revenue, "lifetime_revenue")?, ltv_customers);
         let average_orders_per_customer =
             parse_decimal_value(&avg_orders, "average_orders_per_customer")?;
 
@@ -465,7 +468,6 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                     COALESCE(c.first_name || ' ' || c.last_name, c.email) as name,
                     decimal_sum(o.total_amount) as total_spent,
                     COUNT(o.id) as order_count,
-                    CAST(COALESCE(AVG(o.total_amount), 0) AS TEXT) as avg_order,
                     MIN(o.created_at) as first_order,
                     MAX(o.created_at) as last_order
                 FROM customers c
@@ -486,19 +488,18 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 let name: String = row.get(2)?;
                 let total_spent: String = row.get(3)?;
                 let order_count: i64 = row.get(4)?;
-                let avg_order: String = row.get(5)?;
-                let first_order: Option<String> = row.get(6)?;
-                let last_order: Option<String> = row.get(7)?;
-                Ok((id, email, name, total_spent, order_count, avg_order, first_order, last_order))
+                let first_order: Option<String> = row.get(5)?;
+                let last_order: Option<String> = row.get(6)?;
+                Ok((id, email, name, total_spent, order_count, first_order, last_order))
             })
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
         for row in rows {
-            let (id, email, name, total_spent, order_count, avg_order, first_order, last_order) =
+            let (id, email, name, total_spent, order_count, first_order, last_order) =
                 row.map_err(map_db_error)?;
             let total_spent = parse_decimal_value(&total_spent, "total_spent")?;
-            let average_order_value = parse_decimal_value(&avg_order, "average_order_value")?;
+            let average_order_value = decimal_average(total_spent, order_count);
             results.push(TopCustomer {
                 customer_id: Uuid::parse_str(&id).unwrap_or_default(),
                 email,
@@ -1122,6 +1123,78 @@ mod tests {
         let summary = repo.get_sales_summary(last_30_days()).expect("ok");
         assert_eq!(summary.total_revenue, dec!(0));
         assert_eq!(summary.order_count, 0);
+    }
+
+    /// Seed one customer with the given order totals (all created "now",
+    /// so they fall inside every period the tests query).
+    fn seed_customer_orders(repo: &SqliteAnalyticsRepository, customer_id: &str, totals: &[&str]) {
+        let conn = repo.conn().expect("conn");
+        conn.execute(
+            "INSERT INTO customers (id, email, first_name, last_name) VALUES (?1, ?2, 'A', 'B')",
+            rusqlite::params![customer_id, format!("{customer_id}@example.com")],
+        )
+        .expect("insert customer");
+        let now = Utc::now().to_rfc3339();
+        for (i, total) in totals.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO orders (id, order_number, customer_id, status, total_amount, created_at)
+                 VALUES (?1, ?2, ?3, 'completed', ?4, ?5)",
+                rusqlite::params![
+                    format!("{customer_id}-o{i}"),
+                    format!("{customer_id}-N{i}"),
+                    customer_id,
+                    total,
+                    now
+                ],
+            )
+            .expect("insert order");
+        }
+    }
+
+    #[test]
+    fn decimal_average_is_exact_and_zero_safe() {
+        assert_eq!(decimal_average(dec!(0.60), 3), dec!(0.20));
+        assert_eq!(decimal_average(dec!(10), 4), dec!(2.5));
+        assert_eq!(decimal_average(dec!(10), 0), Decimal::ZERO);
+        assert_eq!(decimal_average(dec!(10), -1), Decimal::ZERO);
+    }
+
+    #[test]
+    fn sales_summary_average_order_value_uses_exact_decimal_math() {
+        let repo = fresh_repo();
+        // 0.10 + 0.20 + 0.30 drifts under IEEE-754 SUM (0.6000000000000001).
+        seed_customer_orders(&repo, "c1", &["0.10", "0.20"]);
+        seed_customer_orders(&repo, "c2", &["0.30"]);
+
+        let summary = repo.get_sales_summary(last_30_days()).expect("summary");
+        assert_eq!(summary.total_revenue, dec!(0.60));
+        assert_eq!(summary.order_count, 3);
+        assert_eq!(summary.average_order_value, dec!(0.20));
+        assert_eq!(summary.average_order_value.to_string(), "0.20");
+    }
+
+    #[test]
+    fn customer_metrics_lifetime_value_uses_exact_decimal_math() {
+        let repo = fresh_repo();
+        seed_customer_orders(&repo, "c1", &["0.10", "0.20"]);
+        seed_customer_orders(&repo, "c2", &["0.30"]);
+
+        let metrics = repo.get_customer_metrics(last_30_days()).expect("metrics");
+        // (0.30 + 0.30) / 2 purchasing customers.
+        assert_eq!(metrics.average_lifetime_value, dec!(0.30));
+        assert_eq!(metrics.returning_customers, 1);
+    }
+
+    #[test]
+    fn top_customers_average_order_value_uses_exact_decimal_math() {
+        let repo = fresh_repo();
+        seed_customer_orders(&repo, "c1", &["0.10", "0.20"]);
+
+        let top = repo.get_top_customers(last_30_days()).expect("top customers");
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].total_spent, dec!(0.30));
+        assert_eq!(top[0].order_count, 2);
+        assert_eq!(top[0].average_order_value, dec!(0.15));
     }
 
     #[test]
