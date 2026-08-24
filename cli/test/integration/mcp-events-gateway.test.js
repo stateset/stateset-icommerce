@@ -31,6 +31,9 @@ async function waitForExit(processHandle, signal = 'SIGINT') {
   }
 }
 
+const GATEWAY_START_TIMEOUT_MS = 30_000;
+const MCP_REQUEST_TIMEOUT_MS = 15_000;
+
 function startGateway(dbPathOrOptions, port = '0') {
   return new Promise((resolve, reject) => {
     const options =
@@ -47,18 +50,14 @@ function startGateway(dbPathOrOptions, port = '0') {
     }
     args.push('--host', '127.0.0.1', '--port', String(resolvedPort));
 
-    const proc = spawn(
-      process.execPath,
-      args,
-      {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          ...(useDbEnv ? { DB_PATH: dbPath } : {}),
-          ...extraEnv,
-        },
+    const proc = spawn(process.execPath, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        ...(useDbEnv ? { DB_PATH: dbPath } : {}),
+        ...extraEnv,
       },
-    );
+    });
 
     let stdout = '';
     let stderr = '';
@@ -76,6 +75,10 @@ function startGateway(dbPathOrOptions, port = '0') {
       if (resolved) return;
       resolved = true;
       cleanup();
+      // Never leak a half-started gateway: the caller has no handle to it.
+      if (proc.exitCode === null && !proc.killed) {
+        proc.kill('SIGKILL');
+      }
       reject(error);
     };
 
@@ -117,9 +120,17 @@ function startGateway(dbPathOrOptions, port = '0') {
       }
     };
 
+    // The gateway builds its full MCP server (hundreds of tool schemas) before
+    // it advertises readiness; ~1s on an idle machine, many times that under a
+    // loaded parallel test run. Readiness is a boot cost, not a correctness
+    // signal, so wait generously.
     const startTimeout = setTimeout(() => {
-      fail(new Error('Timed out waiting for MCP events gateway to start'));
-    }, 5000);
+      fail(
+        new Error(
+          `Timed out waiting for MCP events gateway to start (${GATEWAY_START_TIMEOUT_MS}ms)`,
+        ),
+      );
+    }, GATEWAY_START_TIMEOUT_MS);
 
     proc.once('error', onError);
     proc.once('close', onClose);
@@ -129,7 +140,7 @@ function startGateway(dbPathOrOptions, port = '0') {
 }
 
 function createMcpClient(processHandle, options = {}) {
-  const requestTimeoutMs = options.requestTimeoutMs || 5000;
+  const requestTimeoutMs = options.requestTimeoutMs || MCP_REQUEST_TIMEOUT_MS;
   let nextId = 0;
   const pending = new Map();
   let buffer = '';
@@ -432,7 +443,10 @@ describe('stateset-mcp-events integration', () => {
   let cleanupDir;
 
   beforeEach(() => {
-    cleanupDir = path.join(os.tmpdir(), `stateset-mcp-events-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    cleanupDir = path.join(
+      os.tmpdir(),
+      `stateset-mcp-events-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
     fs.mkdirSync(cleanupDir, { recursive: true });
     dbPath = path.join(cleanupDir, 'store.db');
   });
@@ -587,11 +601,17 @@ describe('stateset-mcp-events integration', () => {
             entry.tool.endsWith('agentic_get_event_history'),
         ),
       );
-      const globalHistory = await requestJson(started.port, '/history?session=__global__&types=success');
+      const globalHistory = await requestJson(
+        started.port,
+        '/history?session=__global__&types=success',
+      );
       assert.equal(globalHistory.status, 200);
       assert.equal(globalHistory.body.count > 0, true);
 
-      const scopedHistory = await requestJson(started.port, '/history?session=some-other-session&types=success');
+      const scopedHistory = await requestJson(
+        started.port,
+        '/history?session=some-other-session&types=success',
+      );
       assert.equal(scopedHistory.status, 200);
       assert.equal(scopedHistory.body.count, 0);
 
@@ -655,7 +675,10 @@ describe('stateset-mcp-events integration', () => {
       const subscriptionId = subscribePayload.subscription?.id;
       assert.ok(subscriptionId, 'subscription id should be returned');
 
-      const activeSubscriptions = await requestJson(started.port, `/subscriptions?session=${sessionId}`);
+      const activeSubscriptions = await requestJson(
+        started.port,
+        `/subscriptions?session=${sessionId}`,
+      );
       assert.equal(activeSubscriptions.status, 200);
       assert.equal(activeSubscriptions.body.count, 1);
       assert.equal(activeSubscriptions.body.subscriptions[0].id, subscriptionId);
@@ -674,7 +697,10 @@ describe('stateset-mcp-events integration', () => {
       assert.equal(unsubscribePayload?.success, true);
       assert.equal(unsubscribePayload?.subscription?.id, subscriptionId);
 
-      const afterUnsubscribe = await requestJson(started.port, `/subscriptions?session=${sessionId}`);
+      const afterUnsubscribe = await requestJson(
+        started.port,
+        `/subscriptions?session=${sessionId}`,
+      );
       assert.equal(afterUnsubscribe.status, 200);
       assert.equal(afterUnsubscribe.body.count, 0);
       assert.equal(Array.isArray(afterUnsubscribe.body.subscriptions), true);

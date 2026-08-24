@@ -332,10 +332,28 @@ and `Mcp-Name` headers.
 
 Flags: `--host 0.0.0.0` to expose, `--db <path>` for a durable store (writes
 then require `--apply`), `--read-only` to disable writes, `--no-seed` for an
-empty store, `--strict-protocol` to refuse 2025-era clients, `--allowed-host`
-to set the DNS-rebinding allowlist.
+empty store, `--strict-protocol` to refuse 2025-era clients.
 `GET /health` reports status for deploy probes. There is deliberately no auth;
 front it with your proxy for private hosting.
+
+Two request guards sit in front of the MCP handler:
+
+- **Host (DNS rebinding)** — `--allowed-host <hostname>` (repeatable). A
+  loopback bind allows only localhost Host values by default. Any other
+  `--host` **refuses to start** without `--allowed-host`; pass
+  `--insecure-allow-any-host` only behind a proxy that already pins the Host
+  header.
+- **Origin (browser cross-origin)** — `--allowed-origin <origin>` (repeatable;
+  a full origin like `https://agent.example.com` or a bare hostname, matched by
+  hostname). A request carrying any other `Origin` gets `403`. A loopback bind
+  allows localhost origins by default; an exposed bind allows none. Requests
+  with no `Origin` header — every non-browser MCP client — always pass.
+
+```bash
+stateset-mcp-http --host 0.0.0.0 --port 8090 \
+  --allowed-host mcp.example.com \
+  --allowed-origin https://agent.example.com
+```
 
 2025-era clients (those predating the `_meta` envelope) are still served, on the
 SDK's stateless legacy leg, from the **same** tool factory — the two eras cannot

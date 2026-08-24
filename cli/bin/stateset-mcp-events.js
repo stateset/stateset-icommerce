@@ -249,6 +249,18 @@ async function main() {
       onerror: (error) => console.error(`[stateset-mcp-events] ${error.message}`),
     },
   );
+  // Build one server at boot, BEFORE advertising readiness on stderr. The
+  // factory's first run pays ~1s of one-time tool-schema conversions (cached at
+  // module level); without this the first `initialize` on stdin pays it after
+  // the "active on" line, which under load exceeds client request timeouts.
+  createStatesetV2McpServer({
+    createServer: createStatesetMcpServer,
+    commerce,
+    dbPath,
+    structuredToolResults: values['structured-tool-results'],
+    mcpEventStream: eventStreamer,
+  });
+
   const server = createServer((req, res) => {
     void (async () => {
       const requestUrl = new URL(req.url || '/', `http://${host}:${port}`);
