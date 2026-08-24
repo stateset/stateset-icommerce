@@ -77,11 +77,23 @@ pub(crate) static X_ACTOR_ID: HeaderName = HeaderName::from_static("x-actor-id")
 const CORS_ORIGINS_ENV: &str = "STATESET_HTTP_ALLOWED_ORIGINS";
 const DEFAULT_CORS_ORIGINS: [&str; 2] = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct BearerAuthBinding {
     token: Arc<str>,
     bound_tenant_id: Option<Arc<str>>,
     bound_actor_id: Option<Arc<str>>,
+}
+
+impl std::fmt::Debug for BearerAuthBinding {
+    /// The bearer token is a credential: it is never rendered, even in debug
+    /// output, so accidental `{:?}` logging cannot leak it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BearerAuthBinding")
+            .field("token", &"[REDACTED]")
+            .field("bound_tenant_id", &self.bound_tenant_id)
+            .field("bound_actor_id", &self.bound_actor_id)
+            .finish()
+    }
 }
 
 impl BearerAuthBinding {
@@ -159,18 +171,18 @@ fn bearer_token_from_header(value: &str) -> Option<&str> {
     if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() { Some(token) } else { None }
 }
 
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-    if a_bytes.len() != b_bytes.len() {
-        return false;
-    }
+/// Constant-time string equality for credentials.
+///
+/// Both inputs are hashed to fixed-length SHA-256 digests and the digests are
+/// compared with [`subtle::ConstantTimeEq`], so neither the length of the
+/// secret nor the position of the first mismatch is observable through timing.
+pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    use subtle::ConstantTimeEq;
 
-    let mut diff = 0u8;
-    for (&left, &right) in a_bytes.iter().zip(b_bytes.iter()) {
-        diff |= left ^ right;
-    }
-    diff == 0
+    let a_digest = Sha256::digest(a.as_bytes());
+    let b_digest = Sha256::digest(b.as_bytes());
+    bool::from(a_digest.ct_eq(&b_digest))
 }
 
 fn is_valid_tenant_id(value: &str) -> bool {
@@ -497,6 +509,13 @@ pub(crate) struct RateLimitConfig {
     pub requests_per_second: u64,
     /// Maximum burst size (token bucket capacity).
     pub burst_size: u64,
+    /// Key clients by the client IP reported in `X-Forwarded-For` /
+    /// `Forwarded` instead of the TCP peer address.
+    ///
+    /// Only enable this when the server sits behind a proxy that overwrites or
+    /// appends to those headers; otherwise any client can pick its own bucket.
+    /// Defaults to `false`.
+    pub trust_proxy_headers: bool,
 }
 
 /// Token bucket for rate limiting.
@@ -598,20 +617,88 @@ impl KeyedRateLimiter {
     }
 }
 
+/// Extract the client IP a trusted proxy reported in `X-Forwarded-For` or
+/// `Forwarded`.
+///
+/// The *last* entry is used: it is the one appended by the nearest (trusted)
+/// proxy, whereas earlier entries are client-controlled.
+fn forwarded_client_ip(request: &Request<Body>) -> Option<IpAddr> {
+    fn parse_ip(raw: &str) -> Option<IpAddr> {
+        let value = raw.trim().trim_matches('"');
+        if let Ok(ip) = value.parse::<IpAddr>() {
+            return Some(ip);
+        }
+        // "[v6]:port", "v4:port" or "[v6]" forms.
+        if let Ok(addr) = value.parse::<SocketAddr>() {
+            return Some(addr.ip());
+        }
+        value.strip_prefix('[').and_then(|v| v.strip_suffix(']')).and_then(|v| v.parse().ok())
+    }
+
+    let headers = request.headers();
+    if let Some(ip) = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .filter_map(parse_ip)
+        .next_back()
+    {
+        return Some(ip);
+    }
+    headers
+        .get_all("forwarded")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .flat_map(|element| element.split(';'))
+        .filter_map(|pair| {
+            let (name, value) = pair.trim().split_once('=')?;
+            name.eq_ignore_ascii_case("for").then_some(value)
+        })
+        .filter_map(parse_ip)
+        .next_back()
+}
+
+/// Resolve the bucket key for a request.
+///
+/// Order of precedence: trusted proxy headers (only when
+/// [`RateLimitConfig::trust_proxy_headers`] is set), then the TCP peer from
+/// `ConnectInfo`. Requests with neither share one fallback bucket, and a
+/// one-time warning is logged because the limiter then throttles the whole
+/// process rather than individual clients.
+fn rate_limit_key(request: &Request<Body>, trust_proxy_headers: bool) -> IpAddr {
+    static FALLBACK_WARNED: std::sync::Once = std::sync::Once::new();
+
+    if trust_proxy_headers {
+        if let Some(ip) = forwarded_client_ip(request) {
+            return ip;
+        }
+    }
+    if let Some(ci) = request.extensions().get::<axum::extract::ConnectInfo<SocketAddr>>() {
+        return ci.0.ip();
+    }
+    FALLBACK_WARNED.call_once(|| {
+        tracing::warn!(
+            "rate limiter could not determine the client address (no ConnectInfo and no \
+             trusted proxy headers); all clients share one bucket, so rate limiting is \
+             per-process rather than per-client. Serve with `into_make_service_with_connect_info` \
+             or enable `trust_proxy_headers` behind a trusted proxy."
+        );
+    });
+    IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+}
+
 /// Middleware that enforces a per-client request rate limit.
 ///
-/// Clients are keyed by peer IP (from axum's `ConnectInfo`); requests without
-/// peer information share a single fallback bucket. Returns HTTP 429 with a
+/// Clients are keyed by [`rate_limit_key`]. Returns HTTP 429 with a
 /// `Retry-After` header when the client's bucket is empty.
 async fn rate_limit(
     State(limiter): State<Arc<KeyedRateLimiter>>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let key = request
-        .extensions()
-        .get::<axum::extract::ConnectInfo<SocketAddr>>()
-        .map_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), |ci| ci.0.ip());
+    let key = rate_limit_key(&request, limiter.config.trust_proxy_headers);
     if limiter.try_acquire(key) {
         next.run(request).await
     } else {
@@ -847,8 +934,10 @@ mod tests {
 
     #[test]
     fn keyed_rate_limiter_isolates_clients() {
-        let limiter =
-            KeyedRateLimiter::new(&RateLimitConfig { requests_per_second: 1, burst_size: 2 }, 100);
+        let limiter = KeyedRateLimiter::new(
+            &RateLimitConfig { requests_per_second: 1, burst_size: 2, trust_proxy_headers: false },
+            100,
+        );
         let a: std::net::IpAddr = "10.0.0.1".parse().unwrap();
         let b: std::net::IpAddr = "10.0.0.2".parse().unwrap();
         assert!(limiter.try_acquire(a));
@@ -859,8 +948,10 @@ mod tests {
 
     #[test]
     fn keyed_rate_limiter_bounds_tracked_keys() {
-        let limiter =
-            KeyedRateLimiter::new(&RateLimitConfig { requests_per_second: 1, burst_size: 1 }, 4);
+        let limiter = KeyedRateLimiter::new(
+            &RateLimitConfig { requests_per_second: 1, burst_size: 1, trust_proxy_headers: false },
+            4,
+        );
         for i in 0..50u8 {
             let ip: std::net::IpAddr = format!("10.1.0.{i}").parse().unwrap();
             let _ = limiter.try_acquire(ip);
@@ -898,11 +989,59 @@ mod tests {
     }
 
     #[test]
+    fn bearer_auth_binding_debug_redacts_token() {
+        let binding = BearerAuthBinding::new(
+            "super-secret-token-value".to_string(),
+            Some("tenant-1".to_string()),
+            Some("actor-1".to_string()),
+        );
+        let rendered = format!("{binding:?}");
+        assert!(!rendered.contains("super-secret-token-value"), "token leaked: {rendered}");
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(rendered.contains("tenant-1"));
+
+        let config = BearerAuthConfig::new(vec![binding]);
+        let rendered = format!("{config:?}");
+        assert!(!rendered.contains("super-secret-token-value"), "token leaked: {rendered}");
+    }
+
+    #[test]
+    fn rate_limit_key_ignores_proxy_headers_unless_trusted() {
+        let peer: SocketAddr = "10.0.0.7:4000".parse().unwrap();
+        let mut request = Request::get("/health")
+            .header("x-forwarded-for", "203.0.113.9, 198.51.100.4")
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(axum::extract::ConnectInfo(peer));
+
+        assert_eq!(rate_limit_key(&request, false), peer.ip());
+        assert_eq!(rate_limit_key(&request, true), "198.51.100.4".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn rate_limit_key_parses_forwarded_header_forms() {
+        let request = Request::get("/health")
+            .header("forwarded", "for=192.0.2.60;proto=http, for=\"[2001:db8::1]:8080\"")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(rate_limit_key(&request, true), "2001:db8::1".parse::<IpAddr>().unwrap());
+
+        // Garbage headers fall through to the peer address / fallback bucket.
+        let request = Request::get("/health")
+            .header("x-forwarded-for", "not-an-ip")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(rate_limit_key(&request, true), IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    }
+
+    #[test]
     fn constant_time_eq_behaves_like_string_equality() {
         assert!(constant_time_eq("secret", "secret"));
         assert!(!constant_time_eq("secret", "secreu"));
         assert!(!constant_time_eq("secret", "secret1"));
         assert!(!constant_time_eq("", "a"));
+        assert!(constant_time_eq("", ""));
+        assert!(!constant_time_eq("a", ""));
     }
 
     #[test]
@@ -1153,14 +1292,22 @@ mod tests {
 
     #[test]
     fn rate_limit_config_builds() {
-        let config = RateLimitConfig { requests_per_second: 100, burst_size: 200 };
+        let config = RateLimitConfig {
+            requests_per_second: 100,
+            burst_size: 200,
+            trust_proxy_headers: false,
+        };
         let _limiter = KeyedRateLimiter::new(&config, RATE_LIMITER_MAX_KEYS);
     }
 
     #[tokio::test]
     async fn rate_limit_allows_requests_within_limit() {
         let router = Router::new().route("/health", get(|| async { "ok" }));
-        let config = Some(RateLimitConfig { requests_per_second: 100, burst_size: 10 });
+        let config = Some(RateLimitConfig {
+            requests_per_second: 100,
+            burst_size: 10,
+            trust_proxy_headers: false,
+        });
         let app = apply_middleware(router, false, false, None, None, None, config);
 
         let response =
@@ -1170,7 +1317,8 @@ mod tests {
 
     #[tokio::test]
     async fn rate_limit_returns_429_when_exceeded() {
-        let config = RateLimitConfig { requests_per_second: 1, burst_size: 1 };
+        let config =
+            RateLimitConfig { requests_per_second: 1, burst_size: 1, trust_proxy_headers: false };
         let limiter = Arc::new(KeyedRateLimiter::new(&config, RATE_LIMITER_MAX_KEYS));
 
         // Exhaust the fallback bucket (oneshot requests carry no ConnectInfo).
@@ -1189,7 +1337,8 @@ mod tests {
 
     #[tokio::test]
     async fn rate_limit_keys_by_connect_info_peer_ip() {
-        let config = RateLimitConfig { requests_per_second: 1, burst_size: 1 };
+        let config =
+            RateLimitConfig { requests_per_second: 1, burst_size: 1, trust_proxy_headers: false };
         let limiter = Arc::new(KeyedRateLimiter::new(&config, RATE_LIMITER_MAX_KEYS));
         let app: Router<()> = Router::new()
             .route("/health", get(|| async { "ok" }))
@@ -1216,7 +1365,11 @@ mod tests {
     #[test]
     fn apply_middleware_with_rate_limit() {
         let router = Router::new();
-        let config = Some(RateLimitConfig { requests_per_second: 50, burst_size: 100 });
+        let config = Some(RateLimitConfig {
+            requests_per_second: 50,
+            burst_size: 100,
+            trust_proxy_headers: false,
+        });
         let _router = apply_middleware(router, false, false, None, None, None, config);
     }
 

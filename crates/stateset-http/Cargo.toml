@@ -36,6 +36,7 @@ http-body-util = "0.1"
 utoipa = { version = "5", features = ["chrono", "uuid"] }
 base64 = "0.22"
 sha2 = { workspace = true }
+subtle = "2"
 
 [lints]
 workspace = true
