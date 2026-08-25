@@ -1,20 +1,74 @@
 //! SQLite return repository implementation
 
+use super::bins::{
+    apply_bin_delta_tx, apply_warehouse_delta_tx, find_disposition_bin_tx, insert_bin_movement_tx,
+    smuggle,
+};
 use super::parse_helpers::{parse_decimal, parse_enum, parse_uuid};
 use super::{
-    build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_uuid_row, sum_decimal_query, uuid_params,
+    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_uuid_row, sum_decimal_query,
+    uuid_params, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
-    BatchResult, CommerceError, CreateReturn, CustomerId, OrderId, OrderItemId, OrderStatus,
-    Result, Return, ReturnFilter, ReturnId, ReturnItem, ReturnRepository, ReturnStatus,
-    UpdateReturn, validate_batch_size,
+    BatchResult, BinMovementType, BinType, CommerceError, CreateReturn, CustomerId, OrderId,
+    OrderItemId, OrderStatus, Result, Return, ReturnDisposition, ReturnFilter, ReturnId,
+    ReturnItem, ReturnRepository, ReturnStatus, SetReturnDisposition, UpdateReturn,
+    validate_batch_size,
 };
 use uuid::Uuid;
+
+/// Parse the nullable `disposition` column of a `return_items` row.
+fn parse_disposition_row(
+    row: &rusqlite::Row<'_>,
+) -> std::result::Result<Option<ReturnDisposition>, rusqlite::Error> {
+    match row.get::<_, Option<String>>("disposition")? {
+        Some(raw) if !raw.is_empty() => {
+            Ok(Some(parse_enum_row(&raw, "return_item", "disposition")?))
+        }
+        _ => Ok(None),
+    }
+}
+
+const RETURN_ITEM_COLUMNS: &str = "id, return_id, order_item_id, sku, name, quantity, condition, \
+                                   refund_amount, disposition, disposition_at, disposition_by";
+
+fn row_to_return_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReturnItem> {
+    Ok(ReturnItem {
+        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+        return_id: ReturnId::from(parse_uuid_row(
+            &row.get::<_, String>("return_id")?,
+            "return_item",
+            "return_id",
+        )?),
+        order_item_id: OrderItemId::from(parse_uuid_row(
+            &row.get::<_, String>("order_item_id")?,
+            "return_item",
+            "order_item_id",
+        )?),
+        sku: row.get("sku")?,
+        name: row.get("name")?,
+        quantity: row.get("quantity")?,
+        condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
+        refund_amount: parse_decimal_row(
+            &row.get::<_, String>("refund_amount")?,
+            "return_item",
+            "refund_amount",
+        )?,
+        disposition: parse_disposition_row(row)?,
+        disposition_at: parse_datetime_opt_row(
+            row.get::<_, Option<String>>("disposition_at")?,
+            "return_item",
+            "disposition_at",
+        )?,
+        disposition_by: row.get("disposition_by")?,
+    })
+}
 
 /// SQLite implementation of `ReturnRepository`
 #[derive(Debug)]
@@ -194,7 +248,7 @@ impl SqliteReturnRepository {
         }
         let placeholders = vec!["?"; ids.len()].join(", ");
         let sql = format!(
-            "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+            "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount, disposition, disposition_at, disposition_by
              FROM return_items WHERE return_id IN ({placeholders})"
         );
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -226,6 +280,13 @@ impl SqliteReturnRepository {
                         "return_item",
                         "refund_amount",
                     )?,
+                    disposition: parse_disposition_row(row)?,
+                    disposition_at: parse_datetime_opt_row(
+                        row.get::<_, Option<String>>("disposition_at")?,
+                        "return_item",
+                        "disposition_at",
+                    )?,
+                    disposition_by: row.get("disposition_by")?,
                 })
             })
             .map_err(map_db_error)?
@@ -242,7 +303,7 @@ impl SqliteReturnRepository {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount, disposition, disposition_at, disposition_by
                  FROM return_items WHERE return_id = ?",
             )
             .map_err(map_db_error)?;
@@ -274,6 +335,13 @@ impl SqliteReturnRepository {
                         "return_item",
                         "refund_amount",
                     )?,
+                    disposition: parse_disposition_row(row)?,
+                    disposition_at: parse_datetime_opt_row(
+                        row.get::<_, Option<String>>("disposition_at")?,
+                        "return_item",
+                        "disposition_at",
+                    )?,
+                    disposition_by: row.get("disposition_by")?,
                 })
             })
             .map_err(map_db_error)?
@@ -307,7 +375,7 @@ impl SqliteReturnRepository {
             Ok(mut ret) => {
                 let mut stmt = conn
                     .prepare(
-                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount, disposition, disposition_at, disposition_by
                          FROM return_items WHERE return_id = ?",
                     )
                     .map_err(map_db_error)?;
@@ -339,6 +407,13 @@ impl SqliteReturnRepository {
                                 "return_item",
                                 "refund_amount",
                             )?,
+                            disposition: parse_disposition_row(row)?,
+                            disposition_at: parse_datetime_opt_row(
+                                row.get::<_, Option<String>>("disposition_at")?,
+                                "return_item",
+                                "disposition_at",
+                            )?,
+                            disposition_by: row.get("disposition_by")?,
                         })
                     })
                     .map_err(map_db_error)?
@@ -468,7 +543,7 @@ impl ReturnRepository for SqliteReturnRepository {
         {
             let mut stmt = tx
                 .prepare(
-                    "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                    "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount, disposition, disposition_at, disposition_by
                      FROM return_items WHERE return_id = ?",
                 )
                 .map_err(map_db_error)?;
@@ -500,6 +575,13 @@ impl ReturnRepository for SqliteReturnRepository {
                             "return_item",
                             "refund_amount",
                         )?,
+                        disposition: parse_disposition_row(row)?,
+                        disposition_at: parse_datetime_opt_row(
+                            row.get::<_, Option<String>>("disposition_at")?,
+                            "return_item",
+                            "disposition_at",
+                        )?,
+                        disposition_by: row.get("disposition_by")?,
                     })
                 })
                 .map_err(map_db_error)?
@@ -525,7 +607,7 @@ impl ReturnRepository for SqliteReturnRepository {
                 // Inline load_return_items to use same connection
                 let mut stmt = conn
                     .prepare(
-                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount, disposition, disposition_at, disposition_by
                          FROM return_items WHERE return_id = ?",
                     )
                     .map_err(map_db_error)?;
@@ -557,6 +639,13 @@ impl ReturnRepository for SqliteReturnRepository {
                                 "return_item",
                                 "refund_amount",
                             )?,
+                            disposition: parse_disposition_row(row)?,
+                            disposition_at: parse_datetime_opt_row(
+                                row.get::<_, Option<String>>("disposition_at")?,
+                                "return_item",
+                                "disposition_at",
+                            )?,
+                            disposition_by: row.get("disposition_by")?,
                         })
                     })
                     .map_err(map_db_error)?
@@ -619,7 +708,7 @@ impl ReturnRepository for SqliteReturnRepository {
                 // Inline load_return_items to use same connection
                 let mut stmt = conn
                     .prepare(
-                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount, disposition, disposition_at, disposition_by
                          FROM return_items WHERE return_id = ?",
                     )
                     .map_err(map_db_error)?;
@@ -651,6 +740,13 @@ impl ReturnRepository for SqliteReturnRepository {
                                 "return_item",
                                 "refund_amount",
                             )?,
+                            disposition: parse_disposition_row(row)?,
+                            disposition_at: parse_datetime_opt_row(
+                                row.get::<_, Option<String>>("disposition_at")?,
+                                "return_item",
+                                "disposition_at",
+                            )?,
+                            disposition_by: row.get("disposition_by")?,
                         })
                     })
                     .map_err(map_db_error)?
@@ -782,6 +878,145 @@ impl ReturnRepository for SqliteReturnRepository {
         )
     }
 
+    fn set_item_disposition(
+        &self,
+        return_id: ReturnId,
+        item_id: Uuid,
+        input: SetReturnDisposition,
+    ) -> Result<ReturnItem> {
+        let warehouse_id = input.warehouse_id.unwrap_or(1);
+        with_immediate_transaction(&self.pool, |tx| {
+            let now = Utc::now().to_rfc3339();
+            let status_raw: Option<String> = tx
+                .query_row(
+                    "SELECT status FROM returns WHERE id = ?1",
+                    [return_id.to_string()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let status: ReturnStatus = match status_raw {
+                Some(raw) => parse_enum_row(&raw, "return", "status")?,
+                None => return Err(smuggle(CommerceError::ReturnNotFound(return_id.into()))),
+            };
+            if !matches!(status, ReturnStatus::Received | ReturnStatus::Inspecting) {
+                return Err(smuggle(CommerceError::NotPermitted(format!(
+                    "Return items can only be dispositioned once received (status: {status})"
+                ))));
+            }
+            let item = tx
+                .query_row(
+                    &format!(
+                        "SELECT {RETURN_ITEM_COLUMNS} FROM return_items WHERE id = ?1 AND return_id = ?2"
+                    ),
+                    [item_id.to_string(), return_id.to_string()],
+                    row_to_return_item,
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    smuggle(CommerceError::ValidationError(format!(
+                        "Return item {item_id} not found on return {return_id}"
+                    )))
+                })?;
+            if let Some(existing) = item.disposition {
+                return Err(smuggle(CommerceError::Conflict(format!(
+                    "Return item {item_id} already dispositioned as {existing}"
+                ))));
+            }
+
+            let qty = Decimal::from(item.quantity);
+            let reference_id = item_id.to_string();
+            let reason = format!("return {return_id} {}", input.disposition);
+            match input.disposition {
+                ReturnDisposition::Restock => {
+                    let bin = find_disposition_bin_tx(
+                        tx,
+                        warehouse_id,
+                        input.bin_id,
+                        &[BinType::Returns, BinType::Quarantine],
+                    )?;
+                    if let Some(bin) = &bin {
+                        apply_bin_delta_tx(tx, bin, &item.sku, qty, Decimal::ZERO, &now)?;
+                        insert_bin_movement_tx(
+                            tx,
+                            BinMovementType::ReturnDisposition,
+                            None,
+                            Some(bin.id),
+                            &item.sku,
+                            qty,
+                            Some(&reason),
+                            Some("return_item"),
+                            Some(&reference_id),
+                            input.disposition_by.as_deref(),
+                            &now,
+                        )?;
+                    }
+                    apply_warehouse_delta_tx(
+                        tx,
+                        warehouse_id,
+                        &item.sku,
+                        qty,
+                        Decimal::ZERO,
+                        &reason,
+                        Some("return_item"),
+                        Some(&reference_id),
+                        &now,
+                    )?;
+                }
+                ReturnDisposition::Quarantine => {
+                    if let Some(bin) = find_disposition_bin_tx(
+                        tx,
+                        warehouse_id,
+                        input.bin_id,
+                        &[BinType::Quarantine],
+                    )? {
+                        apply_bin_delta_tx(tx, &bin, &item.sku, qty, qty, &now)?;
+                        apply_warehouse_delta_tx(
+                            tx,
+                            warehouse_id,
+                            &item.sku,
+                            qty,
+                            qty,
+                            &reason,
+                            Some("return_item"),
+                            Some(&reference_id),
+                            &now,
+                        )?;
+                        insert_bin_movement_tx(
+                            tx,
+                            BinMovementType::ReturnDisposition,
+                            None,
+                            Some(bin.id),
+                            &item.sku,
+                            qty,
+                            Some(&reason),
+                            Some("return_item"),
+                            Some(&reference_id),
+                            input.disposition_by.as_deref(),
+                            &now,
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+
+            tx.execute(
+                "UPDATE return_items SET disposition = ?1, disposition_at = ?2, disposition_by = ?3
+                 WHERE id = ?4",
+                rusqlite::params![
+                    input.disposition.to_string(),
+                    now,
+                    input.disposition_by,
+                    item_id.to_string()
+                ],
+            )?;
+            tx.query_row(
+                &format!("SELECT {RETURN_ITEM_COLUMNS} FROM return_items WHERE id = ?1"),
+                [item_id.to_string()],
+                row_to_return_item,
+            )
+        })
+    }
+
     fn count(&self, filter: ReturnFilter) -> Result<u64> {
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM returns WHERE 1=1".to_string();
@@ -900,6 +1135,9 @@ impl ReturnRepository for SqliteReturnRepository {
                     quantity: item.quantity,
                     condition: item.condition.unwrap_or_default(),
                     refund_amount,
+                    disposition: None,
+                    disposition_at: None,
+                    disposition_by: None,
                 });
             }
 

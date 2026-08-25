@@ -401,6 +401,194 @@ pub struct UpdateZone {
 }
 
 // ============================================================================
+// Warehouse Bins (bin-level sub-allocation of warehouse stock)
+// ============================================================================
+
+/// Functional type of a warehouse bin.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum BinType {
+    /// Forward pick face
+    #[default]
+    Pick,
+    /// Bulk / reserve storage
+    Bulk,
+    /// Receiving dock
+    Receiving,
+    /// Outbound staging
+    Staging,
+    /// Quality / hold quarantine
+    Quarantine,
+    /// Returns processing
+    Returns,
+}
+
+/// A bin (slot) inside a warehouse. Bins are a *sub-allocation* of
+/// warehouse-level inventory: the sum of `quantity_on_hand` across a
+/// warehouse's bins for a SKU is expected to equal the warehouse-level
+/// `inventory_balances.quantity_on_hand` for that SKU (see
+/// [`BinReconciliation`]). Reservations stay at the warehouse level.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WarehouseBin {
+    pub id: i32,
+    pub warehouse_id: i32,
+    /// Unique per warehouse.
+    pub code: String,
+    pub zone: Option<String>,
+    pub aisle: Option<String>,
+    pub rack: Option<String>,
+    pub shelf: Option<String>,
+    pub position: Option<String>,
+    pub bin_type: BinType,
+    pub is_active: bool,
+    /// Optional maximum `quantity_on_hand` per SKU line held in this bin.
+    pub capacity: Option<Decimal>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Input for creating a warehouse bin
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateWarehouseBin {
+    pub warehouse_id: i32,
+    pub code: String,
+    pub zone: Option<String>,
+    pub aisle: Option<String>,
+    pub rack: Option<String>,
+    pub shelf: Option<String>,
+    pub position: Option<String>,
+    pub bin_type: BinType,
+    pub capacity: Option<Decimal>,
+}
+
+/// Input for updating a warehouse bin
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateWarehouseBin {
+    pub zone: Option<String>,
+    pub aisle: Option<String>,
+    pub rack: Option<String>,
+    pub shelf: Option<String>,
+    pub position: Option<String>,
+    pub bin_type: Option<BinType>,
+    pub is_active: Option<bool>,
+    /// `Some(None)` clears the capacity; `None` leaves it unchanged.
+    pub capacity: Option<Option<Decimal>>,
+}
+
+/// Filter for listing warehouse bins
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WarehouseBinFilter {
+    pub warehouse_id: Option<i32>,
+    pub bin_type: Option<BinType>,
+    pub zone: Option<String>,
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+/// Stock of one SKU in one bin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BinLevel {
+    pub bin_id: i32,
+    pub warehouse_id: i32,
+    pub sku: String,
+    pub quantity_on_hand: Decimal,
+    pub quantity_allocated: Decimal,
+    pub quantity_available: Decimal,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Signed adjustment of a bin level. The same delta is applied to the
+/// warehouse-level balance in the same transaction so the bin/warehouse
+/// invariant holds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AdjustBinLevel {
+    pub bin_id: i32,
+    pub sku: String,
+    /// Positive adds, negative removes.
+    pub quantity: Decimal,
+    pub reason: String,
+    pub reference_type: Option<String>,
+    pub reference_id: Option<String>,
+    pub performed_by: Option<String>,
+}
+
+/// Move stock of one SKU between two bins of the same warehouse.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MoveBetweenBins {
+    pub from_bin_id: i32,
+    pub to_bin_id: i32,
+    pub sku: String,
+    pub quantity: Decimal,
+    pub reason: Option<String>,
+    pub performed_by: Option<String>,
+}
+
+/// Type of bin movement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum BinMovementType {
+    /// Bin-to-bin transfer
+    Transfer,
+    /// Signed adjustment (put-away, pick, count correction)
+    Adjustment,
+    /// Stock returned by a customer and dispositioned into a bin
+    ReturnDisposition,
+}
+
+/// Audit record of a bin-level stock change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BinMovement {
+    pub id: Uuid,
+    pub movement_type: BinMovementType,
+    pub from_bin_id: Option<i32>,
+    pub to_bin_id: Option<i32>,
+    pub sku: String,
+    pub quantity: Decimal,
+    pub reason: Option<String>,
+    pub reference_type: Option<String>,
+    pub reference_id: Option<String>,
+    pub performed_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Result of comparing bin-level stock with the warehouse-level balance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BinReconciliation {
+    pub warehouse_id: i32,
+    pub sku: String,
+    /// Σ `quantity_on_hand` over all bins of the warehouse for this SKU.
+    pub bin_on_hand: Decimal,
+    /// Warehouse-level `quantity_on_hand` (0 when no balance row exists).
+    pub warehouse_on_hand: Decimal,
+    /// `warehouse_on_hand - bin_on_hand`.
+    pub variance: Decimal,
+}
+
+impl BinReconciliation {
+    /// True when bins fully account for the warehouse-level quantity.
+    #[must_use]
+    pub const fn is_balanced(&self) -> bool {
+        self.variance.is_zero()
+    }
+}
+
+// ============================================================================
 // Type Aliases for API compatibility
 // ============================================================================
 

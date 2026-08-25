@@ -241,5 +241,10 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "067_order_item_shipped_quantity",
             include_str!("../migrations/067_order_item_shipped_quantity.sql"),
         ),
+        // Warehouse bins + return item disposition.
+        (
+            "068_warehouse_bins_return_disposition",
+            include_str!("../migrations/068_warehouse_bins_return_disposition.sql"),
+        ),
     ]
 }

@@ -298,6 +298,8 @@ fn is_action_segment(segment: &str) -> bool {
             | "convert"
             | "approve"
             | "start"
+            | "move"
+            | "disposition"
     )
 }
 

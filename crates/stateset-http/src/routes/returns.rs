@@ -25,6 +25,97 @@ pub fn router() -> Router<AppState> {
         .route("/returns", post(create_return).get(list_returns))
         .route("/returns/{id}", get(get_return))
         .route("/returns/{id}/approve", patch(approve_return))
+        .route("/returns/{id}/items/{item_id}/disposition", post(set_item_disposition))
+}
+
+/// Request body for `POST /api/v1/returns/{id}/items/{item_id}/disposition`.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct SetReturnDispositionRequest {
+    /// One of `restock`, `refurbish`, `scrap`, `return_to_vendor`, `quarantine`.
+    pub disposition: String,
+    /// Warehouse receiving the stock (default 1).
+    pub warehouse_id: Option<i32>,
+    /// Explicit target bin; otherwise the warehouse's `returns` (restock) or
+    /// `quarantine` bin is used when one exists.
+    pub bin_id: Option<i32>,
+    pub disposition_by: Option<String>,
+}
+
+/// A return line item with its disposition.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub(crate) struct ReturnItemResponse {
+    pub id: String,
+    pub return_id: String,
+    pub order_item_id: String,
+    pub sku: String,
+    pub name: String,
+    pub quantity: i32,
+    pub condition: String,
+    pub refund_amount: String,
+    pub disposition: Option<String>,
+    pub disposition_at: Option<String>,
+    pub disposition_by: Option<String>,
+}
+
+impl From<stateset_core::ReturnItem> for ReturnItemResponse {
+    fn from(i: stateset_core::ReturnItem) -> Self {
+        Self {
+            id: i.id.to_string(),
+            return_id: i.return_id.to_string(),
+            order_item_id: i.order_item_id.to_string(),
+            sku: i.sku,
+            name: i.name,
+            quantity: i.quantity,
+            condition: i.condition.to_string(),
+            refund_amount: i.refund_amount.to_string(),
+            disposition: i.disposition.map(|d| d.to_string()),
+            disposition_at: i.disposition_at.map(|d| d.to_rfc3339()),
+            disposition_by: i.disposition_by,
+        }
+    }
+}
+
+/// `POST /api/v1/returns/:id/items/:item_id/disposition`
+#[utoipa::path(
+    post,
+    operation_id = "return_item_set_disposition",
+    path = "/api/v1/returns/{id}/items/{item_id}/disposition",
+    tag = "returns",
+    request_body = SetReturnDispositionRequest,
+    params(
+        ("id" = String, Path, description = "Return ID (UUID)"),
+        ("item_id" = String, Path, description = "Return item ID (UUID)"),
+    ),
+    responses(
+        (status = 200, description = "Disposition recorded; stock effect applied", body = ReturnItemResponse),
+        (status = 400, description = "Invalid disposition / stock effect rejected", body = ErrorBody),
+        (status = 403, description = "Return not yet received", body = ErrorBody),
+        (status = 404, description = "Return not found", body = ErrorBody),
+        (status = 409, description = "Item already dispositioned", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn set_item_disposition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, item_id)): Path<(ReturnId, uuid::Uuid)>,
+    Json(req): Json<SetReturnDispositionRequest>,
+) -> Result<Json<ReturnItemResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let disposition = stateset_core::ReturnDisposition::from_str(&req.disposition)
+        .map_err(|e| HttpError::BadRequest(format!("Invalid disposition: {e}")))?;
+    let item = commerce.returns().set_item_disposition(
+        id,
+        item_id,
+        stateset_core::SetReturnDisposition {
+            disposition,
+            warehouse_id: req.warehouse_id,
+            bin_id: req.bin_id,
+            disposition_by: req.disposition_by,
+        },
+    )?;
+    Ok(Json(ReturnItemResponse::from(item)))
 }
 
 /// `POST /api/v1/returns`

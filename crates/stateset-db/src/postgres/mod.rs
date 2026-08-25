@@ -12,6 +12,7 @@ mod agent_reputation;
 mod agent_validation;
 mod analytics;
 mod backorder;
+mod bins;
 mod bom;
 mod carts;
 mod channels;
@@ -86,6 +87,7 @@ pub use agent_reputation::*;
 pub use agent_validation::*;
 pub use analytics::*;
 pub use backorder::*;
+pub use bins::*;
 pub use bom::*;
 pub use carts::*;
 pub use channels::*;
@@ -396,6 +398,11 @@ impl PostgresDatabase {
             "072_order_item_shipped_quantity",
             include_str!("migrations/072_order_item_shipped_quantity.sql"),
         ));
+        // Warehouse bins + return item disposition.
+        migrations.push((
+            "073_warehouse_bins_return_disposition",
+            include_str!("migrations/073_warehouse_bins_return_disposition.sql"),
+        ));
 
         migrations
     }
@@ -614,6 +621,11 @@ impl PostgresDatabase {
     /// Get serials repository
     pub fn serials(&self) -> PgSerialRepository {
         PgSerialRepository::new(self.pool.clone())
+    }
+
+    /// Get warehouse bin repository
+    pub fn bins(&self) -> PgBinRepository {
+        PgBinRepository::new(self.pool.clone())
     }
 
     /// Get warehouse repository

@@ -431,13 +431,16 @@ fn migration_backfills_shipped_quantity_for_shipped_orders() {
          CREATE TABLE order_items (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, quantity INTEGER NOT NULL);",
     )
     .expect("scratch schema");
-    // Mark the base migrations as applied so the chain starts after 001.
+    // Mark EVERY migration except 067 as already applied, so the runner executes
+    // exactly 067 against this minimal schema. Filtering (rather than taking the
+    // prefix before 067) keeps the test isolated when later migrations are added:
+    // those touch tables this fixture deliberately does not create.
     conn.execute_batch(
         "CREATE TABLE _migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, checksum TEXT, applied_at TEXT NOT NULL DEFAULT (datetime('now')));",
     )
     .expect("migrations table");
     let names = stateset_db::migrations::known_migration_names();
-    for name in names.iter().take_while(|n| **n != "067_order_item_shipped_quantity") {
+    for name in names.iter().filter(|n| **n != "067_order_item_shipped_quantity") {
         conn.execute("INSERT INTO _migrations (name, checksum) VALUES (?, '')", [name])
             .expect("mark applied");
     }

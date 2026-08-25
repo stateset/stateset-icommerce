@@ -32,6 +32,18 @@ pub trait ReturnRepository: Send + Sync {
     /// Count returns matching filter
     fn count(&self, filter: ReturnFilter) -> Result<u64>;
 
+    /// Record the warehouse disposition of a received return item.
+    ///
+    /// Allowed only while the return is `received` or `inspecting`; a second
+    /// disposition on the same item is rejected with `Conflict`. Stock effects
+    /// (see [`crate::ReturnDisposition`]) are applied in the same transaction.
+    fn set_item_disposition(
+        &self,
+        return_id: ReturnId,
+        item_id: Uuid,
+        input: SetReturnDisposition,
+    ) -> Result<ReturnItem>;
+
     // === Batch Operations ===
 
     /// Create multiple returns - partial success allowed

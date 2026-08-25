@@ -1048,6 +1048,13 @@ pub use stateset_core::{
     validate_sku,
 };
 
+// Warehouse bin + return disposition types
+pub use stateset_core::{
+    AdjustBinLevel, BinLevel, BinMovement, BinMovementType, BinReconciliation, BinRepository,
+    BinType, CreateWarehouseBin, MoveBetweenBins, ReturnDisposition, SetReturnDisposition,
+    UpdateWarehouseBin, WarehouseBin, WarehouseBinFilter,
+};
+
 // Vector search types (feature-gated)
 #[cfg(feature = "vector")]
 pub use stateset_core::{

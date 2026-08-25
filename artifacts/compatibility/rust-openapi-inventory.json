@@ -7,18 +7,18 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 319,
-  "totalOperations": 432,
-  "totalSchemas": 418,
+  "totalPaths": 326,
+  "totalOperations": 442,
+  "totalSchemas": 430,
   "totalTags": 61,
   "methods": [
     {
       "name": "DELETE",
-      "count": 24
+      "count": 25
     },
     {
       "name": "GET",
-      "count": 171
+      "count": 175
     },
     {
       "name": "PATCH",
@@ -26,11 +26,11 @@
     },
     {
       "name": "POST",
-      "count": 215
+      "count": 219
     },
     {
       "name": "PUT",
-      "count": 12
+      "count": 13
     }
   ],
   "tags": [
@@ -242,7 +242,7 @@
     {
       "name": "returns",
       "description": "Return request processing",
-      "count": 4
+      "count": 5
     },
     {
       "name": "revenue_recognition",
@@ -322,7 +322,7 @@
     {
       "name": "warehouse",
       "description": "Warehouses, storage locations, and location-level inventory (adjust/move)",
-      "count": 18
+      "count": 27
     },
     {
       "name": "warranties",
@@ -348,6 +348,7 @@
     "AddCartonRequest",
     "AddWishlistItemRequest",
     "AddressDto",
+    "AdjustBinLevelRequest",
     "AdjustInventoryRequest",
     "AdjustStoreCreditRequest",
     "AgingBucketResponse",
@@ -385,6 +386,12 @@
     "BackorderResponse",
     "BalanceSheetLineResponse",
     "BalanceSheetResponse",
+    "BinLevelListResponse",
+    "BinLevelResponse",
+    "BinListResponse",
+    "BinMovementResponse",
+    "BinReconciliationResponse",
+    "BinResponse",
     "BomComponentListResponse",
     "BomComponentResponse",
     "BomListResponse",
@@ -440,6 +447,7 @@
     "CreateArCreditMemoRequest",
     "CreateArWriteOffRequest",
     "CreateBackorderRequest",
+    "CreateBinRequest",
     "CreateBomComponentRequest",
     "CreateBomRequest",
     "CreateCartRequest",
@@ -588,6 +596,7 @@
     "LoyaltyProgramResponse",
     "MapLineRequest",
     "MessageResponse",
+    "MoveBetweenBinsRequest",
     "MoveInventoryRequest",
     "MovementResponse",
     "NcrListResponse",
@@ -658,6 +667,7 @@
     "ReserveLotRequest",
     "ReserveSerialRequest",
     "ResolveResponse",
+    "ReturnItemResponse",
     "ReturnListResponse",
     "ReturnResponse",
     "ReturnSerialRequest",
@@ -686,6 +696,7 @@
     "SetCartShippingRequest",
     "SetEntryRequest",
     "SetExchangeRateRequest",
+    "SetReturnDispositionRequest",
     "SetStatusRequest",
     "ShipOrderLineRequest",
     "ShipOrderRequest",
@@ -723,6 +734,7 @@
     "TrialBalanceResponse",
     "UnitClassResponse",
     "UnitOfMeasureResponse",
+    "UpdateBinRequest",
     "UpdateBomRequest",
     "UpdateCartItemRequest",
     "UpdateChannelRequest",
@@ -3525,6 +3537,15 @@
       "summary": "`PATCH /api/v1/returns/:id/approve`"
     },
     {
+      "path": "/api/v1/returns/{id}/items/{item_id}/disposition",
+      "method": "POST",
+      "operationId": "return_item_set_disposition",
+      "tags": [
+        "returns"
+      ],
+      "summary": "`POST /api/v1/returns/:id/items/:item_id/disposition`"
+    },
+    {
       "path": "/api/v1/revenue-contracts",
       "method": "GET",
       "operationId": "revenue_recognition_list_contracts",
@@ -4304,6 +4325,87 @@
       "operationId": "vendor_returns_submit",
       "tags": [
         "vendor_returns"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins",
+      "method": "GET",
+      "operationId": "warehouse_bin_list",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins",
+      "method": "POST",
+      "operationId": "warehouse_bin_create",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins/{id}",
+      "method": "DELETE",
+      "operationId": "warehouse_bin_delete",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins/{id}",
+      "method": "GET",
+      "operationId": "warehouse_bin_get_one",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins/{id}",
+      "method": "PUT",
+      "operationId": "warehouse_bin_update",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins/{id}/levels",
+      "method": "GET",
+      "operationId": "warehouse_bin_levels",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins/adjust",
+      "method": "POST",
+      "operationId": "warehouse_bin_adjust",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins/move",
+      "method": "POST",
+      "operationId": "warehouse_bin_move",
+      "tags": [
+        "warehouse"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/warehouse-bins/reconcile",
+      "method": "GET",
+      "operationId": "warehouse_bin_reconcile",
+      "tags": [
+        "warehouse"
       ],
       "summary": ""
     },

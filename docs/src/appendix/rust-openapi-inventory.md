@@ -16,20 +16,20 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 319 |
-| Operations | 432 |
-| Schemas | 418 |
+| Paths | 326 |
+| Operations | 442 |
+| Schemas | 430 |
 | Tags | 61 |
 
 ## Method Counts
 
 | Method | Operations |
 | --- | --- |
-| DELETE | 24 |
-| GET | 171 |
+| DELETE | 25 |
+| GET | 175 |
 | PATCH | 10 |
-| POST | 215 |
-| PUT | 12 |
+| POST | 219 |
+| PUT | 13 |
 
 ## Tag Counts
 
@@ -76,7 +76,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `quality` | 15 | Quality control: inspections, non-conformance reports, and quality holds |
 | `receiving` | 12 | Inbound receiving: goods receipts, item receipt, and put-away tasks |
 | `reports` | 5 | Computed business reports |
-| `returns` | 4 | Return request processing |
+| `returns` | 5 | Return request processing |
 | `revenue_recognition` | 8 | Revenue contracts, performance obligations, and recognition schedules (ASC 606) |
 | `reviews` | 4 | Product review management |
 | `segments` | 6 | Customer segment management |
@@ -92,7 +92,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `units_of_measure` | 6 | Unit of measure definitions |
 | `vendor_credits` | 5 | Vendor credit management |
 | `vendor_returns` | 6 | Return-to-vendor processing |
-| `warehouse` | 18 | Warehouses, storage locations, and location-level inventory (adjust/move) |
+| `warehouse` | 27 | Warehouses, storage locations, and location-level inventory (adjust/move) |
 | `warranties` | 3 | Product warranty management |
 | `wishlists` | 6 | Customer wishlist management |
 | `work_orders` | 13 | Manufacturing work order lifecycle and shop-floor tasks |
@@ -408,6 +408,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `POST` | `/api/v1/returns` | `returns` | `create_return` | `POST /api/v1/returns` |
 | `GET` | `/api/v1/returns/{id}` | `returns` | `get_return` | `GET /api/v1/returns/:id` |
 | `PATCH` | `/api/v1/returns/{id}/approve` | `returns` | `approve_return` | `PATCH /api/v1/returns/:id/approve` |
+| `POST` | `/api/v1/returns/{id}/items/{item_id}/disposition` | `returns` | `return_item_set_disposition` | `POST /api/v1/returns/:id/items/:item_id/disposition` |
 | `GET` | `/api/v1/revenue-contracts` | `revenue_recognition` | `revenue_recognition_list_contracts` | — |
 | `POST` | `/api/v1/revenue-contracts` | `revenue_recognition` | `revenue_recognition_create_contract` | — |
 | `GET` | `/api/v1/revenue-contracts/{id}` | `revenue_recognition` | `revenue_recognition_get_contract` | — |
@@ -497,6 +498,15 @@ expired credits, and insufficient balance. |
 | `POST` | `/api/v1/vendor-returns/{id}/cancel` | `vendor_returns` | `vendor_returns_cancel` | — |
 | `POST` | `/api/v1/vendor-returns/{id}/process` | `vendor_returns` | `vendor_returns_process` | — |
 | `POST` | `/api/v1/vendor-returns/{id}/submit` | `vendor_returns` | `vendor_returns_submit` | — |
+| `GET` | `/api/v1/warehouse-bins` | `warehouse` | `warehouse_bin_list` | — |
+| `POST` | `/api/v1/warehouse-bins` | `warehouse` | `warehouse_bin_create` | — |
+| `DELETE` | `/api/v1/warehouse-bins/{id}` | `warehouse` | `warehouse_bin_delete` | — |
+| `GET` | `/api/v1/warehouse-bins/{id}` | `warehouse` | `warehouse_bin_get_one` | — |
+| `PUT` | `/api/v1/warehouse-bins/{id}` | `warehouse` | `warehouse_bin_update` | — |
+| `GET` | `/api/v1/warehouse-bins/{id}/levels` | `warehouse` | `warehouse_bin_levels` | — |
+| `POST` | `/api/v1/warehouse-bins/adjust` | `warehouse` | `warehouse_bin_adjust` | — |
+| `POST` | `/api/v1/warehouse-bins/move` | `warehouse` | `warehouse_bin_move` | — |
+| `GET` | `/api/v1/warehouse-bins/reconcile` | `warehouse` | `warehouse_bin_reconcile` | — |
 | `POST` | `/api/v1/warehouse-inventory/adjust` | `warehouse` | `warehouse_inventory_adjust` | — |
 | `POST` | `/api/v1/warehouse-inventory/move` | `warehouse` | `warehouse_inventory_move` | — |
 | `GET` | `/api/v1/warehouse-locations` | `warehouse` | `warehouse_location_list` | — |

@@ -72,11 +72,11 @@ pub use postgres::PostgresDatabase;
 use stateset_core::{
     A2ACommerceRepository, AccountsPayableRepository, AccountsReceivableRepository,
     ActivityLogRepository, AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
-    AgentValidationRepository, AnalyticsRepository, BackorderRepository, BomRepository,
-    CartRepository, ChannelRepository, CommerceError, CompanyRepository, CostAccountingRepository,
-    CreditRepository, CurrencyRepository, CustomObjectRepository, CustomerRepository,
-    EdiDocumentRepository, FixedAssetRepository, FraudRepository, FulfillmentRepository,
-    GeneralLedgerRepository, GiftCardRepository, InboundShipmentRepository,
+    AgentValidationRepository, AnalyticsRepository, BackorderRepository, BinRepository,
+    BomRepository, CartRepository, ChannelRepository, CommerceError, CompanyRepository,
+    CostAccountingRepository, CreditRepository, CurrencyRepository, CustomObjectRepository,
+    CustomerRepository, EdiDocumentRepository, FixedAssetRepository, FraudRepository,
+    FulfillmentRepository, GeneralLedgerRepository, GiftCardRepository, InboundShipmentRepository,
     IntegrationFieldMappingRepository, IntegrationMappingRepository, InventoryRepository,
     InvoiceRepository, LotRepository, LoyaltyProgramRepository, OrderRepository,
     PaymentObligationRepository, PaymentRepository, PrepaymentRepository, PriceLevelRepository,
@@ -326,6 +326,8 @@ pub trait Database: Send + Sync {
     fn serials(&self) -> Box<dyn SerialRepository + '_>;
     /// Get the warehouse repository
     fn warehouse(&self) -> Box<dyn WarehouseRepository + '_>;
+    /// Get the warehouse bin repository
+    fn bins(&self) -> Box<dyn BinRepository + '_>;
     /// Get the receiving repository
     fn receiving(&self) -> Box<dyn ReceivingRepository + '_>;
     /// Get the fulfillment repository
@@ -952,6 +954,10 @@ macro_rules! impl_database_accessors {
 
             fn warehouse(&self) -> Box<dyn WarehouseRepository + '_> {
                 Box::new(<$db_type>::warehouse(self))
+            }
+
+            fn bins(&self) -> Box<dyn BinRepository + '_> {
+                Box::new(<$db_type>::bins(self))
             }
 
             fn receiving(&self) -> Box<dyn ReceivingRepository + '_> {
