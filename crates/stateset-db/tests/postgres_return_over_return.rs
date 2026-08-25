@@ -24,7 +24,7 @@ use rust_decimal_macros::dec;
 #[cfg(feature = "postgres")]
 use stateset_core::{
     CommerceError, CreateCustomer, CreateOrder, CreateOrderItem, CreateProduct, CreateReturn,
-    CreateReturnItem, ItemCondition, Order, ReturnFilter, ReturnReason,
+    CreateReturnItem, ItemCondition, Order, OrderStatus, ReturnFilter, ReturnReason, UpdateOrder,
 };
 #[cfg(feature = "postgres")]
 use stateset_db::PostgresDatabase;
@@ -77,7 +77,8 @@ async fn order_with_item(
         .await
         .expect("create product");
 
-    db.orders()
+    let order = db
+        .orders()
         .create_async(CreateOrder {
             customer_id: customer.id,
             items: vec![CreateOrderItem {
@@ -93,7 +94,22 @@ async fn order_with_item(
             ..Default::default()
         })
         .await
-        .expect("create order")
+        .expect("create order");
+
+    // Returns can only be requested against shipped goods; walk the order
+    // through the allowed transitions.
+    let mut shipped = order;
+    for status in [OrderStatus::Confirmed, OrderStatus::Processing, OrderStatus::Shipped] {
+        shipped = db
+            .orders()
+            .update_async(
+                shipped.id.into_uuid(),
+                UpdateOrder { status: Some(status), ..Default::default() },
+            )
+            .await
+            .expect("advance order status");
+    }
+    shipped
 }
 
 /// Returning more units than were ordered in a single line must be rejected,

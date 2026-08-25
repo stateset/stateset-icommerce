@@ -41,7 +41,7 @@ fn create_test_order(commerce: &Commerce, customer_id: CustomerId) -> OrderId {
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 2,
-                unit_price: dec!(29.99),
+                unit_price: dec!(59.99), // order total 119.98 leaves room for the 99.99 test captures
                 ..Default::default()
             }],
             ..Default::default()
@@ -1455,7 +1455,7 @@ fn test_full_payment_flow() {
             order_id: Some(order_id),
             customer_id: Some(customer_id),
             payment_method: PaymentMethodType::CreditCard,
-            amount: dec!(59.98), // Order total
+            amount: dec!(59.98), // partial capture (order total is 119.98)
             currency: Some(CurrencyCode::USD),
             card_brand: Some(CardBrand::Visa),
             card_last4: Some("4242".into()),

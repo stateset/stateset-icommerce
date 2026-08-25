@@ -16,6 +16,74 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Payment statuses that hold (or are about to hold) a slice of the order's
+/// total: in-flight captures count as well as completed ones so two concurrent
+/// captures cannot each pass the check against the same stale balance.
+fn capturing_statuses() -> String {
+    [
+        PaymentTransactionStatus::Pending,
+        PaymentTransactionStatus::Processing,
+        PaymentTransactionStatus::RequiresAction,
+        PaymentTransactionStatus::Completed,
+        PaymentTransactionStatus::PartiallyRefunded,
+        PaymentTransactionStatus::Refunded,
+    ]
+    .iter()
+    .map(|s| format!("'{s}'"))
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+/// Over-capture guard: reject when Σ(in-flight + completed captures for the
+/// order, excluding `exclude_payment_id`) + `amount` would exceed
+/// `orders.total_amount`. Must run inside the caller's IMMEDIATE transaction
+/// so concurrent captures serialize on the write lock. A payment whose
+/// `order_id` does not resolve to an order (standalone / external reference)
+/// has nothing to cap against and passes.
+///
+/// `amount` / `total_amount` are TEXT money columns, so the sum is done in
+/// `Decimal` in Rust rather than in SQL.
+fn check_order_capture_capacity_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+    exclude_payment_id: Option<&str>,
+    amount: rust_decimal::Decimal,
+) -> std::result::Result<(), rusqlite::Error> {
+    let total =
+        match tx.query_row("SELECT total_amount FROM orders WHERE id = ?", [order_id], |row| {
+            row.get::<_, String>(0)
+        }) {
+            Ok(total) => parse_decimal_row(&total, "order", "total_amount")?,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+            Err(e) => return Err(e),
+        };
+
+    let sql = format!(
+        "SELECT id, amount FROM payments WHERE order_id = ? AND status IN ({})",
+        capturing_statuses()
+    );
+    let mut stmt = tx.prepare(&sql)?;
+    let rows =
+        stmt.query_map([order_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    let mut captured = rust_decimal::Decimal::ZERO;
+    for row in rows {
+        let (id, raw_amount) = row?;
+        if exclude_payment_id == Some(id.as_str()) {
+            continue;
+        }
+        captured += parse_decimal_row(&raw_amount, "payment", "amount")?;
+    }
+
+    if captured + amount > total {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            CommerceError::ValidationError(format!(
+                "Payment of {amount} would exceed order {order_id} total {total}: {captured} already captured or in flight"
+            )),
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct SqlitePaymentRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -250,9 +318,13 @@ impl PaymentRepository for SqlitePaymentRepository {
         let now = chrono::Utc::now();
         let payment_number = generate_payment_number();
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        // The over-capture check and the INSERT share one IMMEDIATE transaction
+        // (same pattern as `create_refund`'s over-refund guard).
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(order_id) = input.order_id {
+                check_order_capture_capacity_tx(tx, &order_id.to_string(), None, input.amount)?;
+            }
+            tx.execute(
                 "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
                  payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
                  card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
@@ -284,8 +356,9 @@ impl PaymentRepository for SqlitePaymentRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            ).map_err(map_db_error)?;
-        }
+            )?;
+            Ok(())
+        })?;
 
         self.get(PaymentId::from(id))?.ok_or(CommerceError::NotFound)
     }
@@ -412,9 +485,27 @@ impl PaymentRepository for SqlitePaymentRepository {
     fn mark_completed(&self, id: PaymentId) -> Result<Payment> {
         let now = chrono::Utc::now();
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        with_immediate_transaction(&self.pool, |tx| {
+            // Re-check the order's capacity at completion time: a payment that
+            // was failed/cancelled (and so released its slice of the total) must
+            // not be completed on top of captures made since.
+            let (order_id, raw_amount): (Option<String>, String) = tx
+                .query_row(
+                    "SELECT order_id, amount FROM payments WHERE id = ?",
+                    [id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
+                    }
+                    other => other,
+                })?;
+            if let Some(order_id) = order_id {
+                let amount = parse_decimal_row(&raw_amount, "payment", "amount")?;
+                check_order_capture_capacity_tx(tx, &order_id, Some(&id.to_string()), amount)?;
+            }
+            tx.execute(
                 "UPDATE payments SET status = ?, paid_at = ?, updated_at = ? WHERE id = ?",
                 params![
                     PaymentTransactionStatus::Completed.to_string(),
@@ -422,9 +513,9 @@ impl PaymentRepository for SqlitePaymentRepository {
                     now.to_rfc3339(),
                     id.to_string()
                 ],
-            )
-            .map_err(map_db_error)?;
-        }
+            )?;
+            Ok(())
+        })?;
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -666,16 +757,31 @@ impl PaymentRepository for SqlitePaymentRepository {
     fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund> {
         let now = chrono::Utc::now();
 
-        {
+        // Only an in-flight refund can fail. A `Completed` refund has already
+        // been folded into `payments.amount_refunded`; flipping it to `failed`
+        // would leave that balance inflated while the refund ledger no longer
+        // shows the money (Σ completed refunds != amount_refunded). The status
+        // guard lives in the UPDATE itself so a concurrent completion cannot
+        // slip between a read and the write.
+        let rows = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
-                "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? WHERE id = ?",
+                "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? \
+                 WHERE id = ? AND status IN ('pending', 'processing')",
                 params![RefundStatus::Failed.to_string(), reason, now.to_rfc3339(), id.to_string()],
             )
-            .map_err(map_db_error)?;
-        }
+            .map_err(map_db_error)?
+        };
 
-        self.get_refund(id)?.ok_or(CommerceError::NotFound)
+        let refund = self.get_refund(id)?.ok_or(CommerceError::NotFound)?;
+        // Idempotent: failing an already-failed refund is a no-op.
+        if rows == 0 && refund.status != RefundStatus::Failed {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot fail a {} refund",
+                refund.status
+            )));
+        }
+        Ok(refund)
     }
 
     fn create_payment_method(&self, input: CreatePaymentMethod) -> Result<PaymentMethod> {
@@ -823,6 +929,11 @@ impl PaymentRepository for SqlitePaymentRepository {
             let id = Uuid::new_v4();
             let now = chrono::Utc::now();
             let payment_number = generate_payment_number();
+
+            if let Some(order_id) = input.order_id {
+                check_order_capture_capacity_tx(&tx, &order_id.to_string(), None, input.amount)
+                    .map_err(map_db_error)?;
+            }
 
             tx.execute(
                 "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,

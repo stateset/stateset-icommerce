@@ -1,6 +1,6 @@
 //! SQLite return repository implementation
 
-use super::parse_helpers::{parse_decimal, parse_uuid};
+use super::parse_helpers::{parse_decimal, parse_enum, parse_uuid};
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_opt_row,
     parse_decimal_row, parse_enum_row, parse_uuid_row, sum_decimal_query, uuid_params,
@@ -10,9 +10,9 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    BatchResult, CommerceError, CreateReturn, CustomerId, OrderId, OrderItemId, Result, Return,
-    ReturnFilter, ReturnId, ReturnItem, ReturnRepository, ReturnStatus, UpdateReturn,
-    validate_batch_size,
+    BatchResult, CommerceError, CreateReturn, CustomerId, OrderId, OrderItemId, OrderStatus,
+    Result, Return, ReturnFilter, ReturnId, ReturnItem, ReturnRepository, ReturnStatus,
+    UpdateReturn, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -20,6 +20,20 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct SqliteReturnRepository {
     pool: Pool<SqliteConnectionManager>,
+}
+
+/// Returns may only be requested against orders whose goods have left the
+/// building: `Shipped` or `Delivered`. Anything earlier has nothing to send
+/// back (and would let a return + refund be opened against goods never
+/// fulfilled); cancelled/refunded orders are closed.
+fn ensure_order_returnable(order_id: &str, raw_status: &str) -> Result<()> {
+    let status: OrderStatus = parse_enum(raw_status, "order", "status")?;
+    if matches!(status, OrderStatus::Shipped | OrderStatus::Delivered) {
+        return Ok(());
+    }
+    Err(CommerceError::ValidationError(format!(
+        "Order {order_id} must be shipped or delivered before a return can be requested (current status: {status})"
+    )))
 }
 
 /// Validate a single return line against its order item, inside a write
@@ -334,14 +348,15 @@ impl ReturnRepository for SqliteReturnRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        // Get order to get customer_id
-        let customer_id: String = tx
+        // Get order to get customer_id, and make sure it is returnable.
+        let (customer_id, order_status): (String, String) = tx
             .query_row(
-                "SELECT customer_id FROM orders WHERE id = ?",
+                "SELECT customer_id, status FROM orders WHERE id = ?",
                 [input.order_id.to_string()],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|_| CommerceError::OrderNotFound(input.order_id.into()))?;
+        ensure_order_returnable(&input.order_id.to_string(), &order_status)?;
 
         tx.execute(
             "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, idempotency_key, notes, created_at, updated_at)
@@ -780,14 +795,15 @@ impl ReturnRepository for SqliteReturnRepository {
             let id = Uuid::new_v4();
             let now = Utc::now();
 
-            // Get order to get customer_id
-            let customer_id: String = tx
+            // Get order to get customer_id, and make sure it is returnable.
+            let (customer_id, order_status): (String, String) = tx
                 .query_row(
-                    "SELECT customer_id FROM orders WHERE id = ?",
+                    "SELECT customer_id, status FROM orders WHERE id = ?",
                     [input.order_id.to_string()],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .map_err(|_| CommerceError::OrderNotFound(input.order_id.into()))?;
+            ensure_order_returnable(&input.order_id.to_string(), &order_status)?;
 
             tx.execute(
                 "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, idempotency_key, notes, created_at, updated_at)
