@@ -29,5 +29,6 @@ expression: input
   "billing_address": null,
   "notes": "Please gift wrap",
   "payment_method": "credit_card",
-  "shipping_method": "standard"
+  "shipping_method": "standard",
+  "stock_policy": "allow_backorder"
 }

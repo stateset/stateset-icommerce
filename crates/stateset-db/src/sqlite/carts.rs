@@ -1954,6 +1954,7 @@ impl SqliteCartRepository {
                 notes: cart.notes.clone(),
                 payment_method: cart.payment_method.clone(),
                 shipping_method: cart.shipping_method.clone(),
+                stock_policy: stateset_core::StockPolicy::default(),
             },
         )?;
 

@@ -108,6 +108,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
                 notes: cart_for_order.notes.clone(),
                 payment_method: cart_for_order.payment_method.clone(),
                 shipping_method: cart_for_order.shipping_method,
+                stock_policy: stateset_core::StockPolicy::default(),
             },
         )
         .expect("create order for cart");

@@ -143,6 +143,37 @@ pub enum FulfillmentStatus {
     Delivered,
 }
 
+/// What order creation does when a line cannot be fully reserved from stock.
+///
+/// Order creation reserves inventory for every line whose SKU is a tracked
+/// inventory item. When the available quantity is short, this policy decides
+/// whether the order is still created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StockPolicy {
+    /// Reserve what is available and create a backorder for the remainder.
+    ///
+    /// This is the default and matches historical behaviour: the order is
+    /// always created, and shortfalls surface as backorders.
+    #[default]
+    AllowBackorder,
+    /// Fail the whole order with [`CommerceError::InsufficientStock`] if any
+    /// line cannot be fully reserved. Nothing is persisted: no order row, no
+    /// reservations, no backorders.
+    ///
+    /// [`CommerceError::InsufficientStock`]: crate::CommerceError::InsufficientStock
+    RejectIfInsufficient,
+}
+
+impl StockPolicy {
+    /// Whether this policy tolerates a partial (or zero) reservation.
+    #[must_use]
+    pub const fn allows_backorder(self) -> bool {
+        matches!(self, Self::AllowBackorder)
+    }
+}
+
 /// Input for creating a new order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateOrder {
@@ -154,6 +185,10 @@ pub struct CreateOrder {
     pub notes: Option<String>,
     pub payment_method: Option<String>,
     pub shipping_method: Option<String>,
+    /// How to handle lines that cannot be fully reserved from stock.
+    /// Defaults to [`StockPolicy::AllowBackorder`].
+    #[serde(default)]
+    pub stock_policy: StockPolicy,
 }
 
 impl Default for CreateOrder {
@@ -167,6 +202,7 @@ impl Default for CreateOrder {
             notes: None,
             payment_method: None,
             shipping_method: None,
+            stock_policy: StockPolicy::AllowBackorder,
         }
     }
 }

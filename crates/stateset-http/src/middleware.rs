@@ -139,7 +139,10 @@ struct AuthenticatedActorIdentity;
 pub(crate) struct AuthzConfig {
     engine: Arc<Mutex<AuthzEngine>>,
     trust_actor_headers: bool,
-    strict_path_mapping: bool,
+    /// When `true`, `/api/v1` requests that cannot be mapped to a
+    /// resource/action pair bypass authorization (authentication still
+    /// applies). Defaults to `false`: unmapped routes fail closed with 403.
+    allow_unmapped_routes: bool,
 }
 
 impl AuthzConfig {
@@ -147,7 +150,7 @@ impl AuthzConfig {
         Self {
             engine: Arc::new(Mutex::new(engine)),
             trust_actor_headers: false,
-            strict_path_mapping: false,
+            allow_unmapped_routes: false,
         }
     }
 
@@ -156,10 +159,14 @@ impl AuthzConfig {
         self
     }
 
-    /// Deny `/api/v1` requests that cannot be mapped to a resource/action pair
-    /// instead of letting them bypass authorization.
-    pub(crate) const fn with_strict_path_mapping(mut self) -> Self {
-        self.strict_path_mapping = true;
+    /// Let `/api/v1` requests that cannot be mapped to a resource/action pair
+    /// skip authorization instead of being denied.
+    ///
+    /// This is an explicit opt-out of fail-closed authorization: any route
+    /// the mapper does not recognise becomes reachable by every authenticated
+    /// actor regardless of role.
+    pub(crate) const fn allow_unmapped_routes(mut self, allow: bool) -> Self {
+        self.allow_unmapped_routes = allow;
         self
     }
 }
@@ -419,10 +426,13 @@ async fn require_authorization(
     next: Next,
 ) -> Response {
     let Some((resource, action)) = authz_target(&request) else {
-        if config.strict_path_mapping && request.uri().path().starts_with("/api/v1") {
-            return HttpError::Forbidden(
-                "request path is not mapped to an authorization target".to_string(),
-            )
+        if !config.allow_unmapped_routes && request.uri().path().starts_with("/api/v1") {
+            return HttpError::UnmappedRoute(format!(
+                "{} {} is not mapped to an authorization target; authorization fails closed \
+                 (opt out with ServerBuilder::allow_unmapped_authz_routes(true))",
+                request.method(),
+                request.uri().path()
+            ))
             .into_response();
         }
         return next.run(request).await;
@@ -1386,6 +1396,57 @@ mod tests {
         assert_eq!(cancel_target, (Resource::new("orders"), Action::Delete));
     }
 
+    /// Every `/api/v1/**` operation documented in the `OpenAPI` spec must map to
+    /// an authorization target. Authorization now fails closed for unmapped
+    /// routes, so a new route that the mapper does not understand would ship
+    /// as a hard 403 for every caller; this test catches that before release.
+    #[test]
+    fn every_openapi_api_v1_operation_has_an_authz_mapping() {
+        use utoipa::OpenApi as _;
+
+        const HTTP_VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
+
+        let spec = serde_json::to_value(crate::openapi::ApiDoc::openapi()).expect("spec json");
+        let paths = spec["paths"].as_object().expect("openapi paths object");
+
+        let mut checked = 0usize;
+        let mut unmapped = Vec::new();
+        for (template, item) in paths {
+            if !template.starts_with("/api/v1") {
+                continue;
+            }
+            // Replace `{id}`-style parameters with a concrete placeholder so
+            // the request URI is well-formed.
+            let concrete = template
+                .split('/')
+                .map(|segment| if segment.starts_with('{') { "x" } else { segment })
+                .collect::<Vec<_>>()
+                .join("/");
+            for verb in HTTP_VERBS {
+                if item.get(verb).is_none() {
+                    continue;
+                }
+                let method =
+                    Method::from_bytes(verb.to_ascii_uppercase().as_bytes()).expect("http verb");
+                let request = Request::builder()
+                    .method(method.clone())
+                    .uri(&concrete)
+                    .body(Body::empty())
+                    .expect("request");
+                checked += 1;
+                if authz_target(&request).is_none() {
+                    unmapped.push(format!("{method} {template}"));
+                }
+            }
+        }
+
+        assert!(checked > 50, "expected the OpenAPI spec to document /api/v1 operations");
+        assert!(
+            unmapped.is_empty(),
+            "unmapped /api/v1 operations (authorization would deny them): {unmapped:#?}"
+        );
+    }
+
     #[tokio::test]
     async fn authz_requires_actor_header() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
@@ -1409,7 +1470,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn strict_authz_denies_unmapped_api_paths() {
+    async fn authz_denies_unmapped_api_paths_by_default() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
         let engine = AuthzEngineBuilder::new()
             .add_role(Role::viewer())
@@ -1420,12 +1481,13 @@ mod tests {
             false,
             false,
             Some(actor_bound_auth_bindings("secret", "viewer-1")),
-            Some(AuthzConfig::new(engine).with_strict_path_mapping()),
+            Some(AuthzConfig::new(engine)),
             None,
             None,
         );
 
-        // HEAD requests have no authz_target mapping, so strict mode denies them.
+        // HEAD requests have no authz_target mapping, so the default
+        // (fail-closed) configuration denies them with a distinct error code.
         let response = app
             .oneshot(
                 Request::builder()
@@ -1439,10 +1501,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        // HEAD responses carry no body; the `authz_unmapped_route` code is
+        // covered by `error::tests`.
     }
 
     #[tokio::test]
-    async fn non_strict_authz_allows_unmapped_api_paths() {
+    async fn authz_allows_unmapped_api_paths_only_with_explicit_opt_out() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
         let engine = AuthzEngineBuilder::new()
             .add_role(Role::viewer())
@@ -1453,7 +1517,7 @@ mod tests {
             false,
             false,
             Some(actor_bound_auth_bindings("secret", "viewer-1")),
-            Some(AuthzConfig::new(engine)),
+            Some(AuthzConfig::new(engine).allow_unmapped_routes(true)),
             None,
             None,
         );

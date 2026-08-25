@@ -100,6 +100,7 @@ fn snapshot_create_order_input() {
         notes: Some("Please gift wrap".into()),
         payment_method: Some("credit_card".into()),
         shipping_method: Some("standard".into()),
+        stock_policy: stateset_core::StockPolicy::AllowBackorder,
     };
     assert_json_snapshot!("create_order_input", input);
 }

@@ -867,6 +867,8 @@ fn import_order(
         notes: opt_str(record, "notes"),
         payment_method: opt_str(record, "payment_method"),
         shipping_method: opt_str(record, "shipping_method"),
+        // Imports replay historical orders; never reject them on current stock.
+        stock_policy: stateset_core::StockPolicy::AllowBackorder,
     };
     let created = db.orders().create(input)?;
     if let Ok(old_id) = str_field(record, "id") {

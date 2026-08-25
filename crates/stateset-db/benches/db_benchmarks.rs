@@ -102,6 +102,7 @@ fn create_test_order(customer_id: CustomerId, item_count: usize) -> CreateOrder 
         billing_address: None,
         payment_method: Some("credit_card".to_string()),
         shipping_method: Some("standard".to_string()),
+        stock_policy: stateset_core::StockPolicy::default(),
         notes: None,
         items: (0..item_count).map(create_test_order_item).collect(),
     }

@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_core::StockPolicy;
 use stateset_primitives::{CustomerId, OrderId, ProductId, ReturnId};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -261,6 +262,24 @@ pub struct CreateOrderRequest {
     pub payment_method: Option<String>,
     /// Shipping method identifier.
     pub shipping_method: Option<String>,
+    /// What to do when a line cannot be fully reserved from stock.
+    ///
+    /// `allow_backorder` (default) reserves what is available and backorders
+    /// the remainder; `reject_if_insufficient` fails the whole request with
+    /// HTTP 400 and creates nothing.
+    #[serde(default)]
+    #[schema(value_type = Option<StockPolicyDto>)]
+    pub stock_policy: StockPolicy,
+}
+
+/// Stock policy accepted by `POST /api/v1/orders` (`stock_policy`).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StockPolicyDto {
+    /// Reserve what is available; backorder the remainder (default).
+    AllowBackorder,
+    /// Reject the order with `InsufficientStock` if any line is short.
+    RejectIfInsufficient,
 }
 
 /// A single line item in a create-order request.
@@ -1265,6 +1284,7 @@ mod tests {
             notes: None,
             payment_method: None,
             shipping_method: None,
+            stock_policy: StockPolicy::AllowBackorder,
         };
         let json = serde_json::to_string(&req).unwrap();
         let deser: CreateOrderRequest = serde_json::from_str(&json).unwrap();

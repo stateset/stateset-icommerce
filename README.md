@@ -1203,7 +1203,10 @@ startup when these are missing):
   but without an authz config any valid token has full access to every
   `/api/v1` route. Wire `ServerBuilder::with_authz(...)` (RBAC roles,
   default-deny for unknown actors) so a leaked token has a scoped blast
-  radius.
+  radius. With authz configured, any `/api/v1` request the path mapper
+  cannot classify is denied with `403 authz_unmapped_route` (fail closed);
+  `ServerBuilder::allow_unmapped_authz_routes(true)` is the explicit,
+  not-recommended opt-out that lets unmapped routes skip authorization.
 - **Per-client rate limiting.** Enable
   `ServerBuilder::with_rate_limit(rps, burst)` — clients are keyed by peer
   IP with independent token buckets, so one abusive client cannot starve

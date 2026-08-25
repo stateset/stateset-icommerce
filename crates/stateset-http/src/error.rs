@@ -41,6 +41,12 @@ pub enum HttpError {
     /// Too many requests (HTTP 429).
     #[error("Too many requests: {0}")]
     TooManyRequests(String),
+
+    /// The request path is under `/api/v1` but has no authorization mapping
+    /// (HTTP 403). Authorization fails closed rather than letting the request
+    /// through unchecked; see `ServerBuilder::allow_unmapped_authz_routes`.
+    #[error("Forbidden: {0}")]
+    UnmappedRoute(String),
 }
 
 /// JSON body for error responses.
@@ -69,6 +75,7 @@ impl HttpError {
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::ValidationError(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
+            Self::UnmappedRoute(_) => StatusCode::FORBIDDEN,
         }
     }
 
@@ -84,6 +91,7 @@ impl HttpError {
             Self::Forbidden(_) => "forbidden",
             Self::ValidationError(_) => "validation_error",
             Self::TooManyRequests(_) => "too_many_requests",
+            Self::UnmappedRoute(_) => "authz_unmapped_route",
         }
     }
 }
@@ -183,6 +191,18 @@ mod tests {
         let err = HttpError::Forbidden("denied".into());
         assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
         assert_eq!(err.code(), "forbidden");
+    }
+
+    #[tokio::test]
+    async fn unmapped_route_is_403_with_distinct_code() {
+        let err = HttpError::UnmappedRoute("HEAD /api/v1/orders is not mapped".into());
+        assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
+        assert_eq!(err.code(), "authz_unmapped_route");
+        let response = err.into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "authz_unmapped_route");
+        assert!(json["error"]["message"].as_str().unwrap().starts_with("Forbidden: "));
     }
 
     #[test]
