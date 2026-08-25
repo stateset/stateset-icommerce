@@ -6,7 +6,37 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+- **Financial/inventory invariant harness** (`crates/stateset-integration-tests/tests/invariants.rs`):
+  a proptest that drives random-but-valid sequences of commerce operations (stock receipts, orders,
+  captures, shipments, returns, refunds, AR invoices and payments) through the embedded SQLite
+  engine and, after every operation, asserts the global books: no over-refund (including in-flight
+  refunds), captured ≤ order total, returned ≤ ordered, inventory balances reconcile to the movement
+  ledger and live reservations, every posted journal entry balances, the trial balance nets to
+  zero, the AR control account equals Σ open invoice balances, no money value exceeds its currency
+  scale, and every failed operation is a typed `CommerceError` that leaves the database untouched.
+  64 cases by default (`PROPTEST_CASES` overrides) plus one deterministic regression per invariant.
+
 ### Security
+- **Breaking: HTTP authorization now fails closed for unmapped routes.** When an authz engine is
+  configured, any `/api/v1` request the path→(resource, action) mapper cannot classify is denied
+  with `403 {"error":{"code":"authz_unmapped_route"}}` instead of bypassing authorization.
+  Deployments that relied on unmapped routes passing through must opt out explicitly with
+  `ServerBuilder::allow_unmapped_authz_routes(true)`; `with_strict_authz()` is now a deprecated
+  no-op that re-asserts the default. A new unit test walks every `/api/v1/**` operation in the
+  OpenAPI document and asserts it has an authorization mapping, so a route cannot ship unmapped.
+- **Order creation no longer silently downgrades `InsufficientStock` to a backorder.** `CreateOrder`
+  gains `stock_policy: StockPolicy` (`#[non_exhaustive]`; `allow_backorder` default preserves the
+  historical partial-reserve + auto-backorder behaviour). `reject_if_insufficient` returns the typed
+  `CommerceError::InsufficientStock` and rolls back the whole order transaction — no order row, no
+  reservation, no backorder — on both SQLite and Postgres. Exposed on `POST /api/v1/orders` as the
+  optional `stock_policy` field (OpenAPI `StockPolicyDto`).
+- **`stateset-mcp-http` now supports bearer / API-key authentication** (`--api-key`, repeatable;
+  `STATESET_MCP_API_KEYS`; `--api-key-file`). Keys are compared in constant time via the gateway's
+  existing `createApiKeyAuth`, never logged (only a sha256 fingerprint), and a missing/wrong key gets a
+  401 with a JSON-RPC error body and `WWW-Authenticate: Bearer`. **Breaking for exposed binds:** a
+  non-loopback `--host` now refuses to start without a key unless `--insecure-no-auth` is passed.
+  Guard order is Host → Origin → Auth → handler; `/health` hides the db path from anonymous callers.
 - **`stateset-mcp-http` validates browser `Origin`** via the MCP SDK guard: requests carrying an
   `Origin` are rejected with 403 unless allowed (`--allowed-origin`, repeatable; localhost origins on a
   loopback bind by default). Requests with no `Origin` (every non-browser MCP client) are unaffected.
@@ -23,6 +53,18 @@ This project follows Keep a Changelog and Semantic Versioning.
   warning explains that limiting is per-process. `ServerBuilder::with_rate_limit_trusting_proxy_headers`.
 
 ### Fixed
+- **`fail_refund` on a completed refund corrupted the books** (SQLite + Postgres): it flipped the
+  refund to `failed` while the payment kept the money in `amount_refunded`, so Σ completed refunds
+  no longer matched. Only `pending`/`processing` refunds can fail now (a typed `ValidationError`
+  otherwise; failing an already-failed refund stays an idempotent no-op).
+- **Over-capture guard** (SQLite + Postgres): creating or completing a payment against an order is
+  rejected with a typed `ValidationError` when Σ(in-flight + completed captures) + the new amount
+  would exceed `orders.total_amount`. The check runs inside the same `IMMEDIATE` transaction /
+  `FOR UPDATE` lock as the write, so concurrent captures serialize. Payments whose `order_id` does
+  not resolve to an order (external references) are unaffected.
+- **Returns before shipment** (SQLite + Postgres): a return can only be requested against a
+  `Shipped` or `Delivered` order; pending/processing/cancelled orders now reject with a typed
+  `ValidationError` instead of accepting a return (and refund amount) for goods never fulfilled.
 - **Money at the HTTP edge is `Decimal`, not `f64`**: gift-card `initial_balance`, A2A credit
   `credit_limit` / `amount` now parse exactly (JSON string or number; OpenAPI documents `string`).
 - SQLite analytics: average order value, average lifetime value and top-customer AOV are computed
