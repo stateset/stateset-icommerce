@@ -129,6 +129,9 @@ class StateSetCommerceTest {
                 currency = "USD"
             )
 
+            // A return requires a shipped order (the engine enforces this).
+            commerce.orders.ship(order.id)
+
             val ret = commerce.returns.create(order.id, ReturnReason.Defective)
             assertTrue(ret.id.isNotEmpty())
             assertEquals(order.id, ret.orderId)

@@ -543,6 +543,9 @@ class TestReturns:
         )
 
         # Create return
+        # A return requires a shipped order (engine enforces this).
+        commerce.orders.ship(order.id, tracking_number="1Z-RET-TEST")
+
         ret = commerce.returns.create(
             order_id=order.id,
             reason="defective",
@@ -582,6 +585,9 @@ class TestReturns:
             ],
         )
 
+        # A return requires a shipped order (engine enforces this).
+        commerce.orders.ship(order.id, tracking_number="1Z-RET-TEST")
+
         ret = commerce.returns.create(
             order_id=order.id,
             reason="damaged",
@@ -618,6 +624,9 @@ class TestReturns:
             ],
         )
 
+        # A return requires a shipped order (engine enforces this).
+        commerce.orders.ship(order.id, tracking_number="1Z-RET-TEST")
+
         ret = commerce.returns.create(
             order_id=order.id,
             reason="changed_mind",
@@ -653,6 +662,9 @@ class TestReturns:
                 )
             ],
         )
+
+        # A return requires a shipped order (engine enforces this).
+        commerce.orders.ship(order.id, tracking_number="1Z-RET-TEST")
 
         commerce.returns.create(
             order_id=order.id,
@@ -755,6 +767,9 @@ class TestRepr:
                 )
             ],
         )
+
+        # A return requires a shipped order (engine enforces this).
+        commerce.orders.ship(order.id, tracking_number="1Z-RET-TEST")
 
         ret = commerce.returns.create(
             order_id=order.id,

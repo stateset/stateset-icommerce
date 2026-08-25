@@ -143,6 +143,8 @@ class CommerceTests {
 
         String itemsJson = "[{\"sku\":\"RET-001\",\"name\":\"Return Item\",\"quantity\":1,\"unit_price\":19.99}]";
         Order order = commerce.orders().create(customer.getId(), itemsJson, "USD");
+        // A return requires a shipped order (the engine enforces this).
+        commerce.orders().ship(order.getId(), "TRACK-RET-0001", null);
 
         ReturnRequest toApprove = commerce.returns().create(order.getId(), "Damaged");
         assertNotNull(toApprove);
@@ -154,6 +156,7 @@ class CommerceTests {
 
         String itemsJson2 = "[{\"sku\":\"RET-002\",\"name\":\"Return Item 2\",\"quantity\":1,\"unit_price\":9.99}]";
         Order order2 = commerce.orders().create(customer.getId(), itemsJson2, "USD");
+        commerce.orders().ship(order2.getId(), "TRACK-RET-0002", null);
         ReturnRequest toReject = commerce.returns().create(order2.getId(), "Wrong size");
         ReturnRequest rejected = commerce.returns().reject(toReject.getId(), "Invalid");
         assertNotNull(rejected);
