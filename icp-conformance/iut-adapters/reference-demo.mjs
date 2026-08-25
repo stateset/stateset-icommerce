@@ -420,6 +420,93 @@ function run09Ceilings(input) {
   return { decisions };
 }
 
+
+// ===========================================================================
+// 10-commerce-invariants — economic invariants (reuses cmpAmount: no floats)
+// ===========================================================================
+
+const MINOR_UNITS = { USD: 2, EUR: 2, JPY: 0, USDC: 6 };
+
+// Exact decimal addition on the string forms cmpAmount already understands.
+function addAmount(a, b) {
+  const [ra, fa = ''] = String(a).split('.');
+  const [rb, fb = ''] = String(b).split('.');
+  const n = Math.max(fa.length, fb.length);
+  const scaled = BigInt(ra + fa.padEnd(n, '0')) + BigInt(rb + fb.padEnd(n, '0'));
+  const digits = scaled.toString().padStart(n + 1, '0');
+  return n === 0 ? digits : `${digits.slice(0, -n)}.${digits.slice(-n)}`;
+}
+
+// Exact decimal subtraction; returns "-x" when b > a so cmpAmount's caller can
+// still order it against a non-negative request (a negative available always
+// loses the >= comparison because the caller checks requested > available).
+function subAmount(a, b) {
+  const [ra, fa = ''] = String(a).split('.');
+  const [rb, fb = ''] = String(b).split('.');
+  const n = Math.max(fa.length, fb.length);
+  const scaled = BigInt(ra + fa.padEnd(n, '0')) - BigInt(rb + fb.padEnd(n, '0'));
+  const neg = scaled < 0n;
+  const digits = (neg ? -scaled : scaled).toString().padStart(n + 1, '0');
+  const body = n === 0 ? digits : `${digits.slice(0, -n)}.${digits.slice(-n)}`;
+  return neg ? `-${body}` : body;
+}
+
+function run10CommerceInvariants(input) {
+  const decisions = {};
+  for (const c of input.cases) {
+    let d;
+    switch (c.kind) {
+      case 'refund': {
+        const used = addAmount(c.completed_refunds, c.inflight_refunds);
+        d = cmpAmount(addAmount(used, c.requested), c.captured) > 0
+          ? { error: 'commerce.refund.exceeds_captured' } : { valid: true };
+        break;
+      }
+      case 'capture': {
+        const used = addAmount(c.completed_captures, c.inflight_captures);
+        d = cmpAmount(addAmount(used, c.requested), c.order_total) > 0
+          ? { error: 'commerce.capture.exceeds_order_total' } : { valid: true };
+        break;
+      }
+      case 'return_quantity': {
+        if (c.shipped <= 0) d = { error: 'commerce.return.order_not_shipped' };
+        else if (c.already_returned + c.requested > c.shipped) d = { error: 'commerce.return.exceeds_shipped' };
+        else d = { valid: true };
+        break;
+      }
+      case 'reserve': {
+        const available = subAmount(c.on_hand, c.allocated);
+        const insufficient =
+          available.startsWith('-') || cmpAmount(c.requested, available) > 0;
+        d = insufficient
+          ? { error: 'commerce.inventory.insufficient_available' } : { valid: true };
+        break;
+      }
+      case 'journal_entry': {
+        const twoSided = c.lines.some(
+          (l) => cmpAmount(l.debit, '0') > 0 && cmpAmount(l.credit, '0') > 0,
+        );
+        if (twoSided) { d = { error: 'commerce.ledger.line_not_single_sided' }; break; }
+        const debits = c.lines.reduce((acc, l) => addAmount(acc, l.debit), '0');
+        const credits = c.lines.reduce((acc, l) => addAmount(acc, l.credit), '0');
+        d = cmpAmount(debits, credits) === 0
+          ? { valid: true } : { error: 'commerce.ledger.entry_unbalanced' };
+        break;
+      }
+      case 'money_scale': {
+        const frac = String(c.amount).includes('.') ? String(c.amount).split('.')[1].length : 0;
+        d = frac > MINOR_UNITS[c.currency]
+          ? { error: 'commerce.money.scale_exceeds_currency' } : { valid: true };
+        break;
+      }
+      default:
+        throw new Error(`unknown case kind: ${c.kind}`);
+    }
+    decisions[c.id] = d;
+  }
+  return { decisions };
+}
+
 // ===========================================================================
 // Main
 // ===========================================================================
@@ -467,6 +554,9 @@ try {
       break;
     case '09-ceilings':
       output = run09Ceilings(input);
+      break;
+    case '10-commerce-invariants':
+      output = run10CommerceInvariants(input);
       break;
     default:
       process.stderr.write(JSON.stringify({ error: 'unsupported', reason: `no handler for ${testName}` }) + '\n');
