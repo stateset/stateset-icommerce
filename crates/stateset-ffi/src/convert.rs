@@ -169,6 +169,7 @@ mod tests {
                 sku: "S".into(),
                 name: "N".into(),
                 quantity: 1,
+                shipped_quantity: 0,
                 unit_price: dec!(100),
                 discount: dec!(0),
                 tax_amount: dec!(0),

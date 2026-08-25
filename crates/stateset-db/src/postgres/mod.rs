@@ -392,6 +392,10 @@ impl PostgresDatabase {
             "071_topology_snapshots",
             include_str!("migrations/071_topology_snapshots.sql"),
         ));
+        migrations.push((
+            "072_order_item_shipped_quantity",
+            include_str!("migrations/072_order_item_shipped_quantity.sql"),
+        ));
 
         migrations
     }

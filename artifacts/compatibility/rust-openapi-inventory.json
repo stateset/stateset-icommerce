@@ -9,7 +9,7 @@
   "version": "1.0.4",
   "totalPaths": 319,
   "totalOperations": 432,
-  "totalSchemas": 416,
+  "totalSchemas": 418,
   "totalTags": 61,
   "methods": [
     {
@@ -687,6 +687,8 @@
     "SetEntryRequest",
     "SetExchangeRateRequest",
     "SetStatusRequest",
+    "ShipOrderLineRequest",
+    "ShipOrderRequest",
     "ShipSerialRequest",
     "ShipTaskListResponse",
     "ShipTaskResponse",

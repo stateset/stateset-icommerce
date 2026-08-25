@@ -24,7 +24,10 @@ fn ensure_order_returnable(order_id: Uuid, raw_status: &str) -> Result<()> {
     let status: OrderStatus = raw_status.parse().map_err(|e| {
         CommerceError::DatabaseError(format!("Invalid order.status '{raw_status}': {e}"))
     })?;
-    if matches!(status, OrderStatus::Shipped | OrderStatus::Delivered) {
+    if matches!(
+        status,
+        OrderStatus::PartiallyShipped | OrderStatus::Shipped | OrderStatus::Delivered
+    ) {
         return Ok(());
     }
     Err(CommerceError::ValidationError(format!(
@@ -51,10 +54,19 @@ async fn validate_return_item_pg(
     order_item_id: Uuid,
     return_qty: i32,
 ) -> Result<(String, String, Decimal)> {
-    let (sku, name, unit_price, oi_order_id, ordered_qty): (String, String, Decimal, Uuid, i32) =
-        sqlx::query_as(
-            "SELECT sku, name, unit_price, order_id, quantity FROM order_items WHERE id = $1",
-        )
+    let (sku, name, unit_price, oi_order_id, ordered_qty, shipped_qty, order_status): (
+        String,
+        String,
+        Decimal,
+        Uuid,
+        i32,
+        i32,
+        String,
+    ) = sqlx::query_as(
+        "SELECT oi.sku, oi.name, oi.unit_price, oi.order_id, oi.quantity, oi.shipped_quantity, o.status
+         FROM order_items oi JOIN orders o ON o.id = oi.order_id
+         WHERE oi.id = $1",
+    )
         .bind(order_item_id)
         .fetch_optional(&mut *conn)
         .await
@@ -81,10 +93,19 @@ async fn validate_return_item_pg(
     .await
     .map_err(map_db_error)?;
 
-    if i64::from(return_qty) + already_returned > i64::from(ordered_qty) {
+    // Once the order has shipped (fully or partially), only units that actually
+    // left the warehouse are returnable. Before shipment the cap stays at the
+    // ordered quantity (legacy behaviour).
+    let (cap, cap_label) = if crate::error_helpers::order_status_has_shipped(&order_status) {
+        (i64::from(shipped_qty), "shipped")
+    } else {
+        (i64::from(ordered_qty), "ordered")
+    };
+
+    if i64::from(return_qty) + already_returned > cap {
         return Err(CommerceError::ValidationError(format!(
-            "Cannot return {return_qty} of order item {order_item_id}: only {} remain returnable ({ordered_qty} ordered, {already_returned} already returned)",
-            i64::from(ordered_qty) - already_returned
+            "Cannot return {return_qty} of order item {order_item_id}: only {} remain returnable ({cap} {cap_label}, {already_returned} already returned)",
+            cap - already_returned
         )));
     }
 

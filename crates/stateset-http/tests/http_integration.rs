@@ -4392,3 +4392,115 @@ async fn create_order_stock_policy_reject_if_insufficient_returns_400_and_persis
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 }
+
+#[tokio::test]
+async fn ship_order_with_lines_returns_partially_shipped_and_shipped_quantity() {
+    let state = AppState::new(test_commerce());
+    let (order_id, item_id) = seed_order(&state); // one line, quantity 2
+    let router = stateset_http::routes::api_router().with_state(state);
+
+    let body = json!({
+        "tracking_number": "TRK-PARTIAL",
+        "lines": [{"order_item_id": item_id, "quantity": 1}]
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{order_id}/ship"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["status"], "partially_shipped");
+    assert_eq!(json["items"][0]["quantity"], 2);
+    assert_eq!(json["items"][0]["shipped_quantity"], 1);
+
+    // Ship the remainder with no body: legacy "ship everything" completes it.
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{order_id}/ship")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["status"], "shipped");
+    assert_eq!(json["items"][0]["shipped_quantity"], 2);
+}
+
+#[tokio::test]
+async fn ship_order_overship_returns_400_and_persists_nothing() {
+    let state = AppState::new(test_commerce());
+    let (order_id, item_id) = seed_order(&state);
+    let router = stateset_http::routes::api_router().with_state(state);
+
+    let body = json!({"lines": [{"order_item_id": item_id, "quantity": 3}]});
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{order_id}/ship"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(resp).await;
+    assert!(
+        json["error"]["message"].as_str().unwrap().contains("requested 3, remaining 2"),
+        "{json}"
+    );
+
+    let resp = router
+        .oneshot(Request::get(format!("/api/v1/orders/{order_id}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let json = body_json(resp).await;
+    assert_ne!(json["status"], "partially_shipped");
+    assert_eq!(json["items"][0]["shipped_quantity"], 0);
+}
+
+#[tokio::test]
+async fn return_after_partial_ship_is_capped_at_shipped_quantity() {
+    let state = AppState::new(test_commerce());
+    let (order_id, item_id) = seed_order(&state);
+    let router = stateset_http::routes::api_router().with_state(state);
+
+    let body = json!({"lines": [{"order_item_id": item_id, "quantity": 1}]});
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{order_id}/ship"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 2 ordered, 1 shipped: returning 2 is rejected, returning 1 is accepted.
+    for (qty, expected) in [(2, StatusCode::UNPROCESSABLE_ENTITY), (1, StatusCode::CREATED)] {
+        let body = json!({
+            "order_id": order_id, "reason": "defective",
+            "items": [{"order_item_id": item_id, "quantity": qty}]
+        });
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/returns")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), expected, "return qty {qty}");
+    }
+}

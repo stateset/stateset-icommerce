@@ -45,6 +45,13 @@ pub struct OrderItem {
     pub sku: String,
     pub name: String,
     pub quantity: i32,
+    /// Units of this line that have physically shipped so far.
+    ///
+    /// Incremented by [`OrderRepository::ship`](crate::OrderRepository::ship);
+    /// never exceeds `quantity`. Returns validate against this once the order
+    /// has shipped (see the returns repository).
+    #[serde(default)]
+    pub shipped_quantity: i32,
     pub unit_price: Decimal,
     pub discount: Decimal,
     pub tax_amount: Decimal,
@@ -76,6 +83,13 @@ pub enum OrderStatus {
     Pending,
     Confirmed,
     Processing,
+    /// Some, but not all, ordered units have shipped (Σ shipped < Σ ordered).
+    ///
+    /// Derived from per-line `shipped_quantity` by
+    /// [`OrderRepository::ship`](crate::OrderRepository::ship); it cannot be
+    /// set directly through a plain status update.
+    #[strum(serialize = "partially_shipped", serialize = "partiallyshipped")]
+    PartiallyShipped,
     Shipped,
     Delivered,
     #[strum(serialize = "cancelled", serialize = "canceled")]
@@ -94,7 +108,10 @@ impl OrderStatus {
         match self {
             Self::Pending => matches!(next, Self::Confirmed | Self::Cancelled),
             Self::Confirmed => matches!(next, Self::Processing | Self::Cancelled),
-            Self::Processing => matches!(next, Self::Shipped | Self::Cancelled),
+            Self::Processing => {
+                matches!(next, Self::PartiallyShipped | Self::Shipped | Self::Cancelled)
+            }
+            Self::PartiallyShipped => matches!(next, Self::Shipped),
             Self::Shipped => matches!(next, Self::Delivered),
             Self::Delivered => matches!(next, Self::Refunded),
             Self::Cancelled | Self::Refunded => false,
@@ -247,6 +264,30 @@ pub struct UpdateOrder {
     pub billing_address: Option<Address>,
 }
 
+/// One order line in a shipment request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShipmentLineInput {
+    /// The order line being shipped.
+    pub order_item_id: OrderItemId,
+    /// Units shipped now; must be `> 0` and `<= quantity - shipped_quantity`.
+    pub quantity: i32,
+}
+
+/// Input for shipping an order (fully or partially).
+///
+/// `lines: None` (or an empty vector) ships every remaining unit on every
+/// line, which is the legacy "flip the order to shipped" behaviour. Explicit
+/// lines increment each line's `shipped_quantity`; the order becomes
+/// [`OrderStatus::PartiallyShipped`] while Σ shipped < Σ ordered and
+/// [`OrderStatus::Shipped`] once every unit has left.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ShipOrder {
+    /// Carrier tracking number to record on the order.
+    pub tracking_number: Option<String>,
+    /// Per-line shipped quantities; `None` ships all remaining units.
+    pub lines: Option<Vec<ShipmentLineInput>>,
+}
+
 /// Order filter for querying
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OrderFilter {
@@ -295,6 +336,13 @@ impl Order {
 pub(crate) const MONEY_SCALE: u32 = 2;
 
 impl OrderItem {
+    /// Units not yet shipped on this line (`quantity - shipped_quantity`, never negative).
+    #[must_use]
+    pub const fn remaining_to_ship(&self) -> i32 {
+        let remaining = self.quantity - self.shipped_quantity;
+        if remaining < 0 { 0 } else { remaining }
+    }
+
     /// Calculate a line item's money total, rounded to the currency minor unit.
     ///
     /// The result is rounded to `MONEY_SCALE` (2) decimal places so the stored
@@ -386,6 +434,7 @@ mod tests {
             sku: "TEST-SKU-001".to_string(),
             name: "Test Product".to_string(),
             quantity,
+            shipped_quantity: 0,
             unit_price,
             discount,
             tax_amount: tax,

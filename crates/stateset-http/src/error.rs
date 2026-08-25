@@ -136,6 +136,11 @@ impl From<CommerceError> for HttpError {
                     "Insufficient stock for SKU {sku}: requested {requested}, available {available}"
                 ))
             }
+            CommerceError::ShipmentExceedsOrdered { order_item_id, requested, remaining } => {
+                Self::BadRequest(format!(
+                    "Shipment exceeds ordered quantity for order item {order_item_id}: requested {requested}, remaining {remaining}"
+                ))
+            }
             CommerceError::CustomerNotActive => {
                 Self::BadRequest("Customer is not active".to_string())
             }

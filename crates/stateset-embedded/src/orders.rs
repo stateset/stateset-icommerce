@@ -3,7 +3,7 @@
 use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
     CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
-    OrderStatus, PaymentStatus, Result, UpdateOrder,
+    OrderStatus, PaymentStatus, Result, ShipOrder, ShipmentLineInput, UpdateOrder,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -298,9 +298,31 @@ impl Orders {
         self.update_status(id, OrderStatus::Cancelled)
     }
 
-    /// Mark an order as shipped.
+    /// Mark an order as shipped (every remaining unit on every line).
+    ///
+    /// Equivalent to [`Self::ship_lines`] with `lines = None`.
     #[tracing::instrument(skip(self), fields(order_id = %id, has_tracking = tracking_number.is_some()))]
     pub fn ship(&self, id: OrderId, tracking_number: Option<&str>) -> Result<Order> {
+        self.ship_lines(id, tracking_number, None)
+    }
+
+    /// Ship an order, optionally only some units of some lines.
+    ///
+    /// With explicit `lines`, each line's `shipped_quantity` is incremented and
+    /// the order becomes [`OrderStatus::PartiallyShipped`] until every unit has
+    /// shipped, then [`OrderStatus::Shipped`]. A line that would exceed its
+    /// ordered quantity fails with `CommerceError::ShipmentExceedsOrdered` and
+    /// nothing is persisted. `None`/empty `lines` ships all remaining units.
+    ///
+    /// Pending/confirmed orders are first advanced to `Processing`, as
+    /// [`Self::ship`] always did.
+    #[tracing::instrument(skip(self, lines), fields(order_id = %id, has_tracking = tracking_number.is_some()))]
+    pub fn ship_lines(
+        &self,
+        id: OrderId,
+        tracking_number: Option<&str>,
+        lines: Option<Vec<ShipmentLineInput>>,
+    ) -> Result<Order> {
         tracing::info!("shipping order");
         if let Some(order) = self.get(id)? {
             match order.status {
@@ -314,14 +336,15 @@ impl Orders {
                 _ => {}
             }
         }
-        self.update(
-            id,
-            UpdateOrder {
-                status: Some(OrderStatus::Shipped),
-                tracking_number: tracking_number.map(std::string::ToString::to_string),
-                ..Default::default()
-            },
-        )
+        #[cfg(feature = "events")]
+        let previous = self.get(id)?;
+        let tracking_number = tracking_number.map(std::string::ToString::to_string);
+        let updated = self.db.orders().ship(id, ShipOrder { tracking_number, lines })?;
+        #[cfg(feature = "events")]
+        if let Some(previous) = previous {
+            self.emit_order_change_events(&previous, &updated);
+        }
+        Ok(updated)
     }
 
     /// Mark an order as delivered.

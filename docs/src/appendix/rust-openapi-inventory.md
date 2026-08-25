@@ -18,7 +18,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | API version | `1.0.4` |
 | Paths | 319 |
 | Operations | 432 |
-| Schemas | 416 |
+| Schemas | 418 |
 | Tags | 61 |
 
 ## Method Counts

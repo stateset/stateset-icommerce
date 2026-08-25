@@ -23,12 +23,17 @@ pub struct SqliteReturnRepository {
 }
 
 /// Returns may only be requested against orders whose goods have left the
-/// building: `Shipped` or `Delivered`. Anything earlier has nothing to send
-/// back (and would let a return + refund be opened against goods never
-/// fulfilled); cancelled/refunded orders are closed.
+/// building: `PartiallyShipped`, `Shipped` or `Delivered`. Anything earlier has
+/// nothing to send back (and would let a return + refund be opened against
+/// goods never fulfilled); cancelled/refunded orders are closed. A partially
+/// shipped order is returnable for the units that actually shipped — the
+/// per-line `shipped_quantity` cap enforces that.
 fn ensure_order_returnable(order_id: &str, raw_status: &str) -> Result<()> {
     let status: OrderStatus = parse_enum(raw_status, "order", "status")?;
-    if matches!(status, OrderStatus::Shipped | OrderStatus::Delivered) {
+    if matches!(
+        status,
+        OrderStatus::PartiallyShipped | OrderStatus::Shipped | OrderStatus::Delivered
+    ) {
         return Ok(());
     }
     Err(CommerceError::ValidationError(format!(
@@ -43,7 +48,8 @@ fn ensure_order_returnable(order_id: &str, raw_status: &str) -> Result<()> {
 /// Rejects the return when:
 /// - the order item does not exist,
 /// - the order item belongs to a different order than the one being returned, or
-/// - returning `return_qty` more units would exceed what was purchased, counting
+/// - returning `return_qty` more units would exceed what was purchased (or, once
+///   the order has shipped, what was actually shipped on that line), counting
 ///   units already claimed by non-terminal returns (rejected/cancelled returns
 ///   release their claim).
 ///
@@ -55,11 +61,31 @@ fn validate_return_item_tx(
     order_item_id: &str,
     return_qty: i64,
 ) -> Result<(String, String, String)> {
-    let (sku, name, unit_price, oi_order_id, ordered_qty): (String, String, String, String, i64) =
-        tx.query_row(
-            "SELECT sku, name, unit_price, order_id, quantity FROM order_items WHERE id = ?",
+    let (sku, name, unit_price, oi_order_id, ordered_qty, shipped_qty, order_status): (
+        String,
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        String,
+    ) = tx
+        .query_row(
+            "SELECT oi.sku, oi.name, oi.unit_price, oi.order_id, oi.quantity, oi.shipped_quantity, o.status
+             FROM order_items oi JOIN orders o ON o.id = oi.order_id
+             WHERE oi.id = ?",
             [order_item_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
         )
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => {
@@ -86,10 +112,19 @@ fn validate_return_item_tx(
         )
         .map_err(map_db_error)?;
 
-    if return_qty + already_returned > ordered_qty {
+    // Once the order has shipped (fully or partially), only units that actually
+    // left the warehouse are returnable. Before shipment the cap stays at the
+    // ordered quantity (legacy behaviour).
+    let (cap, cap_label) = if crate::error_helpers::order_status_has_shipped(&order_status) {
+        (shipped_qty, "shipped")
+    } else {
+        (ordered_qty, "ordered")
+    };
+
+    if return_qty + already_returned > cap {
         return Err(CommerceError::ValidationError(format!(
-            "Cannot return {return_qty} of order item {order_item_id}: only {} remain returnable ({ordered_qty} ordered, {already_returned} already returned)",
-            ordered_qty - already_returned
+            "Cannot return {return_qty} of order item {order_item_id}: only {} remain returnable ({cap} {cap_label}, {already_returned} already returned)",
+            cap - already_returned
         )));
     }
 

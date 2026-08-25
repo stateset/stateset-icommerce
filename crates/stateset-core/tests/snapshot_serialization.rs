@@ -132,6 +132,7 @@ fn snapshot_order() {
             sku: "TEST-SKU-001".into(),
             name: "Test Widget".into(),
             quantity: 2,
+            shipped_quantity: 0,
             unit_price: dec!(29.99),
             discount: dec!(5.00),
             tax_amount: dec!(4.50),

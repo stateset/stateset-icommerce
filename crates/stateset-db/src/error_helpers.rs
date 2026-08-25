@@ -225,6 +225,14 @@ pub fn migration_failed(version: i32, msg: impl Into<String>) -> CommerceError {
     CommerceError::Database(DbError::MigrationFailed { version, message: msg.into() })
 }
 
+/// Whether a raw `orders.status` value means units have physically shipped, so
+/// returns must be capped at each line's `shipped_quantity` rather than its
+/// ordered quantity.
+#[must_use]
+pub fn order_status_has_shipped(status: &str) -> bool {
+    matches!(status, "partially_shipped" | "shipped" | "delivered" | "completed")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
