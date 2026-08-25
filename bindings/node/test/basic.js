@@ -333,6 +333,9 @@ test('Commerce: basic operations', async (t) => {
       ]
     });
 
+    // A return requires a shipped order (the engine enforces this).
+    await commerce.orders.ship(order.id, 'TRACK-RET-0001');
+
     // Get the order to access item IDs (we'll use a mock ID for now)
     const orderDetails = await commerce.orders.get(order.id);
     const orderItemId = orderDetails.items[0].id;

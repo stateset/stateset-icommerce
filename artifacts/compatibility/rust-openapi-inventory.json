@@ -9,7 +9,7 @@
   "version": "1.0.4",
   "totalPaths": 319,
   "totalOperations": 432,
-  "totalSchemas": 415,
+  "totalSchemas": 416,
   "totalTags": 61,
   "methods": [
     {
@@ -699,6 +699,7 @@
     "SnapshotResponse",
     "SnapshotSummary",
     "StationResponse",
+    "StockPolicyDto",
     "StoreCreditListResponse",
     "StoreCreditResponse",
     "StoreCreditTransactionResponse",

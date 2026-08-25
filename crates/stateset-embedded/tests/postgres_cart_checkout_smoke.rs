@@ -298,6 +298,7 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
                 notes: None,
                 payment_method: Some("credit_card".into()),
                 shipping_method: None,
+                stock_policy: Default::default(),
             },
         )
         .await
