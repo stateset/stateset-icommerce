@@ -494,6 +494,111 @@ impl PgInventoryRepository {
         Ok(ReservationConfirmOutcome::Confirmed)
     }
 
+    /// Open (`pending`/`allocated`) reservations held by `reference` for `sku`,
+    /// oldest first, as `(reservation_id, quantity)`.
+    pub(crate) async fn list_open_reservations_for_sku_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        reference_type: &str,
+        reference_id: &str,
+        sku: &str,
+    ) -> Result<Vec<(Uuid, Decimal)>> {
+        sqlx::query_as(
+            "SELECT r.id, r.quantity FROM inventory_reservations r
+             JOIN inventory_items i ON i.id = r.item_id
+             WHERE r.reference_type = $1 AND r.reference_id = $2 AND i.sku = $3
+               AND r.status IN ('pending', 'allocated')
+             ORDER BY r.created_at, r.id",
+        )
+        .bind(reference_type)
+        .bind(reference_id)
+        .bind(sku)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)
+    }
+
+    /// Confirm `quantity` units of a reservation, splitting it when `quantity`
+    /// is less than the reserved amount (the shipped units become a new
+    /// `confirmed` row; the original keeps the `pending` remainder). Mirrors the
+    /// SQLite implementation.
+    pub(crate) async fn confirm_reservation_quantity_in_tx_with_now(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        reservation_id: Uuid,
+        quantity: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<ReservationConfirmOutcome> {
+        let res = sqlx::query_as::<_, ReservationRow>(
+            "SELECT * FROM inventory_reservations WHERE id = $1 FOR UPDATE",
+        )
+        .bind(reservation_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::ReservationNotFound(reservation_id))?;
+
+        if quantity >= res.quantity {
+            return self.confirm_reservation_in_tx_with_now(tx, reservation_id, now).await;
+        }
+
+        let status: ReservationStatus = res.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_reservation.status '{}': {}",
+                res.status, e
+            ))
+        })?;
+        if matches!(status, ReservationStatus::Released | ReservationStatus::Cancelled) {
+            return Ok(ReservationConfirmOutcome::Confirmed);
+        }
+        if status == ReservationStatus::Expired {
+            return Ok(ReservationConfirmOutcome::Expired);
+        }
+        if let Some(expires_at) = res.expires_at {
+            if expires_at < now {
+                Self::expire_reservation_in_tx(
+                    tx,
+                    reservation_id,
+                    res.item_id,
+                    res.location_id,
+                    res.quantity,
+                    now,
+                )
+                .await?;
+                return Ok(ReservationConfirmOutcome::Expired);
+            }
+        }
+        if quantity <= Decimal::ZERO {
+            return Ok(ReservationConfirmOutcome::Confirmed);
+        }
+
+        sqlx::query("UPDATE inventory_reservations SET quantity = $1 WHERE id = $2")
+            .bind(res.quantity - quantity)
+            .bind(reservation_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        sqlx::query(
+            r#"
+            INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status,
+                                                reference_type, reference_id, expires_at, created_at)
+            VALUES ($1, $2, $3, $4, 'confirmed', $5, $6, NULL, $7)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(res.item_id)
+        .bind(res.location_id)
+        .bind(quantity)
+        .bind(&res.reference_type)
+        .bind(&res.reference_id)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(ReservationConfirmOutcome::Confirmed)
+    }
+
     pub(crate) async fn expire_reservation_if_needed_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

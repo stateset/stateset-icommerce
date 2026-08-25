@@ -299,6 +299,28 @@ pub struct CreateOrderItemRequest {
     pub tax_amount: Option<Decimal>,
 }
 
+/// Optional request body for `PATCH /api/v1/orders/{id}/ship`.
+///
+/// Omit the body (or `lines`) to ship every remaining unit. Explicit `lines`
+/// ship only those units: the order becomes `partially_shipped` until every
+/// unit has shipped, then `shipped`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+pub struct ShipOrderRequest {
+    /// Carrier tracking number to record on the order.
+    pub tracking_number: Option<String>,
+    /// Per-line shipped quantities; `null`/absent ships all remaining units.
+    pub lines: Option<Vec<ShipOrderLineRequest>>,
+}
+
+/// One line of a partial-shipment request.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct ShipOrderLineRequest {
+    /// Order line ID (UUID).
+    pub order_item_id: Uuid,
+    /// Units shipped now; must be positive and no more than the line's unshipped remainder.
+    pub quantity: i32,
+}
+
 /// Address DTO shared by orders and customers.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct AddressDto {
@@ -338,6 +360,9 @@ pub struct OrderItemResponse {
     pub sku: String,
     pub name: String,
     pub quantity: i32,
+    /// Units of this line that have shipped so far (`<= quantity`).
+    #[serde(default)]
+    pub shipped_quantity: i32,
     #[schema(value_type = String)]
     pub unit_price: Decimal,
     #[schema(value_type = String)]
@@ -1022,6 +1047,7 @@ impl From<stateset_core::OrderItem> for OrderItemResponse {
             sku: i.sku,
             name: i.name,
             quantity: i.quantity,
+            shipped_quantity: i.shipped_quantity,
             unit_price: i.unit_price,
             total: i.total,
         }

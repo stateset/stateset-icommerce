@@ -9,6 +9,21 @@ This project follows Keep a Changelog and Semantic Versioning.
 ## [1.25.0] - 2026-08-25
 
 ### Added
+- **Per-line shipped quantities and partial shipments.** `order_items.shipped_quantity`
+  (SQLite migration `067_order_item_shipped_quantity`, Postgres `072_order_item_shipped_quantity`;
+  backfilled to `quantity` for orders already shipped/delivered/completed) and
+  `OrderItem.shipped_quantity`. New `OrderRepository::ship(id, ShipOrder { tracking_number, lines })`,
+  `Orders::ship_lines` / `AsyncOrders::ship_lines`, and an optional JSON body on
+  `PATCH /api/v1/orders/{id}/ship` (`{ tracking_number, lines: [{ order_item_id, quantity }] }`);
+  order item responses now carry `shipped_quantity`. Explicit lines increment each line's shipped
+  quantity inside the order transaction, confirm only the shipped portion of the order's inventory
+  reservations (the remainder stays reserved), and move the order to the new
+  `OrderStatus::PartiallyShipped` until every unit has shipped, then `Shipped`. Shipping more than a
+  line's unshipped remainder fails with the new
+  `CommerceError::ShipmentExceedsOrdered { order_item_id, requested, remaining }` (HTTP 400) and
+  nothing is persisted. No body / no lines keeps the legacy "ship everything" behaviour, as does a
+  plain status update to `shipped`. Once an order has shipped (partially or fully), returns are
+  validated against each line's shipped quantity instead of its ordered quantity.
 - **Financial/inventory invariant harness** (`crates/stateset-integration-tests/tests/invariants.rs`):
   a proptest that drives random-but-valid sequences of commerce operations (stock receipts, orders,
   captures, shipments, returns, refunds, AR invoices and payments) through the embedded SQLite

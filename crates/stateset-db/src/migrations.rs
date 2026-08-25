@@ -236,5 +236,10 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("065_zone_shipping_methods", include_str!("../migrations/065_zone_shipping_methods.sql")),
         // Search configuration profiles (fields, facets, synonyms, boosts).
         ("066_search_configs", include_str!("../migrations/066_search_configs.sql")),
+        // Per-line shipped quantities for partial shipments (+ backfill).
+        (
+            "067_order_item_shipped_quantity",
+            include_str!("../migrations/067_order_item_shipped_quantity.sql"),
+        ),
     ]
 }

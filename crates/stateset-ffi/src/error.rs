@@ -83,6 +83,7 @@ impl From<&CommerceError> for FfiErrorCode {
             | CommerceError::OrderCannotBeRefunded(_)
             | CommerceError::InvalidOrderStatusTransition { .. }
             | CommerceError::InsufficientStock { .. }
+            | CommerceError::ShipmentExceedsOrdered { .. }
             | CommerceError::DuplicateSku(_)
             | CommerceError::DuplicateSlug(_)
             | CommerceError::EmailAlreadyExists(_)

@@ -14,8 +14,8 @@ use rust_decimal::Decimal;
 use stateset_core::{
     Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, CustomerId,
     FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId, OrderRepository,
-    OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, UpdateOrder,
-    validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
+    OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, ShipOrder, ShipmentLineInput,
+    UpdateOrder, validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku,
 };
 use uuid::Uuid;
@@ -24,6 +24,29 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct SqliteOrderRepository {
     pool: Pool<SqliteConnectionManager>,
+}
+
+/// How a transition to `Shipped` touches the order lines.
+#[derive(Debug, Clone, Copy)]
+enum ShipMode<'a> {
+    /// Not a shipping update.
+    None,
+    /// Ship every remaining unit on every line (legacy status flip).
+    All,
+    /// Ship explicit per-line quantities.
+    Lines(&'a [ShipmentLineInput]),
+}
+
+/// Units to add to one line's `shipped_quantity`.
+#[derive(Debug, Clone)]
+struct LineDelta {
+    item_id: String,
+    sku: String,
+    delta: i32,
+}
+
+fn to_sql_err(err: CommerceError) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(err))
 }
 
 impl SqliteOrderRepository {
@@ -200,7 +223,7 @@ impl SqliteOrderRepository {
         let mut stmt = conn
             .prepare(
                 "SELECT id, order_id, product_id, variant_id, sku, name, quantity,
-                        unit_price, discount, tax_amount, total
+                        shipped_quantity, unit_price, discount, tax_amount, total
                  FROM order_items WHERE order_id = ?",
             )
             .map_err(map_db_error)?;
@@ -235,6 +258,7 @@ impl SqliteOrderRepository {
             sku: row.get("sku")?,
             name: row.get("name")?,
             quantity: row.get("quantity")?,
+            shipped_quantity: row.get("shipped_quantity")?,
             unit_price: parse_decimal_row(
                 &row.get::<_, String>("unit_price")?,
                 "order_item",
@@ -264,7 +288,7 @@ impl SqliteOrderRepository {
             let placeholders = build_in_clause(chunk.len());
             let sql = format!(
                 "SELECT id, order_id, product_id, variant_id, sku, name, quantity,
-                        unit_price, discount, tax_amount, total
+                        shipped_quantity, unit_price, discount, tax_amount, total
                  FROM order_items WHERE order_id IN ({placeholders})"
             );
             let id_strs: Vec<String> = chunk.iter().map(ToString::to_string).collect();
@@ -499,6 +523,7 @@ impl SqliteOrderRepository {
                     sku: item.sku.clone(),
                     name: item.name.clone(),
                     quantity: item.quantity,
+                    shipped_quantity: 0,
                     unit_price: item.unit_price,
                     discount: item.discount.unwrap_or_default(),
                     tax_amount: item.tax_amount.unwrap_or_default(),
@@ -654,48 +679,170 @@ impl SqliteOrderRepository {
     }
 }
 
-impl OrderRepository for SqliteOrderRepository {
-    fn create(&self, input: CreateOrder) -> Result<Order> {
-        self.create_internal(None, false, input)
-    }
+impl SqliteOrderRepository {
+    /// Load the order's lines and compute how many units each ships now.
+    ///
+    /// Returns the resolved order status (`PartiallyShipped` while
+    /// Σ shipped < Σ ordered, else `Shipped`) and the per-line increments.
+    fn plan_shipment_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: OrderId,
+        ship: &ShipMode<'_>,
+    ) -> std::result::Result<(OrderStatus, Vec<LineDelta>), rusqlite::Error> {
+        let mut stmt = tx.prepare(
+            "SELECT id, sku, quantity, shipped_quantity FROM order_items WHERE order_id = ? ORDER BY rowid",
+        )?;
+        let rows = stmt
+            .query_map([id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i32>(2)?,
+                    row.get::<_, i32>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    fn get(&self, id: OrderId) -> Result<Option<Order>> {
-        let conn = self.conn()?;
-        let result = conn.query_row(
-            "SELECT * FROM orders WHERE id = ?",
-            [id.to_string()],
-            Self::row_to_order,
-        );
-
-        match result {
-            Ok(mut order) => {
-                order.items = Self::load_order_items_with_conn(&conn, id)?;
-                Ok(Some(order))
+        let mut deltas = Vec::with_capacity(rows.len());
+        match ship {
+            ShipMode::None => {}
+            ShipMode::All => {
+                for (item_id, sku, quantity, shipped) in &rows {
+                    deltas.push(LineDelta {
+                        item_id: item_id.clone(),
+                        sku: sku.clone(),
+                        delta: (quantity - shipped).max(0),
+                    });
+                }
             }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
-        }
-    }
-
-    fn get_by_number(&self, order_number: &str) -> Result<Option<Order>> {
-        let conn = self.conn()?;
-        let result = conn.query_row(
-            "SELECT * FROM orders WHERE order_number = ?",
-            [order_number],
-            Self::row_to_order,
-        );
-
-        match result {
-            Ok(mut order) => {
-                order.items = Self::load_order_items_with_conn(&conn, order.id)?;
-                Ok(Some(order))
+            ShipMode::Lines(lines) => {
+                let mut requested: std::collections::BTreeMap<String, i64> =
+                    std::collections::BTreeMap::new();
+                for line in *lines {
+                    if line.quantity <= 0 {
+                        return Err(to_sql_err(CommerceError::ValidationError(format!(
+                            "shipment line quantity must be positive for order item {}",
+                            line.order_item_id
+                        ))));
+                    }
+                    *requested.entry(line.order_item_id.to_string()).or_insert(0) +=
+                        i64::from(line.quantity);
+                }
+                for (item_id, req) in requested {
+                    let Some((_, sku, quantity, shipped)) =
+                        rows.iter().find(|(row_id, ..)| *row_id == item_id)
+                    else {
+                        return Err(to_sql_err(CommerceError::ValidationError(format!(
+                            "Order item {item_id} does not belong to order {id}"
+                        ))));
+                    };
+                    let remaining = (quantity - shipped).max(0);
+                    if req > i64::from(remaining) {
+                        return Err(to_sql_err(CommerceError::ShipmentExceedsOrdered {
+                            order_item_id: parse_uuid_row(&item_id, "order_item", "id")?,
+                            requested: i32::try_from(req).unwrap_or(i32::MAX),
+                            remaining,
+                        }));
+                    }
+                    deltas.push(LineDelta {
+                        item_id,
+                        sku: sku.clone(),
+                        delta: i32::try_from(req).unwrap_or(i32::MAX),
+                    });
+                }
             }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
         }
+
+        let ordered: i64 = rows.iter().map(|r| i64::from(r.2)).sum();
+        let shipped_after: i64 = rows.iter().map(|r| i64::from(r.3)).sum::<i64>()
+            + deltas.iter().map(|d| i64::from(d.delta)).sum::<i64>();
+        let resolved = if shipped_after < ordered {
+            OrderStatus::PartiallyShipped
+        } else {
+            OrderStatus::Shipped
+        };
+        Ok((resolved, deltas))
     }
 
-    fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
+    /// Confirm the shipped portion of the order's inventory reservations.
+    ///
+    /// Returns the first expired reservation, if any; the caller then surfaces
+    /// [`CommerceError::ReservationExpired`] after committing the expiry
+    /// bookkeeping (matching the legacy full-ship behaviour).
+    fn confirm_shipped_reservations_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: OrderId,
+        ship: &ShipMode<'_>,
+        deltas: &[LineDelta],
+        now: chrono::DateTime<Utc>,
+    ) -> std::result::Result<Option<Uuid>, rusqlite::Error> {
+        let reference_id = id.to_string();
+        let reservation_ids = SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
+            tx,
+            "order",
+            &reference_id,
+        )?;
+        for reservation_id in &reservation_ids {
+            if SqliteInventoryRepository::expire_reservation_if_needed_in_tx(
+                tx,
+                *reservation_id,
+                now,
+            )? {
+                return Ok(Some(*reservation_id));
+            }
+        }
+
+        match ship {
+            ShipMode::None => {}
+            ShipMode::All => {
+                for reservation_id in reservation_ids {
+                    match SqliteInventoryRepository::confirm_reservation_in_tx_with_now(
+                        tx,
+                        reservation_id,
+                        now,
+                    )? {
+                        ReservationConfirmOutcome::Confirmed => {}
+                        ReservationConfirmOutcome::Expired => return Ok(Some(reservation_id)),
+                    }
+                }
+            }
+            ShipMode::Lines(_) => {
+                for delta in deltas.iter().filter(|d| d.delta > 0) {
+                    let mut remaining = Decimal::from(delta.delta);
+                    let open = SqliteInventoryRepository::list_open_reservations_for_sku_in_tx(
+                        tx,
+                        "order",
+                        &reference_id,
+                        &delta.sku,
+                    )?;
+                    for (reservation_id, reserved_qty) in open {
+                        if remaining <= Decimal::ZERO {
+                            break;
+                        }
+                        let take = remaining.min(reserved_qty);
+                        match SqliteInventoryRepository::confirm_reservation_quantity_in_tx_with_now(
+                            tx,
+                            reservation_id,
+                            take,
+                            now,
+                        )? {
+                            ReservationConfirmOutcome::Confirmed => remaining -= take,
+                            ReservationConfirmOutcome::Expired => return Ok(Some(reservation_id)),
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Shared implementation of [`OrderRepository::update`] and [`OrderRepository::ship`].
+    ///
+    /// `ship` selects how a transition to `Shipped` touches the order lines:
+    /// [`ShipMode::All`] ships every remaining unit (legacy status flip),
+    /// [`ShipMode::Lines`] ships explicit per-line quantities and resolves the
+    /// status to `PartiallyShipped`/`Shipped` from the line totals.
+    fn apply_update(&self, id: OrderId, input: UpdateOrder, ship: ShipMode<'_>) -> Result<Order> {
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
         }
@@ -759,10 +906,20 @@ impl OrderRepository for SqliteOrderRepository {
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
             let mut reservation_expired: Option<Uuid> = None;
+            let mut effective_status = input.status;
+            let mut line_deltas: Vec<LineDelta> = Vec::new();
 
             if let Some(status) = input.status {
-                if !current_status.can_transition_to(status) {
-                    if status == OrderStatus::Cancelled {
+                let is_ship = status == OrderStatus::Shipped && !matches!(ship, ShipMode::None);
+                if is_ship {
+                    let (resolved, deltas) = Self::plan_shipment_in_tx(tx, id, &ship)?;
+                    effective_status = Some(resolved);
+                    line_deltas = deltas;
+                }
+                let target = effective_status.unwrap_or(status);
+
+                if !current_status.can_transition_to(target) {
+                    if target == OrderStatus::Cancelled {
                         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                             CommerceError::OrderCannotBeCancelled(current_status.to_string()),
                         )));
@@ -771,7 +928,7 @@ impl OrderRepository for SqliteOrderRepository {
                     return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                         CommerceError::InvalidOrderStatusTransition {
                             from: current_status.to_string(),
-                            to: status.to_string(),
+                            to: target.to_string(),
                         },
                     )));
                 }
@@ -794,40 +951,9 @@ impl OrderRepository for SqliteOrderRepository {
                     }
                 }
 
-                if status == OrderStatus::Shipped {
-                    let reservation_ids =
-                        SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
-                            tx,
-                            "order",
-                            &id.to_string(),
-                        )?;
-                    for reservation_id in &reservation_ids {
-                        if SqliteInventoryRepository::expire_reservation_if_needed_in_tx(
-                            tx,
-                            *reservation_id,
-                            now,
-                        )? && reservation_expired.is_none()
-                        {
-                            reservation_expired = Some(*reservation_id);
-                        }
-                    }
-                    if reservation_expired.is_none() {
-                        for reservation_id in reservation_ids {
-                            match SqliteInventoryRepository::confirm_reservation_in_tx_with_now(
-                                tx,
-                                reservation_id,
-                                now,
-                            )? {
-                                ReservationConfirmOutcome::Confirmed => {}
-                                ReservationConfirmOutcome::Expired => {
-                                    if reservation_expired.is_none() {
-                                        reservation_expired = Some(reservation_id);
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                if is_ship {
+                    reservation_expired =
+                        Self::confirm_shipped_reservations_in_tx(tx, id, &ship, &line_deltas, now)?;
                 }
             }
 
@@ -857,11 +983,18 @@ impl OrderRepository for SqliteOrderRepository {
                 });
             }
 
+            for delta in line_deltas.iter().filter(|d| d.delta > 0) {
+                tx.execute(
+                    "UPDATE order_items SET shipped_quantity = shipped_quantity + ? WHERE id = ?",
+                    rusqlite::params![delta.delta, delta.item_id],
+                )?;
+            }
+
             // Build dynamic update
             let mut updates = vec!["updated_at = ?"];
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
 
-            if let Some(status) = &input.status {
+            if let Some(status) = &effective_status {
                 updates.push("status = ?");
                 params.push(Box::new(status.to_string()));
             }
@@ -950,6 +1083,78 @@ impl OrderRepository for SqliteOrderRepository {
         }
 
         Ok(outcome.order)
+    }
+}
+
+impl OrderRepository for SqliteOrderRepository {
+    fn create(&self, input: CreateOrder) -> Result<Order> {
+        self.create_internal(None, false, input)
+    }
+
+    fn get(&self, id: OrderId) -> Result<Option<Order>> {
+        let conn = self.conn()?;
+        let result = conn.query_row(
+            "SELECT * FROM orders WHERE id = ?",
+            [id.to_string()],
+            Self::row_to_order,
+        );
+
+        match result {
+            Ok(mut order) => {
+                order.items = Self::load_order_items_with_conn(&conn, id)?;
+                Ok(Some(order))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
+
+    fn get_by_number(&self, order_number: &str) -> Result<Option<Order>> {
+        let conn = self.conn()?;
+        let result = conn.query_row(
+            "SELECT * FROM orders WHERE order_number = ?",
+            [order_number],
+            Self::row_to_order,
+        );
+
+        match result {
+            Ok(mut order) => {
+                order.items = Self::load_order_items_with_conn(&conn, order.id)?;
+                Ok(Some(order))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
+
+    fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
+        let mode = match input.status {
+            Some(OrderStatus::Shipped) => ShipMode::All,
+            Some(OrderStatus::PartiallyShipped) => {
+                return Err(CommerceError::ValidationError(
+                    "order status partially_shipped is derived from shipped line quantities; \
+                     use OrderRepository::ship with explicit lines"
+                        .to_string(),
+                ));
+            }
+            _ => ShipMode::None,
+        };
+        self.apply_update(id, input, mode)
+    }
+
+    fn ship(&self, id: OrderId, input: ShipOrder) -> Result<Order> {
+        let ShipOrder { tracking_number, lines } = input;
+        let lines = lines.unwrap_or_default();
+        let mode = if lines.is_empty() { ShipMode::All } else { ShipMode::Lines(&lines) };
+        self.apply_update(
+            id,
+            UpdateOrder {
+                status: Some(OrderStatus::Shipped),
+                tracking_number,
+                ..Default::default()
+            },
+            mode,
+        )
     }
 
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>> {
@@ -1074,6 +1279,7 @@ impl OrderRepository for SqliteOrderRepository {
             sku: item.sku,
             name: item.name,
             quantity: item.quantity,
+            shipped_quantity: 0,
             unit_price: item.unit_price,
             discount: item.discount.unwrap_or_default(),
             tax_amount: item.tax_amount.unwrap_or_default(),
@@ -1288,6 +1494,7 @@ impl OrderRepository for SqliteOrderRepository {
                     sku: item.sku.clone(),
                     name: item.name.clone(),
                     quantity: item.quantity,
+                    shipped_quantity: 0,
                     unit_price: item.unit_price,
                     discount: item.discount.unwrap_or_default(),
                     tax_amount: item.tax_amount.unwrap_or_default(),

@@ -25,6 +25,7 @@ fn create_test_order_item(idx: usize) -> OrderItem {
         sku: format!("SKU-{:04}", idx),
         name: format!("Product {}", idx),
         quantity: 2,
+        shipped_quantity: 0,
         unit_price: dec!(29.99),
         discount: dec!(0.00),
         tax_amount: dec!(2.40),

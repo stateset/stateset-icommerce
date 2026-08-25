@@ -186,8 +186,20 @@ impl AsyncOrders {
         self.update_status(id, OrderStatus::Cancelled).await
     }
 
-    /// Mark an order as shipped.
+    /// Mark an order as shipped (every remaining unit on every line).
     pub async fn ship(&self, id: Uuid, tracking_number: Option<&str>) -> Result<Order> {
+        self.ship_lines(id, tracking_number, None).await
+    }
+
+    /// Ship an order, optionally only some units of some lines.
+    ///
+    /// Async counterpart of [`crate::Orders::ship_lines`].
+    pub async fn ship_lines(
+        &self,
+        id: Uuid,
+        tracking_number: Option<&str>,
+        lines: Option<Vec<ShipmentLineInput>>,
+    ) -> Result<Order> {
         if let Some(order) = self.get(id).await? {
             match order.status {
                 OrderStatus::Pending => {
@@ -200,15 +212,8 @@ impl AsyncOrders {
                 _ => {}
             }
         }
-        self.update(
-            id,
-            UpdateOrder {
-                status: Some(OrderStatus::Shipped),
-                tracking_number: tracking_number.map(|s| s.to_string()),
-                ..Default::default()
-            },
-        )
-        .await
+        let tracking_number = tracking_number.map(|s| s.to_string());
+        self.db.orders().ship_async(id, ShipOrder { tracking_number, lines }).await
     }
 
     /// Mark an order as delivered.

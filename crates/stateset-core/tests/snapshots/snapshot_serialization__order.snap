@@ -1,6 +1,5 @@
 ---
 source: crates/stateset-core/tests/snapshot_serialization.rs
-assertion_line: 131
 expression: order
 ---
 {
@@ -35,6 +34,7 @@ expression: order
       "sku": "TEST-SKU-001",
       "name": "Test Widget",
       "quantity": 2,
+      "shipped_quantity": 0,
       "unit_price": "29.99",
       "discount": "5.00",
       "tax_amount": "4.50",

@@ -17,6 +17,17 @@ pub trait OrderRepository: Send + Sync {
     /// Update an order
     fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order>;
 
+    /// Ship an order, fully or per line.
+    ///
+    /// Increments each line's `shipped_quantity` (all remaining units when
+    /// `input.lines` is `None`), confirms the shipped portion of the order's
+    /// inventory reservations, and moves the order to
+    /// [`crate::OrderStatus::PartiallyShipped`] or
+    /// [`crate::OrderStatus::Shipped`] — all in
+    /// one transaction. Fails with
+    /// [`crate::CommerceError::ShipmentExceedsOrdered`] when a line would overship.
+    fn ship(&self, id: OrderId, input: ShipOrder) -> Result<Order>;
+
     /// List orders with filter
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>>;
 

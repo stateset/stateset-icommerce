@@ -9,13 +9,13 @@ use axum::{
 
 use crate::dto::{
     CreateOrderItemRequest, CreateOrderRequest, OrderFilterParams, OrderListResponse,
-    OrderResponse, decode_cursor, encode_cursor, finalize_page, overfetch_limit,
+    OrderResponse, ShipOrderRequest, decode_cursor, encode_cursor, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{
     Address, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentStatus,
-    OrderFilter, OrderId, OrderStatus, PaymentStatus,
+    OrderFilter, OrderId, OrderStatus, PaymentStatus, ShipmentLineInput,
 };
 use std::str::FromStr;
 
@@ -250,26 +250,43 @@ pub(crate) async fn cancel_order(
 }
 
 /// `PATCH /api/v1/orders/:id/ship`
+///
+/// Without a body every remaining unit ships. With `lines`, only those units
+/// ship and the order is `partially_shipped` until the last unit leaves.
 #[utoipa::path(
     patch,
     path = "/api/v1/orders/{id}/ship",
     tag = "orders",
     params(("id" = String, Path, description = "Order ID (UUID)")),
+    request_body(content = Option<ShipOrderRequest>, description = "Optional tracking number and per-line quantities"),
     responses(
-        (status = 200, description = "Order shipped", body = OrderResponse),
-        (status = 400, description = "Order cannot be shipped", body = ErrorBody),
+        (status = 200, description = "Order shipped (fully or partially)", body = OrderResponse),
+        (status = 400, description = "Order cannot be shipped, or a line exceeds its unshipped quantity", body = ErrorBody),
         (status = 404, description = "Order not found", body = ErrorBody),
     )
 )]
-#[tracing::instrument(skip(state, headers))]
+#[tracing::instrument(skip(state, headers, body))]
 pub(crate) async fn ship_order(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<OrderId>,
+    body: Option<Json<ShipOrderRequest>>,
 ) -> Result<Json<OrderResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
+    let ShipOrderRequest { tracking_number, lines } = body.map(|Json(b)| b).unwrap_or_default();
+    let lines = lines.map(|lines| {
+        lines
+            .into_iter()
+            .map(|l| ShipmentLineInput {
+                order_item_id: l.order_item_id.into(),
+                quantity: l.quantity,
+            })
+            .collect::<Vec<_>>()
+    });
     let order = state
-        .run_blocking(tenant_id.as_deref(), move |commerce| Ok(commerce.orders().ship(id, None)?))
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(commerce.orders().ship_lines(id, tracking_number.as_deref(), lines)?)
+        })
         .await?;
     Ok(Json(OrderResponse::from(order)))
 }

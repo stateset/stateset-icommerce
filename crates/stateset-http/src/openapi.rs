@@ -14,8 +14,9 @@ use crate::dto::{
     InventoryListResponse, InventoryResponse, InvoiceListResponse, InvoiceResponse,
     OrderItemResponse, OrderListResponse, OrderResponse, PaymentListResponse, PaymentResponse,
     ProductListResponse, ProductResponse, ReadyResponse, RecordInvoicePaymentRequest,
-    ReturnListResponse, ReturnResponse, ShipmentListResponse, ShipmentResponse, StockPolicyDto,
-    TenantCacheResponse, UpdateCustomerRequest, UpdateProductRequest, VersionResponse,
+    ReturnListResponse, ReturnResponse, ShipOrderLineRequest, ShipOrderRequest,
+    ShipmentListResponse, ShipmentResponse, StockPolicyDto, TenantCacheResponse,
+    UpdateCustomerRequest, UpdateProductRequest, VersionResponse,
 };
 use crate::error::ErrorBody;
 use crate::routes::a2a_credit::{
@@ -579,6 +580,8 @@ use crate::state::AppState;
         CreateRefundRequest,
         CreateInvoiceRequest,
         RecordInvoicePaymentRequest,
+        ShipOrderRequest,
+        ShipOrderLineRequest,
         // Response DTOs
         OrderResponse,
         OrderItemResponse,

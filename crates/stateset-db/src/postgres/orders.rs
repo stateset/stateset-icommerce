@@ -13,8 +13,9 @@ use stateset_core::{
     Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
     CurrencyCode, CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem,
     OrderItemId, OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result,
-    UpdateOrder, validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
-    validate_required_text, validate_required_uuid, validate_sku,
+    ShipOrder, ShipmentLineInput, UpdateOrder, validate_batch_size, validate_currency_code,
+    validate_postal_code, validate_price, validate_required_text, validate_required_uuid,
+    validate_sku,
 };
 use uuid::Uuid;
 
@@ -22,6 +23,25 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct PgOrderRepository {
     pool: PgPool,
+}
+
+/// How a transition to `Shipped` touches the order lines.
+#[derive(Debug, Clone, Copy)]
+enum ShipMode<'a> {
+    /// Not a shipping update.
+    None,
+    /// Ship every remaining unit on every line (legacy status flip).
+    All,
+    /// Ship explicit per-line quantities.
+    Lines(&'a [ShipmentLineInput]),
+}
+
+/// Units to add to one line's `shipped_quantity`.
+#[derive(Debug, Clone)]
+struct LineDelta {
+    item_id: Uuid,
+    sku: String,
+    delta: i32,
 }
 
 #[derive(FromRow)]
@@ -55,6 +75,7 @@ struct OrderItemRow {
     sku: String,
     name: String,
     quantity: i32,
+    shipped_quantity: i32,
     unit_price: Decimal,
     discount: Decimal,
     tax_amount: Decimal,
@@ -214,6 +235,7 @@ impl PgOrderRepository {
             sku: row.sku,
             name: row.name,
             quantity: row.quantity,
+            shipped_quantity: row.shipped_quantity,
             unit_price: row.unit_price,
             discount: row.discount,
             tax_amount: row.tax_amount,
@@ -467,6 +489,7 @@ impl PgOrderRepository {
                 sku: item_input.sku.clone(),
                 name: item_input.name.clone(),
                 quantity: item_input.quantity,
+                shipped_quantity: 0,
                 unit_price: item_input.unit_price,
                 discount,
                 tax_amount: tax,
@@ -673,6 +696,119 @@ impl PgOrderRepository {
 
     /// Update an order (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
+        let mode = match input.status {
+            Some(OrderStatus::Shipped) => ShipMode::All,
+            Some(OrderStatus::PartiallyShipped) => {
+                return Err(CommerceError::ValidationError(
+                    "order status partially_shipped is derived from shipped line quantities; \
+                     use OrderRepository::ship with explicit lines"
+                        .to_string(),
+                ));
+            }
+            _ => ShipMode::None,
+        };
+        self.apply_update_async(id, input, mode).await
+    }
+
+    /// Ship an order (async), fully or per line. See [`OrderRepository::ship`].
+    pub async fn ship_async(&self, id: Uuid, input: ShipOrder) -> Result<Order> {
+        let ShipOrder { tracking_number, lines } = input;
+        let lines = lines.unwrap_or_default();
+        let mode = if lines.is_empty() { ShipMode::All } else { ShipMode::Lines(&lines) };
+        self.apply_update_async(
+            id,
+            UpdateOrder {
+                status: Some(OrderStatus::Shipped),
+                tracking_number,
+                ..Default::default()
+            },
+            mode,
+        )
+        .await
+    }
+
+    /// Load the order's lines and compute how many units each ships now.
+    async fn plan_shipment_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        ship: ShipMode<'_>,
+    ) -> Result<(OrderStatus, Vec<LineDelta>)> {
+        let rows: Vec<(Uuid, String, i32, i32)> = sqlx::query_as(
+            "SELECT id, sku, quantity, shipped_quantity FROM order_items WHERE order_id = $1 ORDER BY created_at, id",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let mut deltas = Vec::with_capacity(rows.len());
+        match ship {
+            ShipMode::None => {}
+            ShipMode::All => {
+                for (item_id, sku, quantity, shipped) in &rows {
+                    deltas.push(LineDelta {
+                        item_id: *item_id,
+                        sku: sku.clone(),
+                        delta: (quantity - shipped).max(0),
+                    });
+                }
+            }
+            ShipMode::Lines(lines) => {
+                let mut requested: std::collections::BTreeMap<Uuid, i64> =
+                    std::collections::BTreeMap::new();
+                for line in lines {
+                    if line.quantity <= 0 {
+                        return Err(CommerceError::ValidationError(format!(
+                            "shipment line quantity must be positive for order item {}",
+                            line.order_item_id
+                        )));
+                    }
+                    *requested.entry(line.order_item_id.into_uuid()).or_insert(0) +=
+                        i64::from(line.quantity);
+                }
+                for (item_id, req) in requested {
+                    let Some((_, sku, quantity, shipped)) =
+                        rows.iter().find(|(row_id, ..)| *row_id == item_id)
+                    else {
+                        return Err(CommerceError::ValidationError(format!(
+                            "Order item {item_id} does not belong to order {id}"
+                        )));
+                    };
+                    let remaining = (quantity - shipped).max(0);
+                    if req > i64::from(remaining) {
+                        return Err(CommerceError::ShipmentExceedsOrdered {
+                            order_item_id: item_id,
+                            requested: i32::try_from(req).unwrap_or(i32::MAX),
+                            remaining,
+                        });
+                    }
+                    deltas.push(LineDelta {
+                        item_id,
+                        sku: sku.clone(),
+                        delta: i32::try_from(req).unwrap_or(i32::MAX),
+                    });
+                }
+            }
+        }
+
+        let ordered: i64 = rows.iter().map(|r| i64::from(r.2)).sum();
+        let shipped_after: i64 = rows.iter().map(|r| i64::from(r.3)).sum::<i64>()
+            + deltas.iter().map(|d| i64::from(d.delta)).sum::<i64>();
+        let resolved = if shipped_after < ordered {
+            OrderStatus::PartiallyShipped
+        } else {
+            OrderStatus::Shipped
+        };
+        Ok((resolved, deltas))
+    }
+
+    /// Shared implementation of `update_async` and `ship_async`.
+    async fn apply_update_async(
+        &self,
+        id: Uuid,
+        input: UpdateOrder,
+        ship: ShipMode<'_>,
+    ) -> Result<Order> {
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
         }
@@ -751,7 +887,12 @@ impl PgOrderRepository {
                 ))
             })?;
 
-        let new_status = input.status.unwrap_or(current_status);
+        let is_ship = input.status == Some(OrderStatus::Shipped) && !matches!(ship, ShipMode::None);
+        let (new_status, line_deltas) = if is_ship {
+            Self::plan_shipment_in_tx(&mut tx, id, ship).await?
+        } else {
+            (input.status.unwrap_or(current_status), Vec::new())
+        };
         let new_payment_status = input.payment_status.unwrap_or(current_payment_status);
         let new_fulfillment_status = input.fulfillment_status.unwrap_or(current_fulfillment_status);
         let now = Utc::now();
@@ -779,7 +920,7 @@ impl PgOrderRepository {
             return Err(CommerceError::OrderCannotBeRefunded(new_payment_status.to_string()));
         }
 
-        if matches!(input.status, Some(OrderStatus::Shipped)) {
+        if is_ship {
             let reservation_ids = inventory_repo
                 .list_reservation_ids_by_reference_in_tx(&mut tx, "order", &id.to_string())
                 .await?;
@@ -800,17 +941,54 @@ impl PgOrderRepository {
                 return Err(CommerceError::ReservationExpired(expired_id));
             }
 
-            for reservation_id in reservation_ids {
-                match inventory_repo
-                    .confirm_reservation_in_tx_with_now(&mut tx, reservation_id, now)
-                    .await?
-                {
-                    ReservationConfirmOutcome::Confirmed => {}
-                    ReservationConfirmOutcome::Expired => {
-                        if expired_reservation.is_none() {
-                            expired_reservation = Some(reservation_id);
+            match ship {
+                ShipMode::None => {}
+                ShipMode::All => {
+                    for reservation_id in reservation_ids {
+                        match inventory_repo
+                            .confirm_reservation_in_tx_with_now(&mut tx, reservation_id, now)
+                            .await?
+                        {
+                            ReservationConfirmOutcome::Confirmed => {}
+                            ReservationConfirmOutcome::Expired => {
+                                expired_reservation = Some(reservation_id);
+                                break;
+                            }
                         }
-                        break;
+                    }
+                }
+                ShipMode::Lines(_) => {
+                    'lines: for delta in line_deltas.iter().filter(|d| d.delta > 0) {
+                        let mut remaining = Decimal::from(delta.delta);
+                        let open = inventory_repo
+                            .list_open_reservations_for_sku_in_tx(
+                                &mut tx,
+                                "order",
+                                &id.to_string(),
+                                &delta.sku,
+                            )
+                            .await?;
+                        for (reservation_id, reserved_qty) in open {
+                            if remaining <= Decimal::ZERO {
+                                break;
+                            }
+                            let take = remaining.min(reserved_qty);
+                            match inventory_repo
+                                .confirm_reservation_quantity_in_tx_with_now(
+                                    &mut tx,
+                                    reservation_id,
+                                    take,
+                                    now,
+                                )
+                                .await?
+                            {
+                                ReservationConfirmOutcome::Confirmed => remaining -= take,
+                                ReservationConfirmOutcome::Expired => {
+                                    expired_reservation = Some(reservation_id);
+                                    break 'lines;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -818,6 +996,17 @@ impl PgOrderRepository {
             if let Some(expired_id) = expired_reservation {
                 tx.commit().await.map_err(map_db_error)?;
                 return Err(CommerceError::ReservationExpired(expired_id));
+            }
+
+            for delta in line_deltas.iter().filter(|d| d.delta > 0) {
+                sqlx::query(
+                    "UPDATE order_items SET shipped_quantity = shipped_quantity + $1 WHERE id = $2",
+                )
+                .bind(delta.delta)
+                .bind(delta.item_id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
             }
         }
 
@@ -1005,6 +1194,7 @@ impl PgOrderRepository {
             sku: item.sku,
             name: item.name,
             quantity: item.quantity,
+            shipped_quantity: 0,
             unit_price: item.unit_price,
             discount,
             tax_amount: tax,
@@ -1218,6 +1408,7 @@ impl PgOrderRepository {
                     sku: item_input.sku.clone(),
                     name: item_input.name.clone(),
                     quantity: item_input.quantity,
+                    shipped_quantity: 0,
                     unit_price: item_input.unit_price,
                     discount,
                     tax_amount: tax,
@@ -1495,6 +1686,10 @@ impl OrderRepository for PgOrderRepository {
 
     fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
         super::block_on(self.update_async(id.into_uuid(), input))
+    }
+
+    fn ship(&self, id: OrderId, input: ShipOrder) -> Result<Order> {
+        super::block_on(self.ship_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>> {

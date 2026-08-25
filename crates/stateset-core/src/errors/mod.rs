@@ -291,6 +291,19 @@ pub enum CommerceError {
         available: String,
     },
 
+    /// A shipment line requested more units than remain unshipped on the order line.
+    #[error(
+        "Shipment exceeds ordered quantity for order item {order_item_id}: requested {requested}, remaining {remaining}"
+    )]
+    ShipmentExceedsOrdered {
+        /// The order line being shipped.
+        order_item_id: Uuid,
+        /// Units the caller tried to ship.
+        requested: i32,
+        /// Units still unshipped on the line (`quantity - shipped_quantity`).
+        remaining: i32,
+    },
+
     /// Inventory reservation not found.
     #[error("Inventory reservation not found: {0}")]
     ReservationNotFound(Uuid),

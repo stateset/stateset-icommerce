@@ -134,6 +134,7 @@ mod tests {
             sku: "SKU-001".to_string(),
             name: "Widget".to_string(),
             quantity: 2,
+            shipped_quantity: 0,
             unit_price: dec!(29.99),
             discount: dec!(0),
             tax_amount: dec!(4.80),
