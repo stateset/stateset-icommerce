@@ -138,7 +138,7 @@ pub struct ServerBuilder {
     max_request_body_bytes: usize,
     authz_config: Option<AuthzConfig>,
     trust_actor_headers_for_authz: bool,
-    authz_strict: bool,
+    authz_allow_unmapped_routes: bool,
     allow_unauthenticated: bool,
     rate_limit: Option<RateLimitConfig>,
     require_idempotency_keys: bool,
@@ -163,7 +163,7 @@ impl fmt::Debug for ServerBuilder {
             .field("max_request_body_bytes", &self.max_request_body_bytes)
             .field("authz_enabled", &self.authz_config.is_some())
             .field("trust_actor_headers_for_authz", &self.trust_actor_headers_for_authz)
-            .field("authz_strict", &self.authz_strict)
+            .field("authz_allow_unmapped_routes", &self.authz_allow_unmapped_routes)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("rate_limit", &self.rate_limit)
             .field("require_idempotency_keys", &self.require_idempotency_keys)
@@ -265,7 +265,7 @@ impl ServerBuilder {
             max_request_body_bytes: DEFAULT_REQUEST_BODY_LIMIT_BYTES,
             authz_config: None,
             trust_actor_headers_for_authz: false,
-            authz_strict: false,
+            authz_allow_unmapped_routes: false,
             allow_unauthenticated: false,
             rate_limit: None,
             // Secure-by-default: money-moving create endpoints require an
@@ -736,14 +736,35 @@ impl ServerBuilder {
 
     /// Fail closed on authorization for unmapped API paths.
     ///
-    /// By default, `/api/v1` paths that the authorization layer cannot map to
-    /// a resource/action pair bypass authorization (authentication still
-    /// applies). When strict mode is enabled, such requests are denied with
-    /// HTTP 403 instead. Only takes effect when authorization is configured
-    /// via [`Self::with_authz_engine`].
+    /// This is now the default: `/api/v1` requests that the authorization
+    /// layer cannot map to a resource/action pair are denied with HTTP 403
+    /// (`authz_unmapped_route`). Calling this method re-asserts the default
+    /// and is kept only for source compatibility; use
+    /// [`Self::allow_unmapped_authz_routes`] to opt out.
+    #[deprecated(
+        since = "1.25.0",
+        note = "fail-closed authorization for unmapped routes is the default; \
+                use `allow_unmapped_authz_routes(true)` to opt out"
+    )]
     #[must_use]
     pub const fn with_strict_authz(mut self) -> Self {
-        self.authz_strict = true;
+        self.authz_allow_unmapped_routes = false;
+        self
+    }
+
+    /// Let `/api/v1` requests with no authorization mapping bypass authz.
+    ///
+    /// **Security trade-off.** By default the authorization layer fails
+    /// closed: a `/api/v1` request that cannot be mapped to a resource/action
+    /// pair is denied with HTTP 403 (`authz_unmapped_route`). Passing `true`
+    /// here restores the pre-1.25 behaviour where such requests skip
+    /// authorization entirely (authentication still applies), which means
+    /// every authenticated actor can reach every unmapped route regardless of
+    /// role. Only takes effect when authorization is configured via
+    /// [`Self::with_authz_engine`].
+    #[must_use]
+    pub const fn allow_unmapped_authz_routes(mut self, allow: bool) -> Self {
+        self.authz_allow_unmapped_routes = allow;
         self
     }
 
@@ -839,14 +860,14 @@ impl ServerBuilder {
             .collect::<Vec<_>>();
         let auth_config = if auth_bindings.is_empty() { None } else { Some(auth_bindings) };
         let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
-        let authz_strict = self.authz_strict;
+        let authz_allow_unmapped_routes = self.authz_allow_unmapped_routes;
         let authz_config = self.authz_config.map(|config| {
             let config = if trust_actor_headers_for_authz {
                 config.with_trusted_actor_headers()
             } else {
                 config
             };
-            if authz_strict { config.with_strict_path_mapping() } else { config }
+            config.allow_unmapped_routes(authz_allow_unmapped_routes)
         });
         // Durable, database-backed idempotency store (with the in-memory map as
         // a read-through cache) plus the required-key gate for money-moving
@@ -1361,11 +1382,14 @@ mod tests {
     }
 
     #[test]
-    fn builder_strict_authz_flag() {
+    fn builder_authz_fails_closed_on_unmapped_routes_by_default() {
         let builder = ServerBuilder::new(test_commerce());
-        assert!(!builder.authz_strict, "default must preserve existing behavior");
+        assert!(!builder.authz_allow_unmapped_routes, "default must fail closed");
+        let builder = builder.allow_unmapped_authz_routes(true);
+        assert!(builder.authz_allow_unmapped_routes);
+        #[allow(deprecated)]
         let builder = builder.with_strict_authz();
-        assert!(builder.authz_strict);
+        assert!(!builder.authz_allow_unmapped_routes, "with_strict_authz re-asserts the default");
     }
 
     #[test]

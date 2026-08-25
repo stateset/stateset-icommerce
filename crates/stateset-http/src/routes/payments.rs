@@ -456,6 +456,7 @@ mod tests {
                 notes: None,
                 payment_method: None,
                 shipping_method: None,
+                stock_policy: stateset_core::StockPolicy::default(),
             })
             .unwrap();
 

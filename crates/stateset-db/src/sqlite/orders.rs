@@ -532,6 +532,17 @@ impl SqliteOrderRepository {
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
             let requested = Decimal::from(item.quantity);
+            if !input.stock_policy.allows_backorder() && available < requested {
+                // Fail the whole transaction: no order row, no reservations,
+                // no backorders survive.
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::InsufficientStock {
+                        sku: item.sku.clone(),
+                        requested: requested.to_string(),
+                        available: available.to_string(),
+                    },
+                )));
+            }
             let reserve_qty =
                 if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
 
@@ -552,7 +563,9 @@ impl SqliteOrderRepository {
                     }
                     Err(err) => {
                         let commerce_err = map_db_error(err);
-                        if matches!(commerce_err, CommerceError::InsufficientStock { .. }) {
+                        if input.stock_policy.allows_backorder()
+                            && matches!(commerce_err, CommerceError::InsufficientStock { .. })
+                        {
                             reserved = Decimal::ZERO;
                         } else {
                             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(

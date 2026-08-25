@@ -14,7 +14,7 @@ use crate::dto::{
     InventoryListResponse, InventoryResponse, InvoiceListResponse, InvoiceResponse,
     OrderItemResponse, OrderListResponse, OrderResponse, PaymentListResponse, PaymentResponse,
     ProductListResponse, ProductResponse, ReadyResponse, RecordInvoicePaymentRequest,
-    ReturnListResponse, ReturnResponse, ShipmentListResponse, ShipmentResponse,
+    ReturnListResponse, ReturnResponse, ShipmentListResponse, ShipmentResponse, StockPolicyDto,
     TenantCacheResponse, UpdateCustomerRequest, UpdateProductRequest, VersionResponse,
 };
 use crate::error::ErrorBody;
@@ -565,6 +565,7 @@ use crate::state::AppState;
         // Request DTOs
         CreateOrderRequest,
         CreateOrderItemRequest,
+        StockPolicyDto,
         AddressDto,
         CreateCustomerRequest,
         CreateProductRequest,

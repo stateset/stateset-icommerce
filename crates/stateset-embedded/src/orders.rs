@@ -89,6 +89,16 @@ impl Orders {
 
     /// Create a new order.
     ///
+    /// Inventory is reserved for every line whose SKU is a tracked item.
+    /// [`CreateOrder::stock_policy`] decides what happens when stock is short:
+    /// [`StockPolicy::AllowBackorder`] (default) reserves what is available and
+    /// backorders the rest; [`StockPolicy::RejectIfInsufficient`] fails with
+    /// [`CommerceError::InsufficientStock`] and persists nothing.
+    ///
+    /// [`StockPolicy::AllowBackorder`]: stateset_core::StockPolicy::AllowBackorder
+    /// [`StockPolicy::RejectIfInsufficient`]: stateset_core::StockPolicy::RejectIfInsufficient
+    /// [`CommerceError::InsufficientStock`]: stateset_core::CommerceError::InsufficientStock
+    ///
     /// # Example
     ///
     /// ```rust,no_run

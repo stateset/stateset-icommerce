@@ -881,6 +881,7 @@ pub use stateset_core::{
     StatementLineItem,
     StatementTransactionType,
     StockLevel,
+    StockPolicy,
     StoreCreditReason,
     StoreCurrencySettings,
     SubmitCreditApplication,

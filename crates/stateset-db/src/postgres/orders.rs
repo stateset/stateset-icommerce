@@ -504,6 +504,15 @@ impl PgOrderRepository {
             .map_err(map_db_error)?;
 
             let requested = Decimal::from(item.quantity);
+            if !input.stock_policy.allows_backorder() && available < requested {
+                // Returning drops `tx`, which rolls the whole order back: no
+                // order row, no reservations, no backorders survive.
+                return Err(CommerceError::InsufficientStock {
+                    sku: item.sku.clone(),
+                    requested: requested.to_string(),
+                    available: available.to_string(),
+                });
+            }
             let reserve_qty =
                 if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
 
@@ -523,7 +532,9 @@ impl PgOrderRepository {
                         reserved = reserve_qty;
                     }
                     Err(err) => {
-                        if matches!(err, CommerceError::InsufficientStock { .. }) {
+                        if input.stock_policy.allows_backorder()
+                            && matches!(err, CommerceError::InsufficientStock { .. })
+                        {
                             reserved = Decimal::ZERO;
                         } else {
                             return Err(err);
