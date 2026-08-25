@@ -299,3 +299,19 @@ impl Returns {
             .list(ReturnFilter { status: Some(ReturnStatus::Requested), ..Default::default() })
     }
 }
+
+impl Returns {
+    /// Record a received return item's warehouse disposition (restock,
+    /// refurbish, scrap, return to vendor, quarantine) and apply its stock
+    /// effect atomically. Allowed only while the return is `received` or
+    /// `inspecting`; a second disposition on the same item is rejected with
+    /// `Conflict`.
+    pub fn set_item_disposition(
+        &self,
+        return_id: ReturnId,
+        item_id: uuid::Uuid,
+        input: stateset_core::SetReturnDisposition,
+    ) -> Result<stateset_core::ReturnItem> {
+        self.db.returns().set_item_disposition(return_id, item_id, input)
+    }
+}

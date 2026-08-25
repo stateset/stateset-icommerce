@@ -646,6 +646,18 @@ impl AsyncReturns {
     pub async fn count(&self, filter: ReturnFilter) -> Result<u64> {
         self.db.returns().count_async(filter).await
     }
+
+    /// Record a received return item's warehouse disposition (restock,
+    /// refurbish, scrap, return to vendor, quarantine) and apply its stock
+    /// effect atomically. A second disposition on the same item is rejected.
+    pub async fn set_item_disposition(
+        &self,
+        return_id: Uuid,
+        item_id: Uuid,
+        input: stateset_core::SetReturnDisposition,
+    ) -> Result<stateset_core::ReturnItem> {
+        self.db.returns().set_item_disposition_async(return_id.into(), item_id, input).await
+    }
 }
 
 // ============================================================================

@@ -187,6 +187,142 @@ pub(crate) struct MovementResponse {
     pub created_at: String,
 }
 
+// ---- Bins ------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct CreateBinRequest {
+    pub warehouse_id: i32,
+    /// Unique per warehouse.
+    pub code: String,
+    pub zone: Option<String>,
+    pub aisle: Option<String>,
+    pub rack: Option<String>,
+    pub shelf: Option<String>,
+    pub position: Option<String>,
+    /// One of `pick`, `bulk`, `receiving`, `staging`, `quarantine`, `returns`. Default `pick`.
+    pub bin_type: Option<String>,
+    /// Optional per-SKU maximum on-hand quantity (decimal string).
+    pub capacity: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+pub(crate) struct UpdateBinRequest {
+    pub zone: Option<String>,
+    pub aisle: Option<String>,
+    pub rack: Option<String>,
+    pub shelf: Option<String>,
+    pub position: Option<String>,
+    pub bin_type: Option<String>,
+    pub is_active: Option<bool>,
+    /// Decimal string; send `""` to clear the capacity.
+    pub capacity: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct BinFilterParams {
+    pub warehouse_id: Option<i32>,
+    pub bin_type: Option<String>,
+    pub zone: Option<String>,
+    pub is_active: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct BinReconcileParams {
+    pub warehouse_id: i32,
+    pub sku: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct BinResponse {
+    pub id: i32,
+    pub warehouse_id: i32,
+    pub code: String,
+    pub zone: Option<String>,
+    pub aisle: Option<String>,
+    pub rack: Option<String>,
+    pub shelf: Option<String>,
+    pub position: Option<String>,
+    pub bin_type: String,
+    pub is_active: bool,
+    pub capacity: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct BinListResponse {
+    pub bins: Vec<BinResponse>,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct BinLevelResponse {
+    pub bin_id: i32,
+    pub warehouse_id: i32,
+    pub sku: String,
+    pub quantity_on_hand: String,
+    pub quantity_allocated: String,
+    pub quantity_available: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct BinLevelListResponse {
+    pub levels: Vec<BinLevelResponse>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct AdjustBinLevelRequest {
+    pub bin_id: i32,
+    pub sku: String,
+    /// Signed decimal quantity as a string (positive adds, negative removes).
+    /// The same delta is applied to warehouse-level stock atomically.
+    pub quantity: String,
+    pub reason: String,
+    pub reference_type: Option<String>,
+    pub reference_id: Option<String>,
+    pub performed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct MoveBetweenBinsRequest {
+    pub from_bin_id: i32,
+    pub to_bin_id: i32,
+    pub sku: String,
+    /// Decimal quantity as a string.
+    pub quantity: String,
+    pub reason: Option<String>,
+    pub performed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct BinMovementResponse {
+    pub id: String,
+    pub movement_type: String,
+    pub from_bin_id: Option<i32>,
+    pub to_bin_id: Option<i32>,
+    pub sku: String,
+    pub quantity: String,
+    pub reason: Option<String>,
+    pub performed_by: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct BinReconciliationResponse {
+    pub warehouse_id: i32,
+    pub sku: String,
+    pub bin_on_hand: String,
+    pub warehouse_on_hand: String,
+    pub variance: String,
+    pub is_balanced: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateCycleCountLineRequest {
     pub sku: String,
@@ -372,6 +508,12 @@ pub fn router() -> Router<AppState> {
         .route("/warehouse-locations/{id}/inventory", get(get_location_inventory))
         .route("/warehouse-inventory/adjust", post(adjust_inventory))
         .route("/warehouse-inventory/move", post(move_inventory))
+        .route("/warehouse-bins", post(create_bin).get(list_bins))
+        .route("/warehouse-bins/adjust", post(adjust_bin_level))
+        .route("/warehouse-bins/move", post(move_between_bins))
+        .route("/warehouse-bins/reconcile", get(reconcile_bins))
+        .route("/warehouse-bins/{id}", get(get_bin).put(update_bin).delete(delete_bin))
+        .route("/warehouse-bins/{id}/levels", get(get_bin_levels))
         .route("/cycle-counts", post(create_cycle_count).get(list_cycle_counts))
         .route("/cycle-counts/{id}", get(get_cycle_count))
         .route("/cycle-counts/{id}/start", post(start_cycle_count))
@@ -879,6 +1021,272 @@ pub(crate) async fn cancel_cycle_count(
     let id: Uuid = parse_id(&id, "cycle count id")?;
     let cc = c.warehouse().cancel_cycle_count(id)?;
     Ok(Json(cycle_count_resp(&cc)))
+}
+
+// ============================================================================
+// Bin handlers
+// ============================================================================
+
+fn bin_resp(b: &stateset_core::WarehouseBin) -> BinResponse {
+    BinResponse {
+        id: b.id,
+        warehouse_id: b.warehouse_id,
+        code: b.code.clone(),
+        zone: b.zone.clone(),
+        aisle: b.aisle.clone(),
+        rack: b.rack.clone(),
+        shelf: b.shelf.clone(),
+        position: b.position.clone(),
+        bin_type: b.bin_type.to_string(),
+        is_active: b.is_active,
+        capacity: b.capacity.map(|c| c.to_string()),
+        created_at: b.created_at.to_rfc3339(),
+        updated_at: b.updated_at.to_rfc3339(),
+    }
+}
+
+fn bin_level_resp(l: &stateset_core::BinLevel) -> BinLevelResponse {
+    BinLevelResponse {
+        bin_id: l.bin_id,
+        warehouse_id: l.warehouse_id,
+        sku: l.sku.clone(),
+        quantity_on_hand: l.quantity_on_hand.to_string(),
+        quantity_allocated: l.quantity_allocated.to_string(),
+        quantity_available: l.quantity_available.to_string(),
+        updated_at: l.updated_at.to_rfc3339(),
+    }
+}
+
+fn bin_movement_resp(m: &stateset_core::BinMovement) -> BinMovementResponse {
+    BinMovementResponse {
+        id: m.id.to_string(),
+        movement_type: m.movement_type.to_string(),
+        from_bin_id: m.from_bin_id,
+        to_bin_id: m.to_bin_id,
+        sku: m.sku.clone(),
+        quantity: m.quantity.to_string(),
+        reason: m.reason.clone(),
+        performed_by: m.performed_by.clone(),
+        created_at: m.created_at.to_rfc3339(),
+    }
+}
+
+#[utoipa::path(post, operation_id = "warehouse_bin_create", path = "/api/v1/warehouse-bins", tag = "warehouse",
+    request_body = CreateBinRequest,
+    responses((status = 201, body = BinResponse), (status = 400, body = ErrorBody), (status = 409, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_bin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateBinRequest>,
+) -> Result<(StatusCode, Json<BinResponse>), HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let bin_type = match req.bin_type.as_deref() {
+        Some(s) => parse_id(s, "bin_type")?,
+        None => stateset_core::BinType::default(),
+    };
+    let b = c.warehouse().create_bin(stateset_core::CreateWarehouseBin {
+        warehouse_id: req.warehouse_id,
+        code: req.code,
+        zone: req.zone,
+        aisle: req.aisle,
+        rack: req.rack,
+        shelf: req.shelf,
+        position: req.position,
+        bin_type,
+        capacity: parse_opt_decimal(req.capacity.as_deref(), "capacity")?,
+    })?;
+    Ok((StatusCode::CREATED, Json(bin_resp(&b))))
+}
+
+#[utoipa::path(get, operation_id = "warehouse_bin_list", path = "/api/v1/warehouse-bins", tag = "warehouse",
+    params(BinFilterParams),
+    responses((status = 200, body = BinListResponse), (status = 400, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn list_bins(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<BinFilterParams>,
+) -> Result<Json<BinListResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let bin_type = match params.bin_type.as_deref() {
+        Some(s) => Some(parse_id(s, "bin_type")?),
+        None => None,
+    };
+    let base = stateset_core::WarehouseBinFilter {
+        warehouse_id: params.warehouse_id,
+        bin_type,
+        zone: params.zone,
+        is_active: params.is_active,
+        limit: None,
+        offset: None,
+    };
+    let total = c.warehouse().count_bins(base.clone())?;
+    let bins = c.warehouse().list_bins(stateset_core::WarehouseBinFilter {
+        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+        offset: Some(params.offset.unwrap_or(0)),
+        ..base
+    })?;
+    Ok(Json(BinListResponse { bins: bins.iter().map(bin_resp).collect(), total }))
+}
+
+#[utoipa::path(get, operation_id = "warehouse_bin_get_one", path = "/api/v1/warehouse-bins/{id}", tag = "warehouse",
+    params(("id" = i32, Path, description = "Bin ID")),
+    responses((status = 200, body = BinResponse), (status = 404, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn get_bin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i32>,
+) -> Result<Json<BinResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let b = c
+        .warehouse()
+        .get_bin(id)?
+        .ok_or_else(|| HttpError::NotFound(format!("Bin {id} not found")))?;
+    Ok(Json(bin_resp(&b)))
+}
+
+#[utoipa::path(put, operation_id = "warehouse_bin_update", path = "/api/v1/warehouse-bins/{id}", tag = "warehouse",
+    request_body = UpdateBinRequest,
+    params(("id" = i32, Path, description = "Bin ID")),
+    responses((status = 200, body = BinResponse), (status = 400, body = ErrorBody), (status = 404, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn update_bin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i32>,
+    Json(req): Json<UpdateBinRequest>,
+) -> Result<Json<BinResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let bin_type = match req.bin_type.as_deref() {
+        Some(s) => Some(parse_id(s, "bin_type")?),
+        None => None,
+    };
+    let capacity = match req.capacity.as_deref() {
+        None => None,
+        Some("") => Some(None),
+        Some(s) => Some(Some(parse_decimal(s, "capacity")?)),
+    };
+    let b = c.warehouse().update_bin(
+        id,
+        stateset_core::UpdateWarehouseBin {
+            zone: req.zone,
+            aisle: req.aisle,
+            rack: req.rack,
+            shelf: req.shelf,
+            position: req.position,
+            bin_type,
+            is_active: req.is_active,
+            capacity,
+        },
+    )?;
+    Ok(Json(bin_resp(&b)))
+}
+
+#[utoipa::path(delete, operation_id = "warehouse_bin_delete", path = "/api/v1/warehouse-bins/{id}", tag = "warehouse",
+    params(("id" = i32, Path, description = "Bin ID")),
+    responses((status = 204), (status = 403, body = ErrorBody), (status = 404, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn delete_bin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i32>,
+) -> Result<StatusCode, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    c.warehouse().delete_bin(id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(get, operation_id = "warehouse_bin_levels", path = "/api/v1/warehouse-bins/{id}/levels", tag = "warehouse",
+    params(("id" = i32, Path, description = "Bin ID")),
+    responses((status = 200, body = BinLevelListResponse), (status = 404, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn get_bin_levels(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i32>,
+) -> Result<Json<BinLevelListResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    c.warehouse().get_bin(id)?.ok_or_else(|| HttpError::NotFound(format!("Bin {id} not found")))?;
+    let levels = c.warehouse().get_bin_levels(id)?;
+    Ok(Json(BinLevelListResponse {
+        total: levels.len(),
+        levels: levels.iter().map(bin_level_resp).collect(),
+    }))
+}
+
+#[utoipa::path(post, operation_id = "warehouse_bin_adjust", path = "/api/v1/warehouse-bins/adjust", tag = "warehouse",
+    request_body = AdjustBinLevelRequest,
+    responses((status = 200, body = BinLevelResponse), (status = 400, body = ErrorBody), (status = 404, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn adjust_bin_level(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AdjustBinLevelRequest>,
+) -> Result<Json<BinLevelResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let level = c.warehouse().adjust_bin_level(stateset_core::AdjustBinLevel {
+        bin_id: req.bin_id,
+        sku: req.sku,
+        quantity: parse_decimal(&req.quantity, "quantity")?,
+        reason: req.reason,
+        reference_type: req.reference_type,
+        reference_id: req.reference_id,
+        performed_by: req.performed_by,
+    })?;
+    Ok(Json(bin_level_resp(&level)))
+}
+
+#[utoipa::path(post, operation_id = "warehouse_bin_move", path = "/api/v1/warehouse-bins/move", tag = "warehouse",
+    request_body = MoveBetweenBinsRequest,
+    responses((status = 200, body = BinMovementResponse), (status = 400, body = ErrorBody), (status = 404, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn move_between_bins(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<MoveBetweenBinsRequest>,
+) -> Result<Json<BinMovementResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let m = c.warehouse().move_between_bins(stateset_core::MoveBetweenBins {
+        from_bin_id: req.from_bin_id,
+        to_bin_id: req.to_bin_id,
+        sku: req.sku,
+        quantity: parse_decimal(&req.quantity, "quantity")?,
+        reason: req.reason,
+        performed_by: req.performed_by,
+    })?;
+    Ok(Json(bin_movement_resp(&m)))
+}
+
+#[utoipa::path(get, operation_id = "warehouse_bin_reconcile", path = "/api/v1/warehouse-bins/reconcile", tag = "warehouse",
+    params(BinReconcileParams),
+    responses((status = 200, body = BinReconciliationResponse), (status = 400, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn reconcile_bins(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<BinReconcileParams>,
+) -> Result<Json<BinReconciliationResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let r = c.warehouse().reconcile_bins(params.warehouse_id, &params.sku)?;
+    Ok(Json(BinReconciliationResponse {
+        warehouse_id: r.warehouse_id,
+        sku: r.sku.clone(),
+        bin_on_hand: r.bin_on_hand.to_string(),
+        warehouse_on_hand: r.warehouse_on_hand.to_string(),
+        variance: r.variance.to_string(),
+        is_balanced: r.is_balanced(),
+    }))
 }
 
 #[cfg(test)]

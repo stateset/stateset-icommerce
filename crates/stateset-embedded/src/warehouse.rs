@@ -530,3 +530,99 @@ impl WarehouseOps {
         self.db.warehouse().cancel_cycle_count(id)
     }
 }
+
+// ============================================================================
+// Bin-level inventory
+// ============================================================================
+
+impl WarehouseOps {
+    /// Create a bin inside a warehouse (code unique per warehouse).
+    pub fn create_bin(
+        &self,
+        input: stateset_core::CreateWarehouseBin,
+    ) -> Result<stateset_core::WarehouseBin> {
+        self.db.bins().create_bin(input)
+    }
+
+    /// Get a bin by ID.
+    pub fn get_bin(&self, id: i32) -> Result<Option<stateset_core::WarehouseBin>> {
+        self.db.bins().get_bin(id)
+    }
+
+    /// Get a bin by warehouse and code.
+    pub fn get_bin_by_code(
+        &self,
+        warehouse_id: i32,
+        code: &str,
+    ) -> Result<Option<stateset_core::WarehouseBin>> {
+        self.db.bins().get_bin_by_code(warehouse_id, code)
+    }
+
+    /// Update a bin.
+    pub fn update_bin(
+        &self,
+        id: i32,
+        input: stateset_core::UpdateWarehouseBin,
+    ) -> Result<stateset_core::WarehouseBin> {
+        self.db.bins().update_bin(id, input)
+    }
+
+    /// List bins.
+    pub fn list_bins(
+        &self,
+        filter: stateset_core::WarehouseBinFilter,
+    ) -> Result<Vec<stateset_core::WarehouseBin>> {
+        self.db.bins().list_bins(filter)
+    }
+
+    /// Count bins.
+    pub fn count_bins(&self, filter: stateset_core::WarehouseBinFilter) -> Result<u64> {
+        self.db.bins().count_bins(filter)
+    }
+
+    /// Delete an empty bin.
+    pub fn delete_bin(&self, id: i32) -> Result<()> {
+        self.db.bins().delete_bin(id)
+    }
+
+    /// Stock lines held in a bin.
+    pub fn get_bin_levels(&self, bin_id: i32) -> Result<Vec<stateset_core::BinLevel>> {
+        self.db.bins().get_bin_levels(bin_id)
+    }
+
+    /// Stock of a SKU across the bins of a warehouse.
+    pub fn get_bin_levels_for_sku(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<Vec<stateset_core::BinLevel>> {
+        self.db.bins().get_bin_levels_for_sku(warehouse_id, sku)
+    }
+
+    /// Signed bin adjustment, mirrored onto warehouse-level stock in the same
+    /// transaction (keeps `Σ bins == warehouse on_hand`).
+    pub fn adjust_bin_level(
+        &self,
+        input: stateset_core::AdjustBinLevel,
+    ) -> Result<stateset_core::BinLevel> {
+        self.db.bins().adjust_bin_level(input)
+    }
+
+    /// Move stock between two bins of the same warehouse (stock-neutral;
+    /// rejected when the source lacks available quantity).
+    pub fn move_between_bins(
+        &self,
+        input: stateset_core::MoveBetweenBins,
+    ) -> Result<stateset_core::BinMovement> {
+        self.db.bins().move_between_bins(input)
+    }
+
+    /// Compare Σ bin on-hand with the warehouse-level balance for a SKU.
+    pub fn reconcile_bins(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<stateset_core::BinReconciliation> {
+        self.db.bins().reconcile(warehouse_id, sku)
+    }
+}

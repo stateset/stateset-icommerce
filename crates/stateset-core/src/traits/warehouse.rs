@@ -141,6 +141,57 @@ pub trait WarehouseRepository: Send + Sync {
 }
 
 // ============================================================================
+// Bin Repository
+// ============================================================================
+
+/// Bin-level (sub-warehouse) stock repository.
+///
+/// Bins are a sub-allocation of warehouse-level inventory: for every
+/// `(warehouse, sku)` the sum of bin `quantity_on_hand` must equal the
+/// warehouse-level `on_hand`. [`BinRepository::adjust_bin_level`] applies its
+/// delta to both in one transaction; [`BinRepository::move_between_bins`] is
+/// stock-neutral; [`BinRepository::reconcile`] reports any drift.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait BinRepository: Send + Sync {
+    /// Create a bin (code unique per warehouse)
+    fn create_bin(&self, input: CreateWarehouseBin) -> Result<WarehouseBin>;
+
+    /// Get bin by ID
+    fn get_bin(&self, id: i32) -> Result<Option<WarehouseBin>>;
+
+    /// Get bin by warehouse + code
+    fn get_bin_by_code(&self, warehouse_id: i32, code: &str) -> Result<Option<WarehouseBin>>;
+
+    /// Update a bin
+    fn update_bin(&self, id: i32, input: UpdateWarehouseBin) -> Result<WarehouseBin>;
+
+    /// List bins with filter
+    fn list_bins(&self, filter: WarehouseBinFilter) -> Result<Vec<WarehouseBin>>;
+
+    /// Count bins with filter
+    fn count_bins(&self, filter: WarehouseBinFilter) -> Result<u64>;
+
+    /// Delete a bin (only when it holds no stock)
+    fn delete_bin(&self, id: i32) -> Result<()>;
+
+    /// Stock lines held in a bin
+    fn get_bin_levels(&self, bin_id: i32) -> Result<Vec<BinLevel>>;
+
+    /// Stock of a SKU across all bins of a warehouse
+    fn get_bin_levels_for_sku(&self, warehouse_id: i32, sku: &str) -> Result<Vec<BinLevel>>;
+
+    /// Signed bin adjustment, mirrored onto the warehouse-level balance
+    fn adjust_bin_level(&self, input: AdjustBinLevel) -> Result<BinLevel>;
+
+    /// Move stock between two bins of the same warehouse (one transaction;
+    /// rejected when the source lacks available quantity)
+    fn move_between_bins(&self, input: MoveBetweenBins) -> Result<BinMovement>;
+
+    /// Compare Σ bin on-hand with the warehouse-level balance
+    fn reconcile(&self, warehouse_id: i32, sku: &str) -> Result<BinReconciliation>;
+}
+
+// ============================================================================
 // Receiving Repository
 // ============================================================================
 

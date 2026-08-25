@@ -10,6 +10,7 @@ mod agent_reputation;
 mod agent_validation;
 mod analytics;
 mod backorder;
+mod bins;
 mod bom;
 mod carts;
 mod channels;
@@ -89,6 +90,7 @@ pub use agent_reputation::*;
 pub use agent_validation::*;
 pub use analytics::*;
 pub use backorder::*;
+pub use bins::*;
 pub use bom::*;
 pub use carts::*;
 pub use channels::*;
@@ -532,6 +534,12 @@ impl SqliteDatabase {
     #[must_use]
     pub fn serials(&self) -> SqliteSerialRepository {
         SqliteSerialRepository::new(self.pool.clone())
+    }
+
+    /// Get warehouse bin repository
+    #[must_use]
+    pub fn bins(&self) -> SqliteBinRepository {
+        SqliteBinRepository::new(self.pool.clone())
     }
 
     /// Get warehouse repository

@@ -4504,3 +4504,307 @@ async fn return_after_partial_ship_is_capped_at_shipped_quantity() {
         assert_eq!(resp.status(), expected, "return qty {qty}");
     }
 }
+
+async fn get_path(router: &axum::Router, path: &str) -> axum::response::Response {
+    router.clone().oneshot(Request::get(path).body(Body::empty()).unwrap()).await.unwrap()
+}
+
+async fn post_json(router: &axum::Router, path: &str, body: Value) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::post(path)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+fn seed_warehouse(state: &AppState, sku: &str) -> i32 {
+    state
+        .commerce()
+        .inventory()
+        .create_item(stateset_core::CreateInventoryItem {
+            sku: sku.into(),
+            name: sku.into(),
+            ..Default::default()
+        })
+        .unwrap();
+    state
+        .commerce()
+        .warehouse()
+        .create_warehouse(stateset_core::CreateWarehouse {
+            code: format!("WH-{}", &Uuid::new_v4().simple().to_string()[..6]),
+            name: "Bins DC".into(),
+            warehouse_type: stateset_core::WarehouseType::Distribution,
+            address: stateset_core::WarehouseAddress { country: "US".into(), ..Default::default() },
+            timezone: None,
+        })
+        .unwrap()
+        .id
+}
+
+fn seed_received_return(state: &AppState) -> (ReturnId, Uuid, String) {
+    let (order_id, item_id) = seed_order(state);
+    // Returns require shipped goods; the engine enforces this.
+    state.commerce().orders().ship(order_id, Some("TRACK-DISP-0001")).unwrap();
+    let order = state.commerce().orders().get(order_id).unwrap().unwrap();
+    let sku = order.items[0].sku.clone();
+    let ret = state
+        .commerce()
+        .returns()
+        .create(stateset_core::CreateReturn {
+            order_id,
+            items: vec![stateset_core::CreateReturnItem {
+                order_item_id: stateset_primitives::OrderItemId::from_uuid(item_id),
+                quantity: 2,
+                condition: None,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+    state.commerce().returns().approve(ret.id).unwrap();
+    for status in [stateset_core::ReturnStatus::InTransit, stateset_core::ReturnStatus::Received] {
+        state
+            .commerce()
+            .returns()
+            .update(
+                ret.id,
+                stateset_core::UpdateReturn { status: Some(status), ..Default::default() },
+            )
+            .unwrap();
+    }
+    (ret.id, ret.items[0].id, sku)
+}
+
+#[tokio::test]
+async fn warehouse_bins_crud_adjust_move_and_reconcile() {
+    let (router, state) = app_with_state();
+    let sku = format!("BIN-SKU-{}", Uuid::new_v4().simple());
+    let wh = seed_warehouse(&state, &sku);
+
+    // Create two bins; duplicate code in the same warehouse is a 409.
+    let resp = post_json(
+        &router,
+        "/api/v1/warehouse-bins",
+        json!({ "warehouse_id": wh, "code": "A-01", "zone": "A", "bin_type": "pick", "capacity": "100" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let a = body_json(resp).await;
+    assert_eq!(a["bin_type"], "pick");
+    assert_eq!(a["capacity"], "100");
+    let a_id = a["id"].as_i64().unwrap();
+
+    let resp = post_json(
+        &router,
+        "/api/v1/warehouse-bins",
+        json!({ "warehouse_id": wh, "code": "B-01", "bin_type": "bulk" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let b_id = body_json(resp).await["id"].as_i64().unwrap();
+
+    let resp =
+        post_json(&router, "/api/v1/warehouse-bins", json!({ "warehouse_id": wh, "code": "A-01" }))
+            .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let resp = post_json(
+        &router,
+        "/api/v1/warehouse-bins",
+        json!({ "warehouse_id": wh, "code": "X", "bin_type": "void" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // List / get / update.
+    let resp =
+        get_path(&router, &format!("/api/v1/warehouse-bins?warehouse_id={wh}&bin_type=pick")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list = body_json(resp).await;
+    assert_eq!(list["total"], 1);
+    assert_eq!(list["bins"][0]["code"], "A-01");
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::put(format!("/api/v1/warehouse-bins/{a_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "shelf": "3", "capacity": "" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated = body_json(resp).await;
+    assert_eq!(updated["shelf"], "3");
+    assert!(updated["capacity"].is_null());
+
+    let resp = get_path(&router, "/api/v1/warehouse-bins/999999").await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Adjust into A, move some to B; Σ bins == warehouse on-hand.
+    let resp = post_json(
+        &router,
+        "/api/v1/warehouse-bins/adjust",
+        json!({ "bin_id": a_id, "sku": sku, "quantity": "10", "reason": "put-away" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["quantity_on_hand"], "10");
+
+    let resp = post_json(
+        &router,
+        "/api/v1/warehouse-bins/move",
+        json!({ "from_bin_id": a_id, "to_bin_id": b_id, "sku": sku, "quantity": "4" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mv = body_json(resp).await;
+    assert_eq!(mv["movement_type"], "transfer");
+    assert_eq!(mv["quantity"], "4");
+
+    // Over-move is rejected and leaves levels untouched.
+    let resp = post_json(
+        &router,
+        "/api/v1/warehouse-bins/move",
+        json!({ "from_bin_id": a_id, "to_bin_id": b_id, "sku": sku, "quantity": "7" }),
+    )
+    .await;
+    assert!(resp.status().is_client_error(), "got {}", resp.status());
+
+    let resp = get_path(&router, &format!("/api/v1/warehouse-bins/{a_id}/levels")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let levels = body_json(resp).await;
+    assert_eq!(levels["total"], 1);
+    assert_eq!(levels["levels"][0]["quantity_on_hand"], "6");
+
+    let resp =
+        get_path(&router, &format!("/api/v1/warehouse-bins/reconcile?warehouse_id={wh}&sku={sku}"))
+            .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rec = body_json(resp).await;
+    assert_eq!(rec["bin_on_hand"], "10");
+    assert_eq!(rec["warehouse_on_hand"], "10");
+    assert_eq!(rec["is_balanced"], true);
+
+    // Delete: non-empty bin is refused; emptied bin is deleted.
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/v1/warehouse-bins/{b_id}")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let resp = post_json(
+        &router,
+        "/api/v1/warehouse-bins/adjust",
+        json!({ "bin_id": b_id, "sku": sku, "quantity": "-4", "reason": "pick" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/v1/warehouse-bins/{b_id}")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn return_item_disposition_restocks_into_returns_bin_once() {
+    let (router, state) = app_with_state();
+    let (return_id, item_id, sku) = seed_received_return(&state);
+    let wh = seed_warehouse(&state, &sku);
+    let resp = post_json(
+        &router,
+        "/api/v1/warehouse-bins",
+        json!({ "warehouse_id": wh, "code": "RET-1", "bin_type": "returns" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let ret_bin = body_json(resp).await["id"].as_i64().unwrap();
+
+    let path = format!("/api/v1/returns/{return_id}/items/{item_id}/disposition");
+    let resp = post_json(&router, &path, json!({ "disposition": "unicorn" })).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let resp = post_json(
+        &router,
+        &path,
+        json!({ "disposition": "restock", "warehouse_id": wh, "disposition_by": "qa" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let item = body_json(resp).await;
+    assert_eq!(item["disposition"], "restock");
+    assert_eq!(item["disposition_by"], "qa");
+    assert!(item["disposition_at"].as_str().is_some());
+
+    // Landed in the returns bin and at warehouse level.
+    let resp = get_path(&router, &format!("/api/v1/warehouse-bins/{ret_bin}/levels")).await;
+    let levels = body_json(resp).await;
+    assert_eq!(levels["levels"][0]["quantity_on_hand"], "2");
+    let resp =
+        get_path(&router, &format!("/api/v1/warehouse-bins/reconcile?warehouse_id={wh}&sku={sku}"))
+            .await;
+    let rec = body_json(resp).await;
+    assert_eq!(rec["warehouse_on_hand"], "2");
+    assert_eq!(rec["is_balanced"], true);
+
+    // Second disposition on the same item: 409.
+    let resp =
+        post_json(&router, &path, json!({ "disposition": "scrap", "warehouse_id": wh })).await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // Unknown return: 404.
+    let resp = post_json(
+        &router,
+        &format!("/api/v1/returns/{}/items/{item_id}/disposition", ReturnId::new()),
+        json!({ "disposition": "scrap" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn return_item_disposition_requires_received_status_and_scrap_is_stock_neutral() {
+    let (router, state) = app_with_state();
+    let (order_id, item_id) = seed_order(&state);
+    // Returns require shipped goods; the engine enforces this.
+    state.commerce().orders().ship(order_id, Some("TRACK-DISP-0002")).unwrap();
+    let ret = state
+        .commerce()
+        .returns()
+        .create(stateset_core::CreateReturn {
+            order_id,
+            items: vec![stateset_core::CreateReturnItem {
+                order_item_id: stateset_primitives::OrderItemId::from_uuid(item_id),
+                quantity: 1,
+                condition: None,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+    let path = format!("/api/v1/returns/{}/items/{}/disposition", ret.id, ret.items[0].id);
+    let resp = post_json(&router, &path, json!({ "disposition": "scrap" })).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Fresh store: `seed_order` seeds a fixed product slug.
+    let (router, state) = app_with_state();
+    let (return_id, item_id, sku) = seed_received_return(&state);
+    let wh = seed_warehouse(&state, &sku);
+    let path = format!("/api/v1/returns/{return_id}/items/{item_id}/disposition");
+    let resp =
+        post_json(&router, &path, json!({ "disposition": "scrap", "warehouse_id": wh })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp =
+        get_path(&router, &format!("/api/v1/warehouse-bins/reconcile?warehouse_id={wh}&sku={sku}"))
+            .await;
+    assert_eq!(body_json(resp).await["warehouse_on_hand"], "0");
+}

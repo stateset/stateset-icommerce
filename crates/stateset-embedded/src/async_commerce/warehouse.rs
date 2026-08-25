@@ -521,5 +521,87 @@ impl AsyncFulfillment {
 }
 
 // ============================================================================
+// Bin-level inventory
+// ============================================================================
+
+impl AsyncWarehouse {
+    pub async fn create_bin(
+        &self,
+        input: stateset_core::CreateWarehouseBin,
+    ) -> Result<stateset_core::WarehouseBin> {
+        self.db.bins().create_bin_async(input).await
+    }
+
+    pub async fn get_bin(&self, id: i32) -> Result<Option<stateset_core::WarehouseBin>> {
+        self.db.bins().get_bin_async(id).await
+    }
+
+    pub async fn get_bin_by_code(
+        &self,
+        warehouse_id: i32,
+        code: &str,
+    ) -> Result<Option<stateset_core::WarehouseBin>> {
+        self.db.bins().get_bin_by_code_async(warehouse_id, code).await
+    }
+
+    pub async fn update_bin(
+        &self,
+        id: i32,
+        input: stateset_core::UpdateWarehouseBin,
+    ) -> Result<stateset_core::WarehouseBin> {
+        self.db.bins().update_bin_async(id, input).await
+    }
+
+    pub async fn list_bins(
+        &self,
+        filter: stateset_core::WarehouseBinFilter,
+    ) -> Result<Vec<stateset_core::WarehouseBin>> {
+        self.db.bins().list_bins_async(filter).await
+    }
+
+    pub async fn count_bins(&self, filter: stateset_core::WarehouseBinFilter) -> Result<u64> {
+        self.db.bins().count_bins_async(filter).await
+    }
+
+    pub async fn delete_bin(&self, id: i32) -> Result<()> {
+        self.db.bins().delete_bin_async(id).await
+    }
+
+    pub async fn get_bin_levels(&self, bin_id: i32) -> Result<Vec<stateset_core::BinLevel>> {
+        self.db.bins().get_bin_levels_async(bin_id).await
+    }
+
+    pub async fn get_bin_levels_for_sku(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<Vec<stateset_core::BinLevel>> {
+        self.db.bins().get_bin_levels_for_sku_async(warehouse_id, sku).await
+    }
+
+    pub async fn adjust_bin_level(
+        &self,
+        input: stateset_core::AdjustBinLevel,
+    ) -> Result<stateset_core::BinLevel> {
+        self.db.bins().adjust_bin_level_async(input).await
+    }
+
+    pub async fn move_between_bins(
+        &self,
+        input: stateset_core::MoveBetweenBins,
+    ) -> Result<stateset_core::BinMovement> {
+        self.db.bins().move_between_bins_async(input).await
+    }
+
+    pub async fn reconcile_bins(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<stateset_core::BinReconciliation> {
+        self.db.bins().reconcile_async(warehouse_id, sku).await
+    }
+}
+
+// ============================================================================
 // Async Accounts Payable
 // ============================================================================

@@ -41,6 +41,63 @@ pub struct ReturnItem {
     pub quantity: i32,
     pub condition: ItemCondition,
     pub refund_amount: Decimal,
+    /// Warehouse disposition recorded once the item is physically received.
+    pub disposition: Option<ReturnDisposition>,
+    pub disposition_at: Option<DateTime<Utc>>,
+    pub disposition_by: Option<String>,
+}
+
+/// What the warehouse does with a received return item.
+///
+/// Stock effects (applied atomically with the disposition write):
+/// - `Restock`: warehouse-level `on_hand += quantity`; into the returns (or
+///   quarantine) bin when the warehouse has bins.
+/// - `Quarantine`: when a quarantine bin exists, `on_hand += quantity` and
+///   `allocated += quantity` (held, not sellable) at bin and warehouse level;
+///   without bins nothing is touched.
+/// - `Refurbish`, `Scrap`, `ReturnToVendor`: no stock change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
+pub enum ReturnDisposition {
+    Restock,
+    Refurbish,
+    Scrap,
+    #[strum(serialize = "return_to_vendor", serialize = "returntovendor")]
+    ReturnToVendor,
+    Quarantine,
+}
+
+impl ReturnDisposition {
+    /// Whether this disposition puts units back into warehouse stock.
+    #[must_use]
+    pub const fn affects_stock(self) -> bool {
+        matches!(self, Self::Restock | Self::Quarantine)
+    }
+}
+
+/// Input for recording a return item's disposition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetReturnDisposition {
+    pub disposition: ReturnDisposition,
+    /// Warehouse receiving the stock (defaults to 1, the default location).
+    pub warehouse_id: Option<i32>,
+    /// Explicit target bin; when omitted a `returns` (Restock) or `quarantine`
+    /// bin of the warehouse is used if one exists.
+    pub bin_id: Option<i32>,
+    pub disposition_by: Option<String>,
+}
+
+impl Default for SetReturnDisposition {
+    fn default() -> Self {
+        Self {
+            disposition: ReturnDisposition::Restock,
+            warehouse_id: None,
+            bin_id: None,
+            disposition_by: None,
+        }
+    }
 }
 
 /// Return status enumeration

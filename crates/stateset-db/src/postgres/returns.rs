@@ -1,14 +1,18 @@
 //! PostgreSQL returns repository implementation
 
-use super::map_db_error;
+use super::bins::{
+    apply_bin_delta_pg, apply_warehouse_delta_pg, find_disposition_bin_pg, insert_bin_movement_pg,
+};
+use super::{block_on, map_db_error};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    BatchResult, CommerceError, CreateReturn, CustomerId, ItemCondition, OrderId, OrderItemId,
-    OrderStatus, Result, Return, ReturnFilter, ReturnId, ReturnItem, ReturnReason,
-    ReturnRepository, ReturnStatus, UpdateReturn, validate_batch_size,
+    BatchResult, BinMovementType, BinType, CommerceError, CreateReturn, CustomerId, ItemCondition,
+    OrderId, OrderItemId, OrderStatus, Result, Return, ReturnDisposition, ReturnFilter, ReturnId,
+    ReturnItem, ReturnReason, ReturnRepository, ReturnStatus, SetReturnDisposition, UpdateReturn,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -140,6 +144,9 @@ struct ReturnItemRow {
     quantity: i32,
     condition: String,
     refund_amount: Decimal,
+    disposition: Option<String>,
+    disposition_at: Option<DateTime<Utc>>,
+    disposition_by: Option<String>,
 }
 
 impl PgReturnRepository {
@@ -201,6 +208,9 @@ impl PgReturnRepository {
             quantity,
             condition,
             refund_amount,
+            disposition,
+            disposition_at,
+            disposition_by,
         } = row;
 
         let condition: ItemCondition = condition.parse().map_err(|e| {
@@ -209,6 +219,16 @@ impl PgReturnRepository {
                 condition, e
             ))
         })?;
+        let disposition: Option<ReturnDisposition> = disposition
+            .filter(|d| !d.is_empty())
+            .map(|d| {
+                d.parse().map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid return_item.disposition '{d}': {e}"
+                    ))
+                })
+            })
+            .transpose()?;
 
         Ok(ReturnItem {
             id,
@@ -219,7 +239,156 @@ impl PgReturnRepository {
             quantity,
             condition,
             refund_amount,
+            disposition,
+            disposition_at,
+            disposition_by,
         })
+    }
+
+    /// Record a return item's disposition and apply its stock effect (async).
+    pub async fn set_item_disposition_async(
+        &self,
+        return_id: ReturnId,
+        item_id: Uuid,
+        input: SetReturnDisposition,
+    ) -> Result<ReturnItem> {
+        let warehouse_id = input.warehouse_id.unwrap_or(1);
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+        let status_raw: Option<String> =
+            sqlx::query_scalar("SELECT status FROM returns WHERE id = $1 FOR UPDATE")
+                .bind(return_id.into_uuid())
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let status: ReturnStatus = match status_raw {
+            Some(raw) => raw.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!("Invalid return.status '{raw}': {e}"))
+            })?,
+            None => return Err(CommerceError::ReturnNotFound(return_id.into())),
+        };
+        if !matches!(status, ReturnStatus::Received | ReturnStatus::Inspecting) {
+            return Err(CommerceError::NotPermitted(format!(
+                "Return items can only be dispositioned once received (status: {status})"
+            )));
+        }
+        let item = sqlx::query_as::<_, ReturnItemRow>(
+            "SELECT * FROM return_items WHERE id = $1 AND return_id = $2 FOR UPDATE",
+        )
+        .bind(item_id)
+        .bind(return_id.into_uuid())
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or_else(|| {
+            CommerceError::ValidationError(format!(
+                "Return item {item_id} not found on return {return_id}"
+            ))
+        })?;
+        let item = Self::row_to_item(item)?;
+        if let Some(existing) = item.disposition {
+            return Err(CommerceError::Conflict(format!(
+                "Return item {item_id} already dispositioned as {existing}"
+            )));
+        }
+
+        let qty = Decimal::from(item.quantity);
+        let reference_id = item_id.to_string();
+        let reason = format!("return {return_id} {}", input.disposition);
+        match input.disposition {
+            ReturnDisposition::Restock => {
+                let bin = find_disposition_bin_pg(
+                    tx.as_mut(),
+                    warehouse_id,
+                    input.bin_id,
+                    &[BinType::Returns, BinType::Quarantine],
+                )
+                .await?;
+                if let Some(bin) = &bin {
+                    apply_bin_delta_pg(tx.as_mut(), bin, &item.sku, qty, Decimal::ZERO, now)
+                        .await?;
+                    insert_bin_movement_pg(
+                        tx.as_mut(),
+                        BinMovementType::ReturnDisposition,
+                        None,
+                        Some(bin.id),
+                        &item.sku,
+                        qty,
+                        Some(&reason),
+                        Some("return_item"),
+                        Some(&reference_id),
+                        input.disposition_by.as_deref(),
+                        now,
+                    )
+                    .await?;
+                }
+                apply_warehouse_delta_pg(
+                    tx.as_mut(),
+                    warehouse_id,
+                    &item.sku,
+                    qty,
+                    Decimal::ZERO,
+                    &reason,
+                    Some("return_item"),
+                    Some(&reference_id),
+                    now,
+                )
+                .await?;
+            }
+            ReturnDisposition::Quarantine => {
+                if let Some(bin) = find_disposition_bin_pg(
+                    tx.as_mut(),
+                    warehouse_id,
+                    input.bin_id,
+                    &[BinType::Quarantine],
+                )
+                .await?
+                {
+                    apply_bin_delta_pg(tx.as_mut(), &bin, &item.sku, qty, qty, now).await?;
+                    apply_warehouse_delta_pg(
+                        tx.as_mut(),
+                        warehouse_id,
+                        &item.sku,
+                        qty,
+                        qty,
+                        &reason,
+                        Some("return_item"),
+                        Some(&reference_id),
+                        now,
+                    )
+                    .await?;
+                    insert_bin_movement_pg(
+                        tx.as_mut(),
+                        BinMovementType::ReturnDisposition,
+                        None,
+                        Some(bin.id),
+                        &item.sku,
+                        qty,
+                        Some(&reason),
+                        Some("return_item"),
+                        Some(&reference_id),
+                        input.disposition_by.as_deref(),
+                        now,
+                    )
+                    .await?;
+                }
+            }
+            _ => {}
+        }
+
+        let updated = sqlx::query_as::<_, ReturnItemRow>(
+            "UPDATE return_items SET disposition = $1, disposition_at = $2, disposition_by = $3
+             WHERE id = $4 RETURNING *",
+        )
+        .bind(input.disposition.to_string())
+        .bind(now)
+        .bind(input.disposition_by)
+        .bind(item_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Self::row_to_item(updated)
     }
 
     /// Create a return (async)
@@ -313,6 +482,9 @@ impl PgReturnRepository {
                 quantity: item_input.quantity,
                 condition,
                 refund_amount: refund,
+                disposition: None,
+                disposition_at: None,
+                disposition_by: None,
             });
         }
 
@@ -733,6 +905,9 @@ impl PgReturnRepository {
                     quantity: item_input.quantity,
                     condition,
                     refund_amount: refund,
+                    disposition: None,
+                    disposition_at: None,
+                    disposition_by: None,
                 });
             }
 
@@ -958,6 +1133,15 @@ impl ReturnRepository for PgReturnRepository {
 
     fn cancel(&self, id: ReturnId) -> Result<Return> {
         super::block_on(self.cancel_async(id.into_uuid()))
+    }
+
+    fn set_item_disposition(
+        &self,
+        return_id: ReturnId,
+        item_id: Uuid,
+        input: SetReturnDisposition,
+    ) -> Result<ReturnItem> {
+        block_on(self.set_item_disposition_async(return_id, item_id, input))
     }
 
     fn count(&self, filter: ReturnFilter) -> Result<u64> {

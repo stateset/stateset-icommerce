@@ -24,6 +24,32 @@ This project follows Keep a Changelog and Semantic Versioning.
   nothing is persisted. No body / no lines keeps the legacy "ship everything" behaviour, as does a
   plain status update to `shipped`. Once an order has shipped (partially or fully), returns are
   validated against each line's shipped quantity instead of its ordered quantity.
+- **Bin-level warehouse locations.** New `warehouse_bins` (code unique per warehouse; zone /
+  aisle / rack / shelf / position; `bin_type` ∈ pick, bulk, receiving, staging, quarantine,
+  returns; optional per-SKU `capacity`) and `inventory_bin_levels` (SKU × bin → on-hand /
+  allocated) tables plus an `inventory_bin_movements` audit trail. Bins are a sub-allocation of
+  warehouse-level stock: `adjust_bin_level` mirrors its delta onto `inventory_balances`
+  (`location_id = warehouse_id`) in the same transaction so `Σ bin on_hand == warehouse on_hand`
+  holds; `move_between_bins` is stock-neutral and rejects insufficient source quantity; `reconcile`
+  reports any drift. Reservations stay at the warehouse level. New `BinRepository` trait
+  (SQLite + Postgres), `Database::bins()`, `Commerce::warehouse().{create_bin, get_bin,
+  get_bin_by_code, update_bin, list_bins, count_bins, delete_bin, get_bin_levels,
+  get_bin_levels_for_sku, adjust_bin_level, move_between_bins, reconcile_bins}` (sync + async),
+  and REST `POST/GET /api/v1/warehouse-bins`, `GET/PUT/DELETE /api/v1/warehouse-bins/{id}`,
+  `GET /api/v1/warehouse-bins/{id}/levels`, `POST /api/v1/warehouse-bins/adjust`,
+  `POST /api/v1/warehouse-bins/move`, `GET /api/v1/warehouse-bins/reconcile`.
+- **Returns disposition.** `ReturnDisposition { restock, refurbish, scrap, return_to_vendor,
+  quarantine }` recorded per return item (`return_items.disposition` / `disposition_at` /
+  `disposition_by`, nullable). `restock` increments warehouse on-hand (into the returns or
+  quarantine bin when bins exist); `quarantine` puts stock into a quarantine bin as on-hand +
+  allocated (held, not sellable) and is a record-only no-op without bins; `refurbish`, `scrap` and
+  `return_to_vendor` never touch stock. Applied atomically with the disposition write; allowed only
+  while the return is `received`/`inspecting`; a second disposition on the same item is rejected
+  with 409 `Conflict`. `ReturnRepository::set_item_disposition`,
+  `Commerce::returns().set_item_disposition`, and
+  `POST /api/v1/returns/{id}/items/{item_id}/disposition`.
+- Migrations `068_warehouse_bins_return_disposition` (SQLite) / `073_…` (Postgres); one number
+  gap is intentionally left after the previous migration.
 - **Financial/inventory invariant harness** (`crates/stateset-integration-tests/tests/invariants.rs`):
   a proptest that drives random-but-valid sequences of commerce operations (stock receipts, orders,
   captures, shipments, returns, refunds, AR invoices and payments) through the embedded SQLite

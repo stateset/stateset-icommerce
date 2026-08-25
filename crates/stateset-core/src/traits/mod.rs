@@ -85,7 +85,8 @@ pub use platform::{
 pub use purchasing::{PurchaseOrderRepository, SupplierSkuRepository, VendorReturnRepository};
 pub use returns::{ReturnRepository, WarrantyRepository};
 pub use warehouse::{
-    InboundShipmentRepository, ReceivingRepository, TransferOrderRepository, WarehouseRepository,
+    BinRepository, InboundShipmentRepository, ReceivingRepository, TransferOrderRepository,
+    WarehouseRepository,
 };
 
 // Shared imports for every trait module in this directory —
@@ -183,6 +184,10 @@ pub(crate) use crate::models::{
     X402Asset, X402CheckoutResult, X402CreditAccount, X402CreditAdjustment, X402CreditTransaction,
     X402CreditTransactionFilter, X402Network, X402PaymentIntent, X402PaymentIntentFilter, Zone,
     ZoneShippingMethod, ZoneShippingMethodFilter, ZoneShippingRate, ZoneShippingRateRequest,
+};
+pub(crate) use crate::models::{
+    AdjustBinLevel, BinLevel, BinMovement, BinReconciliation, CreateWarehouseBin, MoveBetweenBins,
+    ReturnItem, SetReturnDisposition, UpdateWarehouseBin, WarehouseBin, WarehouseBinFilter,
 };
 // Newly-added B2B / ERP-ops entities (channels, companies, transfer orders,
 // units of measure, production batches).
