@@ -1,30 +1,49 @@
 {
   "reference-demo": {
-    "command": ["node", "iut-adapters/reference-demo.mjs"],
+    "command": [
+      "node",
+      "iut-adapters/reference-demo.mjs"
+    ],
     "language": "javascript",
     "implementation": "icp-spec/examples/01-aid-and-sign/demo.mjs (deterministic mode)",
     "version": "1.0.0",
-    "supports": ["icp-1.0-core"]
+    "supports": [
+      "icp-1.0-core",
+      "icp-1.0-commerce"
+    ]
   },
   "stateset-rust": {
-    "command": ["../target/release/stateset-icp-iut"],
+    "command": [
+      "../target/release/stateset-icp-iut"
+    ],
     "language": "rust",
     "implementation": "crates/stateset-icp-iut (canonicalizes via stateset-crypto's hand-rolled RFC 8785 JCS impl; ed25519-dalek, x25519-dalek)",
     "version": "1.0.0",
-    "supports": ["icp-1.0-core"]
+    "supports": [
+      "icp-1.0-core"
+    ]
   },
   "stateset-go": {
-    "command": ["../crates/stateset-icp-iut-go/stateset-icp-iut-go"],
+    "command": [
+      "../crates/stateset-icp-iut-go/stateset-icp-iut-go"
+    ],
     "language": "go",
     "implementation": "crates/stateset-icp-iut-go (pure Go stdlib: crypto/ed25519, crypto/ecdh, custom canonical JSON)",
     "version": "1.0.0",
-    "supports": ["icp-1.0-core"]
+    "supports": [
+      "icp-1.0-core"
+    ]
   },
   "stateset-python": {
-    "command": ["python3", "../crates/stateset-icp-iut-py/iut.py"],
+    "command": [
+      "python3",
+      "../crates/stateset-icp-iut-py/iut.py"
+    ],
     "language": "python",
     "implementation": "crates/stateset-icp-iut-py (cryptography library + recursive RFC 8785 serializer)",
     "version": "1.0.0",
-    "supports": ["icp-1.0-core"]
+    "supports": [
+      "icp-1.0-core"
+    ]
   }
 }

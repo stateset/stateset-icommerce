@@ -1,0 +1,265 @@
+{
+  "test": "10-commerce-invariants",
+  "cases": [
+    {
+      "id": "ref01_under",
+      "kind": "refund",
+      "captured": "100.00",
+      "completed_refunds": "20.00",
+      "inflight_refunds": "0",
+      "requested": "50.00"
+    },
+    {
+      "id": "ref02_exact",
+      "kind": "refund",
+      "captured": "100.00",
+      "completed_refunds": "50.00",
+      "inflight_refunds": "0",
+      "requested": "50.00"
+    },
+    {
+      "id": "ref03_over",
+      "kind": "refund",
+      "captured": "100.00",
+      "completed_refunds": "50.00",
+      "inflight_refunds": "0",
+      "requested": "50.01"
+    },
+    {
+      "id": "ref04_inflight_ok",
+      "kind": "refund",
+      "captured": "100.00",
+      "completed_refunds": "20.00",
+      "inflight_refunds": "30.00",
+      "requested": "50.00"
+    },
+    {
+      "id": "ref05_inflight_over",
+      "kind": "refund",
+      "captured": "100.00",
+      "completed_refunds": "20.00",
+      "inflight_refunds": "30.00",
+      "requested": "50.01"
+    },
+    {
+      "id": "ref06_trailing_zero",
+      "kind": "refund",
+      "captured": "100.0",
+      "completed_refunds": "0",
+      "inflight_refunds": "0",
+      "requested": "100.000"
+    },
+    {
+      "id": "ref07_nothing_captured",
+      "kind": "refund",
+      "captured": "0",
+      "completed_refunds": "0",
+      "inflight_refunds": "0",
+      "requested": "0.01"
+    },
+    {
+      "id": "cap01_under",
+      "kind": "capture",
+      "order_total": "200.00",
+      "completed_captures": "50.00",
+      "inflight_captures": "0",
+      "requested": "100.00"
+    },
+    {
+      "id": "cap02_exact",
+      "kind": "capture",
+      "order_total": "200.00",
+      "completed_captures": "100.00",
+      "inflight_captures": "0",
+      "requested": "100.00"
+    },
+    {
+      "id": "cap03_over",
+      "kind": "capture",
+      "order_total": "200.00",
+      "completed_captures": "100.00",
+      "inflight_captures": "0",
+      "requested": "100.01"
+    },
+    {
+      "id": "cap04_inflight_over",
+      "kind": "capture",
+      "order_total": "200.00",
+      "completed_captures": "80.00",
+      "inflight_captures": "70.00",
+      "requested": "60.00"
+    },
+    {
+      "id": "retq01_under",
+      "kind": "return_quantity",
+      "ordered": 5,
+      "shipped": 5,
+      "already_returned": 0,
+      "requested": 3
+    },
+    {
+      "id": "retq02_exact",
+      "kind": "return_quantity",
+      "ordered": 5,
+      "shipped": 5,
+      "already_returned": 2,
+      "requested": 3
+    },
+    {
+      "id": "retq03_over",
+      "kind": "return_quantity",
+      "ordered": 5,
+      "shipped": 5,
+      "already_returned": 3,
+      "requested": 3
+    },
+    {
+      "id": "retq04_partial",
+      "kind": "return_quantity",
+      "ordered": 5,
+      "shipped": 2,
+      "already_returned": 0,
+      "requested": 2
+    },
+    {
+      "id": "retq05_over_shipped",
+      "kind": "return_quantity",
+      "ordered": 5,
+      "shipped": 2,
+      "already_returned": 0,
+      "requested": 3
+    },
+    {
+      "id": "retq06_unshipped",
+      "kind": "return_quantity",
+      "ordered": 5,
+      "shipped": 0,
+      "already_returned": 0,
+      "requested": 1
+    },
+    {
+      "id": "inv01_under",
+      "kind": "reserve",
+      "on_hand": "10",
+      "allocated": "2",
+      "requested": "5"
+    },
+    {
+      "id": "inv02_exact",
+      "kind": "reserve",
+      "on_hand": "10",
+      "allocated": "5",
+      "requested": "5"
+    },
+    {
+      "id": "inv03_over",
+      "kind": "reserve",
+      "on_hand": "10",
+      "allocated": "6",
+      "requested": "5"
+    },
+    {
+      "id": "inv04_none",
+      "kind": "reserve",
+      "on_hand": "0",
+      "allocated": "0",
+      "requested": "1"
+    },
+    {
+      "id": "gl01_balanced",
+      "kind": "journal_entry",
+      "lines": [
+        {
+          "debit": "100.00",
+          "credit": "0"
+        },
+        {
+          "debit": "0",
+          "credit": "100.00"
+        }
+      ]
+    },
+    {
+      "id": "gl02_unbalanced",
+      "kind": "journal_entry",
+      "lines": [
+        {
+          "debit": "100.00",
+          "credit": "0"
+        },
+        {
+          "debit": "0",
+          "credit": "99.99"
+        }
+      ]
+    },
+    {
+      "id": "gl03_multi_ok",
+      "kind": "journal_entry",
+      "lines": [
+        {
+          "debit": "60.00",
+          "credit": "0"
+        },
+        {
+          "debit": "40.00",
+          "credit": "0"
+        },
+        {
+          "debit": "0",
+          "credit": "100.00"
+        }
+      ]
+    },
+    {
+      "id": "gl04_both_sides",
+      "kind": "journal_entry",
+      "lines": [
+        {
+          "debit": "50.00",
+          "credit": "50.00"
+        },
+        {
+          "debit": "0",
+          "credit": "0"
+        }
+      ]
+    },
+    {
+      "id": "scale01_usd_ok",
+      "kind": "money_scale",
+      "currency": "USD",
+      "amount": "10.99"
+    },
+    {
+      "id": "scale02_usd_over",
+      "kind": "money_scale",
+      "currency": "USD",
+      "amount": "10.999"
+    },
+    {
+      "id": "scale03_usd_int",
+      "kind": "money_scale",
+      "currency": "USD",
+      "amount": "10"
+    },
+    {
+      "id": "scale04_jpy_ok",
+      "kind": "money_scale",
+      "currency": "JPY",
+      "amount": "1000"
+    },
+    {
+      "id": "scale05_jpy_over",
+      "kind": "money_scale",
+      "currency": "JPY",
+      "amount": "1000.5"
+    },
+    {
+      "id": "scale06_usdc_ok",
+      "kind": "money_scale",
+      "currency": "USDC",
+      "amount": "10.123456"
+    }
+  ]
+}

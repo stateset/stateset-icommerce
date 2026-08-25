@@ -1,0 +1,97 @@
+{
+  "decisions": {
+    "ref01_under": {
+      "valid": true
+    },
+    "ref02_exact": {
+      "valid": true
+    },
+    "ref03_over": {
+      "error": "commerce.refund.exceeds_captured"
+    },
+    "ref04_inflight_ok": {
+      "valid": true
+    },
+    "ref05_inflight_over": {
+      "error": "commerce.refund.exceeds_captured"
+    },
+    "ref06_trailing_zero": {
+      "valid": true
+    },
+    "ref07_nothing_captured": {
+      "error": "commerce.refund.exceeds_captured"
+    },
+    "cap01_under": {
+      "valid": true
+    },
+    "cap02_exact": {
+      "valid": true
+    },
+    "cap03_over": {
+      "error": "commerce.capture.exceeds_order_total"
+    },
+    "cap04_inflight_over": {
+      "error": "commerce.capture.exceeds_order_total"
+    },
+    "retq01_under": {
+      "valid": true
+    },
+    "retq02_exact": {
+      "valid": true
+    },
+    "retq03_over": {
+      "error": "commerce.return.exceeds_shipped"
+    },
+    "retq04_partial": {
+      "valid": true
+    },
+    "retq05_over_shipped": {
+      "error": "commerce.return.exceeds_shipped"
+    },
+    "retq06_unshipped": {
+      "error": "commerce.return.order_not_shipped"
+    },
+    "inv01_under": {
+      "valid": true
+    },
+    "inv02_exact": {
+      "valid": true
+    },
+    "inv03_over": {
+      "error": "commerce.inventory.insufficient_available"
+    },
+    "inv04_none": {
+      "error": "commerce.inventory.insufficient_available"
+    },
+    "gl01_balanced": {
+      "valid": true
+    },
+    "gl02_unbalanced": {
+      "error": "commerce.ledger.entry_unbalanced"
+    },
+    "gl03_multi_ok": {
+      "valid": true
+    },
+    "gl04_both_sides": {
+      "error": "commerce.ledger.line_not_single_sided"
+    },
+    "scale01_usd_ok": {
+      "valid": true
+    },
+    "scale02_usd_over": {
+      "error": "commerce.money.scale_exceeds_currency"
+    },
+    "scale03_usd_int": {
+      "valid": true
+    },
+    "scale04_jpy_ok": {
+      "valid": true
+    },
+    "scale05_jpy_over": {
+      "error": "commerce.money.scale_exceeds_currency"
+    },
+    "scale06_usdc_ok": {
+      "valid": true
+    }
+  }
+}

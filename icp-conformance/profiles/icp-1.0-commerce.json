@@ -1,0 +1,8 @@
+{
+  "name": "icp-1.0-commerce",
+  "spec_version": "icp-1.0",
+  "description": "Economic invariants an implementation MUST uphold to claim commerce-execution conformance: no over-refund or over-capture, returns bounded by shipped units, reservations that cannot oversell, balanced journal entries, and money within the currency's scale. Layered on top of icp-1.0-core, which covers identity, signing, canonicalization and the intent verbs.",
+  "vectors": [
+    "10-commerce-invariants"
+  ]
+}
