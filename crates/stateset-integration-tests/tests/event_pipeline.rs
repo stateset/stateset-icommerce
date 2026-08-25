@@ -144,6 +144,9 @@ fn return_create_emits_return_requested_event() {
     let order =
         commerce.orders().create(fixtures::create_order_input(customer.id)).expect("create order");
 
+    // A return requires a shipped order (the engine enforces this).
+    commerce.orders().ship(order.id, Some("TRACK-RET-0001")).expect("ship order");
+
     // Subscribe after order creation
     let mut subscription = commerce.subscribe_events();
 
