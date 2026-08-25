@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.24.0)'
+        description: 'Version to release (e.g., 1.25.0)'
         required: true
 
 env:
@@ -221,7 +221,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         # Explicit per-directory publish: `napi prepublish` (v2 CLI) exited in
-        # 0.4s without publishing anything in the 1.24.0 run. Idempotent so a
+        # 0.4s without publishing anything in the 1.25.0 run. Idempotent so a
         # partially published release can be resumed.
         run: |
           for dir in npm/*/; do

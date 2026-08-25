@@ -6,6 +6,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-08-25
+
 ### Added
 - **Financial/inventory invariant harness** (`crates/stateset-integration-tests/tests/invariants.rs`):
   a proptest that drives random-but-valid sequences of commerce operations (stock receipts, orders,
