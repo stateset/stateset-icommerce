@@ -13,7 +13,60 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// PostgreSQL payment repository
+/// Payment statuses that hold (or are about to hold) a slice of the order's
+/// total; in-flight captures count so concurrent captures cannot both pass.
+fn capturing_statuses() -> Vec<String> {
+    [
+        PaymentTransactionStatus::Pending,
+        PaymentTransactionStatus::Processing,
+        PaymentTransactionStatus::RequiresAction,
+        PaymentTransactionStatus::Completed,
+        PaymentTransactionStatus::PartiallyRefunded,
+        PaymentTransactionStatus::Refunded,
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect()
+}
+
+/// Over-capture guard: reject when Σ(in-flight + completed captures for the
+/// order, excluding `exclude_payment_id`) + `amount` would exceed
+/// `orders.total_amount`. Locks the order row with `FOR UPDATE` so concurrent
+/// captures for the same order serialize. A payment whose `order_id` does not
+/// resolve to an order has nothing to cap against and passes.
+async fn check_order_capture_capacity_pg(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    exclude_payment_id: Option<Uuid>,
+    amount: Decimal,
+) -> Result<()> {
+    let total: Option<(Decimal,)> =
+        sqlx::query_as("SELECT total_amount FROM orders WHERE id = $1 FOR UPDATE")
+            .bind(order_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+    let Some((total,)) = total else { return Ok(()) };
+
+    let (captured,): (Decimal,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(amount), 0) FROM payments \
+         WHERE order_id = $1 AND status = ANY($2) AND id IS DISTINCT FROM $3",
+    )
+    .bind(order_id)
+    .bind(capturing_statuses())
+    .bind(exclude_payment_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+
+    if captured + amount > total {
+        return Err(CommerceError::ValidationError(format!(
+            "Payment of {amount} would exceed order {order_id} total {total}: {captured} already captured or in flight"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct PgPaymentRepository {
     pool: PgPool,
@@ -294,6 +347,14 @@ impl PgPaymentRepository {
         let now = Utc::now();
         let payment_number = generate_payment_number();
 
+        // Over-capture check and INSERT share one transaction; the guard locks
+        // the order row so concurrent captures serialize.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        if let Some(order_id) = input.order_id {
+            check_order_capture_capacity_pg(tx.as_mut(), order_id.into_uuid(), None, input.amount)
+                .await?;
+        }
+
         sqlx::query(
             "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
              payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
@@ -325,9 +386,10 @@ impl PgPaymentRepository {
         .bind(&input.metadata)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -514,14 +576,30 @@ impl PgPaymentRepository {
     pub async fn mark_completed_async(&self, id: Uuid) -> Result<Payment> {
         let now = Utc::now();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        // Re-check the order's capacity at completion time (a failed/cancelled
+        // payment released its slice of the total and must not re-take it on
+        // top of captures made since).
+        let (order_id, amount): (Option<Uuid>, Decimal) =
+            sqlx::query_as("SELECT order_id, amount FROM payments WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        if let Some(order_id) = order_id {
+            check_order_capture_capacity_pg(tx.as_mut(), order_id, Some(id), amount).await?;
+        }
+
         sqlx::query("UPDATE payments SET status = $1, paid_at = $2, updated_at = $3 WHERE id = $4")
             .bind(PaymentTransactionStatus::Completed.to_string())
             .bind(now)
             .bind(now)
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -778,8 +856,11 @@ impl PgPaymentRepository {
     pub async fn fail_refund_async(&self, id: Uuid, reason: &str) -> Result<Refund> {
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE refunds SET status = $1, failure_reason = $2, updated_at = $3 WHERE id = $4",
+        // Only an in-flight refund can fail; a `Completed` refund is already
+        // folded into `payments.amount_refunded` (see the SQLite backend).
+        let rows = sqlx::query(
+            "UPDATE refunds SET status = $1, failure_reason = $2, updated_at = $3 \
+             WHERE id = $4 AND status IN ('pending', 'processing')",
         )
         .bind(RefundStatus::Failed.to_string())
         .bind(reason)
@@ -787,9 +868,17 @@ impl PgPaymentRepository {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
 
-        self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
+        let refund = self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if rows == 0 && refund.status != RefundStatus::Failed {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot fail a {} refund",
+                refund.status
+            )));
+        }
+        Ok(refund)
     }
 
     /// Create payment method (async)
@@ -997,6 +1086,16 @@ impl PgPaymentRepository {
             let id = Uuid::new_v4();
             let now = Utc::now();
             let payment_number = generate_payment_number();
+
+            if let Some(order_id) = input.order_id {
+                check_order_capture_capacity_pg(
+                    tx.as_mut(),
+                    order_id.into_uuid(),
+                    None,
+                    input.amount,
+                )
+                .await?;
+            }
 
             sqlx::query(
             "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,

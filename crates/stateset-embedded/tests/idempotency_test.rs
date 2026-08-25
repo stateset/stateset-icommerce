@@ -37,6 +37,8 @@ fn create_order_with_item(
             ..Default::default()
         })
         .expect("Failed to create order");
+    // Returns can only be requested against shipped goods.
+    commerce.orders().ship(order.id, None).expect("Failed to ship order");
 
     let item_id = order.items.first().expect("Order item missing").id;
     (order.id, item_id)

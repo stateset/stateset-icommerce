@@ -188,6 +188,14 @@ fn seed_order(state: &AppState) -> (OrderId, Uuid) {
     (order.id, first_item_id)
 }
 
+/// Like [`seed_order`], but the order is shipped: returns can only be requested
+/// against shipped goods.
+fn seed_shipped_order(state: &AppState) -> (OrderId, Uuid) {
+    let (order_id, item_id) = seed_order(state);
+    state.commerce().orders().ship(order_id, None).unwrap();
+    (order_id, item_id)
+}
+
 // ============================================================================
 // 1. Route Handler Response Shapes
 // ============================================================================
@@ -1234,6 +1242,7 @@ fn create_order_request_serialization_roundtrip() {
         notes: Some("Test notes".into()),
         payment_method: Some("card".into()),
         shipping_method: Some("express".into()),
+        stock_policy: stateset_core::StockPolicy::RejectIfInsufficient,
     };
 
     let serialized = serde_json::to_string(&req).unwrap();
@@ -1249,6 +1258,7 @@ fn create_order_request_serialization_roundtrip() {
     assert_eq!(deserialized.notes, Some("Test notes".into()));
     assert_eq!(deserialized.payment_method, Some("card".into()));
     assert_eq!(deserialized.shipping_method, Some("express".into()));
+    assert_eq!(deserialized.stock_policy, stateset_core::StockPolicy::RejectIfInsufficient);
 }
 
 #[test]
@@ -1587,7 +1597,7 @@ async fn list_returns_returns_200_with_empty_list() {
 #[tokio::test]
 async fn create_return_returns_201_with_correct_fields() {
     let state = AppState::new(test_commerce());
-    let (order_id, item_id) = seed_order(&state);
+    let (order_id, item_id) = seed_shipped_order(&state);
 
     let router = stateset_http::routes::api_router().with_state(state);
     let payload = json!({
@@ -1619,7 +1629,7 @@ async fn create_return_returns_201_with_correct_fields() {
 #[tokio::test]
 async fn get_return_by_id_returns_correct_return() {
     let state = AppState::new(test_commerce());
-    let (order_id, item_id) = seed_order(&state);
+    let (order_id, item_id) = seed_shipped_order(&state);
 
     // Create return via API
     let create_router = stateset_http::routes::api_router().with_state(state.clone());
@@ -1675,7 +1685,7 @@ async fn get_return_nonexistent_returns_404() {
 #[tokio::test]
 async fn create_return_with_invalid_reason_returns_400() {
     let state = AppState::new(test_commerce());
-    let (order_id, item_id) = seed_order(&state);
+    let (order_id, item_id) = seed_shipped_order(&state);
 
     let router = stateset_http::routes::api_router().with_state(state);
     let payload = json!({
@@ -1713,7 +1723,7 @@ async fn list_returns_with_custom_pagination() {
 #[tokio::test]
 async fn e2e_create_return_then_list_returns() {
     let state = AppState::new(test_commerce());
-    let (order_id, item_id) = seed_order(&state);
+    let (order_id, item_id) = seed_shipped_order(&state);
 
     // Create two returns for the same order (different items via separate orders)
     for reason in ["defective", "changed_mind"] {
@@ -2386,6 +2396,7 @@ async fn create_shipment_returns_201() {
             notes: None,
             payment_method: None,
             shipping_method: None,
+            stock_policy: stateset_core::StockPolicy::default(),
         })
         .unwrap();
 
@@ -2794,7 +2805,7 @@ async fn e2e_return_processing_approve() {
 async fn e2e_return_different_reasons() {
     for reason in ["changed_mind", "wrong_item", "not_as_described"] {
         let state = AppState::new(test_commerce());
-        let (order_id, item_id) = seed_order(&state);
+        let (order_id, item_id) = seed_shipped_order(&state);
         let router = stateset_http::routes::api_router().with_state(state);
         let body = json!({ "order_id": order_id, "reason": reason, "items": [{"order_item_id": item_id, "quantity": 1}] });
         let resp = router
@@ -3661,7 +3672,7 @@ async fn concurrent_customer_creation() {
 #[tokio::test]
 async fn error_return_with_zero_quantity() {
     let (router, state) = app_with_state();
-    let (order_id, item_id) = seed_order(&state);
+    let (order_id, item_id) = seed_shipped_order(&state);
     let body = json!({ "order_id": order_id, "reason": "defective", "items": [{"order_item_id": item_id, "quantity": 0}] });
     let resp = router
         .oneshot(
@@ -4317,4 +4328,67 @@ async fn gl_close_month_bad_period_ids() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn create_order_stock_policy_reject_if_insufficient_returns_400_and_persists_nothing() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    state
+        .commerce()
+        .inventory()
+        .create_item(stateset_core::CreateInventoryItem {
+            sku: "POLICY-HTTP-SKU".into(),
+            name: "Scarce Widget".into(),
+            initial_quantity: Some(dec!(1)),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let payload = json!({
+        "customer_id": customer_id,
+        "items": [{
+            "product_id": product_id,
+            "sku": "POLICY-HTTP-SKU",
+            "name": "Scarce Widget",
+            "quantity": 3,
+            "unit_price": "19.99"
+        }],
+        "stock_policy": "reject_if_insufficient"
+    });
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["code"], "bad_request");
+    assert!(json["error"]["message"].as_str().unwrap().contains("Insufficient stock"), "{json}");
+
+    let orders = state.commerce().orders().list(stateset_core::OrderFilter::default()).unwrap();
+    assert!(orders.is_empty(), "rejected order must not be persisted");
+    let stock = state.commerce().inventory().get_stock("POLICY-HTTP-SKU").unwrap().unwrap();
+    assert_eq!(stock.total_available, dec!(1));
+
+    // The default policy (field omitted) still creates the order and backorders the rest.
+    let mut default_payload = payload.clone();
+    default_payload.as_object_mut().unwrap().remove("stock_policy");
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&default_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
 }

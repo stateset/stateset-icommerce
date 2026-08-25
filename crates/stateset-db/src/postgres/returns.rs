@@ -7,8 +7,8 @@ use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     BatchResult, CommerceError, CreateReturn, CustomerId, ItemCondition, OrderId, OrderItemId,
-    Result, Return, ReturnFilter, ReturnId, ReturnItem, ReturnReason, ReturnRepository,
-    ReturnStatus, UpdateReturn, validate_batch_size,
+    OrderStatus, Result, Return, ReturnFilter, ReturnId, ReturnItem, ReturnReason,
+    ReturnRepository, ReturnStatus, UpdateReturn, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -16,6 +16,20 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct PgReturnRepository {
     pool: PgPool,
+}
+
+/// Returns may only be requested against `Shipped` or `Delivered` orders (see
+/// the SQLite backend for the rationale).
+fn ensure_order_returnable(order_id: Uuid, raw_status: &str) -> Result<()> {
+    let status: OrderStatus = raw_status.parse().map_err(|e| {
+        CommerceError::DatabaseError(format!("Invalid order.status '{raw_status}': {e}"))
+    })?;
+    if matches!(status, OrderStatus::Shipped | OrderStatus::Delivered) {
+        return Ok(());
+    }
+    Err(CommerceError::ValidationError(format!(
+        "Order {order_id} must be shipped or delivered before a return can be requested (current status: {status})"
+    )))
 }
 
 /// Validate a single return line against its order item, on the given
@@ -203,12 +217,14 @@ impl PgReturnRepository {
         // a partially-created return behind.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        // Get customer_id from order
-        let order_info: (Uuid,) = sqlx::query_as("SELECT customer_id FROM orders WHERE id = $1")
-            .bind(input.order_id.into_uuid())
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(|_| CommerceError::OrderNotFound(input.order_id.into_uuid()))?;
+        // Get customer_id from order, and make sure it is returnable.
+        let order_info: (Uuid, String) =
+            sqlx::query_as("SELECT customer_id, status FROM orders WHERE id = $1")
+                .bind(input.order_id.into_uuid())
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(|_| CommerceError::OrderNotFound(input.order_id.into_uuid()))?;
+        ensure_order_returnable(input.order_id.into_uuid(), &order_info.1)?;
 
         let customer_id = order_info.0;
 
@@ -620,13 +636,14 @@ impl PgReturnRepository {
             let id = Uuid::new_v4();
             let now = Utc::now();
 
-            // Get customer_id from order
-            let order_info: (Uuid,) =
-                sqlx::query_as("SELECT customer_id FROM orders WHERE id = $1")
+            // Get customer_id from order, and make sure it is returnable.
+            let order_info: (Uuid, String) =
+                sqlx::query_as("SELECT customer_id, status FROM orders WHERE id = $1")
                     .bind(input.order_id.into_uuid())
                     .fetch_one(tx.as_mut())
                     .await
                     .map_err(|_| CommerceError::OrderNotFound(input.order_id.into_uuid()))?;
+            ensure_order_returnable(input.order_id.into_uuid(), &order_info.1)?;
 
             let customer_id = order_info.0;
 

@@ -108,6 +108,8 @@ fn test_metrics_record_key_engine_operations() {
         .unwrap();
     commerce.payments().mark_completed(payment.id).unwrap();
 
+    // Returns can only be requested against shipped goods.
+    commerce.orders().ship(order.id, None).unwrap();
     commerce
         .returns()
         .create(CreateReturn {

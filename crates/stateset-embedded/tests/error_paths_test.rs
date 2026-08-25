@@ -434,6 +434,9 @@ fn test_return_approve_already_approved() {
         })
         .expect("Failed to create order");
 
+    // Returns can only be requested against shipped goods.
+    commerce.orders().ship(order.id, None).expect("Failed to ship order");
+
     // Get order to access items
     let order_with_items =
         commerce.orders().get(order.id).expect("Failed to get order").expect("Order not found");
