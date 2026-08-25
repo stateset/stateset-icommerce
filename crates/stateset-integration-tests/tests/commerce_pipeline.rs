@@ -255,6 +255,9 @@ fn create_return_approve_and_verify() {
     let order =
         commerce.orders().create(fixtures::create_order_input(customer.id)).expect("create order");
 
+    // A return requires a shipped order (the engine enforces this).
+    commerce.orders().ship(order.id, Some("TRACK-RET-0001")).expect("ship order");
+
     // Create a return against that order
     let ret = commerce
         .returns()
