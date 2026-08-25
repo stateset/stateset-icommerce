@@ -222,6 +222,8 @@ describe('mcp http — --strict-protocol', () => {
 
 const ORIGIN_PORT = DEFAULT_PORT + 800;
 const ANY_HOST_PORT = DEFAULT_PORT + 1200;
+const AUTH_PORT = DEFAULT_PORT + 1600;
+const NO_AUTH_PORT = DEFAULT_PORT + 2000;
 
 /** Collect stderr and the exit code of a server that is expected to die. */
 function spawnAndCollect(args) {
@@ -350,10 +352,188 @@ describe('mcp http — non-loopback bind fails closed', () => {
       '--port',
       String(ANY_HOST_PORT),
       '--insecure-allow-any-host',
+      '--api-key',
+      API_KEY,
     ]);
     try {
       const health = await waitForHealth(`http://127.0.0.1:${ANY_HOST_PORT}`);
       assert.equal(health.status, 'ok');
+    } finally {
+      child.kill('SIGTERM');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// API-key authentication
+// ---------------------------------------------------------------------------
+
+const API_KEY = 'test-placeholder-key-not-a-secret'; // gitleaks:allow;
+const OTHER_KEY = 'other-placeholder-key-not-a-secret'; // gitleaks:allow;
+
+const listWithHeaders = (base, extra = {}) =>
+  fetch(`${base}/mcp`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      'Mcp-Method': 'tools/list',
+      ...extra,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+      params: { _meta: ENVELOPE },
+    }),
+  });
+
+describe('mcp http — auth off by default on a loopback bind', () => {
+  const BASE = `http://127.0.0.1:${NO_AUTH_PORT}`;
+  let child;
+
+  before(async () => {
+    child = spawnServer(['--port', String(NO_AUTH_PORT)]);
+    await waitForHealth(BASE);
+  });
+
+  after(() => {
+    child?.kill('SIGTERM');
+  });
+
+  it('serves /mcp without any credential and reports auth off', async () => {
+    const health = await waitForHealth(BASE);
+    assert.equal(health.auth, 'off');
+    const res = await listWithHeaders(BASE);
+    assert.equal(res.status, 200);
+    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+  });
+});
+
+describe('mcp http — API-key authentication', () => {
+  const BASE = `http://127.0.0.1:${AUTH_PORT}`;
+  let child;
+  let stderr = '';
+
+  before(async () => {
+    child = spawn(process.execPath, [BIN, '--port', String(AUTH_PORT), '--api-key', API_KEY], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env, STATESET_MCP_API_KEYS: OTHER_KEY },
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    await waitForHealth(BASE);
+  });
+
+  after(() => {
+    child?.kill('SIGTERM');
+  });
+
+  it('rejects a request with no credential with 401 + WWW-Authenticate', async () => {
+    const res = await listWithHeaders(BASE);
+    assert.equal(res.status, 401);
+    assert.match(res.headers.get('www-authenticate'), /^Bearer/);
+    const body = await res.json();
+    assert.equal(body.jsonrpc, '2.0');
+    assert.equal(body.error.code, -32001);
+    assert.match(body.error.message, /missing API key/);
+  });
+
+  it('rejects a wrong key with 401', async () => {
+    const res = await listWithHeaders(BASE, { Authorization: 'Bearer nope-nope-nope-nope-nope' });
+    assert.equal(res.status, 401);
+    assert.match((await res.json()).error.message, /invalid API key/);
+  });
+
+  it('serves a modern request with a valid Bearer key', async () => {
+    const res = await listWithHeaders(BASE, { Authorization: `Bearer ${API_KEY}` });
+    assert.equal(res.status, 200);
+    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+  });
+
+  it('serves a request with a valid X-API-Key, including one from the env var', async () => {
+    for (const key of [API_KEY, OTHER_KEY]) {
+      const res = await listWithHeaders(BASE, { 'X-API-Key': key });
+      assert.equal(res.status, 200, `X-API-Key ${key === API_KEY ? 'flag' : 'env'} key`);
+    }
+  });
+
+  it('lets a 2025-era initialize through with a valid key', async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'legacy-test', version: '0' },
+        },
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(parseBody(await res.text()).result.serverInfo.name, 'stateset-commerce');
+  });
+
+  it('keeps /health open but hides operational details from anonymous callers', async () => {
+    const anon = await (await fetch(`${BASE}/health`)).json();
+    assert.equal(anon.status, 'ok');
+    assert.equal(anon.auth, 'required');
+    assert.equal(anon.db, undefined, 'the store path must not leak to anonymous callers');
+    const authed = await (
+      await fetch(`${BASE}/health`, { headers: { 'X-API-Key': API_KEY } })
+    ).json();
+    assert.equal(authed.db, ':memory:');
+  });
+
+  it('logs "auth: required" with a fingerprint and never the key', () => {
+    assert.match(stderr, /auth: required \(2 keys: [0-9a-f]{6},[0-9a-f]{6}\)/);
+    assert.ok(!stderr.includes(API_KEY));
+    assert.ok(!stderr.includes(OTHER_KEY));
+  });
+});
+
+describe('mcp http — non-loopback bind requires auth', () => {
+  it('exits non-zero without a key and names the fix', async () => {
+    const { code, stderr } = await spawnAndCollect([
+      '--host',
+      '0.0.0.0',
+      '--port',
+      String(ANY_HOST_PORT),
+      '--insecure-allow-any-host',
+    ]);
+    assert.notEqual(code, 0, 'a non-loopback bind with no API key must not start');
+    assert.match(stderr, /--api-key/);
+    assert.match(stderr, /STATESET_MCP_API_KEYS/);
+    assert.match(stderr, /--insecure-no-auth/);
+  });
+
+  it('starts with --insecure-no-auth and warns', async () => {
+    const child = spawnServer([
+      '--host',
+      '0.0.0.0',
+      '--port',
+      String(ANY_HOST_PORT),
+      '--insecure-allow-any-host',
+      '--insecure-no-auth',
+    ]);
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    try {
+      const health = await waitForHealth(`http://127.0.0.1:${ANY_HOST_PORT}`);
+      assert.equal(health.status, 'ok');
+      assert.equal(health.auth, 'off');
+      assert.match(stderr, /WARNING: --insecure-no-auth/);
+      assert.match(stderr, /auth: OFF \(insecure\)/);
     } finally {
       child.kill('SIGTERM');
     }

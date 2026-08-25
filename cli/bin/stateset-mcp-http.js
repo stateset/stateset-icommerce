@@ -21,10 +21,10 @@
  * and it is shared by every request: `--db` (default `:memory:`, a private
  * temp-file-backed store seeded with demo data once at boot). Point `--db` at a
  * real file to serve a durable store; writes are then disabled unless you pass
- * `--apply`, since this server has no auth of its own.
+ * `--apply`.
  *
- * Two request guards run in front of the SDK handler, which is deliberately
- * validation-free:
+ * Three request guards run in front of the SDK handler, which is deliberately
+ * validation-free, in the order Host → Origin → Auth:
  *   - Host (DNS rebinding): a loopback bind accepts only localhost Host values;
  *     any other bind REQUIRES `--allowed-host` (repeatable) and refuses to start
  *     without it, unless `--insecure-allow-any-host` is passed explicitly.
@@ -33,6 +33,16 @@
  *     localhost origins; anything else must be listed via `--allowed-origin`
  *     (repeatable). Requests with no `Origin` — every non-browser MCP client —
  *     always pass.
+ *   - Auth (API key): when any key is configured (`--api-key`, repeatable;
+ *     `STATESET_MCP_API_KEYS`, comma-separated; `--api-key-file`), every `/mcp`
+ *     request must present `Authorization: Bearer <key>` or `X-API-Key: <key>`
+ *     or it gets 401 with a JSON-RPC error body and a `WWW-Authenticate`
+ *     challenge. Keys are compared in constant time and never logged (only a
+ *     6-char sha256 fingerprint). A non-loopback bind REQUIRES a key and
+ *     refuses to start without one, unless `--insecure-no-auth` is passed
+ *     explicitly. On a loopback bind auth is optional (off by default).
+ *     `/health` stays open but reports only `status`/`version`/`protocol`
+ *     to unauthenticated callers once auth is on.
  *
  * Contrast with the siblings:
  *   - `stateset-mcp`         stdio, one shared database, writes need --apply
@@ -42,6 +52,12 @@ import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
 import { runMain } from '../src/graceful-shutdown.js';
 import { CLI_VERSION } from '../src/config.js';
+import {
+  API_KEYS_ENV,
+  collectApiKeys,
+  createApiKeyGuard,
+  keyFingerprint,
+} from '../src/mcp/http-api-keys.js';
 
 const HELP = `
 StateSet Commerce MCP Server — Streamable HTTP (protocol 2026-07-28)  v${CLI_VERSION}
@@ -71,10 +87,21 @@ OPTIONS:
                          any other Origin get 403. Default: localhost origins
                          on a loopback bind, none otherwise. Requests with no
                          Origin header (non-browser clients) always pass.
+  --api-key <key>        API key clients must present (repeatable). Also read
+                         from STATESET_MCP_API_KEYS (comma-separated). Clients
+                         send "Authorization: Bearer <key>" or "X-API-Key".
+                         REQUIRED for any non-loopback --host; optional on
+                         loopback. Keys must be at least 16 characters.
+  --api-key-file <path>  File of API keys, one per line (# comments allowed).
+  --insecure-no-auth     Serve a non-loopback bind with NO authentication. Only
+                         behind a proxy that authenticates every request itself.
   -h, --help             Show this help
 
 CONNECT (Claude Desktop / any Streamable-HTTP MCP client):
   { "mcpServers": { "stateset": { "url": "http://localhost:8090/mcp" } } }
+  With a key:
+  { "mcpServers": { "stateset": { "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <key>" } } } }
 `;
 
 /**
@@ -111,6 +138,9 @@ async function main() {
       'allowed-host': { type: 'string', multiple: true },
       'allowed-origin': { type: 'string', multiple: true },
       'insecure-allow-any-host': { type: 'boolean', default: false },
+      'api-key': { type: 'string', multiple: true },
+      'api-key-file': { type: 'string' },
+      'insecure-no-auth': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -145,7 +175,8 @@ async function main() {
   const seed = !values['no-seed'];
 
   // Writes are safe by default only when the store is ephemeral. A durable --db
-  // needs explicit --apply, because this server ships no authentication.
+  // needs explicit --apply regardless of auth: a key proves who the caller is,
+  // not that the operator wants this replica mutating a real store.
   const allowApply = values['read-only'] ? false : ephemeralDb || values.apply;
 
   // DNS-rebinding protection: a browser on a victim's machine must not reach a
@@ -184,6 +215,32 @@ async function main() {
   const allowedOrigins =
     explicitOrigins.length > 0 ? explicitOrigins : loopback ? localhostAllowedOrigins() : [];
   const validateOrigin = originValidation(allowedOrigins);
+
+  // Authentication: an exposed bind is reachable by anyone who can route to
+  // it, so it FAILS CLOSED without a key. `--insecure-no-auth` is the
+  // deliberate escape hatch for a proxy that authenticates upstream. Loopback
+  // is local-only by construction; keys there are honoured but optional.
+  const apiKeys = collectApiKeys({
+    flags: values['api-key'],
+    env: process.env[API_KEYS_ENV],
+    file: values['api-key-file'],
+  });
+  const validateAuth = createApiKeyGuard(apiKeys);
+  if (!validateAuth && !loopback) {
+    if (values['insecure-no-auth']) {
+      console.error(
+        `[stateset-mcp-http] WARNING: --insecure-no-auth on ${host}: /mcp accepts requests from ` +
+          'ANYONE who can reach this port. Only run this behind a proxy that authenticates every request.',
+      );
+    } else {
+      throw new Error(
+        `refusing to bind ${host}:${port} without authentication. A non-loopback bind must ` +
+          `configure at least one API key via --api-key <key>, ${API_KEYS_ENV}=<key,...> or ` +
+          '--api-key-file <path>. To serve without auth (behind a proxy that authenticates ' +
+          'every request) pass --insecure-no-auth.',
+      );
+    }
+  }
 
   // The store is the only state, shared by every request.
   const commerce = new Commerce(dbPath);
@@ -224,15 +281,31 @@ async function main() {
     res.end(JSON.stringify(body));
   }
 
+  /** Throwaway response so the auth guard can be consulted without writing a 401. */
+  const nullRes = () => ({ writeHead() {}, end() {} });
+
   const server = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url || '/', `http://${host}:${port}`);
 
       if (url.pathname === '/health') {
+        // Open for deploy probes, but once auth is on the operational details
+        // (store path, write mode) are only for authenticated callers.
+        const authed = !validateAuth || validateAuth(req, nullRes());
+        if (!authed) {
+          sendJson(res, 200, {
+            status: 'ok',
+            version: CLI_VERSION,
+            protocol: '2026-07-28',
+            auth: 'required',
+          });
+          return;
+        }
         sendJson(res, 200, {
           status: 'ok',
           version: CLI_VERSION,
           protocol: '2026-07-28',
+          auth: validateAuth ? 'required' : 'off',
           legacy: values['strict-protocol'] ? 'reject' : 'stateless',
           stateless: true,
           db: dbPath,
@@ -252,6 +325,7 @@ async function main() {
       // validation-free. A guard that rejects has already written the response.
       if (validateHost && !validateHost(req, res)) return;
       if (!validateOrigin(req, res)) return;
+      if (validateAuth && !validateAuth(req, res)) return;
 
       await mcpHandler(req, res);
     })().catch((error) => {
@@ -275,6 +349,7 @@ async function main() {
       `writes: ${allowApply ? 'enabled' : 'read-only'}, ` +
       `legacy 2025 clients: ${values['strict-protocol'] ? 'rejected' : 'served statelessly'}, ` +
       `hosts: ${explicitHosts.length > 0 ? explicitHosts.join(',') : loopback ? 'localhost' : 'ANY (insecure)'}, ` +
+      `auth: ${validateAuth ? `required (${apiKeys.length} key${apiKeys.length === 1 ? '' : 's'}: ${apiKeys.map(keyFingerprint).join(',')})` : loopback ? 'off' : 'OFF (insecure)'}, ` +
       `origins: ${allowedOrigins.length > 0 ? allowedOrigins.join(',') : 'none (Origin-bearing requests rejected)'})`,
   );
 }
