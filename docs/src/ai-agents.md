@@ -333,10 +333,10 @@ and `Mcp-Name` headers.
 Flags: `--host 0.0.0.0` to expose, `--db <path>` for a durable store (writes
 then require `--apply`), `--read-only` to disable writes, `--no-seed` for an
 empty store, `--strict-protocol` to refuse 2025-era clients.
-`GET /health` reports status for deploy probes. There is deliberately no auth;
-front it with your proxy for private hosting.
+`GET /health` reports status for deploy probes.
 
-Two request guards sit in front of the MCP handler:
+Three request guards sit in front of the MCP handler, in the order
+Host → Origin → Auth:
 
 - **Host (DNS rebinding)** — `--allowed-host <hostname>` (repeatable). A
   loopback bind allows only localhost Host values by default. Any other
@@ -348,11 +348,48 @@ Two request guards sit in front of the MCP handler:
   hostname). A request carrying any other `Origin` gets `403`. A loopback bind
   allows localhost origins by default; an exposed bind allows none. Requests
   with no `Origin` header — every non-browser MCP client — always pass.
+- **Auth (API key)** — `--api-key <key>` (repeatable), `STATESET_MCP_API_KEYS`
+  (comma-separated) or `--api-key-file <path>` (one per line). Once any key is
+  configured every `/mcp` request must carry `Authorization: Bearer <key>` or
+  `X-API-Key: <key>`; anything else gets `401` with a JSON-RPC error body and a
+  `WWW-Authenticate: Bearer` challenge. Keys are at least 16 characters,
+  compared in constant time, and never logged — the boot line shows only a
+  6-char SHA-256 fingerprint per key. A non-loopback `--host` **refuses to
+  start** without a key; pass `--insecure-no-auth` only behind a proxy that
+  authenticates every request itself. On loopback, auth is off unless you give
+  a key. `/health` stays open but shows only `status`/`version`/`protocol` to
+  anonymous callers once auth is on.
 
 ```bash
+STATESET_MCP_API_KEYS="$(openssl rand -hex 24)" \
 stateset-mcp-http --host 0.0.0.0 --port 8090 \
   --allowed-host mcp.example.com \
   --allowed-origin https://agent.example.com
+```
+
+Clients pass the key as a header. Claude Desktop / Claude Code (`.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "stateset": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <key>" }
+    }
+  }
+}
+```
+
+The TypeScript SDK's `StreamableHTTPClientTransport` takes the same header via
+`requestInit: { headers: { Authorization: 'Bearer <key>' } }`; from a shell:
+
+```bash
+curl -sS https://mcp.example.com/mcp \
+  -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -H 'Mcp-Method: tools/list' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},"io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
 2025-era clients (those predating the `_meta` envelope) are still served, on the
