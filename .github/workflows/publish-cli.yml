@@ -57,11 +57,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian-aarch64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
@@ -75,8 +77,13 @@ jobs:
             target: aarch64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
-    # musl targets build inside the napi-rs alpine image (matrix.docker), which
-    # ships node + rustup with musl toolchains. Empty for the other targets.
+    # Linux targets all build inside a napi-rs image (matrix.docker): alpine for
+    # musl, debian (bullseye, glibc 2.31) for gnu. The gnu lanes MUST NOT build on
+    # the bare ubuntu-latest runner — its glibc is far newer than the oldest
+    # supported consumer, and the produced .node then fails to load at require()
+    # time on Ubuntu 20.04 / Debian 11 / RHEL 8 with
+    # "version `GLIBC_2.34' not found". The glibc ceiling check below enforces it.
+    # Empty for macOS/Windows.
     container: ${{ matrix.docker }}
     name: Build - ${{ matrix.target }}
 
@@ -105,11 +112,8 @@ jobs:
       - name: Add target to the active (pinned) toolchain
         run: rustup target add ${{ matrix.target }}
 
-      - name: Install dependencies (Linux ARM)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+      # The napi debian-aarch64 image already ships the aarch64 cross toolchain,
+      # so nothing to install there (and it has no sudo).
 
       # napi cross-links the aarch64 musl lane through zig, which the alpine
       # image does not ship; without it the build silently falls back to the
@@ -140,6 +144,31 @@ jobs:
           else
             npm run build -- --target ${{ matrix.target }}
           fi
+
+      # A .node built against a newer glibc than the oldest supported consumer
+      # installs fine and then dies at require() with "version `GLIBC_2.xx' not
+      # found". Nothing else in CI can catch that: every runner has a new glibc.
+      # This gate fails the release instead of shipping a silently broken binary.
+      - name: Check glibc ceiling (gnu Linux targets)
+        if: endsWith(matrix.target, '-unknown-linux-gnu')
+        working-directory: bindings/node
+        shell: bash
+        env:
+          MAX_GLIBC: '2.31'
+        run: |
+          set -euo pipefail
+          command -v objdump >/dev/null || { apt-get update && apt-get install -y binutils; }
+          status=0
+          for f in *.node; do
+            highest=$(objdump -T "$f" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu | tail -1 | sed 's/GLIBC_//')
+            [ -z "$highest" ] && { echo "$f: no glibc symbols (static?) - ok"; continue; }
+            echo "$f requires glibc <= $highest (ceiling $MAX_GLIBC)"
+            if [ "$(printf '%s\n%s\n' "$MAX_GLIBC" "$highest" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+              echo "::error file=$f::requires GLIBC_$highest, above the $MAX_GLIBC ceiling; it will fail to load on Ubuntu 20.04 / Debian 11 / RHEL 8. Build this target in the napi-rs debian image."
+              status=1
+            fi
+          done
+          exit $status
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
