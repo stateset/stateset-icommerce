@@ -429,7 +429,7 @@ impl PgKernelExecutor {
 
         if let Some(variants) = &input.variants {
             for (index, variant) in variants.iter().enumerate() {
-                let options = serde_json::to_value(&variant.options.clone().unwrap_or_default())
+                let options = serde_json::to_value(variant.options.clone().unwrap_or_default())
                     .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
                 sqlx::query(
                     "INSERT INTO product_variants (

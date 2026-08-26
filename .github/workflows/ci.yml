@@ -48,6 +48,9 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+      - name: Install CLI dependencies for catalog verification
+        working-directory: cli
+        run: npm ci
       - name: Verify governed command coverage
         run: node scripts/ci/check_kernel_coverage.mjs
       - name: Run authority, policy, atomicity, replay, and tamper evals

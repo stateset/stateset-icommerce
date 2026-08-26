@@ -38,7 +38,7 @@
     "@radix-ui/react-tabs": "^1.0.4",
     "@radix-ui/react-toast": "^1.1.5",
     "@radix-ui/react-tooltip": "^1.0.7",
-    "@stateset/design": "file:../../stateset-design",
+    "@stateset/design": "file:vendor/stateset-design",
     "@stateset/embedded": "file:../bindings/node",
     "@tanstack/react-table": "^8.11.8",
     "@tremor/react": "^3.14.1",

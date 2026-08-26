@@ -3,7 +3,7 @@
 //! The [`Money`] type pairs an amount with a [`CurrencyCode`], preventing
 //! accidental arithmetic between different currencies at the type level.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use core::fmt;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
