@@ -20,7 +20,8 @@
     "implementation": "crates/stateset-icp-iut (canonicalizes via stateset-crypto's hand-rolled RFC 8785 JCS impl; ed25519-dalek, x25519-dalek)",
     "version": "1.0.0",
     "supports": [
-      "icp-1.0-core"
+      "icp-1.0-core",
+      "icp-1.0-commerce"
     ]
   },
   "stateset-go": {
@@ -31,7 +32,8 @@
     "implementation": "crates/stateset-icp-iut-go (pure Go stdlib: crypto/ed25519, crypto/ecdh, custom canonical JSON)",
     "version": "1.0.0",
     "supports": [
-      "icp-1.0-core"
+      "icp-1.0-core",
+      "icp-1.0-commerce"
     ]
   },
   "stateset-python": {
@@ -43,7 +45,8 @@
     "implementation": "crates/stateset-icp-iut-py (cryptography library + recursive RFC 8785 serializer)",
     "version": "1.0.0",
     "supports": [
-      "icp-1.0-core"
+      "icp-1.0-core",
+      "icp-1.0-commerce"
     ]
   }
 }

@@ -42,6 +42,7 @@ fn run() -> Result<()> {
         "07-settlement-receipts" => run_07_settlement_receipts(&input)?,
         "08-timing" => run_08_timing(&input)?,
         "09-ceilings" => run_09_ceilings(&input)?,
+        "10-commerce-invariants" => run_10_commerce_invariants(&input)?,
         other => {
             // Per iut.protocol.md: exit 2 + JSON on stderr signals SKIP.
             eprintln!(
@@ -55,6 +56,181 @@ fn run() -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{}", serde_json::to_string_pretty(&output).context("serialize output")?)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: Commerce invariants — refunds/captures/returns/inventory/GL/scale
+// ---------------------------------------------------------------------------
+
+/// Number of minor units a currency permits. Unknown currencies fall back to
+/// the ISO 4217 default of 2.
+const fn currency_scale(code: &str) -> usize {
+    match code.as_bytes() {
+        b"JPY" | b"KRW" | b"VND" | b"CLP" | b"ISK" => 0,
+        b"BHD" | b"JOD" | b"KWD" | b"OMR" | b"TND" => 3,
+        b"USDC" | b"USDT" => 6,
+        b"ETH" => 18,
+        _ => 2,
+    }
+}
+
+/// Decimal places carried by a non-negative decimal string, ignoring nothing —
+/// `10.999` is 3 even though the currency may allow fewer. Trailing zeros count
+/// as written; a bare integer is 0.
+fn decimal_places(a: &str) -> usize {
+    a.split_once('.').map_or(0, |(_, frac)| frac.len())
+}
+
+/// Decimal places that actually carry precision: trailing zeros are
+/// numerically insignificant and MUST NOT change a verdict, so `10.9900` is
+/// two-scale (valid USD), while `10.9901` is four-scale (not).
+fn significant_decimal_places(a: &str) -> usize {
+    a.split_once('.').map_or(0, |(_, frac)| frac.trim_end_matches('0').len())
+}
+
+/// Exact sum of non-negative decimal strings, rendered back as a decimal string
+/// at the widest input scale. i128 at these magnitudes cannot overflow, but a
+/// saturating add keeps the function total.
+fn add_amounts(parts: &[&str]) -> String {
+    let scale = parts.iter().map(|p| decimal_places(p)).max().unwrap_or(0);
+    let mut total: i128 = 0;
+    for p in parts {
+        total = total.saturating_add(scaled_units(p, scale));
+    }
+    render_units(total, scale)
+}
+
+/// Scale a non-negative decimal string to an integer count of `scale`-decimal
+/// units. Non-numeric input yields 0 (callers validate shape beforehand).
+fn scaled_units(a: &str, scale: usize) -> i128 {
+    let (int, frac) = a.split_once('.').unwrap_or((a, ""));
+    let mut padded = format!("{frac:0<scale$}");
+    padded.truncate(scale);
+    let mut digits = String::with_capacity(int.len() + scale);
+    digits.push_str(int);
+    digits.push_str(&padded);
+    digits.retain(|c| c.is_ascii_digit());
+    digits.parse::<i128>().unwrap_or(0)
+}
+
+fn render_units(units: i128, scale: usize) -> String {
+    if scale == 0 {
+        return units.to_string();
+    }
+    let divisor = 10_i128.saturating_pow(u32::try_from(scale).unwrap_or(0));
+    format!("{}.{:0>scale$}", units / divisor, (units % divisor).abs(), scale = scale)
+}
+
+fn ok_or_error(violated: bool, code: &str) -> Value {
+    if violated { json!({"error": code}) } else { json!({"valid": true}) }
+}
+
+fn case_amount<'a>(case: &'a Value, key: &str) -> Result<&'a str> {
+    case.get(key).and_then(Value::as_str).with_context(|| format!("case.{key}"))
+}
+
+fn case_qty(case: &Value, key: &str) -> Result<i64> {
+    case.get(key).and_then(Value::as_i64).with_context(|| format!("case.{key}"))
+}
+
+fn run_10_commerce_invariants(input: &Value) -> Result<Value> {
+    let cases =
+        input.get("cases").and_then(Value::as_array).context("input.cases must be an array")?;
+    let mut decisions = serde_json::Map::new();
+    for case in cases {
+        let id = case.get("id").and_then(Value::as_str).context("case.id")?;
+        let kind = case.get("kind").and_then(Value::as_str).context("case.kind")?;
+        let decision = match kind {
+            "refund" => {
+                let total = add_amounts(&[
+                    case_amount(case, "completed_refunds")?,
+                    case_amount(case, "inflight_refunds")?,
+                    case_amount(case, "requested")?,
+                ]);
+                ok_or_error(
+                    cmp_amount(&total, case_amount(case, "captured")?)
+                        == std::cmp::Ordering::Greater,
+                    "commerce.refund.exceeds_captured",
+                )
+            }
+            "capture" => {
+                let total = add_amounts(&[
+                    case_amount(case, "completed_captures")?,
+                    case_amount(case, "inflight_captures")?,
+                    case_amount(case, "requested")?,
+                ]);
+                ok_or_error(
+                    cmp_amount(&total, case_amount(case, "order_total")?)
+                        == std::cmp::Ordering::Greater,
+                    "commerce.capture.exceeds_order_total",
+                )
+            }
+            "return_quantity" => {
+                let shipped = case_qty(case, "shipped")?;
+                let already = case_qty(case, "already_returned")?;
+                let requested = case_qty(case, "requested")?;
+                if shipped <= 0 {
+                    json!({"error": "commerce.return.order_not_shipped"})
+                } else {
+                    ok_or_error(
+                        already.saturating_add(requested) > shipped,
+                        "commerce.return.exceeds_shipped",
+                    )
+                }
+            }
+            "reserve" => {
+                let available = add_amounts(&[case_amount(case, "on_hand")?]);
+                let claimed = add_amounts(&[
+                    case_amount(case, "allocated")?,
+                    case_amount(case, "requested")?,
+                ]);
+                ok_or_error(
+                    cmp_amount(&claimed, &available) == std::cmp::Ordering::Greater,
+                    "commerce.inventory.insufficient_available",
+                )
+            }
+            "journal_entry" => {
+                let lines = case.get("lines").and_then(Value::as_array).context("case.lines")?;
+                let mut debits: Vec<&str> = Vec::with_capacity(lines.len());
+                let mut credits: Vec<&str> = Vec::with_capacity(lines.len());
+                for line in lines {
+                    debits.push(case_amount(line, "debit")?);
+                    credits.push(case_amount(line, "credit")?);
+                }
+                // A line may be a debit, a credit, or neither — never both.
+                let both_sided = debits
+                    .iter()
+                    .zip(credits.iter())
+                    .any(|(d, c)| !is_zero_amount(d) && !is_zero_amount(c));
+                if both_sided {
+                    json!({"error": "commerce.ledger.line_not_single_sided"})
+                } else {
+                    ok_or_error(
+                        cmp_amount(&add_amounts(&debits), &add_amounts(&credits))
+                            != std::cmp::Ordering::Equal,
+                        "commerce.ledger.entry_unbalanced",
+                    )
+                }
+            }
+            "money_scale" => {
+                let currency = case.get("currency").and_then(Value::as_str).context("currency")?;
+                let amount = case_amount(case, "amount")?;
+                let allowed = currency_scale(currency);
+                ok_or_error(
+                    significant_decimal_places(amount) > allowed,
+                    "commerce.money.scale_exceeds_currency",
+                )
+            }
+            other => return Err(anyhow::anyhow!("unknown invariant kind: {other}")),
+        };
+        decisions.insert(id.to_string(), decision);
+    }
+    Ok(json!({ "decisions": decisions }))
+}
+
+/// True when a non-negative decimal string denotes exactly zero (`0`, `0.00`).
+fn is_zero_amount(a: &str) -> bool {
+    a.chars().all(|c| !c.is_ascii_digit() || c == '0')
 }
 
 // ---------------------------------------------------------------------------

@@ -551,6 +551,100 @@ def run_09_ceilings(inp):
     return {"decisions": decisions}
 
 
+
+# ---------------------------------------------------------------------------
+# 10-commerce-invariants — economic invariants (exact decimal, no floats)
+# ---------------------------------------------------------------------------
+
+MINOR_UNITS = {"USD": 2, "EUR": 2, "JPY": 0, "USDC": 6}
+
+
+def _scaled(a, b):
+    """Scale two decimal strings to a common integer basis. Exact."""
+    ia, _, fa = str(a).partition(".")
+    ib, _, fb = str(b).partition(".")
+    n = max(len(fa), len(fb))
+    return int(ia + fa.ljust(n, "0")), int(ib + fb.ljust(n, "0")), n
+
+
+def _unscale(value, n):
+    neg = value < 0
+    digits = str(abs(value)).rjust(n + 1, "0")
+    body = digits if n == 0 else f"{digits[:-n]}.{digits[-n:]}"
+    return f"-{body}" if neg else body
+
+
+def add_amount(a, b):
+    sa, sb, n = _scaled(a, b)
+    return _unscale(sa + sb, n)
+
+
+def sub_amount(a, b):
+    sa, sb, n = _scaled(a, b)
+    return _unscale(sa - sb, n)
+
+
+def run_10_commerce_invariants(inp):
+    decisions = {}
+    for c in inp["cases"]:
+        kind = c["kind"]
+        if kind == "refund":
+            used = add_amount(c["completed_refunds"], c["inflight_refunds"])
+            over = cmp_amount(add_amount(used, c["requested"]), c["captured"]) > 0
+            d = {"error": "commerce.refund.exceeds_captured"} if over else {"valid": True}
+        elif kind == "capture":
+            used = add_amount(c["completed_captures"], c["inflight_captures"])
+            over = cmp_amount(add_amount(used, c["requested"]), c["order_total"]) > 0
+            d = {"error": "commerce.capture.exceeds_order_total"} if over else {"valid": True}
+        elif kind == "return_quantity":
+            if c["shipped"] <= 0:
+                d = {"error": "commerce.return.order_not_shipped"}
+            elif c["already_returned"] + c["requested"] > c["shipped"]:
+                d = {"error": "commerce.return.exceeds_shipped"}
+            else:
+                d = {"valid": True}
+        elif kind == "reserve":
+            available = sub_amount(c["on_hand"], c["allocated"])
+            insufficient = available.startswith("-") or cmp_amount(c["requested"], available) > 0
+            d = (
+                {"error": "commerce.inventory.insufficient_available"}
+                if insufficient
+                else {"valid": True}
+            )
+        elif kind == "journal_entry":
+            lines = c["lines"]
+            if any(
+                cmp_amount(l["debit"], "0") > 0 and cmp_amount(l["credit"], "0") > 0
+                for l in lines
+            ):
+                d = {"error": "commerce.ledger.line_not_single_sided"}
+            else:
+                debits = "0"
+                credits = "0"
+                for l in lines:
+                    debits = add_amount(debits, l["debit"])
+                    credits = add_amount(credits, l["credit"])
+                d = (
+                    {"valid": True}
+                    if cmp_amount(debits, credits) == 0
+                    else {"error": "commerce.ledger.entry_unbalanced"}
+                )
+        elif kind == "money_scale":
+            # Significant scale: trailing zeros are insignificant and must not
+            # change the verdict.
+            _, _, frac = str(c["amount"]).partition(".")
+            frac = frac.rstrip("0")
+            d = (
+                {"error": "commerce.money.scale_exceeds_currency"}
+                if len(frac) > MINOR_UNITS[c["currency"]]
+                else {"valid": True}
+            )
+        else:
+            raise ValueError(f"unknown case kind: {kind}")
+        decisions[c["id"]] = d
+    return {"decisions": decisions}
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -587,6 +681,8 @@ def main():
             output = run_08_timing(inp)
         elif test_name == "09-ceilings":
             output = run_09_ceilings(inp)
+        elif test_name == "10-commerce-invariants":
+            output = run_10_commerce_invariants(inp)
         else:
             print(
                 json.dumps(

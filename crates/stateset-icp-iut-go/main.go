@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"os"
 	"regexp"
 	"sort"
@@ -66,6 +67,8 @@ func main() {
 		output, err = run08Timing(input)
 	case "09-ceilings":
 		output, err = run09Ceilings(input)
+	case "10-commerce-invariants":
+		output, err = run10CommerceInvariants(input)
 	default:
 		// Per iut.protocol.md: exit 2 + JSON on stderr signals SKIP.
 		fmt.Fprintf(os.Stderr, `{"error":"unsupported","reason":"no handler for %s"}`+"\n", testName)
@@ -877,6 +880,184 @@ func run09Ceilings(input map[string]interface{}) (map[string]interface{}, error)
 		} else {
 			decisions[c["id"].(string)] = map[string]interface{}{"valid": true}
 		}
+	}
+	return map[string]interface{}{"decisions": decisions}, nil
+}
+
+// ---------------------------------------------------------------------------
+// 10-commerce-invariants — economic invariants (exact decimal, reuses cmpAmount)
+// ---------------------------------------------------------------------------
+
+// currencyScale maps a currency code to its permitted number of minor units.
+var currencyScale = map[string]int{
+	"USD":  2,
+	"EUR":  2,
+	"GBP":  2,
+	"JPY":  0,
+	"USDC": 6,
+	"USDT": 6,
+	"ETH":  18,
+	"BTC":  8,
+}
+
+// amountString coerces a JSON value (string or number) to its decimal text.
+func amountString(v interface{}) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case json.Number:
+		return x.String()
+	case nil:
+		return "0"
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// addAmount sums two non-negative decimal strings exactly, via integer
+// arithmetic on a common scale. No float conversion.
+func addAmount(a, b string) string {
+	ia, fa := splitDecimal(a)
+	ib, fb := splitDecimal(b)
+	n := len(fa)
+	if len(fb) > n {
+		n = len(fb)
+	}
+	xa, ok1 := new(big.Int).SetString(ia+fa+strings.Repeat("0", n-len(fa)), 10)
+	xb, ok2 := new(big.Int).SetString(ib+fb+strings.Repeat("0", n-len(fb)), 10)
+	if !ok1 || !ok2 {
+		return "0"
+	}
+	return unscale(new(big.Int).Add(xa, xb), n)
+}
+
+// subAmount subtracts b from a exactly. The result may be negative.
+func subAmount(a, b string) string {
+	ia, fa := splitDecimal(a)
+	ib, fb := splitDecimal(b)
+	n := len(fa)
+	if len(fb) > n {
+		n = len(fb)
+	}
+	xa, ok1 := new(big.Int).SetString(ia+fa+strings.Repeat("0", n-len(fa)), 10)
+	xb, ok2 := new(big.Int).SetString(ib+fb+strings.Repeat("0", n-len(fb)), 10)
+	if !ok1 || !ok2 {
+		return "0"
+	}
+	return unscale(new(big.Int).Sub(xa, xb), n)
+}
+
+// unscale renders a scaled big.Int back as a decimal string with n fraction digits.
+func unscale(v *big.Int, n int) string {
+	neg := v.Sign() < 0
+	digits := new(big.Int).Abs(v).String()
+	if n > 0 {
+		if len(digits) <= n {
+			digits = strings.Repeat("0", n-len(digits)+1) + digits
+		}
+		digits = digits[:len(digits)-n] + "." + digits[len(digits)-n:]
+	}
+	if neg {
+		return "-" + digits
+	}
+	return digits
+}
+
+// isNegative reports whether an exact decimal string is below zero.
+func isNegative(s string) bool { return strings.HasPrefix(s, "-") }
+
+// decimalScale counts the significant fraction digits of a decimal string,
+// ignoring insignificant trailing zeros (100.000 has scale 0).
+func decimalScale(s string) int {
+	_, frac := splitDecimal(s)
+	return len(strings.TrimRight(frac, "0"))
+}
+
+func decideCommerceCase(c map[string]interface{}) map[string]interface{} {
+	invalid := func(code string) map[string]interface{} {
+		return map[string]interface{}{"error": code}
+	}
+	valid := map[string]interface{}{"valid": true}
+
+	switch c["kind"].(string) {
+	case "refund":
+		// Σ refunds (completed + in-flight + requested) MUST NOT exceed captured.
+		total := addAmount(addAmount(amountString(c["completed_refunds"]), amountString(c["inflight_refunds"])), amountString(c["requested"]))
+		if cmpAmount(total, amountString(c["captured"])) > 0 {
+			return invalid("commerce.refund.exceeds_captured")
+		}
+		return valid
+
+	case "capture":
+		// Σ captures (completed + in-flight + requested) MUST NOT exceed the order total.
+		total := addAmount(addAmount(amountString(c["completed_captures"]), amountString(c["inflight_captures"])), amountString(c["requested"]))
+		if cmpAmount(total, amountString(c["order_total"])) > 0 {
+			return invalid("commerce.capture.exceeds_order_total")
+		}
+		return valid
+
+	case "return_quantity":
+		// Nothing may be returned before anything shipped.
+		shipped := amountString(c["shipped"])
+		if cmpAmount(shipped, "0") <= 0 {
+			return invalid("commerce.return.order_not_shipped")
+		}
+		total := addAmount(amountString(c["already_returned"]), amountString(c["requested"]))
+		if cmpAmount(total, shipped) > 0 {
+			return invalid("commerce.return.exceeds_shipped")
+		}
+		return valid
+
+	case "reserve":
+		// A reservation never exceeds on_hand − allocated.
+		available := subAmount(amountString(c["on_hand"]), amountString(c["allocated"]))
+		requested := amountString(c["requested"])
+		if isNegative(available) || cmpAmount(requested, available) > 0 {
+			return invalid("commerce.inventory.insufficient_available")
+		}
+		return valid
+
+	case "journal_entry":
+		lines, _ := c["lines"].([]interface{})
+		debits, credits := "0", "0"
+		for _, rawLine := range lines {
+			line := rawLine.(map[string]interface{})
+			debit := amountString(line["debit"])
+			credit := amountString(line["credit"])
+			// Every line is single-sided: at most one of debit/credit is non-zero.
+			if cmpAmount(debit, "0") > 0 && cmpAmount(credit, "0") > 0 {
+				return invalid("commerce.ledger.line_not_single_sided")
+			}
+			debits = addAmount(debits, debit)
+			credits = addAmount(credits, credit)
+		}
+		if cmpAmount(debits, credits) != 0 {
+			return invalid("commerce.ledger.entry_unbalanced")
+		}
+		return valid
+
+	case "money_scale":
+		currency := c["currency"].(string)
+		scale, known := currencyScale[strings.ToUpper(currency)]
+		if !known {
+			scale = 2
+		}
+		if decimalScale(amountString(c["amount"])) > scale {
+			return invalid("commerce.money.scale_exceeds_currency")
+		}
+		return valid
+	}
+	return valid
+}
+
+func run10CommerceInvariants(input map[string]interface{}) (map[string]interface{}, error) {
+	cases, ok := input["cases"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("input.cases must be an array")
+	}
+	decisions := map[string]interface{}{}
+	for _, raw := range cases {
+		c := raw.(map[string]interface{})
+		decisions[c["id"].(string)] = decideCommerceCase(c)
 	}
 	return map[string]interface{}{"decisions": decisions}, nil
 }

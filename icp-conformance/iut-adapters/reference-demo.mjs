@@ -494,7 +494,10 @@ function run10CommerceInvariants(input) {
         break;
       }
       case 'money_scale': {
-        const frac = String(c.amount).includes('.') ? String(c.amount).split('.')[1].length : 0;
+        // Significant scale: trailing zeros are insignificant and must not
+        // change the verdict (see description.md "Exact decimal arithmetic").
+        const raw = String(c.amount);
+        const frac = raw.includes('.') ? raw.split('.')[1].replace(/0+$/, '').length : 0;
         d = frac > MINOR_UNITS[c.currency]
           ? { error: 'commerce.money.scale_exceeds_currency' } : { valid: true };
         break;

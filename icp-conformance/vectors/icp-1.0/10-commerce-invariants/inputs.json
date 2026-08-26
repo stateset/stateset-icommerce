@@ -260,6 +260,62 @@
       "kind": "money_scale",
       "currency": "USDC",
       "amount": "10.123456"
+    },
+    {
+      "id": "scale07_usd_trailing_zero",
+      "kind": "money_scale",
+      "currency": "USD",
+      "amount": "10.9900"
+    },
+    {
+      "id": "scale08_jpy_trailing_zero",
+      "kind": "money_scale",
+      "currency": "JPY",
+      "amount": "1000.0"
+    },
+    {
+      "id": "scale09_usd_true_over",
+      "kind": "money_scale",
+      "currency": "USD",
+      "amount": "10.9901"
+    },
+    {
+      "id": "scale10_jpy_true_over",
+      "kind": "money_scale",
+      "currency": "JPY",
+      "amount": "1000.5"
+    },
+    {
+      "id": "gl05_unbalanced_and_two_sided",
+      "kind": "journal_entry",
+      "lines": [
+        {
+          "debit": "50.00",
+          "credit": "10.00"
+        },
+        {
+          "debit": "0",
+          "credit": "5.00"
+        }
+      ]
+    },
+    {
+      "id": "gl06_zero_line_is_legal",
+      "kind": "journal_entry",
+      "lines": [
+        {
+          "debit": "10.00",
+          "credit": "0"
+        },
+        {
+          "debit": "0",
+          "credit": "0"
+        },
+        {
+          "debit": "0",
+          "credit": "10.00"
+        }
+      ]
     }
   ]
 }
