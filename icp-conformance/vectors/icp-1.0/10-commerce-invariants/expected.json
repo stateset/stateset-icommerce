@@ -92,6 +92,24 @@
     },
     "scale06_usdc_ok": {
       "valid": true
+    },
+    "scale07_usd_trailing_zero": {
+      "valid": true
+    },
+    "scale08_jpy_trailing_zero": {
+      "valid": true
+    },
+    "scale09_usd_true_over": {
+      "error": "commerce.money.scale_exceeds_currency"
+    },
+    "scale10_jpy_true_over": {
+      "error": "commerce.money.scale_exceeds_currency"
+    },
+    "gl05_unbalanced_and_two_sided": {
+      "error": "commerce.ledger.line_not_single_sided"
+    },
+    "gl06_zero_line_is_legal": {
+      "valid": true
     }
   }
 }
