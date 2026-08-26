@@ -372,9 +372,12 @@ impl Payment {
     ///
     /// Returns [`crate::CommerceError::ValidationError`] when:
     /// - the payment is not in a refundable status (only `Completed` /
-    ///   `PartiallyRefunded` payments can be refunded),
-    /// - the requested (or resolved) amount is zero or negative, or
-    /// - the requested amount exceeds the remaining refundable balance.
+    ///   `PartiallyRefunded` payments can be refunded), or
+    /// - the requested (or resolved) amount is zero or negative.
+    ///
+    /// Returns [`crate::CommerceError::RefundExceedsCaptured`] (invariant
+    /// `commerce.refund.exceeds_captured`) when the requested amount exceeds
+    /// the remaining refundable balance.
     pub fn validate_refund(&self, requested: Option<Decimal>) -> crate::Result<Decimal> {
         use crate::CommerceError;
 
@@ -395,9 +398,12 @@ impl Payment {
         }
 
         if amount > remaining {
-            return Err(CommerceError::ValidationError(format!(
-                "Refund amount {amount} exceeds remaining refundable balance {remaining}"
-            )));
+            return Err(CommerceError::RefundExceedsCaptured {
+                payment_id: self.id.into_uuid(),
+                captured: self.amount.to_string(),
+                already_refunded: self.amount_refunded.to_string(),
+                requested: amount.to_string(),
+            });
         }
 
         Ok(amount)

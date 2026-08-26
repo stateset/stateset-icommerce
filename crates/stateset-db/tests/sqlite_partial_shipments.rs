@@ -366,10 +366,22 @@ fn returns_validate_against_shipped_quantity() {
             ..Default::default()
         })
         .expect_err("over shipped qty");
+    // Typed invariant error carrying the stable code an agent branches on.
     assert!(
-        matches!(err, CommerceError::ValidationError(ref m) if m.contains("3 shipped")),
+        matches!(
+            err,
+            CommerceError::ReturnExceedsReturnable {
+                basis: "shipped",
+                returnable: 3,
+                already_returned: 0,
+                requested: 4,
+                ..
+            }
+        ),
         "{err:?}"
     );
+    assert_eq!(err.invariant_code(), Some("commerce.return.exceeds_shipped"));
+    assert!(err.to_string().contains("3 shipped"), "{err}");
 
     // Unshipped line: nothing returnable.
     let err = db
@@ -385,7 +397,8 @@ fn returns_validate_against_shipped_quantity() {
             ..Default::default()
         })
         .expect_err("unshipped line");
-    assert!(matches!(err, CommerceError::ValidationError(_)));
+    assert!(matches!(err, CommerceError::ReturnExceedsReturnable { .. }), "{err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.return.exceeds_shipped"));
 
     // 3 <= 3 shipped: accepted.
     db.returns()
@@ -415,7 +428,8 @@ fn returns_validate_against_shipped_quantity() {
             ..Default::default()
         })
         .expect_err("cumulative");
-    assert!(matches!(err, CommerceError::ValidationError(_)));
+    assert!(matches!(err, CommerceError::ReturnExceedsReturnable { .. }), "{err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.return.exceeds_shipped"));
 }
 
 #[test]

@@ -38,6 +38,15 @@ fn completed_payment(db: &SqliteDatabase, amount: rust_decimal::Decimal) -> stat
     db.payments().mark_completed(payment.id).expect("mark payment completed")
 }
 
+/// An over-refund must surface as the typed invariant error carrying the
+/// stable code `commerce.refund.exceeds_captured` — never as a stringly
+/// `ValidationError` an agent cannot branch on.
+#[track_caller]
+fn assert_over_refund(err: &CommerceError) {
+    assert!(matches!(err, CommerceError::RefundExceedsCaptured { .. }), "got {err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.refund.exceeds_captured"), "got {err:?}");
+}
+
 #[test]
 fn refund_amount_must_be_positive() {
     let db = db();
@@ -77,7 +86,7 @@ fn refund_exceeding_remaining_is_rejected() {
             ..Default::default()
         })
         .expect_err("refund larger than payment must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert_over_refund(&err);
 
     // No refund row should have been persisted.
     assert!(db.payments().get_refunds(payment.id).expect("list refunds").is_empty());
@@ -112,7 +121,7 @@ fn over_refund_across_two_refunds_is_rejected() {
             ..Default::default()
         })
         .expect_err("second refund exceeding remaining must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert_over_refund(&err);
 }
 
 #[test]
@@ -267,7 +276,7 @@ fn second_pending_refund_exceeding_remaining_is_rejected_before_completion() {
             ..Default::default()
         })
         .expect_err("second pending refund exceeding remaining must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert_over_refund(&err);
 
     // Only the first refund should exist.
     let refunds = db.payments().get_refunds(payment.id).expect("list refunds");
@@ -309,7 +318,7 @@ fn second_pending_refund_within_remaining_is_allowed() {
             ..Default::default()
         })
         .expect_err("third refund exceeding reserved remaining must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert_over_refund(&err);
 
     let refunds = db.payments().get_refunds(payment.id).expect("list refunds");
     assert_eq!(refunds.len(), 2, "only the two fitting refunds should persist");
@@ -341,7 +350,7 @@ fn failed_refund_releases_its_reservation() {
             ..Default::default()
         })
         .expect_err("balance fully reserved by pending refund");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert_over_refund(&err);
 
     // Fail the first refund: its reservation is released.
     db.payments().fail_refund(r1.id, "processor declined").expect("fail refund");

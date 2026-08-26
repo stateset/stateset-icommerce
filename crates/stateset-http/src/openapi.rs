@@ -871,6 +871,17 @@ mod tests {
         }
     }
 
+    /// The error schema must document the optional stable commerce-invariant
+    /// code, so generated clients can branch on it. See
+    /// `docs/src/advanced/invariants.md`.
+    #[test]
+    fn error_schema_documents_invariant_code() {
+        let spec = ApiDoc::openapi();
+        let json = serde_json::to_value(&spec).unwrap();
+        let schemas = json["components"]["schemas"].to_string();
+        assert!(schemas.contains("invariant"), "ErrorBody schema must expose `invariant`");
+    }
+
     #[test]
     fn openapi_spec_has_tags() {
         let spec = ApiDoc::openapi();

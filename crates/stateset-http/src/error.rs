@@ -47,6 +47,25 @@ pub enum HttpError {
     /// through unchecked; see `ServerBuilder::allow_unmapped_authz_routes`.
     #[error("Forbidden: {0}")]
     UnmappedRoute(String),
+
+    /// A published commerce invariant was violated.
+    ///
+    /// Carries the stable invariant code from
+    /// [`CommerceError::invariant_code`] alongside the status and short code
+    /// the equivalent untyped error would have produced, so adding an
+    /// invariant code never changes an existing response's status or `code`.
+    /// See `docs/src/advanced/invariants.md`.
+    #[error("{message}")]
+    InvariantViolation {
+        /// Stable invariant code, e.g. `commerce.refund.exceeds_captured`.
+        invariant: &'static str,
+        /// The short error code this error would otherwise have carried.
+        code: &'static str,
+        /// The HTTP status this error would otherwise have carried.
+        status: StatusCode,
+        /// The fully formatted human-readable message.
+        message: String,
+    },
 }
 
 /// JSON body for error responses.
@@ -60,6 +79,10 @@ pub(crate) struct ErrorBody {
 pub(crate) struct ErrorDetail {
     code: String,
     message: String,
+    /// Stable commerce-invariant code, present only when the failure violated
+    /// a published invariant (see `docs/src/advanced/invariants.md`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invariant: Option<&'static str>,
 }
 
 impl HttpError {
@@ -76,6 +99,7 @@ impl HttpError {
             Self::ValidationError(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::UnmappedRoute(_) => StatusCode::FORBIDDEN,
+            Self::InvariantViolation { status, .. } => *status,
         }
     }
 
@@ -92,6 +116,17 @@ impl HttpError {
             Self::ValidationError(_) => "validation_error",
             Self::TooManyRequests(_) => "too_many_requests",
             Self::UnmappedRoute(_) => "authz_unmapped_route",
+            Self::InvariantViolation { code, .. } => code,
+        }
+    }
+
+    /// The stable commerce-invariant code, when this error is an invariant
+    /// violation. See [`CommerceError::invariant_code`].
+    #[must_use]
+    pub const fn invariant_code(&self) -> Option<&'static str> {
+        match self {
+            Self::InvariantViolation { invariant, .. } => Some(invariant),
+            _ => None,
         }
     }
 }
@@ -100,7 +135,11 @@ impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         let status = self.status_code();
         let body = ErrorBody {
-            error: ErrorDetail { code: self.code().to_string(), message: self.to_string() },
+            error: ErrorDetail {
+                code: self.code().to_string(),
+                message: self.to_string(),
+                invariant: self.invariant_code(),
+            },
         };
         (status, axum::Json(body)).into_response()
     }
@@ -108,6 +147,24 @@ impl IntoResponse for HttpError {
 
 impl From<CommerceError> for HttpError {
     fn from(err: CommerceError) -> Self {
+        // An invariant violation keeps the status and short code it would have
+        // had anyway, and adds the stable code an agent can branch on.
+        if let Some(invariant) = err.invariant_code() {
+            let classified = Self::classify(err);
+            return Self::InvariantViolation {
+                invariant,
+                code: classified.code(),
+                status: classified.status_code(),
+                message: classified.to_string(),
+            };
+        }
+        Self::classify(err)
+    }
+}
+
+impl HttpError {
+    /// Map a [`CommerceError`] onto its HTTP shape, ignoring invariant codes.
+    fn classify(err: CommerceError) -> Self {
         if err.is_not_found() {
             return Self::NotFound(err.to_string());
         }
@@ -293,11 +350,91 @@ mod tests {
             error: super::ErrorDetail {
                 code: "not_found".into(),
                 message: "Order not found".into(),
+                invariant: None,
             },
         };
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(json["error"]["code"], "not_found");
         assert_eq!(json["error"]["message"], "Order not found");
+        // Absent, not null, when the failure is not an invariant violation.
+        assert!(json["error"].get("invariant").is_none());
+    }
+
+    #[test]
+    fn invariant_code_surfaces_in_error_body() {
+        let err = HttpError::from(CommerceError::RefundExceedsCaptured {
+            payment_id: uuid::Uuid::nil(),
+            captured: "100.00".into(),
+            already_refunded: "100.00".into(),
+            requested: "1.00".into(),
+        });
+        // Status and short code are unchanged from the untyped ValidationError.
+        assert_eq!(err.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(err.code(), "validation_error");
+        assert_eq!(err.invariant_code(), Some("commerce.refund.exceeds_captured"));
+
+        let body = ErrorBody {
+            error: ErrorDetail {
+                code: err.code().to_string(),
+                message: err.to_string(),
+                invariant: err.invariant_code(),
+            },
+        };
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["error"]["invariant"], "commerce.refund.exceeds_captured");
+    }
+
+    #[test]
+    fn invariant_errors_keep_their_original_status() {
+        for (err, status, code, invariant) in [
+            (
+                CommerceError::CaptureExceedsOrderTotal {
+                    order_id: uuid::Uuid::nil(),
+                    order_total: "10.00".into(),
+                    already_captured: "10.00".into(),
+                    requested: "1.00".into(),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation_error",
+                "commerce.capture.exceeds_order_total",
+            ),
+            (
+                CommerceError::ReturnOrderNotShipped {
+                    order_id: uuid::Uuid::nil(),
+                    status: "pending".into(),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation_error",
+                "commerce.return.order_not_shipped",
+            ),
+            (
+                CommerceError::ReturnExceedsReturnable {
+                    order_item_id: uuid::Uuid::nil(),
+                    basis: "shipped",
+                    returnable: 1,
+                    already_returned: 1,
+                    requested: 1,
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation_error",
+                "commerce.return.exceeds_shipped",
+            ),
+            (
+                CommerceError::InsufficientStock {
+                    sku: "SKU-1".into(),
+                    requested: "5".into(),
+                    available: "1".into(),
+                },
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "commerce.inventory.insufficient_available",
+            ),
+        ] {
+            let http = HttpError::from(err);
+            assert_eq!(http.status_code(), status);
+            assert_eq!(http.code(), code);
+            assert_eq!(http.invariant_code(), Some(invariant));
+        }
     }
 
     #[test]

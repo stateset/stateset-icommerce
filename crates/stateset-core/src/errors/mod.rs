@@ -105,7 +105,11 @@ mod _size_assertions {
         CommerceError, CustomerError, DbError, InventoryError, OrderError, PaymentError,
         ProductError, ReturnError, ShippingError,
     };
-    static_assert_size!(CommerceError, 80);
+    // 96 bytes since v1.25.0: the commerce-invariant variants
+    // (`RefundExceedsCaptured`, `CaptureExceedsOrderTotal`) carry a `Uuid`
+    // plus three exact-decimal `String`s, one field more than
+    // `InsufficientStock`. Intentional — see `CommerceError::invariant_code`.
+    static_assert_size!(CommerceError, 96);
     static_assert_size!(DbError, 64);
     static_assert_size!(OrderError, 48);
     static_assert_size!(InventoryError, 72);
@@ -302,6 +306,80 @@ pub enum CommerceError {
         requested: i32,
         /// Units still unshipped on the line (`quantity - shipped_quantity`).
         remaining: i32,
+    },
+
+    /// A refund would push total refunds past the amount captured on the payment.
+    ///
+    /// Invariant `commerce.refund.exceeds_captured` — see
+    /// [`CommerceError::invariant_code`].
+    #[error(
+        "Refund amount {requested} exceeds the refundable balance of payment {payment_id}: {captured} captured, {already_refunded} already refunded or in flight"
+    )]
+    RefundExceedsCaptured {
+        /// The payment being refunded.
+        payment_id: Uuid,
+        /// The amount captured on the payment, as an exact decimal string.
+        captured: String,
+        /// Refunds already completed or in flight, as an exact decimal string.
+        already_refunded: String,
+        /// The refund amount that was requested, as an exact decimal string.
+        requested: String,
+    },
+
+    /// A capture would push total captures past the order total.
+    ///
+    /// Invariant `commerce.capture.exceeds_order_total` — see
+    /// [`CommerceError::invariant_code`].
+    #[error(
+        "Payment of {requested} would exceed order {order_id} total {order_total}: {already_captured} already captured or in flight"
+    )]
+    CaptureExceedsOrderTotal {
+        /// The order being captured against.
+        order_id: Uuid,
+        /// The order total, as an exact decimal string.
+        order_total: String,
+        /// Captures already completed or in flight, as an exact decimal string.
+        already_captured: String,
+        /// The capture amount that was requested, as an exact decimal string.
+        requested: String,
+    },
+
+    /// A return was requested against an order whose goods have not shipped.
+    ///
+    /// Invariant `commerce.return.order_not_shipped` — see
+    /// [`CommerceError::invariant_code`].
+    #[error(
+        "Order {order_id} must be shipped or delivered before a return can be requested (current status: {status})"
+    )]
+    ReturnOrderNotShipped {
+        /// The order a return was requested against.
+        order_id: Uuid,
+        /// The order's current status.
+        status: String,
+    },
+
+    /// A return line would exceed the units still returnable on that order line.
+    ///
+    /// The engine bounds a return by the units that actually shipped once the
+    /// order has shipped, and by the ordered quantity before that; `basis`
+    /// records which bound applied. Invariant
+    /// `commerce.return.exceeds_shipped` — see
+    /// [`CommerceError::invariant_code`].
+    #[error(
+        "Cannot return {requested} of order item {order_item_id}: only {} remain returnable ({returnable} {basis}, {already_returned} already returned)",
+        returnable - already_returned
+    )]
+    ReturnExceedsReturnable {
+        /// The order line being returned.
+        order_item_id: Uuid,
+        /// Which bound applied: `"shipped"` or `"ordered"`.
+        basis: &'static str,
+        /// The bounding quantity (shipped or ordered units on the line).
+        returnable: i64,
+        /// Units already claimed by non-terminal returns on this line.
+        already_returned: i64,
+        /// Units the caller tried to return.
+        requested: i64,
     },
 
     /// Inventory reservation not found.
@@ -522,7 +600,54 @@ impl CommerceError {
     /// Check if error is a validation error.
     #[must_use]
     pub const fn is_validation(&self) -> bool {
-        matches!(self, Self::ValidationError(_) | Self::InvalidInput { .. })
+        matches!(
+            self,
+            Self::ValidationError(_)
+                | Self::InvalidInput { .. }
+                | Self::RefundExceedsCaptured { .. }
+                | Self::CaptureExceedsOrderTotal { .. }
+                | Self::ReturnOrderNotShipped { .. }
+                | Self::ReturnExceedsReturnable { .. }
+        )
+    }
+
+    /// The stable commerce-invariant code for this error, if it is an
+    /// invariant violation.
+    ///
+    /// These codes are the contract an agent branches on. They are catalogued
+    /// in `docs/src/advanced/invariants.md` and pinned by the conformance
+    /// vector `icp-conformance/vectors/icp-1.0/10-commerce-invariants/`, whose
+    /// `description.md` is normative. The code is stable across releases; the
+    /// human-readable `Display` message is not.
+    ///
+    /// Returns `None` for every error that is not a violation of a published
+    /// invariant.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use stateset_core::CommerceError;
+    ///
+    /// let err = CommerceError::ReturnOrderNotShipped {
+    ///     order_id: uuid::Uuid::nil(),
+    ///     status: "pending".into(),
+    /// };
+    /// assert_eq!(err.invariant_code(), Some("commerce.return.order_not_shipped"));
+    /// assert_eq!(CommerceError::NotFound.invariant_code(), None);
+    /// ```
+    #[must_use]
+    pub const fn invariant_code(&self) -> Option<&'static str> {
+        match self {
+            Self::RefundExceedsCaptured { .. } => Some("commerce.refund.exceeds_captured"),
+            Self::CaptureExceedsOrderTotal { .. } => Some("commerce.capture.exceeds_order_total"),
+            Self::ReturnOrderNotShipped { .. } => Some("commerce.return.order_not_shipped"),
+            Self::ReturnExceedsReturnable { .. } => Some("commerce.return.exceeds_shipped"),
+            Self::InsufficientStock { .. }
+            | Self::Inventory(InventoryError::InsufficientStock { .. }) => {
+                Some("commerce.inventory.insufficient_available")
+            }
+            _ => None,
+        }
     }
 
     /// Check if error is a conflict error.
@@ -1369,6 +1494,133 @@ mod tests {
         let err: CommerceError = InventoryError::item_not_found("SKU").into();
         assert!(err.is_not_found());
         assert!(err.as_inventory_error().is_some());
+    }
+
+    /// The stable invariant codes are a published contract: they are
+    /// catalogued in `docs/src/advanced/invariants.md` and pinned by
+    /// `icp-conformance/vectors/icp-1.0/10-commerce-invariants/`. Changing a
+    /// string here is a breaking change for every agent branching on it.
+    #[test]
+    fn invariant_code_maps_every_published_invariant() {
+        let cases: Vec<(CommerceError, &str)> = vec![
+            (
+                CommerceError::RefundExceedsCaptured {
+                    payment_id: Uuid::nil(),
+                    captured: "100.00".into(),
+                    already_refunded: "100.00".into(),
+                    requested: "0.01".into(),
+                },
+                "commerce.refund.exceeds_captured",
+            ),
+            (
+                CommerceError::CaptureExceedsOrderTotal {
+                    order_id: Uuid::nil(),
+                    order_total: "50.00".into(),
+                    already_captured: "50.00".into(),
+                    requested: "0.01".into(),
+                },
+                "commerce.capture.exceeds_order_total",
+            ),
+            (
+                CommerceError::ReturnOrderNotShipped {
+                    order_id: Uuid::nil(),
+                    status: "pending".into(),
+                },
+                "commerce.return.order_not_shipped",
+            ),
+            (
+                CommerceError::ReturnExceedsReturnable {
+                    order_item_id: Uuid::nil(),
+                    basis: "shipped",
+                    returnable: 2,
+                    already_returned: 2,
+                    requested: 1,
+                },
+                "commerce.return.exceeds_shipped",
+            ),
+            (
+                CommerceError::InsufficientStock {
+                    sku: "SKU-1".into(),
+                    requested: "5".into(),
+                    available: "1".into(),
+                },
+                "commerce.inventory.insufficient_available",
+            ),
+            (
+                CommerceError::Inventory(InventoryError::InsufficientStock {
+                    sku: "SKU-1".into(),
+                    requested: "5".into(),
+                    available: "1".into(),
+                }),
+                "commerce.inventory.insufficient_available",
+            ),
+        ];
+        for (err, code) in cases {
+            assert_eq!(err.invariant_code(), Some(code), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn invariant_code_is_none_for_non_invariant_errors() {
+        for err in [
+            CommerceError::NotFound,
+            CommerceError::ValidationError("bad".into()),
+            CommerceError::Internal("boom".into()),
+            // Over-shipping a line is guarded, but no code in the commerce
+            // invariants vector describes it.
+            CommerceError::ShipmentExceedsOrdered {
+                order_item_id: Uuid::nil(),
+                requested: 5,
+                remaining: 1,
+            },
+        ] {
+            assert_eq!(err.invariant_code(), None, "{err:?}");
+        }
+    }
+
+    /// Invariant violations must keep classifying as client validation
+    /// failures, so statuses and batch error codes do not move.
+    #[test]
+    fn invariant_violations_are_validation_errors() {
+        let err = CommerceError::ReturnOrderNotShipped {
+            order_id: Uuid::nil(),
+            status: "pending".into(),
+        };
+        assert!(err.is_validation());
+        assert!(err.is_client_error());
+        assert_eq!(err.suggested_status_code(), 400);
+    }
+
+    #[test]
+    fn invariant_error_messages_are_preserved() {
+        let err = CommerceError::CaptureExceedsOrderTotal {
+            order_id: Uuid::nil(),
+            order_total: "50.00".into(),
+            already_captured: "50.00".into(),
+            requested: "1.00".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Payment of 1.00 would exceed order {} total 50.00: 50.00 already captured or in flight",
+                Uuid::nil()
+            )
+        );
+
+        let err = CommerceError::ReturnExceedsReturnable {
+            order_item_id: Uuid::nil(),
+            basis: "shipped",
+            returnable: 3,
+            already_returned: 1,
+            requested: 5,
+        };
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Cannot return 5 of order item {}: only 2 remain returnable (3 shipped, 1 already returned)",
+                Uuid::nil()
+            )
+        );
     }
 
     #[test]

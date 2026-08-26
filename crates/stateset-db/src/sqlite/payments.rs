@@ -76,9 +76,12 @@ fn check_order_capture_capacity_tx(
 
     if captured + amount > total {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-            CommerceError::ValidationError(format!(
-                "Payment of {amount} would exceed order {order_id} total {total}: {captured} already captured or in flight"
-            )),
+            CommerceError::CaptureExceedsOrderTotal {
+                order_id: parse_uuid_row(order_id, "order", "id")?,
+                order_total: total.to_string(),
+                already_captured: captured.to_string(),
+                requested: amount.to_string(),
+            },
         )));
     }
     Ok(())

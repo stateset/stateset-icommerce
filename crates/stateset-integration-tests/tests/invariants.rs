@@ -431,7 +431,11 @@ impl Harness {
                             "HARNESS: return {} accepted on never-shipped order {}",
                             ret.id, self.model.orders[o].id
                         ))),
-                        Err(CommerceError::ValidationError(_)) => Ok(()),
+                        Err(e)
+                            if e.invariant_code() == Some("commerce.return.order_not_shipped") =>
+                        {
+                            Ok(())
+                        }
                         Err(other) => Err(other),
                     };
                 }
@@ -574,7 +578,11 @@ impl Harness {
                         self.model.orders[o].captured,
                         p.id
                     ))),
-                    Err(CommerceError::ValidationError(_)) => Ok(()),
+                    Err(e)
+                        if e.invariant_code() == Some("commerce.capture.exceeds_order_total") =>
+                    {
+                        Ok(())
+                    }
                     Err(other) => Err(other),
                 };
             }
@@ -1114,7 +1122,8 @@ fn regression_engine_rejects_refund_beyond_remaining_balance() {
         .payments()
         .create_refund(CreateRefund { payment_id, amount: Some(dec!(70)), ..Default::default() })
         .expect_err("second refund must be rejected while the first is in flight");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
+    assert!(matches!(err, CommerceError::RefundExceedsCaptured { .. }), "{err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.refund.exceeds_captured"));
     h.model.payments[0].in_flight = dec!(70);
     h.model.refunds.push(MRefund {
         id: first.id,
@@ -1282,7 +1291,7 @@ fn regression_failed_ops_are_typed_errors_and_leave_books_intact() {
             ..Default::default()
         })
         .expect_err("cannot return more than ordered");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
+    assert!(err.invariant_code().is_some_and(|c| c.starts_with("commerce.return.")), "{err:?}");
     let err = h
         .commerce
         .payments()
@@ -1315,7 +1324,8 @@ fn regression_returns_require_shipped_units() {
         .returns()
         .create(input.clone())
         .expect_err("return against a never-shipped order must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
+    assert!(matches!(err, CommerceError::ReturnOrderNotShipped { .. }), "{err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.return.order_not_shipped"));
     h.check_invariants().unwrap_or_else(|e| panic!("{e}"));
 
     // Cancelled orders are closed too.
@@ -1356,13 +1366,14 @@ fn regression_engine_rejects_capture_beyond_order_total() {
 
     // 25.00 against a 10.00 order: rejected at create.
     let err = payments.create(capture(dec!(25.00))).expect_err("over-capture must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
+    assert!(matches!(err, CommerceError::CaptureExceedsOrderTotal { .. }), "{err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.capture.exceeds_order_total"));
     assert!(payments.for_order(order_id).expect("list").is_empty(), "rejected capture wrote a row");
 
     // 6.00 pending (in flight) + 5.00 > 10.00: rejected even though nothing is completed yet.
     let first = payments.create(capture(dec!(6.00))).expect("6.00 fits");
     let err = payments.create(capture(dec!(5.00))).expect_err("in-flight captures count");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.capture.exceeds_order_total"), "{err:?}");
     // Exactly the remainder fits.
     let second = payments.create(capture(dec!(4.00))).expect("4.00 fits exactly");
     payments.mark_completed(first.id).expect("complete first");
@@ -1372,14 +1383,14 @@ fn regression_engine_rejects_capture_beyond_order_total() {
     let third = payments
         .create(capture(dec!(0.01)))
         .expect_err("order fully captured; even a cent is over");
-    assert!(matches!(third, CommerceError::ValidationError(_)), "{third:?}");
+    assert_eq!(third.invariant_code(), Some("commerce.capture.exceeds_order_total"), "{third:?}");
     payments.mark_failed(first.id, "declined", None).expect("fail first");
     let refill = payments.create(capture(dec!(6.00))).expect("released slice is reusable");
     payments.mark_completed(refill.id).expect("complete refill");
     let err = payments
         .mark_completed(first.id)
         .expect_err("re-completing the failed one would over-capture");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.capture.exceeds_order_total"), "{err:?}");
 
     h.model.orders[0].captured = dec!(10.00);
     for p in [second, refill] {

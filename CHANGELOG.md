@@ -6,6 +6,26 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+- **Stable commerce-invariant error codes.** The invariants catalogued in
+  `docs/src/advanced/invariants.md` and pinned by the conformance vector
+  `icp-conformance/vectors/icp-1.0/10-commerce-invariants/` are now branchable in code.
+  New typed `CommerceError` variants replace the stringly `ValidationError` guards:
+  `RefundExceedsCaptured { payment_id, captured, already_refunded, requested }`,
+  `CaptureExceedsOrderTotal { order_id, order_total, already_captured, requested }`,
+  `ReturnOrderNotShipped { order_id, status }` and
+  `ReturnExceedsReturnable { order_item_id, basis, returnable, already_returned, requested }`
+  (`basis` is `"shipped"` or `"ordered"`, matching the single cap the engine actually applies).
+  New `CommerceError::invariant_code() -> Option<&'static str>` returns the stable code
+  (`commerce.refund.exceeds_captured`, `commerce.capture.exceeds_order_total`,
+  `commerce.return.order_not_shipped`, `commerce.return.exceeds_shipped`, and
+  `commerce.inventory.insufficient_available` for the pre-existing `InsufficientStock`);
+  every other variant returns `None`. HTTP error bodies gain an optional
+  `error.invariant` field carrying that code — `error.code` and the HTTP status are
+  unchanged, so no existing client breaks. Human-readable messages and the SQLite /
+  Postgres behaviour are byte-for-byte preserved apart from the refund message, which now
+  names the payment and its captured / already-refunded amounts.
+
 ## [1.25.0] - 2026-08-25
 
 ### Added

@@ -34,9 +34,7 @@ fn ensure_order_returnable(order_id: Uuid, raw_status: &str) -> Result<()> {
     ) {
         return Ok(());
     }
-    Err(CommerceError::ValidationError(format!(
-        "Order {order_id} must be shipped or delivered before a return can be requested (current status: {status})"
-    )))
+    Err(CommerceError::ReturnOrderNotShipped { order_id, status: status.to_string() })
 }
 
 /// Validate a single return line against its order item, on the given
@@ -107,10 +105,13 @@ async fn validate_return_item_pg(
     };
 
     if i64::from(return_qty) + already_returned > cap {
-        return Err(CommerceError::ValidationError(format!(
-            "Cannot return {return_qty} of order item {order_item_id}: only {} remain returnable ({cap} {cap_label}, {already_returned} already returned)",
-            cap - already_returned
-        )));
+        return Err(CommerceError::ReturnExceedsReturnable {
+            order_item_id,
+            basis: cap_label,
+            returnable: cap,
+            already_returned,
+            requested: i64::from(return_qty),
+        });
     }
 
     Ok((sku, name, unit_price))
