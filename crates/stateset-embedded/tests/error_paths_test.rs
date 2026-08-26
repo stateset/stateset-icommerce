@@ -700,8 +700,9 @@ fn test_decimal_precision() {
         })
         .expect("Failed to create customer");
 
-    // Test high precision decimal
-    let order = commerce
+    // A price finer than the currency's minor unit is refused (invariant M1),
+    // rather than persisting a value USD cannot represent.
+    let err = commerce
         .orders()
         .create(CreateOrder {
             customer_id: customer.id,
@@ -715,9 +716,27 @@ fn test_decimal_precision() {
             }],
             ..Default::default()
         })
-        .expect("Failed to create order with precise decimal");
+        .expect_err("sub-cent unit_price must be rejected for USD");
+    assert_eq!(err.invariant_code(), Some("commerce.money.scale_exceeds_currency"), "{err:?}");
 
-    println!("Order total with tiny price: {:?}", order.total_amount);
+    // The smallest representable USD amount is accepted.
+    let order = commerce
+        .orders()
+        .create(CreateOrder {
+            customer_id: customer.id,
+            items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4().into(),
+                sku: "PRECISION-002".into(),
+                name: "Precision Test".into(),
+                quantity: 1,
+                unit_price: dec!(0.01),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("Failed to create order with one-cent price");
+
+    assert_eq!(order.total_amount, dec!(0.01));
 }
 
 #[test]

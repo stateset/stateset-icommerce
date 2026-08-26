@@ -7,6 +7,26 @@ This project follows Keep a Changelog and Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- **M1 is now enforced on order creation** (`commerce.money.scale_exceeds_currency`).
+  Creating an order whose line `unit_price`, `discount` or `tax_amount` carries more
+  decimal places than the order's currency allows is rejected with
+  `CommerceError::MoneyScaleExceedsCurrency { currency, amount, allowed_scale }` instead
+  of persisting an amount the currency cannot represent (`10.999` in USD used to store
+  verbatim while the derived totals rounded to `11.00`). New
+  `CurrencyCode::decimal_places()` on `stateset-primitives` is the single source of truth
+  for the allowed scale; new `stateset_core::validate_money_scale` and
+  `CreateOrder::validate_money_scale` implement the check, and both the SQLite and
+  Postgres `validate_order_input` call it before the first write, so a rejected order
+  writes nothing. Scale is *significant* scale — trailing zeros do not count, so
+  `10.9900` is still valid USD (vectors `scale07`/`scale08`). Payments, refunds,
+  invoices, carts and `orders().add_item` remain unguarded; see the `†` footnote in
+  `docs/src/advanced/invariants.md`.
+- **The invariant harness can now reach its M1 check.** `crates/stateset-integration-tests`
+  gains an `OverScaledOrder` op that generates genuinely three-scale USD prices and
+  asserts the engine rejects them with the right invariant code and writes nothing; the
+  previous generator only ever emitted 2-dp prices, making the M1 assertion unreachable.
+  A deterministic `regression_engine_rejects_over_scaled_order_money` pins per-field
+  coverage and the trailing-zero acceptance.
 - **Stable commerce-invariant error codes.** The invariants catalogued in
   `docs/src/advanced/invariants.md` and pinned by the conformance vector
   `icp-conformance/vectors/icp-1.0/10-commerce-invariants/` are now branchable in code.

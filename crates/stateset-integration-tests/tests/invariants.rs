@@ -117,6 +117,20 @@ enum Op {
         order: u8,
         extra_cents: u16,
     },
+    /// Try to create an order whose `unit_price` carries more decimal places
+    /// than USD allows (`cents` plus `sub_cents`/1000 of a cent). The engine
+    /// must reject it with `commerce.money.scale_exceeds_currency` and write
+    /// nothing — this is what makes the M1 scale check in `check_orders`
+    /// reachable, since the ordinary order generator only ever emits 2-dp
+    /// prices.
+    OverScaledOrder {
+        sku: u8,
+        qty: u8,
+        cents: u16,
+        /// 1..=9 thousandths of a currency unit added to the price, making it
+        /// genuinely three-scale (never a trailing zero).
+        sub_cents: u8,
+    },
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {
@@ -140,6 +154,9 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         2 => (any::<u8>(), 1u8..=100).prop_map(|(invoice, pct)| Op::PayInvoice { invoice, pct }),
         2 => (any::<u8>(), 1u16..=5_000)
             .prop_map(|(order, extra_cents)| Op::OverCapture { order, extra_cents }),
+        2 => (0u8..3, 1u8..=5, 1u16..=20_000, 1u8..=9).prop_map(
+            |(sku, qty, cents, sub_cents)| Op::OverScaledOrder { sku, qty, cents, sub_cents }
+        ),
     ]
 }
 
@@ -581,6 +598,44 @@ impl Harness {
                     Err(e)
                         if e.invariant_code() == Some("commerce.capture.exceeds_order_total") =>
                     {
+                        Ok(())
+                    }
+                    Err(other) => Err(other),
+                };
+            }
+            Op::OverScaledOrder { sku, qty, cents, sub_cents } => {
+                let s = usize::from(*sku) % SKUS.len();
+                // e.g. 1099 cents + 7 => 10.997, three significant decimals.
+                let unit_price = Decimal::new(i64::from(*cents), MONEY_SCALE)
+                    + Decimal::new(i64::from(*sub_cents), MONEY_SCALE + 1);
+                assert_eq!(
+                    unit_price.normalize().scale(),
+                    MONEY_SCALE + 1,
+                    "HARNESS BUG: over-scaled price {unit_price} is not 3-scale"
+                );
+                let input = CreateOrder {
+                    customer_id: self.customer_id,
+                    items: vec![CreateOrderItem {
+                        product_id: ProductId::new(),
+                        sku: SKUS[s].into(),
+                        name: format!("Item {}", SKUS[s]),
+                        quantity: i32::from(*qty),
+                        unit_price,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                };
+                return match self.commerce.orders().create(input) {
+                    Ok(o) => Err(CommerceError::Internal(format!(
+                        "HARNESS: over-scaled unit_price {unit_price} accepted as order {}",
+                        o.id
+                    ))),
+                    Err(e)
+                        if e.invariant_code() == Some("commerce.money.scale_exceeds_currency") =>
+                    {
+                        // Rejected as required; the model is untouched, and the
+                        // post-step count/invariant checks assert nothing was
+                        // written.
                         Ok(())
                     }
                     Err(other) => Err(other),
@@ -1259,6 +1314,86 @@ fn regression_money_never_exceeds_currency_scale() {
         Op::PayInvoice { invoice: 0, pct: 7 },
     ];
     run_sequence(&ops).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// M1 has an engine guard on order creation: an over-scaled `unit_price` is
+/// refused with `commerce.money.scale_exceeds_currency` and nothing is written.
+///
+/// Trailing zeros are insignificant, so `10.9900` must still be accepted for
+/// USD — the scale bound is on precision, not on characters.
+#[test]
+fn regression_engine_rejects_over_scaled_order_money() {
+    let h = Harness::new();
+    let before = h.commerce.orders().list(Default::default()).expect("list").len();
+
+    for (field, item) in [
+        ("unit_price", CreateOrderItem { unit_price: dec!(10.999), ..Default::default() }),
+        (
+            "discount",
+            CreateOrderItem {
+                unit_price: dec!(10.00),
+                discount: Some(dec!(0.005)),
+                ..Default::default()
+            },
+        ),
+        (
+            "tax_amount",
+            CreateOrderItem {
+                unit_price: dec!(10.00),
+                tax_amount: Some(dec!(0.875)),
+                ..Default::default()
+            },
+        ),
+    ] {
+        let item = CreateOrderItem {
+            product_id: ProductId::new(),
+            sku: SKUS[0].into(),
+            name: "Over-scaled".into(),
+            quantity: 1,
+            ..item
+        };
+        let err = h
+            .commerce
+            .orders()
+            .create(CreateOrder {
+                customer_id: h.customer_id,
+                items: vec![item],
+                ..Default::default()
+            })
+            .expect_err("over-scaled money must be rejected");
+        assert_eq!(
+            err.invariant_code(),
+            Some("commerce.money.scale_exceeds_currency"),
+            "over-scaled {field} rejected with the wrong code: {err:?}"
+        );
+    }
+
+    // A1: nothing was written by any of the three rejections.
+    assert_eq!(
+        h.commerce.orders().list(Default::default()).expect("list").len(),
+        before,
+        "a rejected over-scaled order still wrote an order row"
+    );
+    h.check_invariants().unwrap_or_else(|e| panic!("{e}"));
+
+    // Insignificant trailing zeros are fine: 10.9900 is two-scale USD.
+    let order = h
+        .commerce
+        .orders()
+        .create(CreateOrder {
+            customer_id: h.customer_id,
+            items: vec![CreateOrderItem {
+                product_id: ProductId::new(),
+                sku: SKUS[0].into(),
+                name: "Trailing zeros".into(),
+                quantity: 2,
+                unit_price: dec!(10.9900),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("10.9900 is two significant decimals and must be accepted for USD");
+    assert_eq!(order.total_amount, dec!(21.98));
 }
 
 #[test]

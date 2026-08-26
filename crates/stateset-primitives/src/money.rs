@@ -220,6 +220,32 @@ impl CurrencyCode {
         }
     }
 
+    /// Minor-unit scale for this currency — the number of decimal places a
+    /// stored amount may carry.
+    ///
+    /// Zero-decimal currencies (JPY, KRW, VND) return `0`; the crypto codes
+    /// BTC/ETH return `8`; every other code returns `2`. This is the single
+    /// source of truth for invariant `commerce.money.scale_exceeds_currency`
+    /// and mirrors `stateset_core::models::Currency::decimal_places`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use stateset_primitives::CurrencyCode;
+    ///
+    /// assert_eq!(CurrencyCode::USD.decimal_places(), 2);
+    /// assert_eq!(CurrencyCode::JPY.decimal_places(), 0);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn decimal_places(&self) -> u8 {
+        match &self.0 {
+            b"JPY" | b"KRW" | b"VND" => 0,
+            b"BTC" | b"ETH" => 8,
+            _ => 2,
+        }
+    }
+
     /// Get the currency code as a string slice.
     #[inline]
     #[must_use]

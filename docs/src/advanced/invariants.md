@@ -120,7 +120,7 @@ amount for goods that never left the building.
 
 | # | Guarantee | Error code | Enforced at |
 |---|-----------|------------|-------------|
-| M1 | No stored monetary value carries more decimal places than its currency allows | `commerce.money.scale_exceeds_currency` † | **not enforced by the engine** — see the footnote; amounts are rounded to the currency's minor units where `Money::round` is applied, but no write is refused |
+| M1 | No stored monetary value carries more decimal places than its currency allows | `commerce.money.scale_exceeds_currency` † | **order creation** — `CreateOrder::validate_money_scale` runs inside `validate_order_input` on both backends, before the first write; other write paths are still unguarded, see the footnote |
 | M2 | Monetary arithmetic is exact decimal, never binary floating point | — | `rust_decimal` end to end; `decimal_sum` for SQLite aggregates; see [Money: Storage & Arithmetic](money.md) |
 
 ## Atomicity
@@ -144,14 +144,18 @@ Stated plainly, because a trust document that overstates itself is worse than no
   `error.code` and the HTTP status are unchanged). Rows marked `—` are still
   enforced but surface only as a typed error with a human-readable message; they
   have no code in the conformance vector to branch on yet.
-- † `commerce.money.scale_exceeds_currency` is **defined by the conformance
-  vector** and is what a conformant implementation must report, and
-  `CommerceError::MoneyScaleExceedsCurrency` exists to carry it — but the
-  engine has no guard that rejects an over-scaled amount today. `Money::round`
-  rounds to the currency's minor units where it is called; nothing refuses a
-  write. M1 is therefore a vector-level requirement, not yet an engine-enforced
-  invariant, and no engine path returns that code. The ledger codes (G1, G2)
-  and the payment, return and inventory codes are live on `CommerceError`.
+- † M1 is enforced on **order creation only**. `CreateOrder::validate_money_scale`
+  checks every line's `unit_price`, `discount` and `tax_amount` against
+  `CurrencyCode::decimal_places()` for the order's currency, and both the SQLite
+  and Postgres `validate_order_input` call it before the first write, so a
+  rejected order persists nothing. Scale is *significant* scale — trailing zeros
+  do not count, so `10.9900` is valid USD and `10.999` is not, matching vectors
+  `scale07`/`scale08`. Every other money write path is still unguarded: payments,
+  refunds, invoices and AP bills, carts, and `orders().add_item` (which takes a
+  line after creation) accept an over-scaled amount and round only the derived
+  totals. For those paths M1 remains a vector-level requirement, not an
+  engine-enforced invariant. The ledger codes (G1, G2) and the payment, return
+  and inventory codes are live on `CommerceError`.
 - The ICP conformance suite (`icp-conformance/`) verifies protocol-level behaviour
   — AID derivation, canonical JSON, signatures, escrow lifecycle, timing, ceilings.
   It does **not** yet assert the economic invariants on this page.
