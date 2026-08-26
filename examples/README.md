@@ -128,7 +128,7 @@ cd examples/kotlin
 ./gradlew run
 # Or build a jar:
 ./gradlew jar
-java -jar build/libs/kotlin-1.25.0.jar
+java -jar build/libs/kotlin-1.26.0.jar
 ```
 
 ### Swift
@@ -160,8 +160,8 @@ cd examples/java
 # With Maven
 mvn compile exec:java -Dexec.mainClass="com.stateset.examples.BasicUsage"
 # Or compile manually
-javac -d . -cp path/to/stateset-embedded-1.25.0.jar BasicUsage.java
-java -cp .:path/to/stateset-embedded-1.25.0.jar com.stateset.examples.BasicUsage
+javac -d . -cp path/to/stateset-embedded-1.26.0.jar BasicUsage.java
+java -cp .:path/to/stateset-embedded-1.26.0.jar com.stateset.examples.BasicUsage
 ```
 
 ## Example Output

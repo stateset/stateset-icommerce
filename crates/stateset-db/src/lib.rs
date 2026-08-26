@@ -41,7 +41,9 @@
 
 pub mod error_helpers;
 pub mod http_idempotency;
+pub mod kernel_outbox;
 pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository};
+pub use kernel_outbox::{KernelOutboxEvent, KernelReceiptRecord};
 
 #[cfg(feature = "sqlite")]
 pub mod audit;

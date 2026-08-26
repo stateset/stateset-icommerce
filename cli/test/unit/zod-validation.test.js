@@ -169,6 +169,9 @@ describe('Zod validation constraints', () => {
     it('create_payment accepts valid amount', async () => {
       const schema = getSchema(tools, 'create_payment');
       expectPass(schema, { orderId: 'abc', amount: 99.99 });
+      expectPass(schema, { orderId: 'abc', amount: '9007199254740993.25' });
+      expectFail(schema, { orderId: 'abc', amount: '1e3' });
+      expectFail(schema, { orderId: 'abc', amount: '0.00' });
     });
 
     it('create_refund rejects zero amount', async () => {

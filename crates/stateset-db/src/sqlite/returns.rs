@@ -4,12 +4,14 @@ use super::bins::{
     apply_bin_delta_tx, apply_warehouse_delta_tx, find_disposition_bin_tx, insert_bin_movement_tx,
     smuggle,
 };
+use super::kernel_outbox::append_kernel_event_tx;
 use super::parse_helpers::{parse_decimal, parse_enum, parse_uuid};
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_uuid_row, sum_decimal_query,
     uuid_params, with_immediate_transaction,
 };
+use crate::KernelOutboxEvent;
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -38,7 +40,7 @@ fn parse_disposition_row(
 const RETURN_ITEM_COLUMNS: &str = "id, return_id, order_item_id, sku, name, quantity, condition, \
                                    refund_amount, disposition, disposition_at, disposition_by";
 
-fn row_to_return_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReturnItem> {
+pub(crate) fn row_to_return_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReturnItem> {
     Ok(ReturnItem {
         id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
         return_id: ReturnId::from(parse_uuid_row(
@@ -199,7 +201,7 @@ impl SqliteReturnRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_return(row: &rusqlite::Row<'_>) -> rusqlite::Result<Return> {
+    pub(crate) fn row_to_return(row: &rusqlite::Row<'_>) -> rusqlite::Result<Return> {
         Ok(Return {
             id: ReturnId::from(parse_uuid_row(&row.get::<_, String>("id")?, "return", "id")?),
             order_id: OrderId::from(parse_uuid_row(
@@ -593,6 +595,24 @@ impl ReturnRepository for SqliteReturnRepository {
                 .map_err(map_db_error)?;
         }
 
+        append_kernel_event_tx(
+            &tx,
+            &KernelOutboxEvent::domain(
+                "returns.created.v1",
+                "return",
+                id.to_string(),
+                serde_json::json!({
+                    "return_id": id.to_string(),
+                    "order_id": input.order_id.to_string(),
+                    "status": ReturnStatus::Requested.to_string(),
+                    "refund_amount": ret.refund_amount.map(|amount| amount.to_string()),
+                    "item_count": ret.items.len(),
+                }),
+                input.idempotency_key,
+            ),
+        )
+        .map_err(map_db_error)?;
+
         tx.commit().map_err(map_db_error)?;
 
         Ok(ret)
@@ -664,104 +684,132 @@ impl ReturnRepository for SqliteReturnRepository {
     }
 
     fn update(&self, id: ReturnId, input: UpdateReturn) -> Result<Return> {
-        let conn = self.conn()?;
-        let now = Utc::now();
-
-        let mut updates = vec!["updated_at = ?", "version = version + 1"];
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
-
-        if let Some(status) = &input.status {
-            updates.push("status = ?");
-            params.push(Box::new(status.to_string()));
-        }
-        if let Some(tracking) = &input.tracking_number {
-            updates.push("tracking_number = ?");
-            params.push(Box::new(tracking.clone()));
-        }
-        if let Some(amount) = &input.refund_amount {
-            updates.push("refund_amount = ?");
-            params.push(Box::new(amount.to_string()));
-        }
-        if let Some(method) = &input.refund_method {
-            updates.push("refund_method = ?");
-            params.push(Box::new(method.clone()));
-        }
-        if let Some(notes) = &input.notes {
-            updates.push("notes = ?");
-            params.push(Box::new(notes.clone()));
-        }
-
-        params.push(Box::new(id.to_string()));
-
-        let sql = format!("UPDATE returns SET {} WHERE id = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params.iter().map(std::convert::AsRef::as_ref).collect();
-
-        conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
-
-        // Inline the get logic to avoid connection pool deadlock
-        let result = conn.query_row(
-            "SELECT * FROM returns WHERE id = ?",
-            [id.to_string()],
-            Self::row_to_return,
-        );
-
-        let raw_id: Uuid = id.into();
-        match result {
-            Ok(mut ret) => {
-                // Inline load_return_items to use same connection
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount, disposition, disposition_at, disposition_by
-                         FROM return_items WHERE return_id = ?",
-                    )
-                    .map_err(map_db_error)?;
-
-                ret.items = stmt
-                    .query_map([id.to_string()], |row| {
-                        Ok(ReturnItem {
-                            id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                            return_id: ReturnId::from(parse_uuid_row(
-                                &row.get::<_, String>("return_id")?,
-                                "return_item",
-                                "return_id",
-                            )?),
-                            order_item_id: OrderItemId::from(parse_uuid_row(
-                                &row.get::<_, String>("order_item_id")?,
-                                "return_item",
-                                "order_item_id",
-                            )?),
-                            sku: row.get("sku")?,
-                            name: row.get("name")?,
-                            quantity: row.get("quantity")?,
-                            condition: parse_enum_row(
-                                &row.get::<_, String>("condition")?,
-                                "return_item",
-                                "condition",
-                            )?,
-                            refund_amount: parse_decimal_row(
-                                &row.get::<_, String>("refund_amount")?,
-                                "return_item",
-                                "refund_amount",
-                            )?,
-                            disposition: parse_disposition_row(row)?,
-                            disposition_at: parse_datetime_opt_row(
-                                row.get::<_, Option<String>>("disposition_at")?,
-                                "return_item",
-                                "disposition_at",
-                            )?,
-                            disposition_by: row.get("disposition_by")?,
-                        })
-                    })
-                    .map_err(map_db_error)?
-                    .collect::<rusqlite::Result<Vec<_>>>()
-                    .map_err(map_db_error)?;
-
-                Ok(ret)
+        with_immediate_transaction(&self.pool, |tx| {
+            let now = Utc::now();
+            let (status_raw, version): (String, i32) = tx
+                .query_row(
+                    "SELECT status, version FROM returns WHERE id = ?",
+                    [id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        smuggle(CommerceError::ReturnNotFound(id.into()))
+                    }
+                    other => other,
+                })?;
+            let status_before: ReturnStatus = parse_enum_row(&status_raw, "return", "status")?;
+            if let Some(status_after) = input.status {
+                if !status_before.can_transition_to(status_after) {
+                    return Err(smuggle(CommerceError::ValidationError(format!(
+                        "Invalid return status transition from {status_before} to {status_after}"
+                    ))));
+                }
             }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Err(CommerceError::ReturnNotFound(raw_id)),
-            Err(e) => Err(map_db_error(e)),
-        }
+
+            let mut updates = vec!["updated_at = ?", "version = version + 1"];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+            if let Some(status) = input.status {
+                updates.push("status = ?");
+                params.push(Box::new(status.to_string()));
+            }
+            if let Some(tracking) = &input.tracking_number {
+                updates.push("tracking_number = ?");
+                params.push(Box::new(tracking.clone()));
+            }
+            if let Some(amount) = input.refund_amount {
+                updates.push("refund_amount = ?");
+                params.push(Box::new(amount.to_string()));
+            }
+            if let Some(method) = &input.refund_method {
+                updates.push("refund_method = ?");
+                params.push(Box::new(method.clone()));
+            }
+            if let Some(notes) = &input.notes {
+                updates.push("notes = ?");
+                params.push(Box::new(notes.clone()));
+            }
+            params.push(Box::new(id.to_string()));
+            params.push(Box::new(version));
+
+            let sql =
+                format!("UPDATE returns SET {} WHERE id = ? AND version = ?", updates.join(", "));
+            let refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
+            if tx.execute(&sql, refs.as_slice())? == 0 {
+                return Err(smuggle(CommerceError::VersionConflict {
+                    entity: "return".into(),
+                    id: id.to_string(),
+                    expected_version: version,
+                }));
+            }
+
+            let mut ret = tx.query_row(
+                "SELECT * FROM returns WHERE id = ?",
+                [id.to_string()],
+                Self::row_to_return,
+            )?;
+            let mut statement = tx.prepare(
+                "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount, disposition, disposition_at, disposition_by
+                 FROM return_items WHERE return_id = ?",
+            )?;
+            ret.items = statement
+                .query_map([id.to_string()], |row| {
+                    Ok(ReturnItem {
+                        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                        return_id: ReturnId::from(parse_uuid_row(
+                            &row.get::<_, String>("return_id")?,
+                            "return_item",
+                            "return_id",
+                        )?),
+                        order_item_id: OrderItemId::from(parse_uuid_row(
+                            &row.get::<_, String>("order_item_id")?,
+                            "return_item",
+                            "order_item_id",
+                        )?),
+                        sku: row.get("sku")?,
+                        name: row.get("name")?,
+                        quantity: row.get("quantity")?,
+                        condition: parse_enum_row(
+                            &row.get::<_, String>("condition")?,
+                            "return_item",
+                            "condition",
+                        )?,
+                        refund_amount: parse_decimal_row(
+                            &row.get::<_, String>("refund_amount")?,
+                            "return_item",
+                            "refund_amount",
+                        )?,
+                        disposition: parse_disposition_row(row)?,
+                        disposition_at: parse_datetime_opt_row(
+                            row.get("disposition_at")?,
+                            "return_item",
+                            "disposition_at",
+                        )?,
+                        disposition_by: row.get("disposition_by")?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+
+            append_kernel_event_tx(
+                tx,
+                &KernelOutboxEvent::domain(
+                    "returns.updated.v1",
+                    "return",
+                    id.to_string(),
+                    serde_json::json!({
+                        "return_id": id.to_string(),
+                        "status_before": status_before.to_string(),
+                        "status_after": ret.status.to_string(),
+                        "version_before": version,
+                        "version_after": ret.version,
+                        "refund_amount": ret.refund_amount.map(|amount| amount.to_string()),
+                    }),
+                    None,
+                ),
+            )?;
+            Ok(ret)
+        })
     }
 
     fn list(&self, filter: ReturnFilter) -> Result<Vec<Return>> {

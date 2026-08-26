@@ -1,5 +1,7 @@
 //! Inventory domain models
 
+use crate::errors::Result;
+use crate::validation::{Validate, ValidationBuilder};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -123,6 +125,20 @@ pub struct ReserveInventory {
     pub expires_in_seconds: Option<i64>,
 }
 
+/// Input for confirming all or part of an inventory reservation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfirmInventoryReservation {
+    pub reservation_id: Uuid,
+    /// Quantity to confirm. `None` confirms the full remaining reservation.
+    pub quantity: Option<Decimal>,
+}
+
+/// Input for releasing an inventory reservation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseInventoryReservation {
+    pub reservation_id: Uuid,
+}
+
 /// Input for creating inventory item
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateInventoryItem {
@@ -134,6 +150,29 @@ pub struct CreateInventoryItem {
     pub location_id: Option<i32>,
     pub reorder_point: Option<Decimal>,
     pub safety_stock: Option<Decimal>,
+}
+
+impl Validate for CreateInventoryItem {
+    fn validate(&self) -> Result<()> {
+        ValidationBuilder::new()
+            .sku("sku", &self.sku)
+            .required("name", &self.name)
+            .non_negative("initial_quantity", self.initial_quantity.unwrap_or(Decimal::ZERO))
+            .non_negative("reorder_point", self.reorder_point.unwrap_or(Decimal::ZERO))
+            .non_negative("safety_stock", self.safety_stock.unwrap_or(Decimal::ZERO))
+            .build()?;
+        if self.location_id.is_some_and(|id| id <= 0) {
+            return Err(crate::CommerceError::ValidationError(
+                "location_id must be positive".into(),
+            ));
+        }
+        if self.unit_of_measure.as_deref().is_some_and(|unit| unit.trim().is_empty()) {
+            return Err(crate::CommerceError::ValidationError(
+                "unit_of_measure cannot be empty".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Stock level summary

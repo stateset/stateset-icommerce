@@ -22,6 +22,15 @@ import {
   refundPaymentIntent,
 } from './providers/payments.js';
 
+const exactPositiveAmount = z
+  .string()
+  .regex(/^\d+(?:\.\d+)?$/, 'Amount must be a base-10 decimal string')
+  .refine((value) => /[1-9]/.test(value), 'Amount must be positive');
+
+const agentMoneyAmount = z
+  .union([exactPositiveAmount, z.number().positive()])
+  .describe('Exact decimal string (preferred) or legacy positive number');
+
 /**
  * Payment tool definitions
  */
@@ -57,7 +66,7 @@ export const paymentTools = [
     description: 'Create a payment for an order.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID'),
-      amount: z.number().positive().describe('Payment amount'),
+      amount: agentMoneyAmount,
       currency: z.string().max(10).optional().describe('Currency (default: USD)'),
       method: z
         .string()
@@ -70,12 +79,16 @@ export const paymentTools = [
         return applyRequired('Create payment', params);
       }
 
-      const payment = await commerce.payments.create({
+      const input = {
         orderId: params.orderId,
         amount: String(params.amount),
         currency: params.currency || 'USD',
-        method: params.method || 'credit_card',
-      });
+        paymentMethod: params.method || 'credit_card',
+      };
+      const payment =
+        typeof commerce.payments.createExact === 'function'
+          ? await commerce.payments.createExact(input)
+          : await commerce.payments.create({ ...input, method: input.paymentMethod });
       return { success: true, message: 'Payment created', payment };
     },
   },
@@ -143,7 +156,7 @@ export const paymentTools = [
     description: 'Create a refund for a payment.',
     inputSchema: {
       paymentId: z.string().min(1).describe('Payment ID to refund'),
-      amount: z.number().positive().describe('Refund amount'),
+      amount: agentMoneyAmount,
       reason: z.string().max(500).optional().describe('Refund reason'),
     },
     permission: 'write',
@@ -152,11 +165,15 @@ export const paymentTools = [
         return applyRequired('Create refund', params);
       }
 
-      const refund = await commerce.payments.createRefund({
+      const input = {
         paymentId: params.paymentId,
         amount: String(params.amount),
         reason: params.reason,
-      });
+      };
+      const refund =
+        typeof commerce.payments.createRefundExact === 'function'
+          ? await commerce.payments.createRefundExact(input)
+          : await commerce.payments.createRefund(input);
       return { success: true, message: 'Refund created', refund };
     },
   },

@@ -212,6 +212,7 @@ describe('agent-toolkit', () => {
     const toolkit = createEmbeddedAgentToolkit({
       commerce: mockCommerce,
       allowApply: true,
+      capabilities: ['read:*', 'delegate_to_agent'],
       autonomousEngine: createMockAutonomousEngine({
         executeAgentRequest: async (agentName, taskDescription, context) => {
           delegated = { agentName, taskDescription, context };
@@ -308,6 +309,7 @@ describe('agent-toolkit', () => {
     const toolkit = createEmbeddedAgentToolkit({
       commerce: new GetterCommerce(),
       allowApply: true,
+      capabilities: ['*'],
     });
 
     const customers = await toolkit.executeTool('list_customers');
@@ -425,6 +427,7 @@ describe('agent-toolkit', () => {
     const toolkit = createEmbeddedAgentToolkit({
       commerce: mockCommerce,
       allowApply: true,
+      capabilities: ['*'],
     });
 
     const contract = await toolkit.getRuntimeContract({
@@ -477,6 +480,7 @@ describe('agent-toolkit', () => {
         commerce: mockCommerce,
         dbPath,
         allowApply: true,
+        capabilities: ['create_customer'],
       });
 
       const execution = await toolkit.executeTool('create_customer', {
@@ -504,6 +508,379 @@ describe('agent-toolkit', () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('routes governed mutations through the native kernel receipt boundary', async () => {
+    let captured = null;
+    mockCommerce.executeKernelCommand = async (command, policy) => {
+      captured = { command, policy };
+      return {
+        status: 'succeeded',
+        receipt_id: 'receipt-1',
+        command_type: command.command_type,
+        result: { id: 'payment-1', amount: command.payload.amount },
+      };
+    };
+    const policy = {
+      version: 'agent-policy-1',
+      commands: {
+        'payments.create': {
+          required_capabilities: ['payments.create'],
+          requires_tenant: true,
+          requires_store: true,
+          requires_agent_delegation: true,
+          requires_signed_authority: false,
+          requires_approval: false,
+        },
+      },
+      trusted_authority_keys: {},
+    };
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: true,
+      capabilities: ['payments.create'],
+      kernel: {
+        policy,
+        storeId: 'store-1',
+        principal: {
+          id: 'agent-1',
+          kind: 'agent',
+          tenantId: 'tenant-1',
+          delegatedBy: 'user-1',
+          capabilities: ['payments.create'],
+        },
+      },
+    });
+
+    const result = await toolkit.executeTool(
+      'create_payment',
+      { orderId: 'order-1', amount: '12.34', currency: 'USD' },
+      { idempotencyKey: 'payment-attempt-1' },
+    );
+
+    assert.equal(result.result.kernel, true);
+    assert.equal(result.result.receipt.receipt_id, 'receipt-1');
+    assert.equal(captured.policy, policy);
+    assert.equal(captured.command.command_type, 'payments.create');
+    assert.equal(captured.command.mode, 'apply');
+    assert.equal(captured.command.idempotency_key, 'payment-attempt-1');
+    assert.equal(captured.command.principal.tenant_id, 'tenant-1');
+    assert.equal(captured.command.store_id, 'store-1');
+    assert.equal(captured.command.payload.amount, '12.34');
+  });
+
+  it('routes product creation with exact-decimal variants through the kernel', async () => {
+    const captured = [];
+    mockCommerce.executeKernelCommand = async (command) => {
+      captured.push(command);
+      return {
+        status: 'succeeded',
+        receipt_id: 'product-receipt-1',
+        result: { id: 'product-1', slug: 'agent-offer' },
+      };
+    };
+    const rule = {
+      required_capabilities: ['products.create'],
+      requires_tenant: true,
+      requires_store: true,
+      requires_agent_delegation: true,
+      requires_signed_authority: false,
+      requires_approval: false,
+    };
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: true,
+      capabilities: ['products.create'],
+      kernel: {
+        strict: true,
+        policy: {
+          version: 'catalog-policy-1',
+          commands: { 'products.create': rule },
+          trusted_authority_keys: {},
+        },
+        storeId: 'store-1',
+        principal: {
+          id: 'agent-1',
+          kind: 'agent',
+          tenantId: 'tenant-1',
+          delegatedBy: 'user-1',
+          capabilities: ['products.create'],
+        },
+      },
+    });
+
+    const result = await toolkit.executeTool('create_product', {
+      name: 'Agent Offer',
+      variants: [
+        {
+          sku: 'AGENT-001',
+          price: '9007199254740993.25',
+          compareAtPrice: '9007199254740994.25',
+        },
+      ],
+    });
+    assert.equal(result.result.kernel, true);
+    assert.equal(captured[0].command_type, 'products.create');
+    assert.equal(captured[0].payload.variants[0].price, '9007199254740993.25');
+    assert.equal(captured[0].payload.variants[0].compare_at_price, '9007199254740994.25');
+
+    const unsafe = await toolkit.executeTool('create_product', {
+      name: 'Unsafe Offer',
+      variants: [{ sku: 'UNSAFE-001', price: 12.34 }],
+    });
+    assert.equal(unsafe.success, false);
+    assert.match(unsafe.error, /exact decimal strings/);
+    assert.equal(captured.length, 1);
+  });
+
+  it('routes exact-decimal initial inventory through the kernel', async () => {
+    const captured = [];
+    mockCommerce.executeKernelCommand = async (command) => {
+      captured.push(command);
+      return {
+        status: 'succeeded',
+        receipt_id: 'inventory-receipt-1',
+        result: { id: 1, sku: command.payload.sku },
+      };
+    };
+    const capability = 'inventory.item.create';
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: true,
+      capabilities: [capability],
+      kernel: {
+        strict: true,
+        policy: {
+          version: 'inventory-policy-1',
+          commands: {
+            [capability]: {
+              required_capabilities: [capability],
+              requires_tenant: true,
+              requires_store: true,
+              requires_agent_delegation: true,
+              requires_signed_authority: false,
+              requires_approval: false,
+            },
+          },
+          trusted_authority_keys: {},
+        },
+        storeId: 'store-1',
+        principal: {
+          id: 'agent-1',
+          kind: 'agent',
+          tenantId: 'tenant-1',
+          delegatedBy: 'user-1',
+          capabilities: [capability],
+        },
+      },
+    });
+
+    const result = await toolkit.executeTool('create_inventory_item', {
+      sku: 'FRACTIONAL-001',
+      name: 'Fractional inventory',
+      initialQuantity: '9007199254740993.125',
+      reorderPoint: '0.125',
+      safetyStock: '0.025',
+    });
+    assert.equal(result.result.kernel, true);
+    assert.equal(captured[0].command_type, capability);
+    assert.equal(captured[0].payload.initial_quantity, '9007199254740993.125');
+    assert.equal(captured[0].payload.reorder_point, '0.125');
+
+    const unsafe = await toolkit.executeTool('create_inventory_item', {
+      sku: 'UNSAFE-INVENTORY',
+      name: 'Unsafe inventory',
+      initialQuantity: 12.5,
+    });
+    assert.equal(unsafe.success, false);
+    assert.match(unsafe.error, /exact decimal strings/);
+    assert.equal(captured.length, 1);
+  });
+
+  it('routes the exact-decimal A2A escrow lifecycle through strict kernel commands', async () => {
+    const captured = [];
+    mockCommerce.executeKernelCommand = async (command) => {
+      captured.push(command);
+      return {
+        status: 'succeeded',
+        receipt_id: `receipt-${captured.length}`,
+        command_type: command.command_type,
+        result: { id: command.payload.escrow_id || 'escrow-1', status: 'active' },
+      };
+    };
+    const capabilities = [
+      'a2a.escrow.create',
+      'a2a.escrow.dispute',
+      'a2a.escrow.fund',
+      'a2a.escrow.refund',
+      'a2a.escrow.release',
+      'a2a.dispute.file',
+      'a2a.dispute.evidence.submit',
+      'a2a.dispute.resolve',
+    ];
+    const commands = Object.fromEntries(
+      capabilities.map((capability) => [
+        capability,
+        {
+          required_capabilities: [capability],
+          requires_tenant: true,
+          requires_store: true,
+          requires_agent_delegation: true,
+          requires_signed_authority: false,
+          requires_approval: false,
+        },
+      ]),
+    );
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: true,
+      capabilities: ['permission:write', ...capabilities],
+      agentConfig: { walletAddress: 'did:key:buyer' },
+      kernel: {
+        strict: true,
+        policy: { version: 'a2a-policy-1', commands, trusted_authority_keys: {} },
+        storeId: 'store-a2a',
+        principal: {
+          id: 'agent-a2a',
+          kind: 'agent',
+          tenantId: 'tenant-a2a',
+          delegatedBy: 'user-a2a',
+          capabilities,
+        },
+      },
+    });
+
+    await toolkit.executeTool('a2a_create_escrow', {
+      buyerAddress: 'did:key:buyer',
+      sellerAddress: 'did:key:seller',
+      amount: '0.123456',
+      conditions: [{ type: 'buyer_confirmed' }],
+      expiresInHours: 24,
+    });
+    await toolkit.executeTool('a2a_fund_escrow', { escrowId: 'escrow-1' });
+    await toolkit.executeTool('a2a_dispute_escrow', {
+      escrowId: 'escrow-1',
+      reason: 'delivery evidence missing',
+      category: 'non_delivery',
+    });
+    await toolkit.executeTool('a2a_refund_escrow', {
+      escrowId: 'escrow-1',
+      reason: 'buyer cancelled',
+    });
+    await toolkit.executeTool('a2a_file_dispute', {
+      escrowId: 'escrow-2',
+      reason: 'delivery evidence missing',
+      category: 'non_delivery',
+    });
+    await toolkit.executeTool('a2a_submit_evidence', {
+      disputeId: 'dispute-1',
+      evidenceType: 'communication',
+      title: 'Seller conversation',
+      content: 'seller acknowledged non-delivery',
+    });
+    await toolkit.executeTool('a2a_resolve_dispute', {
+      disputeId: 'dispute-1',
+      resolutionType: 'split',
+      buyerAmount: '0.100001',
+      sellerAmount: '0.023455',
+    });
+
+    assert.deepEqual(
+      captured.map((command) => command.command_type),
+      [
+        'a2a.escrow.create',
+        'a2a.escrow.fund',
+        'a2a.escrow.dispute',
+        'a2a.escrow.refund',
+        'a2a.dispute.file',
+        'a2a.dispute.evidence.submit',
+        'a2a.dispute.resolve',
+      ],
+    );
+    assert.equal(captured[0].payload.amount, '0.123456');
+    assert.equal(captured[0].payload.release_conditions[0].completed, false);
+    assert.equal(captured[1].payload.escrow_id, 'escrow-1');
+    assert.equal(captured[2].payload.reason, 'delivery evidence missing');
+    assert.equal(captured[2].payload.category, 'non_delivery');
+    assert.equal(captured[3].payload.reason, 'buyer cancelled');
+    assert.equal(captured[4].payload.claimant_address, 'did:key:buyer');
+    assert.equal(captured[5].payload.submitted_by, 'did:key:buyer');
+    assert.equal(captured[6].payload.buyer_amount, '0.100001');
+    assert.equal(captured[6].payload.seller_amount, '0.023455');
+
+    const unsafeNumber = await toolkit.executeTool('a2a_create_escrow', {
+      buyerAddress: 'did:key:buyer',
+      sellerAddress: 'did:key:seller',
+      amount: 0.123456,
+    });
+    assert.equal(unsafeNumber.success, false);
+    assert.match(unsafeNumber.error, /exact decimal string/);
+    assert.equal(captured.length, 7);
+  });
+
+  it('refuses governed apply mutations without trusted kernel configuration', async () => {
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: true,
+      capabilities: ['payments.create'],
+    });
+
+    const result = await toolkit.executeTool('create_payment', {
+      orderId: 'order-1',
+      amount: '12.34',
+    });
+    assert.equal(result.success, false);
+    assert.match(result.error, /apply mode requires trusted kernel configuration/);
+  });
+
+  it('strict kernel mode hides and rejects every unmapped mutation tool', async () => {
+    mockCommerce.executeKernelCommand = async (command) => ({
+      status: 'succeeded',
+      receipt_id: 'strict-receipt-1',
+      command_type: command.command_type,
+      result: { id: 'payment-1' },
+    });
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: true,
+      capabilities: ['read:*', 'permission:write', 'permission:delete', 'permission:admin'],
+      kernel: {
+        policy: {
+          version: 'strict-policy-1',
+          commands: {
+            'payments.create': {
+              required_capabilities: ['payments.create'],
+              requires_tenant: true,
+              requires_store: true,
+              requires_agent_delegation: true,
+              requires_signed_authority: false,
+              requires_approval: false,
+            },
+          },
+          trusted_authority_keys: {},
+        },
+        storeId: 'store-1',
+        principal: {
+          id: 'agent-1',
+          kind: 'agent',
+          tenantId: 'tenant-1',
+          delegatedBy: 'user-1',
+          capabilities: ['payments.create'],
+        },
+      },
+    });
+
+    const names = toolkit.getRawTools().map((tool) => tool.name);
+    assert.ok(names.includes('list_customers'));
+    assert.ok(names.includes('create_payment'));
+    assert.ok(!names.includes('create_customer'));
+    assert.ok(!names.includes('delete_customer'));
+    assert.ok(!names.includes('backup_database'));
+    assert.ok(!names.includes('set_exchange_rate'));
+    await assert.rejects(
+      toolkit.executeTool('create_customer', { email: 'blocked@example.com' }),
+      /outside this toolkit's capability scope/,
+    );
   });
 
   it('discovers payable tools through the embedded toolkit', async () => {

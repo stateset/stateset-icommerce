@@ -50,8 +50,12 @@
  */
 import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runMain } from '../src/graceful-shutdown.js';
 import { CLI_VERSION } from '../src/config.js';
+import { loadKernelConfig } from '../src/kernel-config.js';
 import {
   API_KEYS_ENV,
   collectApiKeys,
@@ -73,6 +77,12 @@ OPTIONS:
   --read-only            Disable write tools (default for a durable --db)
   --no-seed              Start with an EMPTY store (default: seeded demo data)
   --strict-protocol      Serve ONLY 2026-07-28; reject 2025-era clients
+  --kernel-policy <path> Trusted kernel policy JSON (env STATESET_KERNEL_POLICY)
+  --kernel-principal <path>
+                         Trusted principal JSON (env STATESET_KERNEL_PRINCIPAL)
+  --kernel-store-id <id> Logical store scope (env STATESET_KERNEL_STORE_ID)
+  --kernel-allow-legacy-writes
+                         Expose writes without typed commands (unsafe migration only)
   --allowed-host <host>  Allowed Host header hostname (repeatable); DNS-rebinding
                          protection. Default: localhost-only on a loopback bind.
                          REQUIRED for any non-loopback --host.
@@ -135,6 +145,10 @@ async function main() {
       'read-only': { type: 'boolean', default: false },
       'no-seed': { type: 'boolean', default: false },
       'strict-protocol': { type: 'boolean', default: false },
+      'kernel-policy': { type: 'string' },
+      'kernel-principal': { type: 'string' },
+      'kernel-store-id': { type: 'string' },
+      'kernel-allow-legacy-writes': { type: 'boolean', default: false },
       'allowed-host': { type: 'string', multiple: true },
       'allowed-origin': { type: 'string', multiple: true },
       'insecure-allow-any-host': { type: 'boolean', default: false },
@@ -172,7 +186,23 @@ async function main() {
   const port = Number.parseInt(values.port || '8090', 10);
   const dbPath = values.db || ':memory:';
   const ephemeralDb = dbPath === ':memory:';
+  // Native Commerce and the JS A2A runtime use independent SQLite
+  // connections. A private temp file preserves ephemeral semantics while
+  // giving both layers one transactional database; two literal `:memory:`
+  // connections would silently create unrelated stores.
+  const ephemeralDir = ephemeralDb ? mkdtempSync(join(tmpdir(), 'stateset-mcp-http-')) : null;
+  const storageDbPath = ephemeralDir ? join(ephemeralDir, 'store.db') : dbPath;
+  if (ephemeralDir) {
+    process.once('exit', () => rmSync(ephemeralDir, { recursive: true, force: true }));
+  }
   const seed = !values['no-seed'];
+  const kernel = loadKernelConfig({
+    policyPath: values['kernel-policy'],
+    principalPath: values['kernel-principal'],
+    storeId: values['kernel-store-id'],
+    allowLegacyWrites: values['kernel-allow-legacy-writes'],
+    requireForApply: values.apply,
+  });
 
   // Writes are safe by default only when the store is ephemeral. A durable --db
   // needs explicit --apply regardless of auth: a key proves who the caller is,
@@ -243,7 +273,7 @@ async function main() {
   }
 
   // The store is the only state, shared by every request.
-  const commerce = new Commerce(dbPath);
+  const commerce = new Commerce(storageDbPath);
   if (seed && ephemeralDb) {
     await seedDemoData(commerce, { quiet: true });
   }
@@ -254,8 +284,9 @@ async function main() {
     () =>
       createStatesetV2McpServer({
         commerce,
-        dbPath,
+        dbPath: storageDbPath,
         allowApply,
+        kernel,
         createServer: createStatesetMcpServer,
       }),
     {
@@ -269,8 +300,9 @@ async function main() {
   // ~940 one-time schema conversions cached inside the factory.
   createStatesetV2McpServer({
     commerce,
-    dbPath,
+    dbPath: storageDbPath,
     allowApply,
+    kernel,
     createServer: createStatesetMcpServer,
   });
 
@@ -311,6 +343,7 @@ async function main() {
           db: dbPath,
           seeded: seed && ephemeralDb,
           writes: allowApply ? 'shared-store' : 'read-only',
+          kernel: kernel ? (kernel.strict ? 'strict' : 'legacy-writes') : 'not-configured',
           uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
         });
         return;

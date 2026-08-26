@@ -61,6 +61,8 @@ import { createToolDispatch } from './mcp/tool-dispatch.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
 import { adaptCommerceApis } from './commerce.js';
 import { getCommerce } from './database.js';
+import { KERNEL_CAPABILITY_BY_TOOL, createKernelToolExecutor } from './kernel-tool-execution.js';
+import { selectStrictKernelToolDefinitions } from './kernel-boundary.js';
 // SUPPORTED_AGENT_NAMES* now consumed by `./mcp/agentic-runtime-tools.js`.
 import { buildMppServiceInfo } from './mpp/index.js';
 
@@ -226,13 +228,31 @@ export function createStatesetMcpServer({
   agentConfig = null,
   mcpEventStream = null,
   structuredToolResults = false,
+  kernel = null,
 }) {
+  const strictKernelBoundary = Boolean(kernel && kernel.strict !== false);
+  const exposedToolDefs = strictKernelBoundary
+    ? selectStrictKernelToolDefinitions(ALL_TOOL_DEFS, KERNEL_CAPABILITY_BY_TOOL)
+    : ALL_TOOL_DEFS;
+  const exposedToolDefsByName = new Map(
+    exposedToolDefs.map((tool) => [tool?.name, tool]).filter(([name]) => Boolean(name)),
+  );
   const commerceInstance = commerce || getCommerce(dbPath);
+  const executeGovernedTool = createKernelToolExecutor({
+    commerce: commerceInstance,
+    kernel,
+    allowApply,
+    agentConfig,
+  });
 
   // ---------------------------------------------------------------------------
   // A2A Store initialization
   // ---------------------------------------------------------------------------
-  const a2aStore = new A2AStore({ dbPath: dbPath.replace('.db', '-a2a.db') });
+  // Keep A2A state in the commerce database. The A2A runtime uses distinct
+  // names for its quote/card projections while `a2a_escrows` is deliberately
+  // shared with the native kernel, so escrow release and its receipt/outbox
+  // commit atomically against the record created by the public A2A tools.
+  const a2aStore = new A2AStore({ dbPath });
 
   // The A2A accessor is late-bound: `./mcp/a2a-service.js` starts it as a
   // pass-through over the store and swaps in the integrated service once
@@ -319,7 +339,7 @@ export function createStatesetMcpServer({
   const getAgenticToolPricing = pricingCache.getPricing;
   const getToolRuntimeMeta = (toolName) =>
     buildToolRuntimeMeta(toolName, {
-      toolDefsByName: TOOL_DEFS_BY_NAME,
+      toolDefsByName: exposedToolDefsByName,
       inferPolicyDomain,
       toolDomainByName: TOOL_DOMAIN_BY_TOOL_NAME,
       compensationHints: AGENTIC_COMPENSATION_HINTS,
@@ -332,7 +352,7 @@ export function createStatesetMcpServer({
     serviceInfo: MPP_SERVICE_INFO,
   });
   const preparePaymentForTool = createPreparePaymentForTool({
-    toolDefsByName: TOOL_DEFS_BY_NAME,
+    toolDefsByName: exposedToolDefsByName,
     getAgenticToolPricing,
     serviceInfo: MPP_SERVICE_INFO,
   });
@@ -347,7 +367,7 @@ export function createStatesetMcpServer({
     getToolDefinitions,
     getRawToolDefinitions,
   } = createToolCatalogHelpers({
-    allToolDefs: ALL_TOOL_DEFS,
+    allToolDefs: exposedToolDefs,
     toolDomainByName: TOOL_DOMAIN_BY_TOOL_NAME,
     serviceInfo: MPP_SERVICE_INFO,
     resultSchemaVersion: AGENTIC_TOOL_RESULT_SCHEMA_VERSION,
@@ -453,7 +473,7 @@ export function createStatesetMcpServer({
   // `toolContext` is assembled below (it references the plan helpers), so the
   // step executor reads it lazily.
   const executeToolStepInPlan = createExecuteToolStepInPlan({
-    toolDefsByName: TOOL_DEFS_BY_NAME,
+    toolDefsByName: exposedToolDefsByName,
     inferPolicyDomain,
     getToolRuntimeMeta,
     hookRunner,
@@ -464,6 +484,7 @@ export function createStatesetMcpServer({
     maybeChargeForTool,
     wrapWithTelemetry,
     getToolContext: () => toolContext,
+    executeGovernedTool,
   });
 
   // Mutation simulate/replay bodies live in ./mcp/mutation-simulator.js.
@@ -489,7 +510,7 @@ export function createStatesetMcpServer({
   });
 
   const runPlanRollback = createRunPlanRollback({
-    toolDefsByName: TOOL_DEFS_BY_NAME,
+    toolDefsByName: exposedToolDefsByName,
     inferPolicyDomain,
     executeToolStepInPlan,
     addAgenticReplayEvent,
@@ -535,7 +556,6 @@ export function createStatesetMcpServer({
     getAgenticReplayLog: listAgenticReplayEvents,
     policyEngine: policyEngineInstance,
   };
-
   // ---------------------------------------------------------------------------
   // Tool dispatch — bodies in ./mcp/tool-dispatch.js
   // ---------------------------------------------------------------------------
@@ -555,6 +575,7 @@ export function createStatesetMcpServer({
     attachStructuredToolMetadataToResponse,
     executeToolStepInPlan,
     toolContext,
+    executeGovernedTool,
   });
 
   // ---------------------------------------------------------------------------
@@ -565,7 +586,7 @@ export function createStatesetMcpServer({
   // serve. The agent-sdk consumes it in-process; `createStatesetV2McpServer`
   // (src/mcp/v2-server.js) registers the same objects on a protocol-2026-07-28
   // server, so the two can never drift apart.
-  const adaptedTools = ALL_TOOL_DEFS.map(adaptTool);
+  const adaptedTools = exposedToolDefs.map(adaptTool);
 
   const server = createSdkMcpServer({
     name: 'stateset-commerce',

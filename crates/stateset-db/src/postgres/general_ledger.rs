@@ -1,6 +1,8 @@
 //! PostgreSQL implementation of General Ledger repository
 
+use super::kernel_outbox::append_kernel_event_tx;
 use super::{block_on, map_db_error};
+use crate::KernelOutboxEvent;
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
@@ -59,7 +61,7 @@ struct PeriodRow {
 }
 
 #[derive(FromRow)]
-struct JournalEntryRow {
+pub(crate) struct JournalEntryRow {
     id: Uuid,
     entry_number: String,
     entry_date: NaiveDate,
@@ -82,7 +84,7 @@ struct JournalEntryRow {
 }
 
 #[derive(FromRow)]
-struct JournalEntryLineRow {
+pub(crate) struct JournalEntryLineRow {
     id: Uuid,
     journal_entry_id: Uuid,
     line_number: i32,
@@ -225,7 +227,7 @@ impl PgGeneralLedgerRepository {
         })
     }
 
-    fn row_to_journal_entry(row: JournalEntryRow) -> Result<JournalEntry> {
+    pub(crate) fn row_to_journal_entry(row: JournalEntryRow) -> Result<JournalEntry> {
         let JournalEntryRow {
             id,
             entry_number,
@@ -291,7 +293,7 @@ impl PgGeneralLedgerRepository {
         })
     }
 
-    fn row_to_journal_entry_line(row: JournalEntryLineRow) -> JournalEntryLine {
+    pub(crate) fn row_to_journal_entry_line(row: JournalEntryLineRow) -> JournalEntryLine {
         JournalEntryLine {
             id: row.id,
             journal_entry_id: row.journal_entry_id,
@@ -331,7 +333,7 @@ impl PgGeneralLedgerRepository {
         }
     }
 
-    async fn update_account_balance_tx(
+    pub(crate) async fn update_account_balance_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, Postgres>,
         account_id: Uuid,
@@ -966,6 +968,27 @@ impl PgGeneralLedgerRepository {
             )
             .await?;
         }
+
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "ledger.journal_entry_posted.v1",
+                "journal_entry",
+                id.to_string(),
+                serde_json::json!({
+                    "journal_entry_id": id.to_string(),
+                    "entry_number": entry.entry_number,
+                    "source": entry.source.to_string(),
+                    "total_debits": entry.total_debits.to_string(),
+                    "total_credits": entry.total_credits.to_string(),
+                    "line_count": entry.lines.len(),
+                    "posted_by": posted_by,
+                    "status": JournalEntryStatus::Posted.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 

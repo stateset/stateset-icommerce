@@ -5,6 +5,13 @@
  */
 
 export { AutonomousEngine, createAutonomousEngine } from './engine.js';
+export {
+  AUTONOMOUS_BUSINESS_SCHEMA_VERSION,
+  GOVERNED_AUTONOMOUS_CAPABILITIES,
+  PRODUCTION_LAUNCH_REQUIREMENTS,
+  createBusinessBootstrap,
+  evaluateBusinessReadiness,
+} from './business-bootstrap.js';
 
 // Re-export subsystems
 export * from '../workflows/index.js';

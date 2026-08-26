@@ -6,7 +6,37 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-08-26
+
 ### Added
+- **Governed AI-commerce kernel.** A versioned `CommandEnvelope` and sealed
+  `ExecutionReceipt` boundary now governs 22 high-risk commands across SQLite
+  and PostgreSQL: checkout, payments/refunds, exact product and inventory
+  launch, reservations, order/return/fulfillment transitions, subscriptions,
+  ledger posting, x402 settlement, and the complete A2A escrow/dispute
+  lifecycle. Commands support preview-before-apply, semantic idempotency,
+  tenant/store and delegated capability policy, optional signed Ed25519
+  authority, optimistic concurrency where applicable, transactional outbox
+  facts, tamper-evident receipt chains, and portable external checkpoints.
+  PostgreSQL advisory locks make concurrent semantic uniqueness races converge
+  on durable success/rejection receipts instead of leaking database errors.
+- **Fail-closed agent mutation exposure.** The generated mutation boundary
+  classifies all 938 registered MCP tools from declared permissions. Strict
+  mode exposes reads plus 25 governed tool aliases and blocks the remaining
+  448 mutations; missing and future permission classes are mutations by
+  default. Durable `--apply` deployments require trusted kernel configuration
+  unless an explicit legacy-write escape hatch is selected.
+- **Durable autonomous recovery and exact launch primitives.** Transactional
+  outbox workers now have leases, retry scheduling, dead-lettering, redrive,
+  and audit verification. `products.create` atomically creates exact-price
+  variants, while `inventory.item.create` atomically creates a SKU, exact
+  fractional initial balance, receipt transaction, event, and receipt.
+  PostgreSQL inventory quantities are no longer constrained to
+  `NUMERIC(19,4)`, and Node stock/reservation outputs are decimal strings.
+- **Native agent distribution.** The Node and Python bindings expose governed
+  execution and framework adapters; stdio and stateless HTTP MCP share the
+  same strict catalog and database. An autonomous-business bootstrap produces
+  least-privilege principal/policy templates and a launch-readiness report.
 - **M1 is now enforced on order creation** (`commerce.money.scale_exceeds_currency`).
   Creating an order whose line `unit_price`, `discount` or `tax_amount` carries more
   decimal places than the order's currency allows is rejected with

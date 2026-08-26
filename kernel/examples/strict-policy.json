@@ -1,0 +1,56 @@
+{
+  "version": "production-v1",
+  "commands": {
+    "inventory.item.create": {
+      "required_capabilities": ["inventory.item.create"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "checkout.commit": {
+      "required_capabilities": ["checkout.commit"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "payments.create": {
+      "required_capabilities": ["payments.create"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "payments.create_refund": {
+      "required_capabilities": ["payments.create_refund"],
+      "requires_approval": true,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "products.create": {
+      "required_capabilities": ["products.create"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    }
+  },
+  "trusted_authority_keys": {}
+}

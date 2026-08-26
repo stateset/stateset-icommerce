@@ -354,3 +354,27 @@ fn failed_stock_effect_rolls_back_disposition() {
         .expect("retry succeeds");
     assert_eq!(on_hand(&db, sku, wh), (dec!(1), dec!(0)));
 }
+
+#[test]
+fn return_state_machine_and_outbox_are_atomic() {
+    let db = db();
+    let ret = received_return(&db, "SKU-KERNEL-RETURN", 1);
+
+    let before = db.kernel_outbox().pending(100).expect("events");
+    let lifecycle_before: Vec<_> =
+        before.iter().filter(|event| event.aggregate_id == ret.id.to_string()).collect();
+    assert_eq!(lifecycle_before.len(), 4);
+    assert_eq!(lifecycle_before[0].payload["refund_amount"], "10");
+
+    let error = db
+        .returns()
+        .update(ret.id, UpdateReturn { status: Some(ReturnStatus::Approved), ..Default::default() })
+        .expect_err("received -> approved must be rejected");
+    assert!(matches!(error, CommerceError::ValidationError(_)));
+
+    let after = db.kernel_outbox().pending(100).expect("events after rejection");
+    let lifecycle_after =
+        after.iter().filter(|event| event.aggregate_id == ret.id.to_string()).count();
+    assert_eq!(lifecycle_after, lifecycle_before.len());
+    assert_eq!(db.returns().get(ret.id).unwrap().unwrap().status, ReturnStatus::Received);
+}

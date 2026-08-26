@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.25.0",
+    "version": "1.26.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -614,6 +614,10 @@
         "count": 4
       },
       {
+        "name": "autonomous",
+        "count": 3
+      },
+      {
         "name": "heartbeat",
         "count": 3
       },
@@ -639,10 +643,6 @@
       },
       {
         "name": "approvals",
-        "count": 2
-      },
-      {
-        "name": "autonomous",
         "count": 2
       },
       {
@@ -803,6 +803,18 @@
       },
       {
         "name": "index.js",
+        "count": 1
+      },
+      {
+        "name": "kernel-boundary.js",
+        "count": 1
+      },
+      {
+        "name": "kernel-config.js",
+        "count": 1
+      },
+      {
+        "name": "kernel-tool-execution.js",
         "count": 1
       },
       {

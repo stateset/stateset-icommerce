@@ -30,12 +30,12 @@ export class A2ADisputesMethods {
     this.init();
     const stmt = this.db.prepare(`
       INSERT INTO a2a_disputes (
-        id, status, escrow_id, quote_id, filed_by, filed_against,
-        reason, category, amount_disputed, amount_decimal, asset,
-        resolution_type, resolution_amount, resolution_note, resolved_by,
+        id, tenant_id, store_id, status, escrow_id, quote_id,
+        claimant_address, respondent_address, reason, category, amount_decimal, asset,
+        resolution_type, buyer_amount_decimal, seller_amount_decimal, resolution_note, resolved_by,
         evidence_deadline, review_deadline, metadata,
         created_at, updated_at, resolved_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const id = dispute.id || randomUUID();
@@ -43,18 +43,20 @@ export class A2ADisputesMethods {
 
     stmt.run(
       id,
+      dispute.tenant_id || 'legacy',
+      dispute.store_id || 'legacy',
       dispute.status || 'filed',
       dispute.escrow_id,
       dispute.quote_id || null,
-      dispute.filed_by,
-      dispute.filed_against,
+      dispute.claimant_address || dispute.filed_by,
+      dispute.respondent_address || dispute.filed_against,
       dispute.reason,
       dispute.category || 'non_delivery',
-      dispute.amount_disputed,
-      dispute.amount_decimal,
+      String(dispute.amount_decimal ?? dispute.amount),
       dispute.asset,
       dispute.resolution_type || null,
-      dispute.resolution_amount || null,
+      dispute.buyer_amount_decimal ?? null,
+      dispute.seller_amount_decimal ?? null,
       dispute.resolution_note || null,
       dispute.resolved_by || null,
       dispute.evidence_deadline || null,
@@ -125,13 +127,13 @@ export class A2ADisputesMethods {
       conditions.push('status = ?');
       params.push(filter.status);
     }
-    if (filter.filed_by) {
-      conditions.push('filed_by = ?');
-      params.push(filter.filed_by);
+    if (filter.filed_by || filter.claimant_address) {
+      conditions.push('claimant_address = ?');
+      params.push(filter.filed_by || filter.claimant_address);
     }
-    if (filter.filed_against) {
-      conditions.push('filed_against = ?');
-      params.push(filter.filed_against);
+    if (filter.filed_against || filter.respondent_address) {
+      conditions.push('respondent_address = ?');
+      params.push(filter.filed_against || filter.respondent_address);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -156,9 +158,9 @@ export class A2ADisputesMethods {
     this.init();
     const stmt = this.db.prepare(`
       INSERT INTO a2a_dispute_evidence (
-        id, dispute_id, submitted_by, evidence_type, title,
+        id, tenant_id, store_id, dispute_id, submitted_by, evidence_type, title,
         description, content, content_hash, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const id = evidence.id || randomUUID();
@@ -166,6 +168,8 @@ export class A2ADisputesMethods {
 
     stmt.run(
       id,
+      evidence.tenant_id || 'legacy',
+      evidence.store_id || 'legacy',
       evidence.dispute_id,
       evidence.submitted_by,
       evidence.evidence_type,

@@ -838,6 +838,13 @@ pub struct CreateJournalEntry {
     pub auto_post: Option<bool>,
 }
 
+/// Kernel command payload for posting a balanced draft journal entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostJournalEntry {
+    pub journal_entry_id: Uuid,
+    pub posted_by: String,
+}
+
 /// Input for a journal entry line
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJournalEntryLine {

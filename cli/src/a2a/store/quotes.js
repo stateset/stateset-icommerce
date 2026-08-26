@@ -23,8 +23,9 @@ export class A2AQuotesMethods {
 
   createQuote(quote) {
     this.init();
+    const id = quote.id || randomUUID();
     const stmt = this.db.prepare(`
-      INSERT INTO a2a_quotes (
+      INSERT INTO a2a_market_quotes (
         id, status, buyer_agent_id, buyer_address, seller_agent_id, seller_address,
         items, subtotal, fees, tax, total, total_decimal, asset, accepted_networks,
         expires_at, terms, estimated_delivery, delivery_method, fulfillment_instructions,
@@ -45,7 +46,7 @@ export class A2AQuotesMethods {
       : quote.negotiation_history || '[]';
 
     stmt.run(
-      quote.id || randomUUID(),
+      id,
       quote.status || 'requested',
       quote.buyer_agent_id || null,
       quote.buyer_address,
@@ -80,18 +81,18 @@ export class A2AQuotesMethods {
       quote.escrow_id || null,
     );
 
-    return this.getQuote(quote.id);
+    return this.getQuote(id);
   }
 
   getQuote(id) {
     this.init();
-    const row = this.db.prepare('SELECT * FROM a2a_quotes WHERE id = ?').get(id);
+    const row = this.db.prepare('SELECT * FROM a2a_market_quotes WHERE id = ?').get(id);
     return row ? this._mapQuote(row) : null;
   }
 
   updateQuote(id, updates) {
     this.init();
-    this._validateUpdateKeys('a2a_quotes', Object.keys(updates));
+    this._validateUpdateKeys('a2a_market_quotes', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -116,7 +117,9 @@ export class A2AQuotesMethods {
     values.push(new Date().toISOString());
     values.push(id);
 
-    this.db.prepare(`UPDATE a2a_quotes SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    this.db
+      .prepare(`UPDATE a2a_market_quotes SET ${fields.join(', ')} WHERE id = ?`)
+      .run(...values);
     return this.getQuote(id);
   }
 
@@ -154,7 +157,7 @@ export class A2AQuotesMethods {
     const offset = filter.offset || 0;
 
     const rows = this.db
-      .prepare(`SELECT * FROM a2a_quotes ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .prepare(`SELECT * FROM a2a_market_quotes ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
       .all(...params, limit, offset);
 
     return rows.map(this._mapQuote);

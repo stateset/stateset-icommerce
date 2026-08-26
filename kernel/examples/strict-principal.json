@@ -1,0 +1,13 @@
+{
+  "id": "agent:replace-me",
+  "kind": "agent",
+  "tenant_id": "tenant:replace-me",
+  "delegated_by": "user:replace-me",
+  "capabilities": [
+    "inventory.item.create",
+    "checkout.commit",
+    "payments.create",
+    "payments.create_refund",
+    "products.create"
+  ]
+}

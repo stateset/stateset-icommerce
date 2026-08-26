@@ -87,6 +87,24 @@ const RESOLUTION_ALLOWED_STATUSES = ['filed', 'evidence_period', 'under_review']
 const EVIDENCE_DEADLINE_MS = 72 * 60 * 60 * 1000; // 72 hours
 const REVIEW_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+function subtractDecimalStrings(total, part) {
+  const parse = (value) => {
+    const match = String(value).match(/^(\d+)(?:\.(\d+))?$/);
+    if (!match) throw new Error(`Invalid exact decimal amount: ${value}`);
+    return { whole: match[1], fraction: match[2] || '' };
+  };
+  const left = parse(total);
+  const right = parse(part);
+  const scale = Math.max(left.fraction.length, right.fraction.length);
+  const units = (value) => BigInt(value.whole + value.fraction.padEnd(scale, '0'));
+  const difference = units(left) - units(right);
+  if (difference < 0n) throw new Error('Resolution allocation exceeds disputed amount');
+  const digits = difference.toString().padStart(scale + 1, '0');
+  if (scale === 0) return digits;
+  const rendered = `${digits.slice(0, -scale)}.${digits.slice(-scale)}`;
+  return rendered.replace(/\.?0+$/, '') || '0';
+}
+
 /**
  * Create a dispute resolution service
  *
@@ -316,10 +334,24 @@ export function createDisputeService(store) {
 
     const now = new Date().toISOString();
 
+    let buyerAmount = null;
+    let sellerAmount = null;
+    if (resolutionType === 'full_refund') {
+      buyerAmount = String(dispute.amount_decimal);
+      sellerAmount = '0';
+    } else if (resolutionType === 'release_to_seller') {
+      buyerAmount = '0';
+      sellerAmount = String(dispute.amount_decimal);
+    } else if (resolutionType === 'partial_refund' || resolutionType === 'split') {
+      buyerAmount = String(amount);
+      sellerAmount = subtractDecimalStrings(dispute.amount_decimal, buyerAmount);
+    }
+
     await store.updateDispute(disputeId, {
       status: 'resolved',
       resolution_type: resolutionType,
-      resolution_amount: amount !== undefined ? amount : null,
+      buyer_amount_decimal: buyerAmount,
+      seller_amount_decimal: sellerAmount,
       resolution_note: note || null,
       resolved_by: resolvedBy,
       resolved_at: now,
@@ -362,7 +394,7 @@ export function createDisputeService(store) {
           action: 'partial_refund',
           escrowId: dispute.escrow_id,
           refundAmount: amount,
-          releaseAmount: dispute.amount_decimal - amount,
+          releaseAmount: Number(subtractDecimalStrings(dispute.amount_decimal, amount)),
           asset: dispute.asset,
           refundTo: dispute.filed_by,
           releaseTo: dispute.filed_against,
@@ -382,7 +414,7 @@ export function createDisputeService(store) {
           action: 'split',
           escrowId: dispute.escrow_id,
           buyerAmount: amount,
-          sellerAmount: dispute.amount_decimal - amount,
+          sellerAmount: Number(subtractDecimalStrings(dispute.amount_decimal, amount)),
           asset: dispute.asset,
           buyer: dispute.filed_by,
           seller: dispute.filed_against,
@@ -578,8 +610,8 @@ export function createDisputeService(store) {
       id: d.id,
       escrowId: d.escrow_id,
       status: d.status,
-      filedBy: d.filed_by,
-      filedAgainst: d.filed_against,
+      filedBy: d.claimant_address ?? d.filed_by,
+      filedAgainst: d.respondent_address ?? d.filed_against,
       reason: d.reason,
       category: d.category,
       amount: d.amount_decimal,
@@ -587,7 +619,13 @@ export function createDisputeService(store) {
       evidenceDeadline: d.evidence_deadline,
       reviewDeadline: d.review_deadline,
       resolutionType: d.resolution_type,
-      resolutionAmount: d.resolution_amount,
+      resolutionAmount:
+        d.resolution_amount ??
+        (['partial_refund', 'split'].includes(d.resolution_type)
+          ? Number(d.buyer_amount_decimal)
+          : null),
+      buyerAmount: d.buyer_amount_decimal,
+      sellerAmount: d.seller_amount_decimal,
       resolutionNote: d.resolution_note,
       resolvedBy: d.resolved_by,
       resolvedAt: d.resolved_at,

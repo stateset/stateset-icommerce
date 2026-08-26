@@ -450,6 +450,14 @@ pub struct CheckoutResult {
     pub currency: CurrencyCode,
 }
 
+/// Governed request to atomically turn a checkout-ready cart into a confirmed
+/// order. Payment settlement is intentionally separate: this command never
+/// marks an order paid without a durable payment or settlement command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitCheckout {
+    pub cart_id: CartId,
+}
+
 impl Cart {
     /// Check if cart has items
     #[must_use]

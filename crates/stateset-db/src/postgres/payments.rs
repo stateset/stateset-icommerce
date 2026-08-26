@@ -1,6 +1,8 @@
 //! PostgreSQL implementation of payment repository
 
+use super::kernel_outbox::append_kernel_event_tx;
 use super::map_db_error;
+use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -9,7 +11,7 @@ use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
     CustomerId, InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod,
     PaymentMethodType, PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result,
-    UpdatePayment, generate_payment_number, generate_refund_number, validate_batch_size,
+    UpdatePayment, Validate, generate_payment_number, generate_refund_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -34,7 +36,7 @@ fn capturing_statuses() -> Vec<String> {
 /// `orders.total_amount`. Locks the order row with `FOR UPDATE` so concurrent
 /// captures for the same order serialize. A payment whose `order_id` does not
 /// resolve to an order has nothing to cap against and passes.
-async fn check_order_capture_capacity_pg(
+pub(crate) async fn check_order_capture_capacity_pg(
     conn: &mut sqlx::PgConnection,
     order_id: Uuid,
     exclude_payment_id: Option<Uuid>,
@@ -76,7 +78,7 @@ pub struct PgPaymentRepository {
 }
 
 #[derive(FromRow)]
-struct PaymentRow {
+pub(crate) struct PaymentRow {
     id: Uuid,
     payment_number: String,
     order_id: Option<Uuid>,
@@ -108,7 +110,7 @@ struct PaymentRow {
 }
 
 #[derive(FromRow)]
-struct RefundRow {
+pub(crate) struct RefundRow {
     id: Uuid,
     refund_number: String,
     payment_id: Uuid,
@@ -149,7 +151,7 @@ impl PgPaymentRepository {
         Self { pool }
     }
 
-    fn row_to_payment(row: PaymentRow) -> Result<Payment> {
+    pub(crate) fn row_to_payment(row: PaymentRow) -> Result<Payment> {
         let PaymentRow {
             id,
             payment_number,
@@ -241,7 +243,7 @@ impl PgPaymentRepository {
         })
     }
 
-    fn row_to_refund(row: RefundRow) -> Result<Refund> {
+    pub(crate) fn row_to_refund(row: RefundRow) -> Result<Refund> {
         let RefundRow {
             id,
             refund_number,
@@ -340,6 +342,7 @@ impl PgPaymentRepository {
 
     /// Create payment (async)
     pub async fn create_async(&self, input: CreatePayment) -> Result<Payment> {
+        input.validate()?;
         if let Some(key) = input.idempotency_key.as_deref() {
             if let Some(existing) = self.get_by_idempotency_key_async(key).await? {
                 return Ok(existing);
@@ -349,6 +352,20 @@ impl PgPaymentRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let payment_number = generate_payment_number();
+        let outbox_event = KernelOutboxEvent::domain(
+            "payments.created.v1",
+            "payment",
+            id.to_string(),
+            serde_json::json!({
+                "payment_id": id.to_string(),
+                "payment_number": payment_number,
+                "order_id": input.order_id.map(|value| value.to_string()),
+                "amount": input.amount.to_string(),
+                "currency": input.currency.unwrap_or_default().as_str(),
+                "status": PaymentTransactionStatus::Pending.to_string(),
+            }),
+            input.idempotency_key.clone(),
+        );
 
         // Over-capture check and INSERT share one transaction; the guard locks
         // the order row so concurrent captures serialize.
@@ -392,6 +409,7 @@ impl PgPaymentRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        append_kernel_event_tx(tx.as_mut(), &outbox_event).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
@@ -682,6 +700,7 @@ impl PgPaymentRepository {
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
         let mut payment = Self::row_to_payment(row)?;
+        input.validate_for_currency(payment.currency)?;
 
         // Reserve against in-flight (non-terminal) refunds as well as the
         // already-committed `amount_refunded`. A `Pending`/`Processing` refund
@@ -730,6 +749,22 @@ impl PgPaymentRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        let outbox_event = KernelOutboxEvent::domain(
+            "payments.refund_created.v1",
+            "refund",
+            id.to_string(),
+            serde_json::json!({
+                "refund_id": id.to_string(),
+                "refund_number": refund_number,
+                "payment_id": raw_payment_id.to_string(),
+                "amount": refund_amount.to_string(),
+                "currency": payment.currency.as_str(),
+                "status": RefundStatus::Pending.to_string(),
+            }),
+            input.idempotency_key.clone(),
+        );
+        append_kernel_event_tx(tx.as_mut(), &outbox_event).await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1086,6 +1121,7 @@ impl PgPaymentRepository {
         let mut payments = Vec::with_capacity(inputs.len());
 
         for input in inputs {
+            input.validate()?;
             let id = Uuid::new_v4();
             let now = Utc::now();
             let payment_number = generate_payment_number();
@@ -1134,6 +1170,22 @@ impl PgPaymentRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+            let outbox_event = KernelOutboxEvent::domain(
+                "payments.created.v1",
+                "payment",
+                id.to_string(),
+                serde_json::json!({
+                    "payment_id": id.to_string(),
+                    "payment_number": payment_number,
+                    "order_id": input.order_id.map(|value| value.to_string()),
+                    "amount": input.amount.to_string(),
+                    "currency": input.currency.unwrap_or_default().as_str(),
+                    "status": PaymentTransactionStatus::Pending.to_string(),
+                }),
+                input.idempotency_key.clone(),
+            );
+            append_kernel_event_tx(tx.as_mut(), &outbox_event).await?;
 
             payments.push(Payment {
                 id: PaymentId::from(id),

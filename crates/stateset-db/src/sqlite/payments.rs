@@ -1,18 +1,20 @@
 //! SQLite implementation of payment repository
 
+use super::kernel_outbox::append_kernel_event_tx;
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
     with_immediate_transaction,
 };
+use crate::KernelOutboxEvent;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Row, params};
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
     InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentRepository,
-    PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment, generate_payment_number,
-    generate_refund_number, validate_batch_size,
+    PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment, Validate,
+    generate_payment_number, generate_refund_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -43,7 +45,7 @@ fn capturing_statuses() -> String {
 ///
 /// `amount` / `total_amount` are TEXT money columns, so the sum is done in
 /// `Decimal` in Rust rather than in SQL.
-fn check_order_capture_capacity_tx(
+pub(crate) fn check_order_capture_capacity_tx(
     tx: &rusqlite::Transaction<'_>,
     order_id: &str,
     exclude_payment_id: Option<&str>,
@@ -102,7 +104,7 @@ impl SqlitePaymentRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_payment(row: &Row<'_>) -> rusqlite::Result<Payment> {
+    pub(crate) fn row_to_payment(row: &Row<'_>) -> rusqlite::Result<Payment> {
         Ok(Payment {
             id: PaymentId::from(parse_uuid_row(&row.get::<_, String>("id")?, "payment", "id")?),
             payment_number: row.get("payment_number")?,
@@ -192,7 +194,7 @@ impl SqlitePaymentRepository {
         })
     }
 
-    fn row_to_refund(row: &Row<'_>) -> rusqlite::Result<Refund> {
+    pub(crate) fn row_to_refund(row: &Row<'_>) -> rusqlite::Result<Refund> {
         Ok(Refund {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "refund", "id")?,
             refund_number: row.get("refund_number")?,
@@ -311,6 +313,7 @@ impl SqlitePaymentRepository {
 
 impl PaymentRepository for SqlitePaymentRepository {
     fn create(&self, input: CreatePayment) -> Result<Payment> {
+        input.validate()?;
         if let Some(key) = input.idempotency_key.as_deref() {
             if let Some(existing) = self.get_by_idempotency_key(key)? {
                 return Ok(existing);
@@ -320,6 +323,20 @@ impl PaymentRepository for SqlitePaymentRepository {
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let payment_number = generate_payment_number();
+        let outbox_event = KernelOutboxEvent::domain(
+            "payments.created.v1",
+            "payment",
+            id.to_string(),
+            serde_json::json!({
+                "payment_id": id.to_string(),
+                "payment_number": payment_number,
+                "order_id": input.order_id.map(|value| value.to_string()),
+                "amount": input.amount.to_string(),
+                "currency": input.currency.unwrap_or_default().as_str(),
+                "status": PaymentTransactionStatus::Pending.to_string(),
+            }),
+            input.idempotency_key.clone(),
+        );
 
         // The over-capture check and the INSERT share one IMMEDIATE transaction
         // (same pattern as `create_refund`'s over-refund guard).
@@ -360,6 +377,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     now.to_rfc3339(),
                 ],
             )?;
+            append_kernel_event_tx(tx, &outbox_event)?;
             Ok(())
         })?;
 
@@ -586,6 +604,10 @@ impl PaymentRepository for SqlitePaymentRepository {
                     other => other,
                 })?;
 
+            input
+                .validate_for_currency(payment.currency)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
             // Reserve against in-flight (non-terminal) refunds as well as the
             // already-committed `amount_refunded`. A `Pending`/`Processing`
             // refund has not yet folded its amount into `amount_refunded`, but
@@ -640,6 +662,22 @@ impl PaymentRepository for SqlitePaymentRepository {
                     now.to_rfc3339(),
                 ],
             )?;
+
+            let outbox_event = KernelOutboxEvent::domain(
+                "payments.refund_created.v1",
+                "refund",
+                id.to_string(),
+                serde_json::json!({
+                    "refund_id": id.to_string(),
+                    "refund_number": refund_number,
+                    "payment_id": payment_id.to_string(),
+                    "amount": refund_amount.to_string(),
+                    "currency": payment.currency.as_str(),
+                    "status": RefundStatus::Pending.to_string(),
+                }),
+                input.idempotency_key.clone(),
+            );
+            append_kernel_event_tx(tx, &outbox_event)?;
 
             Ok(())
         })?;
@@ -929,6 +967,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
+            input.validate()?;
             let id = Uuid::new_v4();
             let now = chrono::Utc::now();
             let payment_number = generate_payment_number();
@@ -971,6 +1010,22 @@ impl PaymentRepository for SqlitePaymentRepository {
                     now.to_rfc3339(),
                 ],
             ).map_err(map_db_error)?;
+
+            let outbox_event = KernelOutboxEvent::domain(
+                "payments.created.v1",
+                "payment",
+                id.to_string(),
+                serde_json::json!({
+                    "payment_id": id.to_string(),
+                    "payment_number": payment_number,
+                    "order_id": input.order_id.map(|value| value.to_string()),
+                    "amount": input.amount.to_string(),
+                    "currency": input.currency.unwrap_or_default().as_str(),
+                    "status": PaymentTransactionStatus::Pending.to_string(),
+                }),
+                input.idempotency_key.clone(),
+            );
+            append_kernel_event_tx(&tx, &outbox_event).map_err(map_db_error)?;
 
             results.push(Payment {
                 id: PaymentId::from(id),

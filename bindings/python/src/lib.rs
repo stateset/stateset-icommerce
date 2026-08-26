@@ -159,6 +159,30 @@ impl Commerce {
         Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
     }
 
+    /// Execute a versioned commerce kernel command under host-supplied policy.
+    ///
+    /// Both arguments and the returned durable receipt use JSON so every
+    /// decimal and contract field crosses the language boundary losslessly.
+    fn execute_kernel_command(
+        &self,
+        command_json: String,
+        policy_json: String,
+    ) -> PyResult<String> {
+        let command = parse_json_value(&command_json, "kernel command")?;
+        let policy: stateset_core::KernelPolicy =
+            serde_json::from_str(&policy_json).map_err(|error| {
+                PyValueError::new_err(format!("Invalid kernel policy JSON: {error}"))
+            })?;
+        let commerce = self
+            .inner
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        let receipt = commerce.execute_kernel_command(command, policy).map_err(|error| {
+            PyRuntimeError::new_err(format!("Kernel execution failed: {error}"))
+        })?;
+        serialize_json(&receipt, "kernel receipt")
+    }
+
     /// Get the customers API.
     #[getter]
     fn customers(&self) -> Customers {
@@ -2409,6 +2433,9 @@ pub struct Payment {
     idempotency_key: Option<String>,
     #[pyo3(get)]
     amount: f64,
+    /// Exact base-10 amount. Prefer this field for calculations.
+    #[pyo3(get)]
+    amount_exact: String,
     #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
@@ -2437,6 +2464,7 @@ impl TryFrom<stateset_core::Payment> for Payment {
     type Error = PyErr;
 
     fn try_from(p: stateset_core::Payment) -> PyResult<Self> {
+        let amount_exact = p.amount.to_string();
         Ok(Self {
             id: p.id.to_string(),
             payment_number: p.payment_number,
@@ -2445,6 +2473,7 @@ impl TryFrom<stateset_core::Payment> for Payment {
             customer_id: p.customer_id.map(|id| id.to_string()),
             idempotency_key: p.idempotency_key,
             amount: to_f64_result(p.amount, "payment amount")?,
+            amount_exact,
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             payment_method: format!("{}", p.payment_method),
@@ -2467,6 +2496,9 @@ pub struct Refund {
     idempotency_key: Option<String>,
     #[pyo3(get)]
     amount: f64,
+    /// Exact base-10 amount. Prefer this field for calculations.
+    #[pyo3(get)]
+    amount_exact: String,
     #[pyo3(get)]
     status: String,
     #[pyo3(get)]
@@ -2486,11 +2518,13 @@ impl TryFrom<stateset_core::Refund> for Refund {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::Refund) -> PyResult<Self> {
+        let amount_exact = r.amount.to_string();
         Ok(Self {
             id: r.id.to_string(),
             payment_id: r.payment_id.to_string(),
             idempotency_key: r.idempotency_key,
             amount: to_f64_result(r.amount, "refund amount")?,
+            amount_exact,
             status: format!("{}", r.status),
             reason: r.reason,
             created_at: r.created_at.to_rfc3339(),
@@ -2570,6 +2604,55 @@ impl Payments {
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create payment: {}", e)))?;
 
+        convert_output(payment)
+    }
+
+    /// Create a payment from an exact decimal string.
+    #[pyo3(signature = (amount, currency=None, order_id=None, customer_id=None, payment_method=None, idempotency_key=None))]
+    fn create_exact(
+        &self,
+        amount: String,
+        currency: Option<String>,
+        order_id: Option<String>,
+        customer_id: Option<String>,
+        payment_method: Option<String>,
+        idempotency_key: Option<String>,
+    ) -> PyResult<Payment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        let order_uuid = order_id
+            .map(|id| id.parse())
+            .transpose()
+            .map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
+        let customer_uuid = customer_id
+            .map(|id| id.parse())
+            .transpose()
+            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let currency = currency
+            .unwrap_or_else(|| "USD".to_string())
+            .parse::<CurrencyCode>()
+            .map_err(|error| PyValueError::new_err(format!("Invalid currency: {error}")))?;
+        let money = stateset_core::Money::from_decimal_str(&amount, currency)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let method = payment_method
+            .and_then(|value| value.parse::<stateset_core::PaymentMethodType>().ok())
+            .unwrap_or_default();
+        let payment = commerce
+            .payments()
+            .create(stateset_core::CreatePayment {
+                order_id: order_uuid,
+                customer_id: customer_uuid,
+                idempotency_key,
+                amount: money.amount(),
+                currency: Some(money.currency()),
+                payment_method: method,
+                ..Default::default()
+            })
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!("Failed to create payment: {error}"))
+            })?;
         convert_output(payment)
     }
 
@@ -2668,6 +2751,43 @@ impl Payments {
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create refund: {}", e)))?;
 
+        convert_output(refund)
+    }
+
+    /// Create a refund from an exact decimal string.
+    #[pyo3(signature = (payment_id, amount, reason=None, idempotency_key=None))]
+    fn create_refund_exact(
+        &self,
+        payment_id: String,
+        amount: String,
+        reason: Option<String>,
+        idempotency_key: Option<String>,
+    ) -> PyResult<Refund> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        let payment_id =
+            payment_id.parse().map_err(|_| PyValueError::new_err("Invalid payment UUID"))?;
+        let payment = commerce
+            .payments()
+            .get(payment_id)
+            .map_err(|error| PyRuntimeError::new_err(format!("Failed to get payment: {error}")))?
+            .ok_or_else(|| PyValueError::new_err("Payment not found"))?;
+        let money = stateset_core::Money::from_decimal_str(&amount, payment.currency)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let refund = commerce
+            .payments()
+            .create_refund(stateset_core::CreateRefund {
+                payment_id,
+                amount: Some(money.amount()),
+                reason,
+                idempotency_key,
+                ..Default::default()
+            })
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!("Failed to create refund: {error}"))
+            })?;
         convert_output(refund)
     }
 

@@ -1,17 +1,18 @@
 //! PostgreSQL implementation of cart/checkout repository
 
-use super::{PgCustomerRepository, PgOrderRepository, PgPromotionRepository, map_db_error};
+use super::{PgOrderRepository, PgPromotionRepository, map_db_error};
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use sqlx::{FromRow, postgres::PgPool};
 use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
-    CreateCustomer, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentType,
-    OrderStatus, PaymentStatus, PromotionType, Result, SetCartPayment, SetCartShipping,
-    SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem, X402Asset,
-    X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData, X402IntentStatus,
-    X402Network, X402PaymentRequiredData, validate_batch_size,
+    CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentType, OrderStatus,
+    PaymentStatus, PromotionType, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
+    ShippingRate, UpdateCart, UpdateCartItem, X402Asset, X402AwaitingSettlementData,
+    X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
+    X402PaymentRequiredData, validate_batch_size, validate_email, validate_phone,
+    validate_required_text,
 };
 use uuid::Uuid;
 
@@ -278,26 +279,24 @@ impl PgCartRepository {
         Self { pool }
     }
 
-    async fn resolve_customer_id_async(&self, cart: &Cart) -> Result<Uuid> {
-        let customer_repo = PgCustomerRepository::new(self.pool.clone());
-
+    async fn resolve_customer_id_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        cart: &Cart,
+    ) -> Result<Uuid> {
         if let Some(id) = cart.customer_id {
             return Ok(id.into_uuid());
         }
 
-        let email = cart.customer_email.as_ref().ok_or_else(|| {
+        let email = cart.customer_email.as_deref().ok_or_else(|| {
             CommerceError::ValidationError("Customer ID or email required".to_string())
         })?;
-
-        if let Some(customer) = customer_repo.get_by_email_async(email).await? {
-            return Ok(customer.id.into_uuid());
-        }
+        validate_email(email)?;
 
         let (first_name, last_name) = cart
             .customer_name
             .as_deref()
             .map(str::trim)
-            .filter(|s| !s.is_empty())
+            .filter(|name| !name.is_empty())
             .map(|name| {
                 let mut parts = name.split_whitespace();
                 let first = parts.next().unwrap_or("Guest").to_string();
@@ -306,17 +305,41 @@ impl PgCartRepository {
                 (first, last)
             })
             .unwrap_or_else(|| ("Guest".to_string(), "Customer".to_string()));
+        validate_required_text("customer.first_name", &first_name, 100)?;
+        validate_required_text("customer.last_name", &last_name, 100)?;
+        if let Some(phone) = &cart.customer_phone {
+            validate_phone(phone)?;
+        }
 
-        let customer = customer_repo
-            .get_or_create_by_email_async(CreateCustomer {
-                email: email.clone(),
-                first_name,
-                last_name,
-                ..Default::default()
-            })
-            .await?;
+        let customer_id = Uuid::new_v4();
+        let now = Utc::now();
+        let inserted: Option<Uuid> = sqlx::query_scalar(
+            r#"INSERT INTO customers
+                (id, email, first_name, last_name, phone, status, accepts_marketing,
+                 email_verified, tags, metadata, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, 'active', false, false, '[]'::jsonb, NULL, $6, $6)
+               ON CONFLICT (email) DO NOTHING
+               RETURNING id"#,
+        )
+        .bind(customer_id)
+        .bind(email)
+        .bind(&first_name)
+        .bind(&last_name)
+        .bind(&cart.customer_phone)
+        .bind(now)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
-        Ok(customer.id.into_uuid())
+        if let Some(id) = inserted {
+            return Ok(id);
+        }
+
+        sqlx::query_scalar("SELECT id FROM customers WHERE email = $1")
+            .bind(email)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)
     }
 
     fn order_items_from_cart(cart: &Cart) -> Vec<CreateOrderItem> {
@@ -446,91 +469,10 @@ impl PgCartRepository {
     }
 
     async fn finalize_x402_checkout_async(&self, cart_id: Uuid) -> Result<X402CheckoutResult> {
-        let cart = self.get_cart_with_items(cart_id).await?.ok_or(CommerceError::NotFound)?;
-
-        if cart.status == CartStatus::Completed {
-            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
-            {
-                return Ok(X402CheckoutResult::Completed(CheckoutResult {
-                    cart_id: cart_id.into(),
-                    order_id,
-                    order_number,
-                    payment_id: None,
-                    total_charged: cart.grand_total,
-                    currency: cart.currency,
-                }));
-            }
-        }
-
-        let order_repo = PgOrderRepository::new(self.pool.clone());
-        let customer_id = self.resolve_customer_id_async(&cart).await?;
-        let order_items = Self::order_items_from_cart(&cart);
-
-        let shipping_address = cart.shipping_address.clone().map(Into::into);
-        let billing_address = Self::billing_address_for_cart(&cart);
-        let order = order_repo
-            .create_from_cart_async(
-                cart_id,
-                CreateOrder {
-                    customer_id: customer_id.into(),
-                    items: order_items,
-                    currency: Some(cart.currency),
-                    shipping_address,
-                    billing_address,
-                    notes: cart.notes.clone(),
-                    payment_method: cart.payment_method.clone(),
-                    shipping_method: cart.shipping_method.clone(),
-                    stock_policy: stateset_core::StockPolicy::default(),
-                },
-            )
-            .await?;
-
-        // Promote the order and complete the cart atomically (x402 settlement
-        // is already durable upstream; order creation above is idempotent by
-        // cart_id, so a crash before this transaction commits is converged by
-        // checkout replay).
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        sqlx::query(
-            r#"UPDATE orders SET
-                status = $2, payment_status = $3, updated_at = $4, version = version + 1
-            WHERE id = $1"#,
-        )
-        .bind(order.id)
-        .bind(OrderStatus::Confirmed.to_string())
-        .bind(PaymentStatus::Paid.to_string())
-        .bind(Utc::now())
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let now = Utc::now();
-        sqlx::query(
-            r#"UPDATE carts SET
-                status = 'completed', order_id = $1, order_number = $2,
-                payment_status = 'captured', x402_status = $3,
-                completed_at = $4, updated_at = $5, customer_id = $6
-             WHERE id = $7"#,
-        )
-        .bind(order.id)
-        .bind(&order.order_number)
-        .bind(X402IntentStatus::Settled.to_string())
-        .bind(now)
-        .bind(now)
-        .bind(customer_id)
-        .bind(cart_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let result = self.complete_checkout_in_tx(&mut tx, cart_id, true, true).await?;
         tx.commit().await.map_err(map_db_error)?;
-
-        Ok(X402CheckoutResult::Completed(CheckoutResult {
-            cart_id: cart_id.into(),
-            order_id: order.id,
-            order_number: order.order_number,
-            payment_id: None,
-            total_charged: cart.grand_total,
-            currency: cart.currency,
-        }))
+        Ok(X402CheckoutResult::Completed(result))
     }
 
     // Async implementations
@@ -1458,8 +1400,76 @@ impl PgCartRepository {
     }
 
     async fn complete_checkout_async(&self, id: Uuid, mark_paid: bool) -> Result<CheckoutResult> {
-        // Lock the cart row so only one checkout can run at a time.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result = self.complete_checkout_in_tx(&mut tx, id, false, mark_paid).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
+    pub(crate) async fn validate_checkout_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<()> {
+        let row: CartRow = sqlx::query_as("SELECT * FROM carts WHERE id = $1 FOR NO KEY UPDATE")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let item_rows: Vec<CartItemRow> =
+            sqlx::query_as("SELECT * FROM cart_items WHERE cart_id = $1 ORDER BY created_at")
+                .bind(id)
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let cart = row.into_cart(item_rows.into_iter().map(Into::into).collect())?;
+        if cart.status == CartStatus::Completed {
+            return Ok(());
+        }
+        if !cart.is_checkoutable_status() {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be checked out in status: {}",
+                cart.status
+            )));
+        }
+        if !cart.is_ready_for_checkout() {
+            return Err(CommerceError::ValidationError("Cart is not ready for checkout".into()));
+        }
+        let customer_id = if let Some(id) = cart.customer_id {
+            id
+        } else {
+            let email = cart.customer_email.as_deref().ok_or_else(|| {
+                CommerceError::ValidationError("Customer ID or email required".into())
+            })?;
+            validate_email(email)?;
+            CustomerId::new()
+        };
+        let input = CreateOrder {
+            customer_id,
+            items: Self::order_items_from_cart(&cart),
+            currency: Some(cart.currency),
+            shipping_address: cart.shipping_address.clone().map(Into::into),
+            billing_address: Self::billing_address_for_cart(&cart),
+            notes: cart.notes,
+            payment_method: cart.payment_method,
+            shipping_method: cart.shipping_method,
+            stock_policy: stateset_core::StockPolicy::default(),
+        };
+        PgOrderRepository::validate_create_order_in_tx(tx, &input).await
+    }
+
+    /// Complete a checkout inside a caller-owned transaction. This is the
+    /// primitive used by the kernel so all business facts and governance facts
+    /// either commit together or roll back together.
+    pub(crate) async fn complete_checkout_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        x402_settled: bool,
+        mark_paid: bool,
+    ) -> Result<CheckoutResult> {
+        // Lock the cart row so only one checkout can run at a time.
 
         // Use NO KEY UPDATE so a checkout can insert an order referencing `carts(id)` via a
         // foreign key (`orders.cart_id`) without deadlocking.
@@ -1472,10 +1482,7 @@ impl PgCartRepository {
 
         let row = match row {
             Some(row) => row,
-            None => {
-                tx.commit().await.map_err(map_db_error)?;
-                return Err(CommerceError::NotFound);
-            }
+            None => return Err(CommerceError::NotFound),
         };
 
         let item_rows: Vec<CartItemRow> =
@@ -1492,7 +1499,6 @@ impl PgCartRepository {
         if cart.status == CartStatus::Completed {
             if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
             {
-                tx.commit().await.map_err(map_db_error)?;
                 return Ok(CheckoutResult {
                     cart_id: id.into(),
                     order_id,
@@ -1506,7 +1512,6 @@ impl PgCartRepository {
 
         // A cancelled/abandoned/expired cart must never be minted into an order.
         if !cart.is_checkoutable_status() {
-            tx.commit().await.map_err(map_db_error)?;
             return Err(CommerceError::Conflict(format!(
                 "Cart cannot be checked out in status: {}",
                 cart.status
@@ -1514,21 +1519,21 @@ impl PgCartRepository {
         }
 
         if !cart.is_ready_for_checkout() {
-            tx.commit().await.map_err(map_db_error)?;
             return Err(CommerceError::ValidationError(
                 "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
             ));
         }
 
-        let customer_id = self.resolve_customer_id_async(&cart).await?;
+        let customer_id = Self::resolve_customer_id_in_tx(tx, &cart).await?;
         let order_items = Self::order_items_from_cart(&cart);
 
         let shipping_address = cart.shipping_address.clone().map(Into::into);
         let billing_address = Self::billing_address_for_cart(&cart);
 
         let order_repo = PgOrderRepository::new(self.pool.clone());
-        let order = order_repo
-            .create_from_cart_async(
+        let mut order = order_repo
+            .create_from_cart_in_tx(
+                tx,
                 id,
                 CreateOrder {
                     customer_id: customer_id.into(),
@@ -1544,12 +1549,8 @@ impl PgCartRepository {
             )
             .await?;
 
-        // Promote the order inside the same transaction that completes the
-        // cart: a confirmed (and, with `mark_paid`, revenue-recognized) order
-        // must never become visible unless the cart atomically completes with
-        // it. Order *creation* above intentionally commits separately — it is
-        // idempotent by cart_id, so a crash before this transaction commits is
-        // converged by checkout replay.
+        // Promote the order inside the same transaction that creates it and
+        // completes the cart.
         sqlx::query(
             r#"UPDATE orders SET
                 status = $2,
@@ -1565,9 +1566,20 @@ impl PgCartRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        order.status = OrderStatus::Confirmed;
+        if mark_paid {
+            order.payment_status = PaymentStatus::Paid;
+        }
+        order.version += 1;
 
         let now = Utc::now();
-        let cart_update = if mark_paid {
+        let cart_update = if x402_settled {
+            r#"UPDATE carts SET
+                status = 'completed', order_id = $1, order_number = $2,
+                payment_status = 'captured', x402_status = 'settled',
+                completed_at = $3, updated_at = $4, customer_id = $5
+            WHERE id = $6"#
+        } else if mark_paid {
             r#"UPDATE carts SET
                 status = 'completed', order_id = $1, order_number = $2,
                 payment_status = 'captured', completed_at = $3, updated_at = $4, customer_id = $5
@@ -1588,8 +1600,6 @@ impl PgCartRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-
-        tx.commit().await.map_err(map_db_error)?;
 
         Ok(CheckoutResult {
             cart_id: id.into(),

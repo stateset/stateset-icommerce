@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "1.0",
+  "commands": [
+    {
+      "name": "a2a.dispute.evidence.submit",
+      "risk": "high",
+      "capability": "a2a.dispute.evidence.submit",
+      "sqliteExecutor": "execute_submit_a2a_dispute_evidence",
+      "postgresExecutor": "execute_submit_a2a_dispute_evidence_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "content_hash"]
+    },
+    {
+      "name": "a2a.dispute.file",
+      "risk": "critical",
+      "capability": "a2a.dispute.file",
+      "sqliteExecutor": "execute_file_a2a_dispute",
+      "postgresExecutor": "execute_file_a2a_dispute_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "participant_binding"]
+    },
+    {
+      "name": "a2a.dispute.resolve",
+      "risk": "critical",
+      "capability": "a2a.dispute.resolve",
+      "sqliteExecutor": "execute_resolve_a2a_dispute",
+      "postgresExecutor": "execute_resolve_a2a_dispute_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "balanced_allocations", "atomic_escrow_resolution"]
+    },
+    {
+      "name": "a2a.escrow.create",
+      "risk": "critical",
+      "capability": "a2a.escrow.create",
+      "sqliteExecutor": "execute_create_a2a_escrow",
+      "postgresExecutor": "execute_create_a2a_escrow_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "a2a.escrow.dispute",
+      "risk": "critical",
+      "capability": "a2a.escrow.dispute",
+      "sqliteExecutor": "execute_dispute_a2a_escrow",
+      "postgresExecutor": "execute_dispute_a2a_escrow_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "a2a.escrow.fund",
+      "risk": "critical",
+      "capability": "a2a.escrow.fund",
+      "sqliteExecutor": "execute_fund_a2a_escrow",
+      "postgresExecutor": "execute_fund_a2a_escrow_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "a2a.escrow.refund",
+      "risk": "critical",
+      "capability": "a2a.escrow.refund",
+      "sqliteExecutor": "execute_refund_a2a_escrow",
+      "postgresExecutor": "execute_refund_a2a_escrow_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "a2a.escrow.release",
+      "risk": "critical",
+      "capability": "a2a.escrow.release",
+      "sqliteExecutor": "execute_release_a2a_escrow",
+      "postgresExecutor": "execute_release_a2a_escrow_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "conditional_release"]
+    },
+    {
+      "name": "checkout.commit",
+      "risk": "critical",
+      "capability": "checkout.commit",
+      "sqliteExecutor": "execute_commit_checkout",
+      "postgresExecutor": "execute_commit_checkout_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "atomic_inventory"]
+    },
+    {
+      "name": "inventory.item.create",
+      "risk": "high",
+      "capability": "inventory.item.create",
+      "sqliteExecutor": "execute_create_inventory_item",
+      "postgresExecutor": "execute_create_inventory_item_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_quantity", "atomic_initial_balance", "semantic_uniqueness"]
+    },
+    {
+      "name": "inventory.reservation.confirm",
+      "risk": "high",
+      "capability": "inventory.reservation.confirm",
+      "sqliteExecutor": "execute_confirm_inventory_reservation",
+      "postgresExecutor": "execute_confirm_inventory_reservation_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_quantity"]
+    },
+    {
+      "name": "inventory.reservation.release",
+      "risk": "high",
+      "capability": "inventory.reservation.release",
+      "sqliteExecutor": "execute_release_inventory_reservation",
+      "postgresExecutor": "execute_release_inventory_reservation_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_quantity"]
+    },
+    {
+      "name": "inventory.reserve",
+      "risk": "high",
+      "capability": "inventory.reserve",
+      "sqliteExecutor": "execute_reserve_inventory",
+      "postgresExecutor": "execute_reserve_inventory_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_quantity"]
+    },
+    {
+      "name": "ledger.post",
+      "risk": "critical",
+      "capability": "ledger.post",
+      "sqliteExecutor": "execute_post_journal_entry",
+      "postgresExecutor": "execute_post_journal_entry_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "orders.ship",
+      "risk": "critical",
+      "capability": "orders.ship",
+      "sqliteExecutor": "execute_ship_order",
+      "postgresExecutor": "execute_ship_order_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_quantity"]
+    },
+    {
+      "name": "orders.transition",
+      "risk": "high",
+      "capability": "orders.transition",
+      "sqliteExecutor": "execute_transition_order",
+      "postgresExecutor": "execute_transition_order_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint"]
+    },
+    {
+      "name": "payments.create",
+      "risk": "critical",
+      "capability": "payments.create",
+      "sqliteExecutor": "execute_create_payment",
+      "postgresExecutor": "execute_create_payment_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "payments.create_refund",
+      "risk": "critical",
+      "capability": "payments.create_refund",
+      "sqliteExecutor": "execute_create_refund",
+      "postgresExecutor": "execute_create_refund_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "products.create",
+      "risk": "high",
+      "capability": "products.create",
+      "sqliteExecutor": "execute_create_product",
+      "postgresExecutor": "execute_create_product_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "atomic_variants", "semantic_uniqueness"]
+    },
+    {
+      "name": "returns.transition",
+      "risk": "high",
+      "capability": "returns.transition",
+      "sqliteExecutor": "execute_transition_return",
+      "postgresExecutor": "execute_transition_return_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "subscriptions.charge",
+      "risk": "critical",
+      "capability": "subscriptions.charge",
+      "sqliteExecutor": "execute_charge_subscription",
+      "postgresExecutor": "execute_charge_subscription_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "pending_payment_only"]
+    },
+    {
+      "name": "x402.settle",
+      "risk": "critical",
+      "capability": "x402.settle",
+      "sqliteExecutor": "execute_settle_x402_intent",
+      "postgresExecutor": "execute_settle_x402_intent_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    }
+  ],
+  "requiredNext": []
+}

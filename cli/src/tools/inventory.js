@@ -47,14 +47,20 @@ export const inventoryTools = [
       sku: z.string().min(1).describe('Product SKU'),
       name: z.string().min(1).describe('Item name'),
       description: z.string().optional().describe('Item description'),
+      unitOfMeasure: z.string().min(1).optional().describe('Unit of measure (default EA)'),
       initialQuantity: z
-        .number()
-        .int()
-        .min(0)
+        .union([z.string().regex(/^\d+(?:\.\d+)?$/), z.number().nonnegative()])
         .optional()
-        .default(0)
-        .describe('Initial stock quantity'),
-      reorderPoint: z.number().int().min(0).optional().describe('Reorder point threshold'),
+        .describe('Exact decimal initial stock quantity'),
+      locationId: z.number().int().positive().optional().describe('Inventory location ID'),
+      reorderPoint: z
+        .union([z.string().regex(/^\d+(?:\.\d+)?$/), z.number().nonnegative()])
+        .optional()
+        .describe('Exact decimal reorder point threshold'),
+      safetyStock: z
+        .union([z.string().regex(/^\d+(?:\.\d+)?$/), z.number().nonnegative()])
+        .optional()
+        .describe('Exact decimal safety stock threshold'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

@@ -31,6 +31,7 @@ export {
 // MCP Server
 export { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
 export { createMcpEventStreamer } from './mcp-event-streamer.js';
+export { loadKernelConfig } from './kernel-config.js';
 export {
   MPP_HTTP_PAYMENT_REQUIRED_STATUS,
   MPP_JSONRPC_PAYMENT_REQUIRED_CODE,

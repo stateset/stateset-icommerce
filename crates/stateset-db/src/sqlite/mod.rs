@@ -32,6 +32,8 @@ mod integration_field_mappings;
 mod integration_mappings;
 mod inventory;
 mod invoices;
+mod kernel_executor;
+mod kernel_outbox;
 mod lots;
 mod loyalty;
 mod money_agg;
@@ -112,6 +114,8 @@ pub use integration_field_mappings::*;
 pub use integration_mappings::*;
 pub use inventory::*;
 pub use invoices::*;
+pub use kernel_executor::*;
+pub use kernel_outbox::*;
 pub use lots::*;
 pub use loyalty::*;
 pub use orders::*;
@@ -462,6 +466,18 @@ impl SqliteDatabase {
     #[must_use]
     pub fn payments(&self) -> SqlitePaymentRepository {
         SqlitePaymentRepository::new(self.pool.clone())
+    }
+
+    /// Get the durable kernel outbox consumer API.
+    #[must_use]
+    pub fn kernel_outbox(&self) -> SqliteKernelOutboxRepository {
+        SqliteKernelOutboxRepository::new(self.pool.clone())
+    }
+
+    /// Create an envelope-aware executor governed by the supplied policy revision.
+    #[must_use]
+    pub fn kernel_executor(&self, policy: stateset_core::KernelPolicy) -> SqliteKernelExecutor {
+        SqliteKernelExecutor::new(self.pool.clone(), policy)
     }
 
     /// Get warranty repository

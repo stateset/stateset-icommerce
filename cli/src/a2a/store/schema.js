@@ -75,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_a2a_requests_status ON a2a_payment_requests(statu
 CREATE INDEX IF NOT EXISTS idx_a2a_requests_expires ON a2a_payment_requests(expires_at);
 
 -- Quotes
-CREATE TABLE IF NOT EXISTS a2a_quotes (
+CREATE TABLE IF NOT EXISTS a2a_market_quotes (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL DEFAULT 'requested',
   buyer_agent_id TEXT,
@@ -107,10 +107,10 @@ CREATE TABLE IF NOT EXISTS a2a_quotes (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_a2a_quotes_buyer ON a2a_quotes(buyer_address);
-CREATE INDEX IF NOT EXISTS idx_a2a_quotes_seller ON a2a_quotes(seller_address);
-CREATE INDEX IF NOT EXISTS idx_a2a_quotes_status ON a2a_quotes(status);
-CREATE INDEX IF NOT EXISTS idx_a2a_quotes_expires ON a2a_quotes(expires_at);
+CREATE INDEX IF NOT EXISTS idx_a2a_market_quotes_buyer ON a2a_market_quotes(buyer_address);
+CREATE INDEX IF NOT EXISTS idx_a2a_market_quotes_seller ON a2a_market_quotes(seller_address);
+CREATE INDEX IF NOT EXISTS idx_a2a_market_quotes_status ON a2a_market_quotes(status);
+CREATE INDEX IF NOT EXISTS idx_a2a_market_quotes_expires ON a2a_market_quotes(expires_at);
 
 -- Escrows
 CREATE TABLE IF NOT EXISTS a2a_escrows (
@@ -144,18 +144,20 @@ CREATE INDEX IF NOT EXISTS idx_a2a_escrows_quote ON a2a_escrows(quote_id);
 -- Disputes
 CREATE TABLE IF NOT EXISTS a2a_disputes (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'legacy',
+  store_id TEXT NOT NULL DEFAULT 'legacy',
   status TEXT NOT NULL DEFAULT 'filed',
   escrow_id TEXT NOT NULL,
   quote_id TEXT,
-  filed_by TEXT NOT NULL,
-  filed_against TEXT NOT NULL,
+  claimant_address TEXT NOT NULL,
+  respondent_address TEXT NOT NULL,
   reason TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT 'non_delivery',
-  amount_disputed INTEGER NOT NULL,
-  amount_decimal REAL NOT NULL,
+  amount_decimal TEXT NOT NULL,
   asset TEXT NOT NULL,
   resolution_type TEXT,
-  resolution_amount INTEGER,
+  buyer_amount_decimal TEXT,
+  seller_amount_decimal TEXT,
   resolution_note TEXT,
   resolved_by TEXT,
   evidence_deadline TEXT,
@@ -168,11 +170,13 @@ CREATE TABLE IF NOT EXISTS a2a_disputes (
 
 CREATE INDEX IF NOT EXISTS idx_a2a_disputes_escrow ON a2a_disputes(escrow_id);
 CREATE INDEX IF NOT EXISTS idx_a2a_disputes_status ON a2a_disputes(status);
-CREATE INDEX IF NOT EXISTS idx_a2a_disputes_filed_by ON a2a_disputes(filed_by);
+CREATE INDEX IF NOT EXISTS idx_a2a_disputes_claimant ON a2a_disputes(claimant_address);
 
 -- Dispute Evidence
 CREATE TABLE IF NOT EXISTS a2a_dispute_evidence (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'legacy',
+  store_id TEXT NOT NULL DEFAULT 'legacy',
   dispute_id TEXT NOT NULL,
   submitted_by TEXT NOT NULL,
   evidence_type TEXT NOT NULL,
@@ -406,7 +410,7 @@ CREATE INDEX IF NOT EXISTS idx_a2a_evt_log_type ON a2a_event_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_a2a_evt_log_created ON a2a_event_log(created_at);
 
 -- Agent Cards (A2A agent identity & capability registration)
-CREATE TABLE IF NOT EXISTS agent_cards (
+CREATE TABLE IF NOT EXISTS a2a_runtime_agent_cards (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   wallet_address TEXT UNIQUE NOT NULL,
@@ -424,9 +428,9 @@ CREATE TABLE IF NOT EXISTS agent_cards (
   updated_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_agent_cards_wallet ON agent_cards(wallet_address);
-CREATE INDEX IF NOT EXISTS idx_agent_cards_active ON agent_cards(active);
-CREATE INDEX IF NOT EXISTS idx_agent_cards_trust ON agent_cards(trust_level);
+CREATE INDEX IF NOT EXISTS idx_a2a_runtime_cards_wallet ON a2a_runtime_agent_cards(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_a2a_runtime_cards_active ON a2a_runtime_agent_cards(active);
+CREATE INDEX IF NOT EXISTS idx_a2a_runtime_cards_trust ON a2a_runtime_agent_cards(trust_level);
 
 -- RFQ Broadcasts
 CREATE TABLE IF NOT EXISTS a2a_rfqs (
@@ -571,7 +575,7 @@ export class A2ASchemaMigrations {
 
     for (const [name, type] of columns) {
       try {
-        this.db.exec(`ALTER TABLE a2a_quotes ADD COLUMN ${name} ${type}`);
+        this.db.exec(`ALTER TABLE a2a_market_quotes ADD COLUMN ${name} ${type}`);
       } catch {
         // Column already exists — expected during idempotent migration
       }
@@ -597,7 +601,7 @@ export class A2ASchemaMigrations {
     const columns = [['payment_addresses', 'TEXT']];
     for (const [name, type] of columns) {
       try {
-        this.db.exec(`ALTER TABLE agent_cards ADD COLUMN ${name} ${type}`);
+        this.db.exec(`ALTER TABLE a2a_runtime_agent_cards ADD COLUMN ${name} ${type}`);
       } catch {
         // Column already exists — expected during idempotent migration
       }

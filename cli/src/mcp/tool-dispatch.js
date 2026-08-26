@@ -24,6 +24,7 @@ import { attachPaymentMetadataToResponse } from './mpp-payment.js';
 import { buildDeterministicMutationManifest } from './mutation-manifest.js';
 import { normalizeToolName } from './policy-helpers.js';
 import { compactReplayValue } from './replay-sanitizer.js';
+import { isMutationPermission } from '../kernel-boundary.js';
 
 /**
  * Build the dispatch helpers for one server instance.
@@ -44,6 +45,7 @@ import { compactReplayValue } from './replay-sanitizer.js';
  *   attachStructuredToolMetadataToResponse: Function,
  *   executeToolStepInPlan: (input: object) => Promise<object>,
  *   toolContext: object,
+ *   executeGovernedTool?: (toolName: string, params?: object, options?: object) => Promise<object | null>,
  *   sdkTool?: Function,
  * }} deps
  * @returns {{
@@ -69,6 +71,7 @@ export function createToolDispatch({
   attachStructuredToolMetadataToResponse,
   executeToolStepInPlan,
   toolContext,
+  executeGovernedTool,
   sdkTool = sdkToolImpl,
 }) {
   const wrapTool = (name, description, schema, handler, policyDomain = null) => {
@@ -477,7 +480,18 @@ export function createToolDispatch({
       stepIndex: 0,
       includeHooks: options.includeHooks ?? true,
       isRollback: options.isRollback || false,
-      extra: options.extra || {},
+      extra: {
+        ...(options.extra || {}),
+        idempotencyKey: options.idempotencyKey,
+        correlationId: options.correlationId,
+        causationId: options.causationId,
+        expectedVersion: options.expectedVersion,
+        deadline: options.deadline,
+        traceId: options.traceId,
+        approval: options.approval,
+        authority: options.authority,
+        authorize: options.authorize,
+      },
     });
 
     await addAgenticReplayEvent({
@@ -541,11 +555,21 @@ export function createToolDispatch({
 
     return wrapTool(name, description, inputSchema, async (args, extra) => {
       try {
-        const result = await handler({
-          ...toolContext,
-          params: args,
-          extra,
-        });
+        const governed = executeGovernedTool
+          ? await executeGovernedTool(name, args, {
+              requestId: extra?.requestId,
+              sessionId: extra?.sessionId,
+              traceId: extra?.traceId,
+              requireGoverned: allowApply && isMutationPermission(toolDef.permission),
+            })
+          : null;
+        const result =
+          governed ??
+          (await handler({
+            ...toolContext,
+            params: args,
+            extra,
+          }));
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

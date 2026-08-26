@@ -105,7 +105,7 @@ mod _size_assertions {
         CommerceError, CustomerError, DbError, InventoryError, OrderError, PaymentError,
         ProductError, ReturnError, ShippingError,
     };
-    // 96 bytes since v1.25.0: the commerce-invariant variants
+    // 96 bytes since v1.26.0: the commerce-invariant variants
     // (`RefundExceedsCaptured`, `CaptureExceedsOrderTotal`) carry a `Uuid`
     // plus three exact-decimal `String`s, one field more than
     // `InsufficientStock`. Intentional — see `CommerceError::invariant_code`.

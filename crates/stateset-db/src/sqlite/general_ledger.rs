@@ -1,5 +1,7 @@
 //! SQLite implementation of General Ledger repository
 
+use crate::KernelOutboxEvent;
+use crate::sqlite::kernel_outbox::append_kernel_event_tx;
 use crate::sqlite::{map_db_error, parse_uuid, with_immediate_transaction};
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
@@ -161,7 +163,7 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
-    fn update_account_balance_with_conn(
+    pub(crate) fn update_account_balance_with_conn(
         conn: &rusqlite::Connection,
         account_id: Uuid,
         debit: Decimal,
@@ -206,7 +208,7 @@ impl SqliteGeneralLedgerRepository {
         rows.collect()
     }
 
-    fn load_journal_entry_with_conn(
+    pub(crate) fn load_journal_entry_with_conn(
         conn: &rusqlite::Connection,
         id: Uuid,
     ) -> rusqlite::Result<JournalEntry> {
@@ -1000,6 +1002,26 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     ),
                 )));
             }
+
+            append_kernel_event_tx(
+                tx,
+                &KernelOutboxEvent::domain(
+                    "ledger.journal_entry_posted.v1",
+                    "journal_entry",
+                    id.to_string(),
+                    serde_json::json!({
+                        "journal_entry_id": id.to_string(),
+                        "entry_number": entry.entry_number,
+                        "source": entry.source.to_string(),
+                        "total_debits": entry.total_debits.to_string(),
+                        "total_credits": entry.total_credits.to_string(),
+                        "line_count": entry.lines.len(),
+                        "posted_by": posted_by,
+                        "status": JournalEntryStatus::Posted.to_string(),
+                    }),
+                    None,
+                ),
+            )?;
 
             Ok(())
         })?;
@@ -2383,6 +2405,19 @@ mod tests {
 
         let posted = repo.post_journal_entry(entry.id, "tester").expect("post");
         assert_eq!(posted.status, JournalEntryStatus::Posted);
+
+        let conn = repo.pool.get().expect("connection");
+        let payload: String = conn
+            .query_row(
+                "SELECT payload FROM kernel_outbox WHERE aggregate_id = ? AND event_type = ?",
+                params![entry.id.to_string(), "ledger.journal_entry_posted.v1"],
+                |row| row.get(0),
+            )
+            .expect("posting event");
+        let payload: serde_json::Value = serde_json::from_str(&payload).expect("valid payload");
+        assert_eq!(payload["total_debits"], "50");
+        assert_eq!(payload["total_credits"], "50");
+        assert_eq!(payload["posted_by"], "tester");
     }
 
     #[test]

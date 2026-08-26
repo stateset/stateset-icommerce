@@ -222,13 +222,13 @@ test('Commerce: basic operations', async (t) => {
     // Get stock level
     let stock = await commerce.inventory.getStock('INV-001');
     assert.strictEqual(stock.sku, 'INV-001');
-    assert.strictEqual(stock.totalOnHand, 100);
-    assert.strictEqual(stock.totalAvailable, 100);
+    assert.strictEqual(stock.totalOnHand, '100');
+    assert.strictEqual(stock.totalAvailable, '100');
 
     // Adjust stock
     await commerce.inventory.adjust('INV-001', -10, 'Test adjustment');
     stock = await commerce.inventory.getStock('INV-001');
-    assert.strictEqual(stock.totalOnHand, 90);
+    assert.strictEqual(stock.totalOnHand, '90');
 
     // Reserve stock
     const reservation = await commerce.inventory.reserve(
@@ -239,11 +239,11 @@ test('Commerce: basic operations', async (t) => {
       3600 // 1 hour expiry
     );
     assert.ok(reservation.id, 'reservation should have an ID');
-    assert.strictEqual(reservation.quantity, 5);
+    assert.strictEqual(reservation.quantity, '5');
 
     // Check available (should be reduced)
     stock = await commerce.inventory.getStock('INV-001');
-    assert.strictEqual(stock.totalAvailable, 85); // 90 - 5 reserved
+    assert.strictEqual(stock.totalAvailable, '85'); // 90 - 5 reserved
 
     // Confirm reservation
     await commerce.inventory.confirmReservation(reservation.id);

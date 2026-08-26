@@ -264,6 +264,17 @@ pub struct UpdateOrder {
     pub billing_address: Option<Address>,
 }
 
+/// Kernel command payload for an order state-machine transition.
+///
+/// Shipment targets are intentionally excluded by the executor: shipping has
+/// line-level quantities and is represented by [`ShipOrder`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionOrder {
+    pub order_id: OrderId,
+    pub status: OrderStatus,
+    pub payment_status: Option<PaymentStatus>,
+}
+
 /// One order line in a shipment request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShipmentLineInput {
@@ -285,6 +296,14 @@ pub struct ShipOrder {
     /// Carrier tracking number to record on the order.
     pub tracking_number: Option<String>,
     /// Per-line shipped quantities; `None` ships all remaining units.
+    pub lines: Option<Vec<ShipmentLineInput>>,
+}
+
+/// Kernel command payload for full or partial order shipment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShipOrderCommand {
+    pub order_id: OrderId,
+    pub tracking_number: Option<String>,
     pub lines: Option<Vec<ShipmentLineInput>>,
 }
 

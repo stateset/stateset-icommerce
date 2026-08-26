@@ -132,6 +132,7 @@
 
 pub mod errors;
 pub mod events;
+pub mod kernel;
 pub mod models;
 pub mod traits;
 pub mod validation;
@@ -144,6 +145,7 @@ pub mod metrics;
 
 pub use errors::*;
 pub use events::*;
+pub use kernel::*;
 pub use models::*;
 pub use traits::*;
 pub use validation::*;
@@ -158,9 +160,9 @@ pub use stateset_primitives::{
     CurrencyCode, CustomerId, EdiDocumentId, FraudRuleId, FulfillmentId, GiftCardId,
     GiftCardTransactionId, InboundShipmentId, InboundShipmentItemId, IntegrationFieldMappingId,
     IntegrationMappingId, InventoryItemId, InvoiceId, LoyaltyAccountId, LoyaltyProgramId,
-    LoyaltyTransactionId, Money, OrderId, OrderItemId, PaymentId, PaymentObligationId,
-    PrepaymentApplicationId, PrepaymentId, PriceLevelId, PriceScheduleId, PrintJobId,
-    PrintStationId, ProductId, ProductionBatchId, PromotionId, PurchaseOrderId,
+    LoyaltyTransactionId, Money, MoneyWire, MoneyWireError, OrderId, OrderItemId, PaymentId,
+    PaymentObligationId, PrepaymentApplicationId, PrepaymentId, PriceLevelId, PriceScheduleId,
+    PrintJobId, PrintStationId, ProductId, ProductionBatchId, PromotionId, PurchaseOrderId,
     PurgatoryLineItemId, PurgatoryOrderId, ReturnId, ReviewId, RewardId, SearchConfigId, SegmentId,
     ShipmentId, ShippingMethodId, ShippingZoneId, Sku, StockSnapshotId, StockSnapshotLineId,
     StoreCreditId, StoreCreditTransactionId, SubscriptionId, SupplierSkuId, TopologySnapshotId,
@@ -173,6 +175,7 @@ pub use stateset_primitives::{
 pub mod prelude {
     pub use crate::errors::*;
     pub use crate::events::*;
+    pub use crate::kernel::*;
     pub use crate::models::*;
     pub use crate::traits::*;
     pub use crate::validation::*;
@@ -183,9 +186,9 @@ pub mod prelude {
         CreditId, CurrencyCode, CustomerId, EdiDocumentId, FraudRuleId, FulfillmentId, GiftCardId,
         GiftCardTransactionId, InboundShipmentId, InboundShipmentItemId, IntegrationFieldMappingId,
         IntegrationMappingId, InventoryItemId, InvoiceId, LoyaltyAccountId, LoyaltyProgramId,
-        LoyaltyTransactionId, Money, OrderId, OrderItemId, PaymentId, PaymentObligationId,
-        PrepaymentApplicationId, PrepaymentId, PriceLevelId, PriceScheduleId, PrintJobId,
-        PrintStationId, ProductId, ProductionBatchId, PromotionId, PurchaseOrderId,
+        LoyaltyTransactionId, Money, MoneyWire, MoneyWireError, OrderId, OrderItemId, PaymentId,
+        PaymentObligationId, PrepaymentApplicationId, PrepaymentId, PriceLevelId, PriceScheduleId,
+        PrintJobId, PrintStationId, ProductId, ProductionBatchId, PromotionId, PurchaseOrderId,
         PurgatoryLineItemId, PurgatoryOrderId, ReturnId, ReviewId, RewardId, SearchConfigId,
         SegmentId, ShipmentId, ShippingMethodId, ShippingZoneId, Sku, StockSnapshotId,
         StockSnapshotLineId, StoreCreditId, StoreCreditTransactionId, SubscriptionId,

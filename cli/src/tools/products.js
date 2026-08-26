@@ -13,8 +13,15 @@ const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyD
 const variantInput = {
   sku: z.string().min(1).max(100).describe('Variant SKU'),
   name: z.string().max(255).optional().describe('Variant name'),
-  price: z.number().positive().describe('Variant price'),
-  compareAtPrice: z.number().positive().optional().describe('Compare at price (original price)'),
+  price: z
+    .union([z.string().regex(/^\d+(?:\.\d+)?$/), z.number().positive()])
+    .describe(
+      'Exact decimal string variant price (legacy numeric input is supported outside strict mode)',
+    ),
+  compareAtPrice: z
+    .union([z.string().regex(/^\d+(?:\.\d+)?$/), z.number().positive()])
+    .optional()
+    .describe('Exact decimal string compare-at price'),
 };
 
 function productSummary(product) {

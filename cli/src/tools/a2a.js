@@ -916,9 +916,10 @@ export const a2aTools = [
       buyerAddress: z.string().min(1).describe('Buyer wallet address'),
       sellerAddress: z.string().min(1).describe('Seller wallet address'),
       amount: z
-        .number()
-        .positive()
-        .describe('Amount to escrow in the selected asset (e.g., 100.00 or 0.001)'),
+        .union([z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/), z.number().positive()])
+        .describe(
+          'Exact decimal string amount to escrow (recommended); JSON numbers are legacy-only',
+        ),
       asset: z
         .string()
         .optional()
@@ -1080,6 +1081,7 @@ export const a2aTools = [
     description: 'Refund escrow funds back to the buyer.',
     inputSchema: {
       escrowId: z.string().min(1).describe('Escrow ID to refund'),
+      reason: z.string().min(1).max(500).optional().describe('Auditable refund reason'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -1354,7 +1356,7 @@ export const a2aTools = [
   {
     name: 'a2a_resolve_dispute',
     description:
-      'Resolve a dispute with a resolution type (full refund, partial refund, release to seller, split, or escalate).',
+      'Resolve a dispute atomically with a full refund, seller release, exact split, or escalation.',
     inputSchema: {
       disputeId: z.string().min(1).describe('Dispute ID to resolve'),
       resolutionType: z
@@ -1364,7 +1366,17 @@ export const a2aTools = [
         .number()
         .positive()
         .optional()
-        .describe('Amount for partial_refund or split (buyer share)'),
+        .describe('Legacy amount for partial_refund; unavailable in strict kernel mode'),
+      buyerAmount: z
+        .string()
+        .regex(/^\d+(?:\.\d+)?$/)
+        .optional()
+        .describe('Exact decimal buyer allocation required for split'),
+      sellerAmount: z
+        .string()
+        .regex(/^\d+(?:\.\d+)?$/)
+        .optional()
+        .describe('Exact decimal seller allocation required for split'),
       note: z.string().optional().describe('Resolution note'),
     },
     permission: 'write',
@@ -1389,7 +1401,7 @@ export const a2aTools = [
 
       const result = await disputeSvc.resolveDispute(params.disputeId, {
         resolutionType: params.resolutionType,
-        amount: params.amount,
+        amount: params.amount ?? (params.buyerAmount ? Number(params.buyerAmount) : undefined),
         note: params.note,
         resolvedBy: agentConfig.walletAddress,
       });

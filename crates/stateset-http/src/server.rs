@@ -742,7 +742,7 @@ impl ServerBuilder {
     /// and is kept only for source compatibility; use
     /// [`Self::allow_unmapped_authz_routes`] to opt out.
     #[deprecated(
-        since = "1.25.0",
+        since = "1.26.0",
         note = "fail-closed authorization for unmapped routes is the default; \
                 use `allow_unmapped_authz_routes(true)` to opt out"
     )]

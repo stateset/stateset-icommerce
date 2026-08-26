@@ -254,6 +254,7 @@ const commerce = new Commerce('./store.db');
 // List orders
 const orders = await executeTool(commerce, 'list_orders', { limit: 10 }, {
     allowApply: true,
+    toolkitOptions: { capabilities: ['read:*'] },
 });
 
 // Create a customer (requires allowApply)
@@ -263,6 +264,7 @@ const customer = await executeTool(commerce, 'create_customer', {
     lastName: 'Agent',
 }, {
     allowApply: true,
+    toolkitOptions: { capabilities: ['read:*', 'create_customer'] },
 });
 
 // Run analytics
@@ -275,6 +277,7 @@ For advanced preview controls, use the full toolkit object:
 const toolkit = createEmbeddedAgentToolkit({
     dbPath: './store.db',
     allowApply: true,
+    capabilities: ['read:*', 'create_customer'],
 });
 
 // List orders
@@ -299,6 +302,7 @@ When your runtime includes the autonomous engine, the toolkit can delegate work 
 const toolkit = createEmbeddedAgentToolkit({
     commerce,
     allowApply: true,
+    capabilities: ['read:*', 'delegate_to_agent'],
     autonomousEngine,
 });
 
