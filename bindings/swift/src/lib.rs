@@ -5,6 +5,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use stateset_core::{
     AccountType, BackorderPriority, InspectionType, LocationType, OrderStatus, ReturnReason,
     ShippingCarrier, WarehouseType,
@@ -136,8 +137,7 @@ fn cstr_to_string(s: *const c_char) -> Option<String> {
 }
 
 fn decimal_from_f64(value: f64, field: &str) -> Result<Decimal, String> {
-    Decimal::from_f64_retain(value)
-        .ok_or_else(|| format!("Invalid numeric value for {field}: {value}"))
+    Decimal::from_f64(value).ok_or_else(|| format!("Invalid numeric value for {field}: {value}"))
 }
 
 fn clear_last_error() {

@@ -6,6 +6,7 @@ use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jdouble, jint, jlong};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use stateset_core::{
     AccountType, BackorderPriority, InspectionType, LocationType, OrderStatus, ProductId,
     ReturnReason, ShippingCarrier, WarehouseType,
@@ -79,8 +80,7 @@ fn next_handle_id() -> usize {
 }
 
 fn decimal_from_f64(value: f64, field: &str) -> Result<Decimal, String> {
-    Decimal::from_f64_retain(value)
-        .ok_or_else(|| format!("Invalid numeric value for {field}: {value}"))
+    Decimal::from_f64(value).ok_or_else(|| format!("Invalid numeric value for {field}: {value}"))
 }
 
 fn create_handle(commerce: RustCommerce) -> jlong {

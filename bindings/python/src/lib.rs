@@ -19,6 +19,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::marker::Ungil;
 use pyo3::prelude::*;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 // Use :: prefix to refer to the external crate, not the pymodule
 use ::stateset_embedded::Commerce as RustCommerce;
 use stateset_primitives::CurrencyCode;
@@ -27,7 +28,7 @@ use stateset_sdk::{SyncRuntime as RustSyncRuntime, SyncRuntimeConfig as RustSync
 use std::sync::{Arc, Mutex};
 
 fn decimal_from_f64(value: f64, field: &str) -> PyResult<Decimal> {
-    Decimal::from_f64_retain(value).ok_or_else(|| {
+    Decimal::from_f64(value).ok_or_else(|| {
         PyValueError::new_err(format!("Invalid {field}: expected a finite decimal value"))
     })
 }
@@ -2054,8 +2055,8 @@ impl Inventory {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let qty = Decimal::from_f64_retain(quantity)
-            .ok_or_else(|| PyValueError::new_err("Invalid quantity"))?;
+        let qty =
+            Decimal::from_f64(quantity).ok_or_else(|| PyValueError::new_err("Invalid quantity"))?;
 
         commerce
             .inventory()
@@ -2090,8 +2091,8 @@ impl Inventory {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let qty = Decimal::from_f64_retain(quantity)
-            .ok_or_else(|| PyValueError::new_err("Invalid quantity"))?;
+        let qty =
+            Decimal::from_f64(quantity).ok_or_else(|| PyValueError::new_err("Invalid quantity"))?;
 
         let reservation = commerce
             .inventory()
@@ -5196,7 +5197,7 @@ impl Carts {
 
         let amount_dec = match shipping_amount {
             Some(v) => Some(
-                Decimal::from_f64_retain(v)
+                Decimal::from_f64(v)
                     .ok_or_else(|| PyValueError::new_err("Invalid shipping amount"))?,
             ),
             None => None,
@@ -6279,8 +6280,7 @@ impl Analytics {
 
         let threshold_dec = match threshold {
             Some(v) => Some(
-                Decimal::from_f64_retain(v)
-                    .ok_or_else(|| PyValueError::new_err("Invalid threshold"))?,
+                Decimal::from_f64(v).ok_or_else(|| PyValueError::new_err("Invalid threshold"))?,
             ),
             None => None,
         };
@@ -6647,7 +6647,7 @@ impl CurrencyOperations {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let rate_dec = Decimal::from_f64_retain(rate)
+        let rate_dec = Decimal::from_f64(rate)
             .ok_or_else(|| PyValueError::new_err("Invalid exchange rate"))?;
 
         let rate = commerce
@@ -6672,7 +6672,7 @@ impl CurrencyOperations {
 
         let mut inputs = Vec::with_capacity(rates.len());
         for r in rates {
-            let rate_dec = Decimal::from_f64_retain(r.rate)
+            let rate_dec = Decimal::from_f64(r.rate)
                 .ok_or_else(|| PyValueError::new_err("Invalid exchange rate"))?;
 
             inputs.push(stateset_core::SetExchangeRate {
@@ -6720,8 +6720,8 @@ impl CurrencyOperations {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let amount_dec = Decimal::from_f64_retain(amount)
-            .ok_or_else(|| PyValueError::new_err("Invalid amount"))?;
+        let amount_dec =
+            Decimal::from_f64(amount).ok_or_else(|| PyValueError::new_err("Invalid amount"))?;
 
         let result = commerce
             .currency()
@@ -6869,8 +6869,8 @@ impl CurrencyOperations {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let amount_dec = Decimal::from_f64_retain(amount)
-            .ok_or_else(|| PyValueError::new_err("Invalid amount"))?;
+        let amount_dec =
+            Decimal::from_f64(amount).ok_or_else(|| PyValueError::new_err("Invalid amount"))?;
 
         Ok(commerce.currency().format(amount_dec, parse_currency(&currency_code)?))
     }

@@ -13,6 +13,7 @@
 use ext_php_rs::binary::Binary;
 use ext_php_rs::prelude::*;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::prelude::ToPrimitive;
 use stateset_embedded::Commerce as RustCommerce;
 use std::sync::{Arc, Mutex};
@@ -64,7 +65,7 @@ where
 }
 
 fn decimal_from_f64(value: f64, field: &str) -> PhpResult<Decimal> {
-    Decimal::from_f64_retain(value).ok_or_else(|| {
+    Decimal::from_f64(value).ok_or_else(|| {
         PhpException::default(format!("Invalid numeric value for {}: {}", field, value))
     })
 }

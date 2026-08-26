@@ -3,6 +3,7 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use serde::{Deserialize, Serialize};
 use stateset_core::{CartId, CustomerId, OrderId, ProductId, PromotionId, SubscriptionId};
 use stateset_embedded::Commerce as RustCommerce;
@@ -65,7 +66,7 @@ where
 }
 
 fn decimal_from_f64(value: f64, field: &str) -> Result<Decimal> {
-    Decimal::from_f64_retain(value).ok_or_else(|| Error::from_reason(format!("Invalid {field}")))
+    Decimal::from_f64(value).ok_or_else(|| Error::from_reason(format!("Invalid {field}")))
 }
 
 fn optional_decimal_from_f64(value: Option<f64>, field: &str) -> Result<Option<Decimal>> {
@@ -2143,8 +2144,8 @@ impl Inventory {
     #[napi]
     pub async fn adjust(&self, sku: String, quantity: f64, reason: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let qty = Decimal::from_f64_retain(quantity)
-            .ok_or_else(|| Error::from_reason("Invalid quantity"))?;
+        let qty =
+            Decimal::from_f64(quantity).ok_or_else(|| Error::from_reason("Invalid quantity"))?;
 
         commerce
             .inventory()
@@ -2164,8 +2165,8 @@ impl Inventory {
         expires_in_seconds: Option<i64>,
     ) -> Result<ReservationOutput> {
         let commerce = self.commerce.lock().await;
-        let qty = Decimal::from_f64_retain(quantity)
-            .ok_or_else(|| Error::from_reason("Invalid quantity"))?;
+        let qty =
+            Decimal::from_f64(quantity).ok_or_else(|| Error::from_reason("Invalid quantity"))?;
 
         let reservation = commerce
             .inventory()
@@ -4569,7 +4570,7 @@ impl Carts {
 
         let shipping_amount = match input.shipping_amount {
             Some(amount) => Some(
-                Decimal::from_f64_retain(amount)
+                Decimal::from_f64(amount)
                     .ok_or_else(|| Error::from_reason("Invalid shipping amount"))?,
             ),
             None => None,
