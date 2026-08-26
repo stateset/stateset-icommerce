@@ -8,6 +8,37 @@ This page is the catalogue of those guarantees: what is promised, where it is
 enforced, and how it is proven. Each invariant holds after *every* operation, on
 both the SQLite and PostgreSQL backends.
 
+## Branching on a violation
+
+Each guarantee below that an agent can act on has a **stable error code**,
+listed in its table row. The codes are defined by the conformance vector
+`icp-conformance/vectors/icp-1.0/10-commerce-invariants/` (its `description.md`
+is normative) and are returned by the engine:
+
+```rust
+match repo.create_refund(input) {
+    Err(e) if e.invariant_code() == Some("commerce.refund.exceeds_captured") => {
+        // the books say this money was never captured — do not retry
+    }
+    other => other?,
+}
+```
+
+Over HTTP the same code appears as `error.invariant`:
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "message": "Refund amount 10.00 exceeds the refundable balance of payment …",
+    "invariant": "commerce.refund.exceeds_captured"
+  }
+}
+```
+
+`error.code` keeps its existing HTTP-level taxonomy and the status code is
+unchanged, so adding `error.invariant` breaks no existing client.
+
 ## How they are proven
 
 `crates/stateset-integration-tests/tests/invariants.rs` is a property test. It
@@ -32,72 +63,72 @@ violation reproduces without waiting for the generator to rediscover it.
 
 ## Payments and refunds
 
-| # | Guarantee | Enforced at |
-|---|-----------|-------------|
-| P1 | Σ completed refunds ≤ amount captured | `sqlite/payments.rs`, `postgres/payments.rs` |
-| P2 | Σ completed **and in-flight** refunds ≤ amount captured — two concurrent refunds cannot both pass | same, inside the write transaction (`BEGIN IMMEDIATE` / `SELECT … FOR UPDATE`) |
-| P3 | `payments.amount_refunded` equals Σ completed refunds | same |
-| P4 | A refund amount is strictly positive | same |
-| P5 | A **completed** refund cannot be transitioned to failed | status guard on the update; violating it silently corrupted `amount_refunded` before v1.25.0 |
-| P6 | Σ captures (completed and in-flight) ≤ the order total | `capturing_statuses()` fold in both backends |
+| # | Guarantee | Error code | Enforced at |
+|---|-----------|------------|-------------|
+| P1 | Σ completed refunds ≤ amount captured | `commerce.refund.exceeds_captured` | `sqlite/payments.rs`, `postgres/payments.rs` |
+| P2 | Σ completed **and in-flight** refunds ≤ amount captured — two concurrent refunds cannot both pass | `commerce.refund.exceeds_captured` | same, inside the write transaction (`BEGIN IMMEDIATE` / `SELECT … FOR UPDATE`) |
+| P3 | `payments.amount_refunded` equals Σ completed refunds | — | same |
+| P4 | A refund amount is strictly positive | — | same |
+| P5 | A **completed** refund cannot be transitioned to failed | — | status guard on the update; violating it silently corrupted `amount_refunded` before v1.25.0 |
+| P6 | Σ captures (completed and in-flight) ≤ the order total | `commerce.capture.exceeds_order_total` | `capturing_statuses()` fold in both backends |
 
 P2 and P6 are deliberately computed *inside* the same transaction that writes, not
 before it. A check that runs outside the transaction is not a guarantee.
 
 ## Orders
 
-| # | Guarantee | Enforced at |
-|---|-----------|-------------|
-| O1 | Captured ≤ order total | see P6 |
-| O2 | Refunded ≤ captured | see P1 |
-| O3 | Returned quantity per line ≤ quantity ordered | `validate_return_item_tx` |
-| O4 | Order total foots to its line items; each line total = qty × unit price − discount + tax | model + engine agree after every op |
-| O5 | A cancelled order holds no live inventory reservation | reservation release on cancel |
+| # | Guarantee | Error code | Enforced at |
+|---|-----------|------------|-------------|
+| O1 | Captured ≤ order total | `commerce.capture.exceeds_order_total` | see P6 |
+| O2 | Refunded ≤ captured | `commerce.refund.exceeds_captured` | see P1 |
+| O3 | Returned quantity per line ≤ quantity shipped (ordered, before shipment) | `commerce.return.exceeds_shipped` | `validate_return_item_tx` |
+| O4 | Order total foots to its line items; each line total = qty × unit price − discount + tax | — | model + engine agree after every op |
+| O5 | A cancelled order holds no live inventory reservation | — | reservation release on cancel |
 
 ## Returns
 
-| # | Guarantee | Enforced at |
-|---|-----------|-------------|
-| R1 | A return may only be requested against an order whose goods have shipped | `ensure_order_returnable` (`sqlite/returns.rs`, `postgres/returns.rs`) |
-| R2 | A return's `refund_amount` foots to its items | engine + model |
+| # | Guarantee | Error code | Enforced at |
+|---|-----------|------------|-------------|
+| R1 | A return may only be requested against an order whose goods have shipped | `commerce.return.order_not_shipped` | `ensure_order_returnable` (`sqlite/returns.rs`, `postgres/returns.rs`) |
+| R2 | A return's `refund_amount` foots to its items | — | engine + model |
 
 R1 exists because a return opened against an unfulfilled order can carry a refund
 amount for goods that never left the building.
 
 ## Inventory
 
-| # | Guarantee | Enforced at |
-|---|-----------|-------------|
-| I1 | `on_hand` ≥ 0 | reservation and adjustment paths |
-| I2 | `allocated` ≥ 0 | same |
-| I3 | `allocated` ≤ `on_hand` | same |
-| I4 | `available` = `on_hand` − `allocated` | derived, never stored independently |
-| I5 | Σ inventory movements reconciles to `on_hand` — the ledger explains the balance | movement rows written in the same transaction as the balance change |
-| I6 | `allocated` = Σ live order reservations | `reserve_in_tx` with an optimistic version guard |
+| # | Guarantee | Error code | Enforced at |
+|---|-----------|------------|-------------|
+| I1 | `on_hand` ≥ 0 | `commerce.inventory.insufficient_available` | reservation and adjustment paths |
+| I2 | `allocated` ≥ 0 | — | same |
+| I3 | `allocated` ≤ `on_hand` | `commerce.inventory.insufficient_available` | same |
+| I4 | `available` = `on_hand` − `allocated` | — | derived, never stored independently |
+| I5 | Σ inventory movements reconciles to `on_hand` — the ledger explains the balance | — | movement rows written in the same transaction as the balance change |
+| I6 | `allocated` = Σ live order reservations | `commerce.inventory.insufficient_available` | `reserve_in_tx` with an optimistic version guard |
 
 ## General ledger and AR
 
-| # | Guarantee | Enforced at |
-|---|-----------|-------------|
-| G1 | Every posted journal entry balances: Σ debits = Σ credits | GL posting |
-| G2 | Every journal line is a pure debit or a pure credit, never both | GL posting |
-| G3 | The trial balance nets to zero | consequence of G1 |
-| G4 | The AR control account balance = Σ open invoice balances | auto-posting |
-| G5 | `invoice.balance_due` = total − amount paid | invoice write path |
+| # | Guarantee | Error code | Enforced at |
+|---|-----------|------------|-------------|
+| G1 | Every posted journal entry balances: Σ debits = Σ credits | `commerce.ledger.entry_unbalanced` † | GL posting |
+| G2 | Every journal line is a pure debit or a pure credit, never both | `commerce.ledger.line_not_single_sided` † | GL posting |
+| G3 | The trial balance nets to zero | — | consequence of G1 |
+| G4 | The AR control account balance = Σ open invoice balances | — | auto-posting |
+| G5 | `invoice.balance_due` = total − amount paid | — | invoice write path |
 
 ## Money
 
-| # | Guarantee | Enforced at |
-|---|-----------|-------------|
-| M1 | No stored monetary value carries more decimal places than its currency allows | checked on every order, item, payment, refund, return, invoice, journal line and trial-balance figure |
-| M2 | Monetary arithmetic is exact decimal, never binary floating point | `rust_decimal` end to end; `decimal_sum` for SQLite aggregates; see [Money: Storage & Arithmetic](money.md) |
+| # | Guarantee | Error code | Enforced at |
+|---|-----------|------------|-------------|
+| M1 | No stored monetary value carries more decimal places than its currency allows | `commerce.money.scale_exceeds_currency` † | checked on every order, item, payment, refund, return, invoice, journal line and trial-balance figure |
+| M2 | Monetary arithmetic is exact decimal, never binary floating point | — | `rust_decimal` end to end; `decimal_sum` for SQLite aggregates; see [Money: Storage & Arithmetic](money.md) |
 
 ## Atomicity
 
-| # | Guarantee | Enforced at |
-|---|-----------|-------------|
-| A1 | A rejected operation writes nothing — entity counts are unchanged | every guard validates before the first write, inside the transaction |
-| A2 | A rejected operation returns a typed `CommerceError`; it never panics | verified by the harness, which distinguishes the two |
+| # | Guarantee | Error code | Enforced at |
+|---|-----------|------------|-------------|
+| A1 | A rejected operation writes nothing — entity counts are unchanged | — | every guard validates before the first write, inside the transaction |
+| A2 | A rejected operation returns a typed `CommerceError`; it never panics | — | verified by the harness, which distinguishes the two |
 
 A1 is why the harness counts orders, payments, returns, invoices and refunds after
 every step: a guard that rejects *after* a partial write would leave the counts
@@ -107,9 +138,17 @@ right but the books wrong.
 
 Stated plainly, because a trust document that overstates itself is worse than none:
 
-- These are **engine** guarantees. They are enforced for every caller, but they are
-  not yet expressed as stable, documented error codes an agent can branch on —
-  today a violation surfaces as a typed error with a human-readable message.
+- The invariants marked with an error code above are enforced for every caller
+  *and* carry that stable code: `CommerceError::invariant_code()` returns it, and
+  the HTTP layer surfaces it as `error.invariant` in the JSON body (the existing
+  `error.code` and the HTTP status are unchanged). Rows marked `—` are still
+  enforced but surface only as a typed error with a human-readable message; they
+  have no code in the conformance vector to branch on yet.
+- † The ledger and money-scale codes are **defined by the conformance vector**
+  and are what a conformant implementation must report, but the engine's own GL
+  and scale guards do not yet return them from `invariant_code()`; they still
+  surface as untyped validation errors. Only the payment, return and inventory
+  codes are live on `CommerceError` today.
 - The ICP conformance suite (`icp-conformance/`) verifies protocol-level behaviour
   — AID derivation, canonical JSON, signatures, escrow lifecycle, timing, ceilings.
   It does **not** yet assert the economic invariants on this page.

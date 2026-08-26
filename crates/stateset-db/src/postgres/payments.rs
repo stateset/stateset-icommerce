@@ -60,9 +60,12 @@ async fn check_order_capture_capacity_pg(
     .map_err(map_db_error)?;
 
     if captured + amount > total {
-        return Err(CommerceError::ValidationError(format!(
-            "Payment of {amount} would exceed order {order_id} total {total}: {captured} already captured or in flight"
-        )));
+        return Err(CommerceError::CaptureExceedsOrderTotal {
+            order_id,
+            order_total: total.to_string(),
+            already_captured: captured.to_string(),
+            requested: amount.to_string(),
+        });
     }
     Ok(())
 }

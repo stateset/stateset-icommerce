@@ -145,7 +145,8 @@ async fn postgres_return_rejects_more_than_ordered_quantity() {
         })
         .await
         .expect_err("returning 5 of a 2-unit item must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert!(matches!(err, CommerceError::ReturnExceedsReturnable { .. }), "got {err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.return.exceeds_shipped"));
 
     // The whole return must have rolled back — no orphaned header.
     let existing = db
@@ -199,7 +200,8 @@ async fn postgres_return_rejects_cumulative_over_return() {
         })
         .await
         .expect_err("cumulative over-return must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert!(matches!(err, CommerceError::ReturnExceedsReturnable { .. }), "got {err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.return.exceeds_shipped"));
 }
 
 /// Returning an order item that belongs to a *different* order must be rejected.

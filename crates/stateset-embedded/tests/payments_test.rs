@@ -572,7 +572,8 @@ fn test_refund_rejects_amount_exceeding_payment() {
             ..Default::default()
         })
         .expect_err("refund exceeding payment must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert!(matches!(err, CommerceError::RefundExceedsCaptured { .. }), "got {err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.refund.exceeds_captured"));
 
     // Nothing should have been persisted.
     assert!(commerce.payments().get_refunds(payment.id).expect("list refunds").is_empty());

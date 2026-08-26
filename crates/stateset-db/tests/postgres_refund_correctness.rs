@@ -88,7 +88,8 @@ async fn postgres_refund_reserves_against_in_flight() {
         })
         .await
         .expect_err("second refund exceeding remaining-minus-in-flight must be rejected");
-    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    assert!(matches!(err, CommerceError::RefundExceedsCaptured { .. }), "got {err:?}");
+    assert_eq!(err.invariant_code(), Some("commerce.refund.exceeds_captured"));
 
     // A refund for the exact remaining 40.00 must still be allowed.
     db.payments()

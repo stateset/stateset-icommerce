@@ -1626,6 +1626,60 @@ async fn create_return_returns_201_with_correct_fields() {
     assert!(json["updated_at"].as_str().is_some());
 }
 
+/// A commerce-invariant violation surfaces its stable code as
+/// `error.invariant` in the JSON body, while `error.code` and the HTTP status
+/// stay exactly as they were. See `docs/src/advanced/invariants.md` and
+/// `icp-conformance/vectors/icp-1.0/10-commerce-invariants/`.
+#[tokio::test]
+async fn create_return_against_unshipped_order_surfaces_invariant_code() {
+    let state = AppState::new(test_commerce());
+    // Deliberately *not* shipped.
+    let (order_id, item_id) = seed_order(&state);
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let payload = json!({
+        "order_id": order_id,
+        "reason": "defective",
+        "items": [{"order_item_id": item_id, "quantity": 1}]
+    });
+
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/returns")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["invariant"], "commerce.return.order_not_shipped");
+    assert_eq!(json["error"]["code"], "validation_error");
+    assert!(
+        json["error"]["message"].as_str().unwrap().contains("must be shipped or delivered"),
+        "{json}"
+    );
+}
+
+/// The `invariant` field is absent — not null — on ordinary failures.
+#[tokio::test]
+async fn ordinary_error_body_carries_no_invariant_field() {
+    let resp = app()
+        .oneshot(
+            Request::get(format!("/api/v1/returns/{}", Uuid::new_v4()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let json = body_json(resp).await;
+    assert!(json["error"].get("invariant").is_none(), "{json}");
+}
+
 #[tokio::test]
 async fn get_return_by_id_returns_correct_return() {
     let state = AppState::new(test_commerce());
