@@ -34,6 +34,7 @@
 
 use crate::errors::{CommerceError, Result};
 use rust_decimal::Decimal;
+use stateset_primitives::CurrencyCode;
 
 // ============================================================================
 // Validate Trait
@@ -279,6 +280,55 @@ impl ValidationBuilder {
 }
 
 // ============================================================================
+// Money scale
+// ============================================================================
+
+/// Significant decimal scale of `amount` — trailing zeros do not count.
+///
+/// `10.9900` is two-scale, `1000.0` is zero-scale, `10.9901` is four-scale.
+#[must_use]
+pub fn significant_scale(amount: Decimal) -> u32 {
+    amount.normalize().scale()
+}
+
+/// Reject a monetary amount that carries more decimal places than `currency` allows.
+///
+/// Scale is counted after trimming insignificant trailing zeros (see
+/// [`significant_scale`]), so `10.9900` is accepted for USD while `10.999` is
+/// not. The allowed scale comes from [`CurrencyCode::decimal_places`], the
+/// single source of truth for a currency's minor units.
+///
+/// Implements invariant `commerce.money.scale_exceeds_currency` (M1).
+///
+/// # Errors
+///
+/// Returns [`CommerceError::MoneyScaleExceedsCurrency`] when the amount's
+/// significant scale exceeds the currency's minor units.
+///
+/// # Examples
+///
+/// ```
+/// use rust_decimal_macros::dec;
+/// use stateset_core::{CurrencyCode, validate_money_scale};
+///
+/// assert!(validate_money_scale(CurrencyCode::USD, dec!(10.9900)).is_ok());
+/// assert!(validate_money_scale(CurrencyCode::USD, dec!(10.999)).is_err());
+/// assert!(validate_money_scale(CurrencyCode::JPY, dec!(1000.0)).is_ok());
+/// ```
+pub fn validate_money_scale(currency: CurrencyCode, amount: Decimal) -> Result<()> {
+    let allowed = u32::from(currency.decimal_places());
+    let scale = significant_scale(amount);
+    if scale > allowed {
+        return Err(CommerceError::MoneyScaleExceedsCurrency {
+            currency: currency.as_str().to_string(),
+            amount: amount.to_string(),
+            allowed_scale: allowed,
+        });
+    }
+    Ok(())
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -286,6 +336,41 @@ impl ValidationBuilder {
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
+
+    #[test]
+    fn money_scale_counts_significant_decimals_only() {
+        assert_eq!(significant_scale(dec!(10.9900)), 2);
+        assert_eq!(significant_scale(dec!(10.999)), 3);
+        assert_eq!(significant_scale(dec!(1000.0)), 0);
+        assert_eq!(significant_scale(Decimal::ZERO), 0);
+    }
+
+    #[test]
+    fn money_scale_guard_uses_currency_minor_units() {
+        // USD: two minor units.
+        assert!(validate_money_scale(CurrencyCode::USD, dec!(10.99)).is_ok());
+        assert!(validate_money_scale(CurrencyCode::USD, dec!(10.9900)).is_ok());
+        assert!(validate_money_scale(CurrencyCode::USD, dec!(-10.99)).is_ok());
+        let err = validate_money_scale(CurrencyCode::USD, dec!(10.999)).expect_err("3dp in USD");
+        assert_eq!(err.invariant_code(), Some("commerce.money.scale_exceeds_currency"));
+        match err {
+            CommerceError::MoneyScaleExceedsCurrency { currency, amount, allowed_scale } => {
+                assert_eq!(currency, "USD");
+                assert_eq!(amount, "10.999");
+                assert_eq!(allowed_scale, 2);
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+
+        // JPY: zero minor units.
+        assert!(validate_money_scale(CurrencyCode::JPY, dec!(1000.0)).is_ok());
+        assert!(validate_money_scale(CurrencyCode::JPY, dec!(1000.5)).is_err());
+
+        // BTC: eight.
+        let btc: CurrencyCode = "BTC".parse().expect("BTC");
+        assert!(validate_money_scale(btc, dec!(0.00000001)).is_ok());
+        assert!(validate_money_scale(btc, dec!(0.000000001)).is_err());
+    }
 
     #[test]
     fn test_validation_builder_success() {

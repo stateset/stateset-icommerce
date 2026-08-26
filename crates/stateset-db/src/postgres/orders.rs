@@ -160,6 +160,12 @@ impl PgOrderRepository {
             Self::validate_order_item_input(item)?;
         }
 
+        // Invariant M1 (`commerce.money.scale_exceeds_currency`): no line money
+        // amount may carry more decimal places than the order currency allows.
+        // Checked here, before the first write, so a rejected order persists
+        // nothing.
+        input.validate_money_scale()?;
+
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
         }

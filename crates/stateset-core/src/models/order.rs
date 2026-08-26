@@ -8,7 +8,7 @@ use strum::{Display, EnumString};
 use uuid::Uuid;
 
 use crate::errors::Result;
-use crate::validation::{Validate, ValidationBuilder};
+use crate::validation::{Validate, ValidationBuilder, validate_money_scale};
 
 /// Order aggregate root
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -362,6 +362,50 @@ impl OrderItem {
     }
 }
 
+impl CreateOrder {
+    /// The currency this order's money amounts are denominated in.
+    ///
+    /// Falls back to [`CurrencyCode::default`] (USD) when the request omits it,
+    /// matching what every backend persists on the order row.
+    #[must_use]
+    pub fn effective_currency(&self) -> CurrencyCode {
+        self.currency.unwrap_or_default()
+    }
+
+    /// Reject any line money amount carrying more decimal places than the
+    /// order's currency allows (invariant M1,
+    /// `commerce.money.scale_exceeds_currency`).
+    ///
+    /// Covers every monetary field on the create request: each line's
+    /// `unit_price`, `discount` and `tax_amount`. `CreateOrder` itself carries
+    /// no order-level money field — the order total is derived from the lines
+    /// and rounded to the currency minor unit — so guarding the lines guards
+    /// the whole request.
+    ///
+    /// Scale is significant scale: `10.9900` is accepted for USD, `10.999` is
+    /// not. See [`validate_money_scale`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommerceError::MoneyScaleExceedsCurrency`] for the first
+    /// offending amount.
+    ///
+    /// [`CommerceError::MoneyScaleExceedsCurrency`]: crate::CommerceError::MoneyScaleExceedsCurrency
+    pub fn validate_money_scale(&self) -> Result<()> {
+        let currency = self.effective_currency();
+        for item in &self.items {
+            validate_money_scale(currency, item.unit_price)?;
+            if let Some(discount) = item.discount {
+                validate_money_scale(currency, discount)?;
+            }
+            if let Some(tax) = item.tax_amount {
+                validate_money_scale(currency, tax)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Validate for CreateOrderItem {
     /// Validate a single order line item.
     ///
@@ -385,7 +429,9 @@ impl Validate for CreateOrder {
     ///
     /// Requires a non-nil customer, at least one line item, and validates each
     /// item. Currency consistency is enforced at the item level where prices
-    /// share the order's single currency.
+    /// share the order's single currency. Finally every line money amount is
+    /// checked against the order currency's minor units
+    /// ([`CreateOrder::validate_money_scale`]).
     fn validate(&self) -> Result<()> {
         ValidationBuilder::new()
             .uuid_not_nil("customer_id", self.customer_id.into_uuid())
@@ -395,6 +441,8 @@ impl Validate for CreateOrder {
         for item in &self.items {
             item.validate()?;
         }
+
+        self.validate_money_scale()?;
 
         Ok(())
     }
@@ -901,5 +949,47 @@ mod tests {
             ..Default::default()
         };
         assert!(order.validate().is_err());
+    }
+
+    #[test]
+    fn create_order_rejects_over_scaled_line_money() {
+        let base = || CreateOrder {
+            customer_id: CustomerId::new(),
+            items: vec![CreateOrderItem {
+                product_id: ProductId::new(),
+                sku: "SKU".into(),
+                name: "Item".into(),
+                quantity: 1,
+                unit_price: dec!(10.00),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        // Each money field on the line is covered.
+        for mutate in [
+            (|o: &mut CreateOrder| o.items[0].unit_price = dec!(10.999)) as fn(&mut CreateOrder),
+            |o: &mut CreateOrder| o.items[0].discount = Some(dec!(0.005)),
+            |o: &mut CreateOrder| o.items[0].tax_amount = Some(dec!(0.875)),
+        ] {
+            let mut order = base();
+            mutate(&mut order);
+            let err = order.validate().expect_err("over-scaled money must be rejected");
+            assert_eq!(err.invariant_code(), Some("commerce.money.scale_exceeds_currency"));
+        }
+
+        // Trailing zeros are insignificant: 10.9900 is two-scale USD.
+        let mut ok = base();
+        ok.items[0].unit_price = dec!(10.9900);
+        ok.validate().expect("10.9900 is valid USD");
+
+        // The order's currency, not a hard-coded 2, sets the bound.
+        let mut jpy = base();
+        jpy.currency = Some(CurrencyCode::JPY);
+        jpy.items[0].unit_price = dec!(1000.50);
+        assert_eq!(
+            jpy.validate().expect_err("JPY has no minor units").invariant_code(),
+            Some("commerce.money.scale_exceeds_currency")
+        );
     }
 }
