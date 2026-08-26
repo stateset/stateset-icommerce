@@ -740,16 +740,16 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
         let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
         let is_balanced = total_debits == total_credits;
-        let lines_are_valid = input.lines.iter().all(|l| {
-            (l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
-                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO)
-        });
-
-        if !lines_are_valid {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Each journal line must have either a positive debit or a positive credit"
-                    .to_string(),
-            ));
+        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
+        // debit or a pure credit, never both and never neither.
+        if let Some((index, _)) = input.lines.iter().enumerate().find(|(_, l)| {
+            !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
+        }) {
+            return Err(stateset_core::CommerceError::JournalLineNotSingleSided {
+                entry_id: id,
+                line_number: i32::try_from(index + 1).unwrap_or(i32::MAX),
+            });
         }
 
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
@@ -969,12 +969,11 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             // cannot pass validation against stale state.
             let entry = Self::load_journal_entry_with_conn(tx, id)?;
 
-            if !entry.can_post() {
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    stateset_core::CommerceError::ValidationError(
-                        "Entry cannot be posted - must be draft and balanced".to_string(),
-                    ),
-                )));
+            // Reports which condition failed: `commerce.ledger.entry_unbalanced`
+            // / `commerce.ledger.line_not_single_sided` are typed; "not a
+            // draft" and "no lines" keep the historical untyped message.
+            if let Err(e) = entry.ensure_postable() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e)));
             }
 
             for line in &entry.lines {
@@ -2285,7 +2284,56 @@ mod tests {
                 auto_post: None,
             })
             .expect_err("err");
-        assert!(matches!(err, CommerceError::ValidationError(_)));
+        assert!(
+            matches!(err, CommerceError::JournalLineNotSingleSided { line_number: 1, .. }),
+            "got {err:?}"
+        );
+        assert_eq!(err.invariant_code(), Some("commerce.ledger.line_not_single_sided"));
+    }
+
+    #[test]
+    fn post_journal_entry_rejects_unbalanced_entry_and_writes_nothing() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+
+        // Single-sided lines, but debits != credits: allowed as a draft,
+        // refused at posting time.
+        let entry = repo
+            .create_journal_entry(CreateJournalEntry {
+                entry_date: NaiveDate::from_ymd_opt(2026, 1, 10).expect("date"),
+                entry_type: None,
+                description: "Unbalanced".into(),
+                lines: vec![
+                    CreateJournalEntryLine::debit(cash.id, dec!(100), None),
+                    CreateJournalEntryLine::credit(revenue.id, dec!(50), None),
+                ],
+                source_document_type: None,
+                source_document_id: None,
+                auto_post: None,
+            })
+            .expect("create draft");
+        assert!(!entry.is_balanced);
+
+        let err = repo.post_journal_entry(entry.id, "tester").expect_err("must not post");
+        assert!(
+            matches!(
+                &err,
+                CommerceError::JournalEntryUnbalanced { entry_id, total_debits, total_credits }
+                    if *entry_id == entry.id && total_debits == "100" && total_credits == "50"
+            ),
+            "got {err:?}"
+        );
+        assert_eq!(err.invariant_code(), Some("commerce.ledger.entry_unbalanced"));
+
+        // Nothing was written: the entry is still a draft and no account
+        // balance moved.
+        let reloaded = repo.get_journal_entry(entry.id).expect("ok").expect("found");
+        assert_eq!(reloaded.status, JournalEntryStatus::Draft);
+        assert!(reloaded.posted_at.is_none());
+        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
     }
 
     #[test]

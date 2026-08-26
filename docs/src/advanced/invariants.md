@@ -110,8 +110,8 @@ amount for goods that never left the building.
 
 | # | Guarantee | Error code | Enforced at |
 |---|-----------|------------|-------------|
-| G1 | Every posted journal entry balances: Σ debits = Σ credits | `commerce.ledger.entry_unbalanced` † | GL posting |
-| G2 | Every journal line is a pure debit or a pure credit, never both | `commerce.ledger.line_not_single_sided` † | GL posting |
+| G1 | Every posted journal entry balances: Σ debits = Σ credits | `commerce.ledger.entry_unbalanced` | `JournalEntry::ensure_postable`, called by `post_journal_entry` in both backends |
+| G2 | Every journal line is a pure debit or a pure credit, never both | `commerce.ledger.line_not_single_sided` | `create_journal_entry` and `ensure_postable`, both backends |
 | G3 | The trial balance nets to zero | — | consequence of G1 |
 | G4 | The AR control account balance = Σ open invoice balances | — | auto-posting |
 | G5 | `invoice.balance_due` = total − amount paid | — | invoice write path |
@@ -120,7 +120,7 @@ amount for goods that never left the building.
 
 | # | Guarantee | Error code | Enforced at |
 |---|-----------|------------|-------------|
-| M1 | No stored monetary value carries more decimal places than its currency allows | `commerce.money.scale_exceeds_currency` † | checked on every order, item, payment, refund, return, invoice, journal line and trial-balance figure |
+| M1 | No stored monetary value carries more decimal places than its currency allows | `commerce.money.scale_exceeds_currency` † | **not enforced by the engine** — see the footnote; amounts are rounded to the currency's minor units where `Money::round` is applied, but no write is refused |
 | M2 | Monetary arithmetic is exact decimal, never binary floating point | — | `rust_decimal` end to end; `decimal_sum` for SQLite aggregates; see [Money: Storage & Arithmetic](money.md) |
 
 ## Atomicity
@@ -144,11 +144,14 @@ Stated plainly, because a trust document that overstates itself is worse than no
   `error.code` and the HTTP status are unchanged). Rows marked `—` are still
   enforced but surface only as a typed error with a human-readable message; they
   have no code in the conformance vector to branch on yet.
-- † The ledger and money-scale codes are **defined by the conformance vector**
-  and are what a conformant implementation must report, but the engine's own GL
-  and scale guards do not yet return them from `invariant_code()`; they still
-  surface as untyped validation errors. Only the payment, return and inventory
-  codes are live on `CommerceError` today.
+- † `commerce.money.scale_exceeds_currency` is **defined by the conformance
+  vector** and is what a conformant implementation must report, and
+  `CommerceError::MoneyScaleExceedsCurrency` exists to carry it — but the
+  engine has no guard that rejects an over-scaled amount today. `Money::round`
+  rounds to the currency's minor units where it is called; nothing refuses a
+  write. M1 is therefore a vector-level requirement, not yet an engine-enforced
+  invariant, and no engine path returns that code. The ledger codes (G1, G2)
+  and the payment, return and inventory codes are live on `CommerceError`.
 - The ICP conformance suite (`icp-conformance/`) verifies protocol-level behaviour
   — AID derivation, canonical JSON, signatures, escrow lifecycle, timing, ceilings.
   It does **not** yet assert the economic invariants on this page.
