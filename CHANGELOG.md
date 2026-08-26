@@ -25,6 +25,21 @@ This project follows Keep a Changelog and Semantic Versioning.
   unchanged, so no existing client breaks. Human-readable messages and the SQLite /
   Postgres behaviour are byte-for-byte preserved apart from the refund message, which now
   names the payment and its captured / already-refunded amounts.
+- **Ledger invariant codes are live.** `JournalEntry::ensure_postable()` reports *which*
+  posting precondition failed instead of the single bool `can_post()` collapsed them
+  into (`can_post()` is kept as a wrapper over it). Posting an entry whose debits do not
+  equal its credits now returns `CommerceError::JournalEntryUnbalanced { entry_id,
+  total_debits, total_credits }` (`commerce.ledger.entry_unbalanced`), and a journal line
+  that is not a pure debit or a pure credit returns
+  `CommerceError::JournalLineNotSingleSided { entry_id, line_number }`
+  (`commerce.ledger.line_not_single_sided`) — from `create_journal_entry` and from
+  posting, on both the SQLite and Postgres backends. The other posting rejections
+  ("not a draft", "no lines") keep their existing untyped `ValidationError` and message.
+  `CommerceError::MoneyScaleExceedsCurrency { currency, amount, allowed_scale }` is added
+  for `commerce.money.scale_exceeds_currency`; note that no engine guard currently
+  rejects an over-scaled amount, so nothing returns it yet (see the M1 footnote in
+  `docs/src/advanced/invariants.md`). All three variants classify as validation errors,
+  so HTTP statuses are unchanged.
 
 ## [1.25.0] - 2026-08-25
 

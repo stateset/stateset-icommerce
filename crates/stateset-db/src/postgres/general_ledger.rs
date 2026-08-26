@@ -725,16 +725,16 @@ impl PgGeneralLedgerRepository {
         let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
         let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
         let is_balanced = total_debits == total_credits;
-        let lines_are_valid = input.lines.iter().all(|l| {
-            (l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
-                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO)
-        });
-
-        if !lines_are_valid {
-            return Err(CommerceError::ValidationError(
-                "Each journal line must have either a positive debit or a positive credit"
-                    .to_string(),
-            ));
+        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
+        // debit or a pure credit, never both and never neither.
+        if let Some((index, _)) = input.lines.iter().enumerate().find(|(_, l)| {
+            !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
+        }) {
+            return Err(CommerceError::JournalLineNotSingleSided {
+                entry_id: id,
+                line_number: i32::try_from(index + 1).unwrap_or(i32::MAX),
+            });
         }
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -929,11 +929,10 @@ impl PgGeneralLedgerRepository {
     ) -> Result<JournalEntry> {
         let entry = self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)?;
 
-        if !entry.can_post() {
-            return Err(CommerceError::ValidationError(
-                "Entry cannot be posted - must be draft and balanced".to_string(),
-            ));
-        }
+        // Reports which condition failed: `commerce.ledger.entry_unbalanced` /
+        // `commerce.ledger.line_not_single_sided` are typed; "not a draft" and
+        // "no lines" keep the historical untyped message.
+        entry.ensure_postable()?;
 
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;

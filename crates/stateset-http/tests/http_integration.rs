@@ -1663,6 +1663,92 @@ async fn create_return_against_unshipped_order_surfaces_invariant_code() {
     );
 }
 
+/// Posting an unbalanced journal entry over HTTP surfaces
+/// `commerce.ledger.entry_unbalanced`, and creating an entry with a line that
+/// is neither a pure debit nor a pure credit surfaces
+/// `commerce.ledger.line_not_single_sided`.
+#[tokio::test]
+async fn gl_posting_surfaces_ledger_invariant_codes() {
+    let (router, state) = app_with_state();
+    let gl = state.commerce().general_ledger();
+    gl.initialize_chart_of_accounts().unwrap();
+    let period = gl
+        .create_period(stateset_core::CreateGlPeriod {
+            period_name: "FY-wide".into(),
+            fiscal_year: 2026,
+            period_number: 1,
+            start_date: chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            end_date: chrono::NaiveDate::from_ymd_opt(2030, 12, 31).unwrap(),
+        })
+        .unwrap();
+    gl.open_period(period.id).unwrap();
+    let cash = gl.get_account_by_number("1010").unwrap().unwrap();
+    let revenue = gl.get_account_by_number("4010").unwrap().unwrap();
+    let today = chrono::Utc::now().date_naive().to_string();
+
+    // A line carrying both a debit and a credit is refused at create time.
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/gl/journal-entries")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "entry_date": today,
+                        "description": "both sides",
+                        "lines": [{
+                            "account_id": cash.id.to_string(),
+                            "debit_amount": "50",
+                            "credit_amount": "50"
+                        }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["invariant"], "commerce.ledger.line_not_single_sided");
+    assert_eq!(json["error"]["code"], "validation_error");
+
+    // A single-sided but unbalanced draft is refused at posting time.
+    let entry = gl
+        .create_journal_entry(stateset_core::CreateJournalEntry {
+            entry_date: chrono::Utc::now().date_naive(),
+            entry_type: None,
+            description: "unbalanced".into(),
+            lines: vec![
+                stateset_core::CreateJournalEntryLine::debit(cash.id, dec!(100), None),
+                stateset_core::CreateJournalEntryLine::credit(revenue.id, dec!(60), None),
+            ],
+            source_document_type: None,
+            source_document_id: None,
+            auto_post: None,
+        })
+        .unwrap();
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/gl/journal-entries/{}/post", entry.id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["invariant"], "commerce.ledger.entry_unbalanced");
+    assert_eq!(json["error"]["code"], "validation_error");
+
+    // Nothing was posted.
+    let reloaded = gl.get_journal_entry(entry.id).unwrap().unwrap();
+    assert_eq!(reloaded.status, stateset_core::JournalEntryStatus::Draft);
+}
+
 /// The `invariant` field is absent — not null — on ordinary failures.
 #[tokio::test]
 async fn ordinary_error_body_carries_no_invariant_field() {

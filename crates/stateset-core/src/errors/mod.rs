@@ -382,6 +382,54 @@ pub enum CommerceError {
         requested: i64,
     },
 
+    /// A journal entry was posted whose debits do not equal its credits.
+    ///
+    /// Invariant `commerce.ledger.entry_unbalanced` — see
+    /// [`CommerceError::invariant_code`].
+    #[error(
+        "Journal entry {entry_id} does not balance: debits {total_debits} != credits {total_credits}"
+    )]
+    JournalEntryUnbalanced {
+        /// The journal entry that failed to post.
+        entry_id: Uuid,
+        /// Sum of the entry's debit lines, as an exact decimal string.
+        total_debits: String,
+        /// Sum of the entry's credit lines, as an exact decimal string.
+        total_credits: String,
+    },
+
+    /// A journal line carried both a debit and a credit, or neither.
+    ///
+    /// Invariant `commerce.ledger.line_not_single_sided` — see
+    /// [`CommerceError::invariant_code`].
+    #[error(
+        "Journal line {line_number} of entry {entry_id} must have either a positive debit or a positive credit, not both and not neither"
+    )]
+    JournalLineNotSingleSided {
+        /// The journal entry the line belongs to. `Uuid::nil()` when the entry
+        /// has not been assigned an id yet (rejected at create time).
+        entry_id: Uuid,
+        /// 1-based line number within the entry.
+        line_number: i32,
+    },
+
+    /// A monetary amount carries more decimal places than its currency allows.
+    ///
+    /// Invariant `commerce.money.scale_exceeds_currency` — see
+    /// [`CommerceError::invariant_code`]. Scale is counted after trimming
+    /// insignificant trailing zeros, so `10.9900` is two-scale.
+    #[error(
+        "Amount {amount} has more decimal places than {currency} allows (maximum {allowed_scale})"
+    )]
+    MoneyScaleExceedsCurrency {
+        /// ISO 4217 code of the currency, e.g. `"USD"`.
+        currency: String,
+        /// The offending amount, as an exact decimal string.
+        amount: String,
+        /// The currency's minor-unit scale.
+        allowed_scale: u32,
+    },
+
     /// Inventory reservation not found.
     #[error("Inventory reservation not found: {0}")]
     ReservationNotFound(Uuid),
@@ -608,6 +656,9 @@ impl CommerceError {
                 | Self::CaptureExceedsOrderTotal { .. }
                 | Self::ReturnOrderNotShipped { .. }
                 | Self::ReturnExceedsReturnable { .. }
+                | Self::JournalEntryUnbalanced { .. }
+                | Self::JournalLineNotSingleSided { .. }
+                | Self::MoneyScaleExceedsCurrency { .. }
         )
     }
 
@@ -642,6 +693,9 @@ impl CommerceError {
             Self::CaptureExceedsOrderTotal { .. } => Some("commerce.capture.exceeds_order_total"),
             Self::ReturnOrderNotShipped { .. } => Some("commerce.return.order_not_shipped"),
             Self::ReturnExceedsReturnable { .. } => Some("commerce.return.exceeds_shipped"),
+            Self::JournalEntryUnbalanced { .. } => Some("commerce.ledger.entry_unbalanced"),
+            Self::JournalLineNotSingleSided { .. } => Some("commerce.ledger.line_not_single_sided"),
+            Self::MoneyScaleExceedsCurrency { .. } => Some("commerce.money.scale_exceeds_currency"),
             Self::InsufficientStock { .. }
             | Self::Inventory(InventoryError::InsufficientStock { .. }) => {
                 Some("commerce.inventory.insufficient_available")
@@ -1554,6 +1608,26 @@ mod tests {
                 }),
                 "commerce.inventory.insufficient_available",
             ),
+            (
+                CommerceError::JournalEntryUnbalanced {
+                    entry_id: Uuid::nil(),
+                    total_debits: "100.00".into(),
+                    total_credits: "99.00".into(),
+                },
+                "commerce.ledger.entry_unbalanced",
+            ),
+            (
+                CommerceError::JournalLineNotSingleSided { entry_id: Uuid::nil(), line_number: 2 },
+                "commerce.ledger.line_not_single_sided",
+            ),
+            (
+                CommerceError::MoneyScaleExceedsCurrency {
+                    currency: "USD".into(),
+                    amount: "10.9901".into(),
+                    allowed_scale: 2,
+                },
+                "commerce.money.scale_exceeds_currency",
+            ),
         ];
         for (err, code) in cases {
             assert_eq!(err.invariant_code(), Some(code), "{err:?}");
@@ -1589,6 +1663,24 @@ mod tests {
         assert!(err.is_validation());
         assert!(err.is_client_error());
         assert_eq!(err.suggested_status_code(), 400);
+
+        for err in [
+            CommerceError::JournalEntryUnbalanced {
+                entry_id: Uuid::nil(),
+                total_debits: "1".into(),
+                total_credits: "2".into(),
+            },
+            CommerceError::JournalLineNotSingleSided { entry_id: Uuid::nil(), line_number: 1 },
+            CommerceError::MoneyScaleExceedsCurrency {
+                currency: "JPY".into(),
+                amount: "1.5".into(),
+                allowed_scale: 0,
+            },
+        ] {
+            assert!(err.is_validation(), "{err:?}");
+            assert!(err.is_client_error(), "{err:?}");
+            assert_eq!(err.suggested_status_code(), 400, "{err:?}");
+        }
     }
 
     #[test]

@@ -538,21 +538,70 @@ impl JournalEntry {
         self.is_balanced = self.total_debits == self.total_credits;
     }
 
-    /// Returns true if entry can be posted
-    pub fn can_post(&self) -> bool {
+    /// Checks every condition required to post this entry, reporting *which*
+    /// one failed.
+    ///
+    /// The two conditions that violate a published commerce invariant return a
+    /// typed error carrying a stable
+    /// [`invariant_code`](crate::CommerceError::invariant_code):
+    ///
+    /// - a line that is not a pure debit or a pure credit ->
+    ///   [`crate::CommerceError::JournalLineNotSingleSided`]
+    ///   (`commerce.ledger.line_not_single_sided`)
+    /// - debits that do not equal credits, or stored totals that disagree with
+    ///   the lines -> [`crate::CommerceError::JournalEntryUnbalanced`]
+    ///   (`commerce.ledger.entry_unbalanced`)
+    ///
+    /// The remaining conditions (not a draft, no lines) are not invariant
+    /// violations and keep an untyped
+    /// [`crate::CommerceError::ValidationError`] with the historical message.
+    ///
+    /// # Errors
+    ///
+    /// Returns the specific reason the entry is not postable.
+    pub fn ensure_postable(&self) -> crate::Result<()> {
         if self.status != JournalEntryStatus::Draft || self.lines.is_empty() {
-            return false;
+            return Err(crate::CommerceError::ValidationError(
+                "Entry cannot be posted - must be draft and balanced".to_string(),
+            ));
         }
 
-        if !self.lines.iter().all(JournalEntryLine::is_valid) {
-            return false;
+        for (index, line) in self.lines.iter().enumerate() {
+            if !line.is_valid() {
+                return Err(crate::CommerceError::JournalLineNotSingleSided {
+                    entry_id: self.id,
+                    line_number: if line.line_number > 0 {
+                        line.line_number
+                    } else {
+                        i32::try_from(index + 1).unwrap_or(i32::MAX)
+                    },
+                });
+            }
         }
 
         let calculated_debits: Decimal = self.lines.iter().map(|l| l.debit_amount).sum();
         let calculated_credits: Decimal = self.lines.iter().map(|l| l.credit_amount).sum();
-        self.total_debits == calculated_debits
-            && self.total_credits == calculated_credits
-            && calculated_debits == calculated_credits
+        if self.total_debits != calculated_debits
+            || self.total_credits != calculated_credits
+            || calculated_debits != calculated_credits
+        {
+            return Err(crate::CommerceError::JournalEntryUnbalanced {
+                entry_id: self.id,
+                total_debits: calculated_debits.to_string(),
+                total_credits: calculated_credits.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Returns true if entry can be posted.
+    ///
+    /// This is a boolean wrapper over [`Self::ensure_postable`], which reports
+    /// *why* an entry is not postable.
+    #[must_use]
+    pub fn can_post(&self) -> bool {
+        self.ensure_postable().is_ok()
     }
 
     /// Returns true if entry can be voided
@@ -1227,6 +1276,114 @@ pub fn create_default_chart_of_accounts() -> Vec<CreateGlAccount> {
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
+
+    fn line(debit: Decimal, credit: Decimal, line_number: i32) -> JournalEntryLine {
+        JournalEntryLine {
+            id: Uuid::new_v4(),
+            journal_entry_id: Uuid::nil(),
+            line_number,
+            account_id: Uuid::new_v4(),
+            account_number: None,
+            account_name: None,
+            description: None,
+            debit_amount: debit,
+            credit_amount: credit,
+            currency: CurrencyCode::USD,
+            reference_type: None,
+            reference_id: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    fn draft_entry(lines: Vec<JournalEntryLine>) -> JournalEntry {
+        let now = Utc::now();
+        let mut entry = JournalEntry {
+            id: Uuid::new_v4(),
+            entry_number: "JE-1".into(),
+            entry_date: now.date_naive(),
+            period_id: Uuid::new_v4(),
+            entry_type: JournalEntryType::Standard,
+            source: JournalEntrySource::Manual,
+            source_document_type: None,
+            source_document_id: None,
+            description: "test".into(),
+            total_debits: Decimal::ZERO,
+            total_credits: Decimal::ZERO,
+            is_balanced: false,
+            status: JournalEntryStatus::Draft,
+            posted_at: None,
+            posted_by: None,
+            reversed_entry_id: None,
+            reversing_entry_id: None,
+            lines,
+            created_at: now,
+            updated_at: now,
+        };
+        entry.recalculate_totals();
+        entry
+    }
+
+    #[test]
+    fn ensure_postable_accepts_a_balanced_draft() {
+        let entry = draft_entry(vec![line(dec!(10), dec!(0), 1), line(dec!(0), dec!(10), 2)]);
+        entry.ensure_postable().expect("postable");
+        assert!(entry.can_post());
+    }
+
+    #[test]
+    fn ensure_postable_reports_unbalanced_separately_from_other_rejections() {
+        let entry = draft_entry(vec![line(dec!(10), dec!(0), 1), line(dec!(0), dec!(4), 2)]);
+        let err = entry.ensure_postable().expect_err("unbalanced");
+        assert!(
+            matches!(
+                &err,
+                crate::CommerceError::JournalEntryUnbalanced { entry_id, total_debits, total_credits }
+                    if *entry_id == entry.id && total_debits == "10" && total_credits == "4"
+            ),
+            "got {err:?}"
+        );
+        assert_eq!(err.invariant_code(), Some("commerce.ledger.entry_unbalanced"));
+        assert!(!entry.can_post());
+    }
+
+    #[test]
+    fn ensure_postable_reports_a_line_that_is_not_single_sided() {
+        for bad in [line(dec!(5), dec!(5), 2), line(dec!(0), dec!(0), 2)] {
+            let entry = draft_entry(vec![line(dec!(5), dec!(0), 1), bad]);
+            let err = entry.ensure_postable().expect_err("bad line");
+            assert!(
+                matches!(
+                    err,
+                    crate::CommerceError::JournalLineNotSingleSided { line_number: 2, .. }
+                ),
+                "got {err:?}"
+            );
+            assert_eq!(err.invariant_code(), Some("commerce.ledger.line_not_single_sided"));
+        }
+    }
+
+    #[test]
+    fn ensure_postable_keeps_untyped_errors_for_non_invariant_rejections() {
+        // Not a draft.
+        let mut entry = draft_entry(vec![line(dec!(10), dec!(0), 1), line(dec!(0), dec!(10), 2)]);
+        entry.status = JournalEntryStatus::Posted;
+        let err = entry.ensure_postable().expect_err("already posted");
+        assert!(matches!(err, crate::CommerceError::ValidationError(_)), "got {err:?}");
+        assert_eq!(err.invariant_code(), None);
+
+        // No lines.
+        let err = draft_entry(vec![]).ensure_postable().expect_err("no lines");
+        assert!(matches!(err, crate::CommerceError::ValidationError(_)), "got {err:?}");
+        assert_eq!(err.invariant_code(), None);
+    }
+
+    #[test]
+    fn ensure_postable_rejects_stored_totals_that_disagree_with_the_lines() {
+        let mut entry = draft_entry(vec![line(dec!(10), dec!(0), 1), line(dec!(0), dec!(10), 2)]);
+        entry.total_debits = dec!(99);
+        let err = entry.ensure_postable().expect_err("totals disagree");
+        assert_eq!(err.invariant_code(), Some("commerce.ledger.entry_unbalanced"));
+    }
 
     fn foreign_account(account_type: AccountType, carrying: Decimal) -> GlAccount {
         let now = Utc::now();
