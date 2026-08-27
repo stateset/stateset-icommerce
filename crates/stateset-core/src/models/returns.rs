@@ -135,7 +135,9 @@ impl ReturnStatus {
             Self::Requested => matches!(next, Self::Approved | Self::Rejected | Self::Cancelled),
             Self::Approved => matches!(next, Self::InTransit | Self::Cancelled),
             Self::InTransit => matches!(next, Self::Received),
-            Self::Received => matches!(next, Self::Inspecting),
+            // Inspection is optional: a return may complete directly when no
+            // disposition workflow is required.
+            Self::Received => matches!(next, Self::Inspecting | Self::Completed),
             Self::Inspecting => matches!(next, Self::Completed | Self::Rejected),
             Self::Rejected | Self::Completed | Self::Cancelled => false,
         }
@@ -273,6 +275,13 @@ pub struct UpdateReturn {
     pub notes: Option<String>,
 }
 
+/// Kernel command payload for a return state-machine transition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionReturn {
+    pub return_id: ReturnId,
+    pub status: ReturnStatus,
+}
+
 /// Return filter for querying
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReturnFilter {
@@ -359,6 +368,7 @@ mod tests {
         assert!(ReturnStatus::Approved.can_transition_to(ReturnStatus::Cancelled));
         assert!(ReturnStatus::InTransit.can_transition_to(ReturnStatus::Received));
         assert!(ReturnStatus::Received.can_transition_to(ReturnStatus::Inspecting));
+        assert!(ReturnStatus::Received.can_transition_to(ReturnStatus::Completed));
         assert!(ReturnStatus::Inspecting.can_transition_to(ReturnStatus::Completed));
         assert!(ReturnStatus::Inspecting.can_transition_to(ReturnStatus::Rejected));
     }

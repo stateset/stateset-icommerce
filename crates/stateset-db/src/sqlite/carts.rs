@@ -1858,13 +1858,86 @@ impl SqliteCartRepository {
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
     }
 
+    pub(crate) fn validate_checkout_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: CartId,
+    ) -> std::result::Result<(), rusqlite::Error> {
+        let mut cart = tx.query_row(
+            "SELECT * FROM carts WHERE id = ?",
+            [cart_id.to_string()],
+            Self::row_to_cart,
+        )?;
+        cart.items = Self::load_cart_items_with_conn(tx, cart_id)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        if cart.status == CartStatus::Completed {
+            return Ok(());
+        }
+        if !cart.is_checkoutable_status() {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::Conflict(format!(
+                    "Cart cannot be checked out in status: {}",
+                    cart.status
+                )),
+            )));
+        }
+        if !cart.is_ready_for_checkout() {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::ValidationError("Cart is not ready for checkout".into()),
+            )));
+        }
+        let customer_id = if let Some(id) = cart.customer_id {
+            id
+        } else {
+            let email = cart.customer_email.as_deref().ok_or_else(|| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::ValidationError(
+                    "Customer ID or email required".into(),
+                )))
+            })?;
+            validate_email(email)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            CustomerId::new()
+        };
+        let input = CreateOrder {
+            customer_id,
+            items: cart
+                .items
+                .iter()
+                .map(|item| CreateOrderItem {
+                    product_id: item.product_id.unwrap_or_else(ProductId::new),
+                    variant_id: item.variant_id,
+                    sku: item.sku.clone(),
+                    name: item.name.clone(),
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    discount: Some(item.discount_amount),
+                    tax_amount: Some(item.tax_amount),
+                })
+                .collect(),
+            currency: Some(cart.currency),
+            shipping_address: cart.shipping_address.clone().map(Into::into),
+            billing_address: if cart.billing_same_as_shipping {
+                cart.billing_address
+                    .clone()
+                    .or_else(|| cart.shipping_address.clone())
+                    .map(Into::into)
+            } else {
+                cart.billing_address.clone().map(Into::into)
+            },
+            notes: cart.notes,
+            payment_method: cart.payment_method,
+            shipping_method: cart.shipping_method,
+            stock_policy: stateset_core::StockPolicy::default(),
+        };
+        SqliteOrderRepository::validate_create_order_in_tx(tx, &input)
+    }
+
     /// `mark_paid` promotes the minted order straight to `PaymentStatus::Paid`
     /// without a payment record. That is only correct when settlement happened
     /// out of band (x402, ACP, external PSP) and the caller opted in
     /// explicitly; the plain checkout path leaves payment pending so a
     /// miswired integration cannot mint revenue-recognized orders with no
     /// payment trail.
-    fn complete_checkout_in_tx(
+    pub(crate) fn complete_checkout_in_tx(
         &self,
         tx: &rusqlite::Transaction<'_>,
         cart_id: CartId,

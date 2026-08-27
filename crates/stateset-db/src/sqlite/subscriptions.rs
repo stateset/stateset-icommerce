@@ -1615,7 +1615,10 @@ impl SqliteSubscriptionRepository {
         })
     }
 
-    fn row_to_billing_cycle(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<BillingCycle> {
+    pub(crate) fn row_to_billing_cycle(
+        &self,
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<BillingCycle> {
         Ok(BillingCycle {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "billing_cycle", "id")?,
             subscription_id: SubscriptionId::from(parse_uuid_row(

@@ -91,6 +91,24 @@ impl Commerce {
         Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
     }
 
+    /// Execute a versioned commerce kernel command under host-supplied policy.
+    ///
+    /// `policy` must come from trusted application configuration. It must not
+    /// be copied from model-generated tool arguments.
+    #[napi]
+    pub async fn execute_kernel_command(
+        &self,
+        command: serde_json::Value,
+        policy: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let policy: stateset_core::KernelPolicy = serde_json::from_value(policy)
+            .map_err(|error| Error::from_reason(format!("Invalid kernel policy: {error}")))?;
+        let commerce = self.inner.lock().await;
+        commerce
+            .execute_kernel_command(command, policy)
+            .map_err(|error| Error::from_reason(format!("Kernel execution failed: {error}")))
+    }
+
     /// Get the customers API
     #[napi(getter)]
     pub fn customers(&self) -> Customers {
@@ -2054,9 +2072,9 @@ impl From<stateset_core::InventoryItem> for InventoryItemOutput {
 pub struct StockLevelOutput {
     pub sku: String,
     pub name: String,
-    pub total_on_hand: f64,
-    pub total_allocated: f64,
-    pub total_available: f64,
+    pub total_on_hand: String,
+    pub total_allocated: String,
+    pub total_available: String,
 }
 
 impl TryFrom<stateset_core::StockLevel> for StockLevelOutput {
@@ -2066,9 +2084,9 @@ impl TryFrom<stateset_core::StockLevel> for StockLevelOutput {
         Ok(Self {
             sku: s.sku,
             name: s.name,
-            total_on_hand: to_f64_result(s.total_on_hand, "stock total on hand")?,
-            total_allocated: to_f64_result(s.total_allocated, "stock total allocated")?,
-            total_available: to_f64_result(s.total_available, "stock total available")?,
+            total_on_hand: s.total_on_hand.to_string(),
+            total_allocated: s.total_allocated.to_string(),
+            total_available: s.total_available.to_string(),
         })
     }
 }
@@ -2078,7 +2096,7 @@ impl TryFrom<stateset_core::StockLevel> for StockLevelOutput {
 pub struct ReservationOutput {
     pub id: String,
     pub item_id: i64,
-    pub quantity: f64,
+    pub quantity: String,
     pub status: String,
 }
 
@@ -2089,7 +2107,7 @@ impl TryFrom<stateset_core::InventoryReservation> for ReservationOutput {
         Ok(Self {
             id: r.id.to_string(),
             item_id: r.item_id,
-            quantity: to_f64_result(r.quantity, "reservation quantity")?,
+            quantity: r.quantity.to_string(),
             status: format!("{}", r.status),
         })
     }
@@ -2459,6 +2477,19 @@ pub struct CreatePaymentInput {
     pub payment_method: Option<String>,
 }
 
+/// Exact-money payment input for agent and financial integrations.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatePaymentExactInput {
+    pub order_id: Option<String>,
+    pub invoice_id: Option<String>,
+    pub customer_id: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub amount: String,
+    pub currency: Option<String>,
+    pub payment_method: Option<String>,
+}
+
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PaymentOutput {
@@ -2469,6 +2500,8 @@ pub struct PaymentOutput {
     pub customer_id: Option<String>,
     pub idempotency_key: Option<String>,
     pub amount: f64,
+    /// Exact base-10 amount. Prefer this field for all calculations.
+    pub amount_exact: String,
     pub currency: String,
     pub status: String,
     pub version: i32,
@@ -2480,6 +2513,7 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
     type Error = Error;
 
     fn try_from(p: stateset_core::Payment) -> Result<Self> {
+        let amount_exact = p.amount.to_string();
         Ok(Self {
             id: p.id.to_string(),
             payment_number: p.payment_number,
@@ -2488,6 +2522,7 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
             customer_id: p.customer_id.map(|id| id.to_string()),
             idempotency_key: p.idempotency_key,
             amount: to_f64_result(p.amount, "payment amount")?,
+            amount_exact,
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             version: p.version,
@@ -2506,6 +2541,16 @@ pub struct CreateRefundInput {
     pub idempotency_key: Option<String>,
 }
 
+/// Exact-money refund input for agent and financial integrations.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateRefundExactInput {
+    pub payment_id: String,
+    pub amount: String,
+    pub reason: Option<String>,
+    pub idempotency_key: Option<String>,
+}
+
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RefundOutput {
@@ -2513,6 +2558,8 @@ pub struct RefundOutput {
     pub refund_number: String,
     pub payment_id: String,
     pub amount: f64,
+    /// Exact base-10 amount. Prefer this field for all calculations.
+    pub amount_exact: String,
     pub status: String,
     pub reason: Option<String>,
     pub created_at: String,
@@ -2523,11 +2570,13 @@ impl TryFrom<stateset_core::Refund> for RefundOutput {
     type Error = Error;
 
     fn try_from(r: stateset_core::Refund) -> Result<Self> {
+        let amount_exact = r.amount.to_string();
         Ok(Self {
             id: r.id.to_string(),
             refund_number: r.refund_number,
             payment_id: r.payment_id.to_string(),
             amount: to_f64_result(r.amount, "refund amount")?,
+            amount_exact,
             status: format!("{}", r.status),
             reason: r.reason,
             created_at: r.created_at.to_rfc3339(),
@@ -2595,6 +2644,52 @@ impl Payments {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create payment: {}", e)))?;
 
+        convert_output(payment)
+    }
+
+    /// Create a payment without any floating-point conversion.
+    #[napi]
+    pub async fn create_exact(&self, input: CreatePaymentExactInput) -> Result<PaymentOutput> {
+        let commerce = self.commerce.lock().await;
+        let customer_id = input
+            .customer_id
+            .map(|id| id.parse())
+            .transpose()
+            .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let order_id = input
+            .order_id
+            .map(|id| id.parse())
+            .transpose()
+            .map_err(|_| Error::from_reason("Invalid order UUID"))?;
+        let invoice_id = input
+            .invoice_id
+            .map(|id| id.parse())
+            .transpose()
+            .map_err(|_| Error::from_reason("Invalid invoice UUID"))?;
+        let currency = input
+            .currency
+            .unwrap_or_else(|| "USD".to_string())
+            .parse::<CurrencyCode>()
+            .map_err(|error| Error::from_reason(format!("Invalid currency: {error}")))?;
+        let money = stateset_core::Money::from_decimal_str(&input.amount, currency)
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+        let payment_method = input
+            .payment_method
+            .and_then(|method| method.parse::<stateset_core::PaymentMethodType>().ok())
+            .unwrap_or_default();
+        let payment = commerce
+            .payments()
+            .create(stateset_core::CreatePayment {
+                order_id,
+                invoice_id,
+                customer_id,
+                idempotency_key: input.idempotency_key,
+                amount: money.amount(),
+                currency: Some(money.currency()),
+                payment_method,
+                ..Default::default()
+            })
+            .map_err(|error| Error::from_reason(format!("Failed to create payment: {error}")))?;
         convert_output(payment)
     }
 
@@ -2683,6 +2778,32 @@ impl Payments {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create refund: {}", e)))?;
 
+        convert_output(refund)
+    }
+
+    /// Create a refund without any floating-point conversion.
+    #[napi]
+    pub async fn create_refund_exact(&self, input: CreateRefundExactInput) -> Result<RefundOutput> {
+        let commerce = self.commerce.lock().await;
+        let payment_id =
+            input.payment_id.parse().map_err(|_| Error::from_reason("Invalid payment UUID"))?;
+        let payment = commerce
+            .payments()
+            .get(payment_id)
+            .map_err(|error| Error::from_reason(format!("Failed to get payment: {error}")))?
+            .ok_or_else(|| Error::from_reason("Payment not found"))?;
+        let money = stateset_core::Money::from_decimal_str(&input.amount, payment.currency)
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+        let refund = commerce
+            .payments()
+            .create_refund(stateset_core::CreateRefund {
+                payment_id,
+                amount: Some(money.amount()),
+                reason: input.reason,
+                idempotency_key: input.idempotency_key,
+                ..Default::default()
+            })
+            .map_err(|error| Error::from_reason(format!("Failed to create refund: {error}")))?;
         convert_output(refund)
     }
 

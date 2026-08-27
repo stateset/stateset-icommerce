@@ -12,7 +12,7 @@ crates by hand; it pins compatible versions of the whole set for you.
 
 ```toml
 [dependencies]
-stateset-sdk = { version = "1.25.0", features = ["full"] }
+stateset-sdk = { version = "1.26.0", features = ["full"] }
 ```
 
 Or: `cargo add stateset-sdk --features full`

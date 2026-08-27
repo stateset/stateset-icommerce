@@ -1,0 +1,6579 @@
+{
+  "schemaVersion": 1,
+  "digest": "sha256:237b7be5fbb2245971c23855ef87fdc46963d673cc64235a81fd51865669aa76",
+  "counts": {
+    "total": 938,
+    "readOnly": 465,
+    "mutations": 473,
+    "governed": 25,
+    "blocked": 448
+  },
+  "entries": [
+    {
+      "name": "a2a_accept_quote",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_add_rule",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_agent_alerts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_agent_dashboard",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_agent_decisions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_agent_insights",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_agent_lifecycle",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_agent_performance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_agent_tick_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_batch_pay",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_batch_request_quotes",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_billing_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_billing_start",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_billing_stop",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_billing_tick",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cancel_agent_subscription",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cancel_scheduled",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_check_payment_conditions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_commerce_report",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_configure_webhooks",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_coordination_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cost_anomalies",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cost_budget_forecast",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cost_counterparty_breakdown",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cost_daily_trend",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cost_margin_analysis",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cost_operation_breakdown",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cost_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_cost_top_spenders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_counter_quote",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_counterparty_profile",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_create_agent_subscription",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_create_conditional_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_create_escrow",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "a2a.escrow.create"
+    },
+    {
+      "name": "a2a_create_split_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_data_stats",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_decline_quote",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_delegate_task",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_discover_agents",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_dispute_escrow",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "a2a.escrow.dispute"
+    },
+    {
+      "name": "a2a_dispute_resolver_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_dispute_resolver_start",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_dispute_resolver_tick",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_dlq_count",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_escrow_process_all",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_evaluate_rules",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_execute_split_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_export_agent_data",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_export_traces",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_file_dispute",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "a2a.dispute.file"
+    },
+    {
+      "name": "a2a_fulfill_quote",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_fund_escrow",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "a2a.escrow.fund"
+    },
+    {
+      "name": "a2a_get_agent_subscription",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_dispute",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_escrow",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_event_history",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_inbox",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_payment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_reputation",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_service",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_split_payment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_thread",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_get_trace",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_handshake",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_health_check",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_join_results",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_agent_subscriptions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_checkpoints",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_disputes",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_escrows",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_event_subscriptions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_failed_notifications",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_notification_log",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_payment_requests",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_payments",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_quotes",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_rules",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_scheduled",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_services",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_split_payments",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_list_webhook_dlq",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_load_checkpoint",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_marketplace_auto_award",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_marketplace_maintenance",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_messaging_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_my_capabilities",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_notification_retry_all",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_pause_agent_subscription",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_pay",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_pay_request",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_process_subscription_billing",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_provide_quote",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_purge_dlq",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_quarantine_failed_webhooks",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_rate_agent",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_rate_limit_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_readiness",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_recent_spans",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_refund_escrow",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "a2a.escrow.refund"
+    },
+    {
+      "name": "a2a_register_service",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_release_escrow",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "a2a.escrow.release"
+    },
+    {
+      "name": "a2a_remember_interaction",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_replay_dlq_entry",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_replay_notification",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_request_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_request_quote",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_resolve_dispute",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "a2a.dispute.resolve"
+    },
+    {
+      "name": "a2a_respond_to_feedback",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_respond_to_task",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_resume_agent_subscription",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_revise_quote",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_rule_audit_log",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_saga_cancel",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_saga_execute",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_saga_list",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_saga_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_save_checkpoint",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_scatter",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_schedule_action",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_scheduler_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_send_message",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_send_notification",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_settle_conditional_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_settlement_finality_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_settlement_pending",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_settlement_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_should_transact",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_sla_enforce",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_sla_enforce_all",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_submit_evidence",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "a2a.dispute.evidence.submit"
+    },
+    {
+      "name": "a2a_submit_response",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_subscribe_events",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "a2a_tick_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_top_counterparties",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_tracing_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_verify_webhook",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "a2a_webhook_dlq_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "abandon_cart",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "activate_bom",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "activate_product",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "activate_promotion",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "activate_subscription_plan",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "add_bom_component",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "add_cart_item",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "add_customer_address",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "add_product_variant",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "add_production_batch_work_orders",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "add_return_tracking",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "add_to_wishlist",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "adjust_credit_limit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "adjust_inventory",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "adjust_store_credit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_attach_sla",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_award_rfq",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_broadcast_rfq",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_check_sla_compliance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_collect_rfq_responses",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_create_escrow_deal",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_create_runtime",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_create_split_deal",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_create_workflow",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_destroy_runtime",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_discover_services",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_enable_settlement",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_execute_workflow",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_all_breaker_states",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_breaker_state",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_budget",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_chain_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_event_history",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_marketplace_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_reputation",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_spending_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_get_workflow_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_instant_checkout",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_key_export",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_key_generate",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_key_info",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_key_list",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_key_rotate",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_list_runtimes",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_rate_counterparty",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_audit",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_dispute",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_fx_quote",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_merchant_statement",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_purchase",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_refund",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_release",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_request_payout",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_resolve",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agent_receipt_sweep_yield",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_register_service",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_reset_all_breakers",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_reset_breaker",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_set_dynamic_pricing",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_set_spending_limits",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_set_strategy",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_start_loop",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_stop_loop",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_subscribe_to_service",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_tick",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_trip_all_breakers",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agent_trip_breaker",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "agentic_execute_plan",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_get_event_history",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_list_event_subscriptions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_payment_discovery",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_plan",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_prepare_payment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_replay",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_replay_mutation",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_runtime_contract",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_simulate_mutation",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_subscribe_events",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_tool_catalog",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "agentic_unsubscribe_events",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "apply_cart_discount",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "apply_cart_promotions",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "apply_prepayment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "apply_store_credit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "apply_vendor_credit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "approve_bill",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "approve_purchase_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "approve_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "returns.transition"
+    },
+    {
+      "name": "approve_review",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "approve_warranty_claim",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "archive_product",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "archive_subscription_plan",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "assess_order_fraud",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "assess_wasm_connector_safety",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "assign_pick_task",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "audit_export",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "audit_query",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "audit_retention",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "audit_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "backup_database",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "begin_cart_checkout",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "bulk_create_integration_field_mappings",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "bulk_delete_integration_field_mappings",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "bulk_upsert_integration_mappings",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "bulk_upsert_supplier_skus",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "calculate_cart_tax",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "calculate_item_tax",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "calculate_shipping_rate",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "calculate_tax",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "calculate_tax_quote",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "calculate_tax_quote_with_failover",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "cancel_backorder",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_bill",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_cart",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_cycle_count",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_fulfillment_wave",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_inbound_shipment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_order",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_payment",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_payment_intent",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_pick_task",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_purchase_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_receipt",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "returns.transition"
+    },
+    {
+      "name": "cancel_shipment",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_subscription",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_transfer_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_vendor_credit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_vendor_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_work_order",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "capture_payment_intent",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "capture_stock_snapshot",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "capture_topology_snapshot",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "certify_wasm_connector",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "charge_gift_card",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "check_activity_logs_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_channels_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_companies_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_currency_enabled",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_customer_credit",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_customer_tax_exempt",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_gift_card_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_inbound_shipments_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_order_ready_to_pack",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_order_ready_to_ship",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_prepayments_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_price_levels_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_price_schedules_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_production_batches_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_promotion_validity",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_serial_availability",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_supplier_skus_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_tax_enabled",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_transfer_orders_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "check_vendor_credits_supported",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "checkout_with_crypto",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "clear_cart_items",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "close_month",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "close_ncr",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "commit_tax_transaction",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "complete_checkout",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "checkout.commit"
+    },
+    {
+      "name": "complete_cycle_count",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "complete_fulfillment_wave",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "complete_inspection",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "complete_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "complete_print_job",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "complete_receiving",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "complete_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "returns.transition"
+    },
+    {
+      "name": "complete_warranty_claim",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "complete_work_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "compliance_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "configure_stripe_webhooks",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "configure_woocommerce_webhooks",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "confirm_reservation",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "inventory.reservation.confirm"
+    },
+    {
+      "name": "convert_currency",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "convert_wishlist_to_cart",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "count_accounts_payable_bills",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "count_active_quality_holds",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "count_fulfillment_waves",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "count_lots",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "count_pending_backorders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "count_receipts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "count_serials",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "count_warehouses",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "create_backorder",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_bill",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_bom",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_cart",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_channel",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_company",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_company_contact",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_coupon",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_credit_account",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_credit_memo",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_custom_object",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_custom_object_type",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_customer",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_cycle_count",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_edi_document",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_fixed_asset",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_fraud_rule",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_fulfillment_wave",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_gift_card",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_gl_account",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_gl_period",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_inbound_shipment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_inspection",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_integration_field_mapping",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_integration_mapping",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_inventory_item",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "inventory.item.create"
+    },
+    {
+      "name": "create_invoice",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_location",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_lot",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_loyalty_program",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_ncr",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "payments.create"
+    },
+    {
+      "name": "create_payment_intent",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_payment_link",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_payment_obligation",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_payment_settlement_batch",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_prepayment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_price_level",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_price_schedule",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_product",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "products.create"
+    },
+    {
+      "name": "create_production_batch",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_promotion",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_purchase_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_quality_hold",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_receipt",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_receipt_from_purchase_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_refund",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "payments.create_refund"
+    },
+    {
+      "name": "create_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_revenue_contract",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_review",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_reward",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_search_config",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_segment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_serial",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_shipment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_shipping_label",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_shipping_method",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_shipping_zone",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_stablecoin_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_store_credit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_subscription",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_subscription_plan",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_supplier",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_supplier_sku",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_tax_exemption",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_tax_jurisdiction",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_tax_rate",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_transfer_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_unit_class",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_unit_conversion_rule",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_unit_of_measure",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_vendor_credit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_vendor_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_warehouse",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_warranty",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_warranty_claim",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_wishlist",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_work_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "deactivate_promotion",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delegate_to_agent",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_cart",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_channel",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_company",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_custom_object",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_custom_object_type",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_customer",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_customer_address",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_exchange_rate",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_gdpr_data",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_integration_field_mapping",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_integration_mapping",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_price_level",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_price_level_entry",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_price_schedule",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_price_schedule_entry",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_product",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_product_variant",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_production_batch",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_promotion",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_purgatory_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_search_config",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_stock_snapshot",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_supplier_sku",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_topology_snapshot",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_unit_class",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_unit_conversion_rule",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "delete_unit_of_measure",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "deliver_shipment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "deny_warranty_claim",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "disable_gift_card",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "discover_agents",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "discover_tools",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "dispose_fixed_asset",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "earn_points",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "enable_currencies",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "enqueue_print_job",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "enroll_customer",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "erc8004_get_by_wallet",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "erc8004_get_identity",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "erc8004_link_wallet",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "erc8004_list_identities",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "erc8004_register_identity",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "evaluate_policy",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "evaluate_segment_membership",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "execute_wasm_connector",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "expire_cart",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "explain_policy_denial",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "export_agent_catalog",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "export_audit_trail",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "export_compliance_package",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "export_data",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "export_full_data",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "export_gdpr_data",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "express_checkout",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "find_or_create_customer",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "flag_review",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "format_currency",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "generate_1099k",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "generate_depreciation_schedule",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "generate_inclusion_proof",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "generate_receipt_bundle",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "generate_revenue_schedule",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "get_abandoned_carts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_accounts_payable_aging_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_accounts_payable_total_outstanding",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_accounts_receivable_aging_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_accounts_receivable_total_outstanding",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_active_promotions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_active_search_config",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_activity_history_for_subject",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_activity_log",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_agent_card",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_agent_wallet",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_backorder",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_backorder_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_balance_sheet",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_bill",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_billing_cycle",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_bom",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_cart",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_channel",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_company",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_coupon",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_credit_account",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_credit_memo",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_currency_settings",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_custom_object",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_custom_object_by_handle",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_custom_object_type",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_custom_object_type_by_handle",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_customer",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_customer_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_customer_tax_exemptions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_cycle_count",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_days_sales_outstanding",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_demand_forecast",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_depreciation_schedule",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_edi_document",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_edi_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_exchange_rate",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_expired_carts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_fixed_asset",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_fraud_assessment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_fulfillment_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_fulfillment_wave",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_gift_card",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_gl_account",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_gl_account_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_inbound_shipment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_income_statement",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_inspection",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_installed_connector",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_integration_field_mapping",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_integration_mapping",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_inventory_health",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_inventory_movement",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_invoice",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_item_cost",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_journal_entry",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_latest_stock_snapshot",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_latest_topology_snapshot",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_location",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_lot",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_low_stock_items",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_loyalty_account",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_loyalty_program",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_ncr",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_order_status_breakdown",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_overdue_invoices",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_payment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_payment_intent",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_payment_link_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_payment_obligation",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_payment_obligation_dashboard",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_pick_task",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_prepayment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_price_level",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_price_schedule",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_print_station",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_product",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_product_by_slug",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_product_performance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_product_spec",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_product_variant",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_production_batch",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_promotion",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_purchase_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_purgatory_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_quality_hold",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_receipt",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_return",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_return_metrics",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_revenue_by_period",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_revenue_contract",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_revenue_forecast",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_revenue_schedule",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_review",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_review_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_sales_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_search_config",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_segment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_serial",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_shipment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_shipping_rates",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_shipping_zone",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_stock",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_stock_snapshot",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_store_credit",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_subscription",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_subscription_events",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_subscription_plan",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_supplier",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_supplier_sku",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_tax_exemption",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_tax_jurisdiction",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_tax_quote",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_tax_rate",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_tax_rate_record",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_tax_settings",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_tax_transaction",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_top_customers",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_top_products",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_topology_snapshot",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_total_inventory_value",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_transfer_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_trial_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_us_state_tax_info",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_vendor_credit",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_vendor_return",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_wallet_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_warehouse",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_warehouse_sku_available_quantity",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_warranty",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_wishlist",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_work_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "handle_fulfillment_exception",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "import_csv",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "import_full_data",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "import_json",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "import_shopify_data",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "import_shopify_shadow_data",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "import_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "import_woocommerce_data",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "ingest_payment_provider_webhook",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "ingest_purgatory_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "ingest_shipping_provider_webhook",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "ingest_tax_provider_webhook",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "initialize_chart_of_accounts",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "inspect_batch",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "install_wasm_connector",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "link_payment_obligation_bill",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "list_active_lots",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_active_quality_holds",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_activity_logs",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_agent_cards",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_available_lots_for_sku",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_available_serials",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_backorders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_backorders_for_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_backorders_for_sku",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_billing_cycles",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_bills",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_bills_due_soon",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_boms",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_cart_items",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_carts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_channel_product_mappings",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_channels",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_companies",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_company_addresses",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_company_contacts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_connector_marketplace",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_coupons",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_credit_accounts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_credit_memos",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_custom_object_types",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_custom_objects",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_customer_addresses",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_customer_carts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_customers",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_cycle_counts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_edi_documents",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_exchange_rates",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_expired_lots",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_expiring_lots",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_fixed_assets",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_fraud_signals",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_fulfillment_waves",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_gift_cards",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_gl_accounts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_gl_periods",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_id_mappings",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_inbound_shipments",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_inspections",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_installed_connectors",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_integration_field_mappings",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_integration_mapping_groups",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_integration_mappings",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_invoices",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_item_costs",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_journal_entries",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_locations",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_lots",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_ncrs",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_orders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_over_limit_credit_accounts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_overdue_backorders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_overdue_bills",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_payment_intents",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_payment_links",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_payment_obligations",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_payment_providers",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_payment_settlement_batches",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_payment_settlements",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_payments",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_pending_returns",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_pick_tasks",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_pickable_locations",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_policies",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_portable_domains",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_prepayment_applications",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_prepayments",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_price_level_entries",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_price_levels",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_price_schedule_entries",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_price_schedules",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_print_jobs",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_print_stations",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_product_variants",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_production_batches",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_products",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_promotions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_purchase_orders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_purgatory_orders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_quality_holds",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_quarantined_lots",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_receipts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_returns",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_returns_for_customer",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_returns_for_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_revenue_contracts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_reviews",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_rewards",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_search_configs",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_segments",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_serials",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_shipments",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_shipping_labels",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_shipping_methods",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_shipping_providers",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_shipping_zones",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_stock_snapshots",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_store_credits",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_subscription_plans",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_subscriptions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_supplier_skus",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_suppliers",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_supported_chains",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_tax_jurisdictions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_tax_providers",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_tax_rates",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_tax_transactions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_topology_snapshots",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_transfer_orders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_unapplied_credits",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_unit_classes",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_unit_conversion_rules",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_units_of_measure",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_vendor_credit_applications",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_vendor_credits",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_vendor_returns",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_warehouses",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_warranties",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_wishlists",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_work_orders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "load_policy_file",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "map_purgatory_line",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "mark_cart_ready_for_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "mark_failed_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "mark_inbound_shipment_arrived",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "mark_inbound_shipment_in_transit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "mark_return_received",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "returns.transition"
+    },
+    {
+      "name": "mark_serial_sold",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "match_agent_to_products",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "match_product_to_agents",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "open_gl_period",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "pair_print_station",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "pause_subscription",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "pick_up_next_print_job",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "place_asset_in_service",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "post_depreciation",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "post_journal_entry",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "ledger.post"
+    },
+    {
+      "name": "post_purgatory_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "process_vendor_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "publish_product_catalog",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "publish_wasm_connector",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "quarantine_lot",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "quarantine_serial",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "query_agent_catalog",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "quote_shipping_rates",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "reactivate_credit_account",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "rebuild_dynamic_segment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "recalculate_cart",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "receive_inbound_shipment_line",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "receive_transfer_order_line",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "recognize_revenue",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "reconcile_payment_provider",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "record_activity",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "record_cycle_counts",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "record_invoice_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "record_payment_obligation_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "record_promotion_usage",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "redeem_points",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "refund_payment_intent",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "refund_prepayment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "refund_to_gift_card",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "register_agent_card",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "register_policy_template",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "reject_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "returns.transition"
+    },
+    {
+      "name": "reject_review",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "release_cart_inventory",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "release_fulfillment_wave",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "release_lot_quarantine",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "release_quality_hold",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "release_reservation",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "inventory.reservation.release"
+    },
+    {
+      "name": "remove_cart_discount",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "remove_cart_item",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "remove_from_wishlist",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "remove_production_batch_work_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "reserve_cart_inventory",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "reserve_inventory",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "inventory.reserve"
+    },
+    {
+      "name": "resolve_integration_mapping",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "resolve_payment_link",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "resolve_scheduled_price",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "restore_database",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "resume_subscription",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "revalue_gl",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "reverse_prepayment_application",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "reverse_vendor_credit_application",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "review_flagged_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "revoke_payment_link",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "revoke_print_station",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "search_products",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "send_invoice",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "send_purchase_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_active_search_config",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_base_currency",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_base_unit_of_measure",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_cart_billing_address",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_cart_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_cart_shipping",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_cart_shipping_address",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_cart_tax",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_channel_lock",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_default_customer_address",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_edi_document_status",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_exchange_rate",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_exchange_rates",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_item_cost",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_payment_obligation_status",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_price_level_entry",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_price_schedule_entry",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "set_tax_enabled",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "ship_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "orders.ship"
+    },
+    {
+      "name": "ship_shipment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "ship_transfer_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "sign_wasm_connector_attestation",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "skip_billing_cycle",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "soc2_evidence",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "start_cycle_count",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "start_inspection",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "start_pick_task",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "start_receiving",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "start_work_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "submit_purchase_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "submit_vendor_return",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "suspend_credit_account",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "sync_conflicts",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "sync_decrypt_event",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "sync_entity_history",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "sync_full",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "sync_inspect_commitment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "sync_outbox",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "sync_pull",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "sync_pulled_events",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "sync_push",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "sync_rebase",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "sync_resolve",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "sync_retry_failed",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "sync_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "sync_verify_inclusion",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "sync_verify_receipt",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "three_way_match_bill",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "track_shipping_label",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "treasury_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "treasury_buy",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "treasury_deposit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "treasury_ledger",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "treasury_list_tokens",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "treasury_register_token",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "uninstall_wasm_connector",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_average_item_cost",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_cart",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_cart_item",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_channel",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_company",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_currency_settings",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_custom_object",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_custom_object_type",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_customer",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_customer_address",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_fraud_rule",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_integration_field_mapping",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_integration_mapping",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_order_status",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "orders.transition"
+    },
+    {
+      "name": "update_price_level",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_price_schedule",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_product",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_product_variant",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_production_batch",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_promotion",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_search_config",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_segment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_shipping_zone",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_subscription",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_subscription_plan",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_supplier_sku",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_tax_settings",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "validate_coupon",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "validate_tax_jurisdiction_compliance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "vector_clear",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_clear_all",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_index_all_customers",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_index_all_inventory",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_index_all_orders",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_index_all_products",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_index_customer",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_index_inventory",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_index_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_index_product",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_reindex_all",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "vector_search_customers",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "vector_search_inventory",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "vector_search_orders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "vector_search_products",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "vector_stats",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "verify_agent",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "verify_chain_anchor",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "verify_inclusion_proof",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "verify_receipt",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "verify_wasm_connector_attestation",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "void_credit_memo",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "void_invoice",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "void_journal_entry",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "void_shipping_label",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "void_tax_transaction",
+      "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "write_off_fixed_asset",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "x402_circuit_status",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "x402_create_payment_intent",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "x402_credit_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "x402_credit_debit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "x402_credit_deposit",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "x402_credit_transactions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "x402_execute_agent_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "x402_get_credit_account",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "x402_get_intent",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "x402_get_next_nonce",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "x402_list_intents",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "x402_mark_settled",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "x402.settle"
+    },
+    {
+      "name": "x402_record_incoming_settlement",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "x402_settle_intent_onchain",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "x402_sign_intent",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    }
+  ]
+}

@@ -14,6 +14,7 @@
 - [What is iCommerce?](concepts/icommerce.md)
 - [Design Principles](concepts/design-principles.md)
 - [Architecture](architecture.md)
+- [AI Commerce Kernel Execution](kernel-execution.md)
 - [Dependency Direction](guides/dependency-direction.md)
 - [The Agentic Reasoning Loop](concepts/reasoning-loop.md)
 - [Case Studies](concepts/case-studies.md)

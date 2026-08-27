@@ -3,10 +3,55 @@
 //! The [`Money`] type pairs an amount with a [`CurrencyCode`], preventing
 //! accidental arithmetic between different currencies at the type level.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use core::fmt;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+
+/// Stable JSON/wire representation for an exact monetary value.
+///
+/// `amount` is deliberately a decimal string. JSON numbers and language-level
+/// floating-point values cannot round-trip every commerce amount exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[must_use]
+pub struct MoneyWire {
+    /// Base-10 decimal amount, for example `"29.99"`.
+    pub amount: String,
+    /// ISO-style currency code that determines the permitted minor-unit scale.
+    pub currency: CurrencyCode,
+}
+
+/// Error returned when an exact monetary wire value cannot be converted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MoneyWireError {
+    /// The amount was not a valid base-10 decimal string.
+    InvalidAmount(String),
+    /// The amount has more significant fractional digits than the currency permits.
+    ScaleExceedsCurrency {
+        /// Currency supplied by the caller.
+        currency: CurrencyCode,
+        /// Canonical decimal amount.
+        amount: String,
+        /// Maximum permitted significant fractional digits.
+        allowed_scale: u8,
+    },
+}
+
+impl fmt::Display for MoneyWireError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidAmount(amount) => write!(f, "invalid decimal money amount: {amount}"),
+            Self::ScaleExceedsCurrency { currency, amount, allowed_scale } => write!(
+                f,
+                "money amount {amount} exceeds the {allowed_scale}-decimal scale for {currency}"
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for MoneyWireError {}
 
 /// A monetary amount paired with its currency.
 ///
@@ -36,6 +81,28 @@ impl Money {
     #[inline]
     pub const fn new(amount: Decimal, currency: CurrencyCode) -> Self {
         Self { amount, currency }
+    }
+
+    /// Parse an exact base-10 amount and validate it against the currency's
+    /// minor-unit scale.
+    pub fn from_decimal_str(amount: &str, currency: CurrencyCode) -> Result<Self, MoneyWireError> {
+        let parsed =
+            amount.parse::<Decimal>().map_err(|_| MoneyWireError::InvalidAmount(amount.into()))?;
+        let normalized = parsed.normalize();
+        let allowed_scale = currency.decimal_places();
+        if normalized.scale() > u32::from(allowed_scale) {
+            return Err(MoneyWireError::ScaleExceedsCurrency {
+                currency,
+                amount: normalized.to_string(),
+                allowed_scale,
+            });
+        }
+        Ok(Self::new(parsed, currency))
+    }
+
+    /// Convert to the stable decimal-string wire representation.
+    pub fn to_wire(self) -> MoneyWire {
+        self.into()
     }
 
     /// Create a zero amount in the given currency.
@@ -148,6 +215,20 @@ impl Money {
     #[must_use = "returns a new Money with negated amount"]
     pub fn negate(self) -> Self {
         Self { amount: -self.amount, currency: self.currency }
+    }
+}
+
+impl From<Money> for MoneyWire {
+    fn from(value: Money) -> Self {
+        Self { amount: value.amount.to_string(), currency: value.currency }
+    }
+}
+
+impl TryFrom<MoneyWire> for Money {
+    type Error = MoneyWireError;
+
+    fn try_from(value: MoneyWire) -> Result<Self, Self::Error> {
+        Self::from_decimal_str(&value.amount, value.currency)
     }
 }
 
@@ -383,6 +464,32 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use rust_decimal_macros::dec;
+
+    #[test]
+    fn exact_wire_round_trips_without_float_conversion() {
+        let wire = MoneyWire { amount: "9007199254740993.25".into(), currency: CurrencyCode::USD };
+        let money = Money::try_from(wire.clone()).expect("exact decimal should parse");
+
+        assert_eq!(money.amount(), dec!(9007199254740993.25));
+        assert_eq!(money.to_wire(), wire);
+    }
+
+    #[test]
+    fn exact_wire_rejects_currency_scale_overflow() {
+        let error = Money::from_decimal_str("19.999", CurrencyCode::USD)
+            .expect_err("USD permits at most two significant decimal places");
+
+        assert!(matches!(
+            error,
+            MoneyWireError::ScaleExceedsCurrency {
+                currency: CurrencyCode::USD,
+                allowed_scale: 2,
+                ..
+            }
+        ));
+        assert!(Money::from_decimal_str("19.9900", CurrencyCode::USD).is_ok());
+        assert!(Money::from_decimal_str("100.0", CurrencyCode::JPY).is_ok());
+    }
 
     fn arb_currency() -> impl Strategy<Value = CurrencyCode> {
         prop_oneof![

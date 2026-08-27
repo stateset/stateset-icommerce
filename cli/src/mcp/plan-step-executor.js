@@ -35,6 +35,7 @@ import { compactReplayValue } from './replay-sanitizer.js';
  *   maybeChargeForTool: (toolName: string, extra: object, opts: object) => Promise<object>,
  *   wrapWithTelemetry: (toolName: string, fn: Function) => Function,
  *   getToolContext: () => object,
+ *   executeGovernedTool?: (toolName: string, params?: object, options?: object) => Promise<object | null>,
  * }} deps
  * @returns {(input: {
  *   toolName: string,
@@ -61,6 +62,7 @@ export function createExecuteToolStepInPlan({
   maybeChargeForTool,
   wrapWithTelemetry,
   getToolContext,
+  executeGovernedTool,
 }) {
   const executeToolStepInPlan = async ({
     toolName,
@@ -236,6 +238,14 @@ export function createExecuteToolStepInPlan({
             : permission.preview
               ? 'preview'
               : 'permission_block';
+        const governedPreview =
+          permission.preview && executeGovernedTool
+            ? await executeGovernedTool(resolvedToolName, nextArgs, {
+                requestId,
+                sessionId,
+                ...extra,
+              })
+            : null;
         const payload = {
           status: blockedStatus,
           preview: permission.preview || false,
@@ -254,8 +264,8 @@ export function createExecuteToolStepInPlan({
           charge: null,
           params: compactReplayValue(nextArgs),
           paramsHash: replayEventHash(nextArgs),
-          result: null,
-          resultHash: null,
+          result: governedPreview,
+          resultHash: governedPreview ? replayEventHash(governedPreview) : null,
           runtime: {
             policyDomain: effectivePolicyDomain,
             sideEffect: baseMeta.sideEffect,
@@ -264,7 +274,7 @@ export function createExecuteToolStepInPlan({
           },
           simulation: dryRun,
           mutationManifest: buildStepMutationManifest(nextArgs, policy, permission, blockedStatus),
-          error: permission.reason || 'Permission denied',
+          error: governedPreview ? null : permission.reason || 'Permission denied',
           wouldDo: permission.wouldDo || null,
         };
         return {
@@ -437,8 +447,16 @@ export function createExecuteToolStepInPlan({
           ...extra,
         },
       };
+      const governed = executeGovernedTool
+        ? await executeGovernedTool(resolvedToolName, nextArgs, {
+            requestId,
+            sessionId,
+            requireGoverned: allowApply && baseMeta.sideEffect === 'write',
+            ...extra,
+          })
+        : null;
       const wrapped = wrapWithTelemetry(resolvedToolName, (payload) => toolDef.handler(payload));
-      let result = await wrapped(toolPayload);
+      let result = governed ?? (await wrapped(toolPayload));
       if (mpp?.authorized && charge?.charged) {
         const receipt = createPaymentReceipt({
           challenge: mpp.challenge,

@@ -13,7 +13,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.25.0` |
+| Workspace version | `1.26.0` |
 | Workspace members | 30 |
 | Default members | 19 |
 | Rust crates in workspace | 22 |
@@ -80,7 +80,7 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 102 |
+| Top-level source groups | 105 |
 | Tool modules | 93 |
 | A2A modules | 61 |
 | JS dependencies | 13 |
@@ -106,6 +106,7 @@ workspace membership because they require host runtimes or headers.
 | `skills` | 5 |
 | `treasury` | 5 |
 | `providers` | 4 |
+| `autonomous` | 3 |
 | `heartbeat` | 3 |
 | `mpp` | 3 |
 | `plugins` | 3 |
@@ -113,7 +114,6 @@ workspace membership because they require host runtimes or headers.
 | `voice` | 3 |
 | `workflows` | 3 |
 | `approvals` | 2 |
-| `autonomous` | 2 |
 | `coverage` | 2 |
 | `webhooks` | 2 |
 | `whatsapp` | 2 |
@@ -154,6 +154,9 @@ workspace membership because they require host runtimes or headers.
 | `harness-utils.js` | 1 |
 | `imessage` | 1 |
 | `index.js` | 1 |
+| `kernel-boundary.js` | 1 |
+| `kernel-config.js` | 1 |
+| `kernel-tool-execution.js` | 1 |
 | `load-env.js` | 1 |
 | `logger.js` | 1 |
 | `main-cli-options.js` | 1 |

@@ -15,7 +15,7 @@ use stateset_primitives::{CurrencyCode, CustomerId, OrderId, ProductId, Subscrip
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
-use super::Address;
+use super::{Address, Payment, PaymentMethodType};
 
 // ============================================================================
 // Subscription Enums
@@ -600,6 +600,24 @@ pub struct CreateBillingCycle {
     pub period_end: DateTime<Utc>,
 }
 
+/// Governed request to begin collecting a subscription billing cycle.
+///
+/// Execution creates a pending payment instruction and moves the cycle to
+/// `processing`; it does not claim that an external processor has settled it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChargeSubscription {
+    pub billing_cycle_id: Uuid,
+    pub payment_method: PaymentMethodType,
+    pub processor: Option<String>,
+}
+
+/// Atomic result of accepting a subscription collection request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscriptionCharge {
+    pub billing_cycle: BillingCycle,
+    pub payment: Payment,
+}
+
 /// Change subscription plan
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeSubscriptionPlan {
@@ -867,7 +885,11 @@ impl Subscription {
     /// Calculate total subscription value
     #[must_use]
     pub fn calculate_total(&self) -> Decimal {
-        self.items.iter().map(|item| item.line_total).sum()
+        if self.items.is_empty() {
+            self.price
+        } else {
+            self.items.iter().map(|item| item.line_total).sum()
+        }
     }
 
     /// Get next billing amount (after discounts)

@@ -347,8 +347,8 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 386,
-  "mappedAuditedMethods": 386,
+  "totalAuditedMethods": 388,
+  "mappedAuditedMethods": 388,
   "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
@@ -491,8 +491,8 @@
     },
     {
       "className": "Payments",
-      "methodCount": 8,
-      "mappedMethodCount": 8,
+      "methodCount": 10,
+      "mappedMethodCount": 10,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []

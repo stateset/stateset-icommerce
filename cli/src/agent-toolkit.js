@@ -1,4 +1,5 @@
 import { getCommerce, getGlobalManager } from './database.js';
+import { KERNEL_CAPABILITY_BY_TOOL } from './kernel-tool-execution.js';
 import { createStatesetMcpServer } from './mcp-server.js';
 import { createMppHttpAgent, discoverMppHttpService } from './mpp/agent.js';
 import { createToolInputSchema } from './tool-schema.js';
@@ -6,6 +7,27 @@ import { createToolInputSchema } from './tool-schema.js';
 function normalizeToolName(toolName) {
   if (!toolName || typeof toolName !== 'string') return '';
   return toolName.trim().replace(/^mcp__[a-z0-9_-]+__/, '');
+}
+
+function toolDefinitionName(tool, format = 'generic') {
+  return normalizeToolName(
+    format === 'openai' ? tool?.function?.name : tool?.toolName || tool?.name,
+  );
+}
+
+function capabilityAllowsTool(tool, capabilities) {
+  if (!capabilities) return true;
+  const name = normalizeToolName(tool?.name);
+  const permission = String(tool?.permission || 'read');
+  const domain = String(tool?.policyDomain || '').trim();
+  return (
+    capabilities.has('*') ||
+    capabilities.has(name) ||
+    capabilities.has(`permission:${permission}`) ||
+    (permission === 'read' && capabilities.has('read:*')) ||
+    (domain && capabilities.has(`${domain}.*`)) ||
+    capabilities.has(KERNEL_CAPABILITY_BY_TOOL[name])
+  );
 }
 
 function parseToolArguments(rawArguments) {
@@ -118,6 +140,8 @@ function createRemoteHttpDescriptor(route, baseUrl, executeRoute) {
  * @param {Object} [options]
  * @param {string} [options.dbPath='./store.db'] SQLite database path when no commerce instance is supplied.
  * @param {boolean} [options.allowApply=false] Enable write tools instead of preview-only execution.
+ * @param {string[]} [options.capabilities] Explicit tool, domain, permission, or kernel capabilities.
+ * @param {Object} [options.kernel] Trusted kernel policy, principal, store, and optional authority signer.
  * @param {Object} [options.commerce] Reuse an existing embedded commerce instance.
  * @param {Object|null} [options.autonomousEngine=null] Enable runtime tools such as `delegate_to_agent`.
  * @param {string} [options.policyStorePath] Optional policy store root. When omitted, the MCP server derives `.stateset/` next to `dbPath`.
@@ -129,6 +153,15 @@ export function createEmbeddedAgentToolkit(options = {}) {
   const dbPath = options.dbPath || './store.db';
   const ownsCommerce = !options.commerce;
   const commerce = options.commerce || getCommerce(dbPath);
+  const capabilityList = Array.isArray(options.capabilities)
+    ? options.capabilities.map((capability) => String(capability).trim()).filter(Boolean)
+    : null;
+  if (options.allowApply && (!capabilityList || capabilityList.length === 0)) {
+    throw new Error(
+      'allowApply requires explicit capabilities (for example ["read:*", "payments.create"]).',
+    );
+  }
+  const capabilities = capabilityList ? new Set(capabilityList) : null;
   const defaultPaymentOptions = {
     ...(options.mpp || {}),
     payer: options?.mpp?.payer || options?.treasury?.agentId || options?.agentId || null,
@@ -139,11 +172,27 @@ export function createEmbeddedAgentToolkit(options = {}) {
     dbPath,
   });
 
+  const getRawTools = () =>
+    server.getRawToolDefinitions().filter((tool) => capabilityAllowsTool(tool, capabilities));
+
   const getTools = ({ format = 'generic' } = {}) => {
-    return server.getToolDefinitions({ format: normalizeToolFormat(format) });
+    const normalizedFormat = normalizeToolFormat(format);
+    const allowedNames = new Set(getRawTools().map((tool) => normalizeToolName(tool.name)));
+    return server
+      .getToolDefinitions({ format: normalizedFormat })
+      .filter((tool) => allowedNames.has(toolDefinitionName(tool, normalizedFormat)));
   };
 
-  const getRawTools = () => server.getRawToolDefinitions();
+  const assertToolAuthorized = (toolName) => {
+    const normalized = normalizeToolName(toolName);
+    const raw = server
+      .getRawToolDefinitions()
+      .find((tool) => normalizeToolName(tool.name) === normalized);
+    if (!raw || !capabilityAllowsTool(raw, capabilities)) {
+      throw new Error(`Tool '${normalized}' is outside this toolkit's capability scope.`);
+    }
+    return normalized;
+  };
 
   const getToolCatalog = async ({ tool = null, format = 'generic', payableOnly = false } = {}) =>
     server.getToolCatalog({ tool, format, payableOnly });
@@ -250,7 +299,8 @@ export function createEmbeddedAgentToolkit(options = {}) {
   };
 
   const executeTool = async (toolName, params = {}, executionOptions = {}) => {
-    return server.executeTool(normalizeToolName(toolName), params, executionOptions);
+    const authorizedTool = assertToolAuthorized(toolName);
+    return server.executeTool(authorizedTool, params, executionOptions);
   };
 
   const executeToolWithPayment = async (toolName, params = {}, executionOptions = {}) => {
@@ -258,7 +308,8 @@ export function createEmbeddedAgentToolkit(options = {}) {
       ...defaultPaymentOptions,
       ...((executionOptions && executionOptions.payment) || {}),
     };
-    return server.executeToolWithPayment(normalizeToolName(toolName), params, {
+    const authorizedTool = assertToolAuthorized(toolName);
+    return server.executeToolWithPayment(authorizedTool, params, {
       ...executionOptions,
       payment: mergedPayment,
     });

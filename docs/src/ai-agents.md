@@ -14,14 +14,14 @@ MCP-native clients.
 ## Install
 
 ```bash
-npm install @stateset/cli@1.25.0 @stateset/embedded@1.25.0
+npm install @stateset/cli@1.26.0 @stateset/embedded@1.26.0
 ```
 
 For Python runtimes:
 
 ```bash
-pip install stateset-embedded==1.25.0
-pip install "stateset-embedded[agents]==1.25.0"
+pip install stateset-embedded==1.26.0
+pip install "stateset-embedded[agents]==1.26.0"
 ```
 
 From the repo checkout, the examples under `examples/agents/` also run against
@@ -65,6 +65,7 @@ import { createEmbeddedAgentToolkit } from '@stateset/embedded/agent-toolkit';
 const delegatedToolkit = createEmbeddedAgentToolkit({
     commerce,
     allowApply: true,
+    capabilities: ['read:*', 'delegate_to_agent'],
     autonomousEngine,
 });
 
@@ -277,10 +278,14 @@ const results = await toolkit.executeToolCalls([
 const toolkit = createEmbeddedAgentToolkit({
     commerce,
     allowApply: true,   // Enables write operations
+    capabilities: ['read:*', 'payments.create'],
 });
 ```
 
-Even with `allowApply: true`, 20 high-risk tools (delete, refund, A2A payments) require explicit approval.
+`allowApply: true` is rejected unless `capabilities` is explicit. Exact tool
+names, `read:*`, `permission:write`, domain wildcards, and governed kernel
+capabilities such as `payments.create` are supported. High-risk tools still
+require their configured approvals.
 
 ## MCP-Native Clients
 
@@ -301,7 +306,7 @@ The setup creates a configuration entry in your MCP client's config file:
     "mcpServers": {
         "stateset-commerce": {
             "command": "npx",
-            "args": ["-y", "-p", "@stateset/cli@1.25.0", "stateset-mcp", "--db", "./store.db"]
+            "args": ["-y", "-p", "@stateset/cli@1.26.0", "stateset-mcp", "--db", "./store.db"]
         }
     }
 }

@@ -3,7 +3,7 @@
 //! Handles payment processing, refunds, and payment method management.
 
 use crate::errors::Result;
-use crate::validation::{Validate, ValidationBuilder};
+use crate::validation::{Validate, ValidationBuilder, validate_money_scale};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -412,6 +412,7 @@ impl Payment {
 
 /// Input for creating a new payment
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CreatePayment {
     /// Associated order ID
     pub order_id: Option<OrderId>,
@@ -475,7 +476,8 @@ impl Validate for CreatePayment {
         ValidationBuilder::new()
             .non_negative("amount", self.amount)
             .email_if_present("billing_email", self.billing_email.as_deref())
-            .build()
+            .build()?;
+        validate_money_scale(self.currency.unwrap_or_default(), self.amount)
     }
 }
 
@@ -571,6 +573,7 @@ pub struct Refund {
 
 /// Input for creating a refund
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CreateRefund {
     /// Payment to refund
     pub payment_id: PaymentId,
@@ -596,6 +599,20 @@ impl Validate for CreateRefund {
     /// only guards the payment reference itself.
     fn validate(&self) -> Result<()> {
         ValidationBuilder::new().uuid_not_nil("payment_id", self.payment_id.into_uuid()).build()
+    }
+}
+
+impl CreateRefund {
+    /// Validate the request once the payment currency is known.
+    ///
+    /// A refund intentionally does not carry an independently selectable
+    /// currency: it inherits the captured payment's currency.
+    pub fn validate_for_currency(&self, currency: CurrencyCode) -> Result<()> {
+        self.validate()?;
+        if let Some(amount) = self.amount {
+            validate_money_scale(currency, amount)?;
+        }
+        Ok(())
     }
 }
 

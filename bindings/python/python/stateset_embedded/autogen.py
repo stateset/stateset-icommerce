@@ -18,21 +18,25 @@ ToolkitTarget = Union[Commerce, EmbeddedAgentToolkit]
 def _resolve_toolkit(
     commerce_or_toolkit: ToolkitTarget,
     allow_apply: bool,
+    capabilities: Optional[Sequence[str]] = None,
 ) -> EmbeddedAgentToolkit:
     if isinstance(commerce_or_toolkit, EmbeddedAgentToolkit):
         return commerce_or_toolkit
-    return create_embedded_agent_toolkit(commerce_or_toolkit, allow_apply=allow_apply)
+    return create_embedded_agent_toolkit(
+        commerce_or_toolkit, allow_apply=allow_apply, capabilities=capabilities
+    )
 
 
 def create_autogen_tools(
     commerce_or_toolkit: ToolkitTarget,
     filter: Optional[Sequence[str]] = None,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
     tool_factory: Optional[FrameworkToolFactory] = None,
 ) -> List[Any]:
     """Create AutoGen-compatible tools from a Commerce instance or toolkit."""
 
-    toolkit = _resolve_toolkit(commerce_or_toolkit, allow_apply=allow_apply)
+    toolkit = _resolve_toolkit(commerce_or_toolkit, allow_apply, capabilities)
     return toolkit.create_autogen_tools(filter=filter, tool_factory=tool_factory)
 
 

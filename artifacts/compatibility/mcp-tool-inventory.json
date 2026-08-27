@@ -1368,7 +1368,7 @@
     },
     {
       "name": "a2a_resolve_dispute",
-      "description": "Resolve a dispute with a resolution type (full refund, partial refund, release to seller, split, or escalate).",
+      "description": "Resolve a dispute atomically with a full refund, seller release, exact split, or escalation.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__a2a_resolve_dispute",

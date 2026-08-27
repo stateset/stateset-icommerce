@@ -98,7 +98,7 @@ impl SqliteX402PaymentIntentRepository {
             .transpose()
     }
 
-    fn row_to_intent(row: &rusqlite::Row<'_>) -> rusqlite::Result<X402PaymentIntent> {
+    pub(crate) fn row_to_intent(row: &rusqlite::Row<'_>) -> rusqlite::Result<X402PaymentIntent> {
         let inclusion_proof: Option<Vec<String>> =
             Self::parse_inclusion_proof(row.get("inclusion_proof")?)?;
 

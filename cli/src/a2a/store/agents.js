@@ -28,7 +28,7 @@ export class A2AAgentsMethods {
 
     this.db
       .prepare(
-        `INSERT INTO agent_cards (
+        `INSERT INTO a2a_runtime_agent_cards (
           id, name, wallet_address, public_key, supported_networks,
           supported_assets, a2a_skills, payment_addresses, endpoint_url, description,
           trust_level, active, suspended_at, created_at, updated_at
@@ -65,13 +65,15 @@ export class A2AAgentsMethods {
 
   getAgent(id) {
     this.init();
-    return this.db.prepare('SELECT * FROM agent_cards WHERE id = ?').get(id) || null;
+    return this.db.prepare('SELECT * FROM a2a_runtime_agent_cards WHERE id = ?').get(id) || null;
   }
 
   getAgentByWallet(address) {
     this.init();
     return (
-      this.db.prepare('SELECT * FROM agent_cards WHERE wallet_address = ?').get(address) || null
+      this.db
+        .prepare('SELECT * FROM a2a_runtime_agent_cards WHERE wallet_address = ?')
+        .get(address) || null
     );
   }
 
@@ -98,7 +100,9 @@ export class A2AAgentsMethods {
     const offset = filter.offset || 0;
 
     return this.db
-      .prepare(`SELECT * FROM agent_cards ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT * FROM a2a_runtime_agent_cards ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      )
       .all(...params, limit, offset);
   }
 
@@ -140,7 +144,9 @@ export class A2AAgentsMethods {
     const limit = filter.limit || 50;
 
     return this.db
-      .prepare(`SELECT * FROM agent_cards ${where} ORDER BY trust_level DESC, name ASC LIMIT ?`)
+      .prepare(
+        `SELECT * FROM a2a_runtime_agent_cards ${where} ORDER BY trust_level DESC, name ASC LIMIT ?`,
+      )
       .all(...params, limit);
   }
 
@@ -148,14 +154,14 @@ export class A2AAgentsMethods {
     this.init();
     const now = new Date().toISOString();
     this.db
-      .prepare('UPDATE agent_cards SET trust_level = ?, updated_at = ? WHERE id = ?')
+      .prepare('UPDATE a2a_runtime_agent_cards SET trust_level = ?, updated_at = ? WHERE id = ?')
       .run('verified', now, id);
     return this.getAgent(id);
   }
 
   updateAgent(id, updates) {
     this.init();
-    this._validateUpdateKeys('agent_cards', Object.keys(updates));
+    this._validateUpdateKeys('a2a_runtime_agent_cards', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -172,7 +178,9 @@ export class A2AAgentsMethods {
     values.push(new Date().toISOString());
     values.push(id);
 
-    this.db.prepare(`UPDATE agent_cards SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    this.db
+      .prepare(`UPDATE a2a_runtime_agent_cards SET ${fields.join(', ')} WHERE id = ?`)
+      .run(...values);
     return this.getAgent(id);
   }
 }

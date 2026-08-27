@@ -21,7 +21,7 @@ pub struct PgX402PaymentIntentRepository {
 }
 
 #[derive(FromRow)]
-struct IntentRow {
+pub(crate) struct IntentRow {
     id: Uuid,
     version: String,
     status: String,
@@ -136,7 +136,7 @@ impl PgX402PaymentIntentRepository {
             .map_err(|_| CommerceError::ValidationError(format!("{} exceeds i64 range", field)))
     }
 
-    fn row_to_intent(row: IntentRow) -> Result<X402PaymentIntent> {
+    pub(crate) fn row_to_intent(row: IntentRow) -> Result<X402PaymentIntent> {
         if row.amount < 0 {
             return Err(CommerceError::DatabaseError(
                 "x402_payment_intent.amount is negative".to_string(),

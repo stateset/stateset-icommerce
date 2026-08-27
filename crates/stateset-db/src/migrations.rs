@@ -59,7 +59,12 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), MigrationError> {
         } else {
             // Run migration atomically.
             let tx = conn.transaction()?;
+            let migrate_legacy_disputes =
+                name == "073_a2a_dispute_kernel" && prepare_legacy_a2a_disputes(&tx)?;
             tx.execute_batch(sql)?;
+            if migrate_legacy_disputes {
+                migrate_legacy_a2a_disputes(&tx)?;
+            }
             tx.execute(
                 "INSERT INTO _migrations (name, checksum) VALUES (?, ?)",
                 rusqlite::params![name, checksum],
@@ -68,6 +73,104 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), MigrationError> {
         }
     }
 
+    Ok(())
+}
+
+fn prepare_legacy_a2a_disputes(tx: &rusqlite::Transaction<'_>) -> Result<bool, MigrationError> {
+    let exists: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'a2a_disputes')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Ok(false);
+    }
+    let has_claimant = tx
+        .prepare("PRAGMA table_info(a2a_disputes)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .any(|column| column == "claimant_address");
+    if has_claimant {
+        return Ok(false);
+    }
+    let evidence_exists: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'a2a_dispute_evidence')",
+        [],
+        |row| row.get(0),
+    )?;
+    if evidence_exists {
+        tx.execute("ALTER TABLE a2a_dispute_evidence RENAME TO a2a_dispute_evidence_legacy", [])?;
+    } else {
+        // Some early CLI databases created disputes lazily and may not have an
+        // evidence table at all.  Give the copy step an empty, schema-compatible
+        // source so migration 073 remains atomic for those databases too.
+        tx.execute_batch(
+            "CREATE TABLE a2a_dispute_evidence_legacy (
+                id TEXT PRIMARY KEY,
+                dispute_id TEXT NOT NULL,
+                submitted_by TEXT NOT NULL,
+                evidence_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                content TEXT,
+                content_hash TEXT,
+                created_at TEXT NOT NULL
+             );",
+        )?;
+    }
+    tx.execute("ALTER TABLE a2a_disputes RENAME TO a2a_disputes_legacy", [])?;
+    Ok(true)
+}
+
+fn migrate_legacy_a2a_disputes(tx: &rusqlite::Transaction<'_>) -> Result<(), MigrationError> {
+    tx.execute_batch(
+        // The legacy CLI did not enforce the dispute -> escrow foreign key.
+        // Preserve any orphaned dispute as a quarantined legacy escrow instead
+        // of making the database permanently unmigratable.
+        "INSERT OR IGNORE INTO a2a_escrows (
+            id, status, quote_id, buyer_address, seller_address, amount,
+            amount_decimal, asset, network, release_conditions, disputed_at,
+            dispute_id, expires_at, metadata, created_at, updated_at,
+            tenant_id, store_id
+         )
+         SELECT escrow_id,
+                CASE WHEN status = 'resolved' THEN 'resolved' ELSE 'disputed' END,
+                quote_id, filed_by, filed_against, amount_disputed,
+                CAST(amount_decimal AS TEXT), asset, 'legacy', '[]',
+                updated_at, id, COALESCE(review_deadline, updated_at, created_at),
+                metadata, created_at, updated_at, 'legacy', 'legacy'
+         FROM a2a_disputes_legacy;
+
+         INSERT INTO a2a_disputes (
+            id, tenant_id, store_id, status, escrow_id, quote_id,
+            claimant_address, respondent_address, reason, category,
+            amount_decimal, asset, resolution_type, buyer_amount_decimal,
+            resolution_note, resolved_by, evidence_deadline, review_deadline,
+            metadata, created_at, updated_at, resolved_at
+         )
+         SELECT id, 'legacy', 'legacy', status, escrow_id, quote_id,
+                filed_by, filed_against, reason, category,
+                CAST(amount_decimal AS TEXT), asset, resolution_type,
+                CASE WHEN resolution_amount IS NULL THEN NULL
+                     ELSE CAST(resolution_amount AS TEXT) END,
+                resolution_note, resolved_by,
+                COALESCE(evidence_deadline, created_at),
+                COALESCE(review_deadline, updated_at, created_at),
+                metadata, created_at, updated_at, resolved_at
+         FROM a2a_disputes_legacy;
+
+         INSERT INTO a2a_dispute_evidence (
+            id, tenant_id, store_id, dispute_id, submitted_by, evidence_type,
+            title, description, content, content_hash, created_at
+         )
+         SELECT id, 'legacy', 'legacy', dispute_id, submitted_by, evidence_type,
+                title, description, COALESCE(content, ''), COALESCE(content_hash, ''), created_at
+         FROM a2a_dispute_evidence_legacy;
+
+         DROP TABLE a2a_dispute_evidence_legacy;
+         DROP TABLE a2a_disputes_legacy;",
+    )?;
     Ok(())
 }
 
@@ -246,5 +349,160 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "068_warehouse_bins_return_disposition",
             include_str!("../migrations/068_warehouse_bins_return_disposition.sql"),
         ),
+        // Durable command receipts and transactional domain-event outbox.
+        ("069_kernel_outbox", include_str!("../migrations/069_kernel_outbox.sql")),
+        (
+            "070_kernel_outbox_delivery",
+            include_str!("../migrations/070_kernel_outbox_delivery.sql"),
+        ),
+        (
+            "071_kernel_receipt_audit_chain",
+            include_str!("../migrations/071_kernel_receipt_audit_chain.sql"),
+        ),
+        ("072_a2a_escrow_kernel", include_str!("../migrations/072_a2a_escrow_kernel.sql")),
+        ("073_a2a_dispute_kernel", include_str!("../migrations/073_a2a_dispute_kernel.sql")),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn install_legacy_dispute_schema(conn: &Connection, include_evidence: bool) {
+        conn.execute_batch(
+            "DROP INDEX idx_a2a_escrows_scope;
+             ALTER TABLE a2a_escrows DROP COLUMN tenant_id;
+             ALTER TABLE a2a_escrows DROP COLUMN store_id;
+             DROP TABLE a2a_dispute_evidence;
+             DROP TABLE a2a_disputes;
+             DELETE FROM _migrations WHERE name = '073_a2a_dispute_kernel';
+             CREATE TABLE a2a_disputes (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'filed',
+                escrow_id TEXT NOT NULL,
+                quote_id TEXT,
+                filed_by TEXT NOT NULL,
+                filed_against TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'non_delivery',
+                amount_disputed INTEGER NOT NULL,
+                amount_decimal REAL NOT NULL,
+                asset TEXT NOT NULL,
+                resolution_type TEXT,
+                resolution_amount INTEGER,
+                resolution_note TEXT,
+                resolved_by TEXT,
+                evidence_deadline TEXT,
+                review_deadline TEXT,
+                metadata TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                resolved_at TEXT
+             );
+             INSERT INTO a2a_disputes (
+                id, escrow_id, filed_by, filed_against, reason,
+                amount_disputed, amount_decimal, asset, resolution_amount,
+                created_at, updated_at
+             ) VALUES (
+                'dispute-legacy', 'escrow-legacy', 'buyer', 'seller', 'not delivered',
+                1234, 12.34, 'USD', 7,
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+             );",
+        )
+        .expect("install legacy dispute schema");
+
+        if include_evidence {
+            conn.execute_batch(
+                "CREATE TABLE a2a_dispute_evidence (
+                    id TEXT PRIMARY KEY,
+                    dispute_id TEXT NOT NULL,
+                    submitted_by TEXT NOT NULL,
+                    evidence_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    content TEXT,
+                    content_hash TEXT,
+                    created_at TEXT NOT NULL
+                 );
+                 INSERT INTO a2a_dispute_evidence (
+                    id, dispute_id, submitted_by, evidence_type, title,
+                    description, content, content_hash, created_at
+                 ) VALUES (
+                    'evidence-legacy', 'dispute-legacy', 'buyer', 'document', 'Receipt',
+                    'proof', 'payload', 'sha256:legacy', '2026-01-01T01:00:00Z'
+                 );",
+            )
+            .expect("install legacy evidence schema");
+        }
+    }
+
+    #[test]
+    fn migrates_legacy_a2a_disputes_without_losing_exact_values_or_evidence() {
+        let mut conn = Connection::open_in_memory().expect("open database");
+        run_migrations(&mut conn).expect("initialize database");
+        install_legacy_dispute_schema(&conn, true);
+
+        run_migrations(&mut conn).expect("migrate legacy disputes");
+
+        let dispute: (String, String, String, String, String, Option<String>) = conn
+            .query_row(
+                "SELECT tenant_id, store_id, claimant_address, respondent_address,
+                        amount_decimal, buyer_amount_decimal
+                 FROM a2a_disputes WHERE id = 'dispute-legacy'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .expect("read migrated dispute");
+        assert_eq!(
+            dispute,
+            (
+                "legacy".into(),
+                "legacy".into(),
+                "buyer".into(),
+                "seller".into(),
+                "12.34".into(),
+                Some("7".into()),
+            )
+        );
+
+        let evidence: (String, String, String, String) = conn
+            .query_row(
+                "SELECT tenant_id, store_id, content, content_hash
+                 FROM a2a_dispute_evidence WHERE id = 'evidence-legacy'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("read migrated evidence");
+        assert_eq!(
+            evidence,
+            ("legacy".into(), "legacy".into(), "payload".into(), "sha256:legacy".into())
+        );
+    }
+
+    #[test]
+    fn migrates_legacy_a2a_disputes_when_evidence_table_is_absent() {
+        let mut conn = Connection::open_in_memory().expect("open database");
+        run_migrations(&mut conn).expect("initialize database");
+        install_legacy_dispute_schema(&conn, false);
+
+        run_migrations(&mut conn).expect("migrate without legacy evidence table");
+
+        let disputes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM a2a_disputes", [], |row| row.get(0))
+            .expect("count disputes");
+        let evidence: i64 = conn
+            .query_row("SELECT COUNT(*) FROM a2a_dispute_evidence", [], |row| row.get(0))
+            .expect("count evidence");
+        assert_eq!(disputes, 1);
+        assert_eq!(evidence, 0);
+    }
 }

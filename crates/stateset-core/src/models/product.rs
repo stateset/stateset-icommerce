@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::ProductId;
+use std::collections::HashSet;
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -119,9 +120,19 @@ impl Validate for CreateProduct {
     fn validate(&self) -> Result<()> {
         ValidationBuilder::new().required("name", &self.name).build()?;
 
+        let slug = self.slug.clone().unwrap_or_else(|| Product::generate_slug(&self.name));
+        ValidationBuilder::new().required("slug", &slug).build()?;
+
         if let Some(variants) = &self.variants {
+            let mut skus = HashSet::with_capacity(variants.len());
             for variant in variants {
                 variant.validate()?;
+                if !skus.insert(variant.sku.trim().to_owned()) {
+                    return Err(crate::CommerceError::ValidationError(format!(
+                        "duplicate product variant SKU: {}",
+                        variant.sku
+                    )));
+                }
             }
         }
 

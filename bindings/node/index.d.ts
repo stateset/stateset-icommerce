@@ -246,14 +246,14 @@ export interface InventoryItemOutput {
 export interface StockLevelOutput {
   sku: string
   name: string
-  totalOnHand: number
-  totalAllocated: number
-  totalAvailable: number
+  totalOnHand: string
+  totalAllocated: string
+  totalAvailable: string
 }
 export interface ReservationOutput {
   id: string
   itemId: number
-  quantity: number
+  quantity: string
   status: string
 }
 export interface CreateReturnItemInput {
@@ -285,6 +285,16 @@ export interface CreatePaymentInput {
   currency?: string
   paymentMethod?: string
 }
+/** Exact-money payment input for agent and financial integrations. */
+export interface CreatePaymentExactInput {
+  orderId?: string
+  invoiceId?: string
+  customerId?: string
+  idempotencyKey?: string
+  amount: string
+  currency?: string
+  paymentMethod?: string
+}
 export interface PaymentOutput {
   id: string
   paymentNumber: string
@@ -293,6 +303,8 @@ export interface PaymentOutput {
   customerId?: string
   idempotencyKey?: string
   amount: number
+  /** Exact base-10 amount. Prefer this field for all calculations. */
+  amountExact: string
   currency: string
   status: string
   version: number
@@ -305,11 +317,20 @@ export interface CreateRefundInput {
   reason?: string
   idempotencyKey?: string
 }
+/** Exact-money refund input for agent and financial integrations. */
+export interface CreateRefundExactInput {
+  paymentId: string
+  amount: string
+  reason?: string
+  idempotencyKey?: string
+}
 export interface RefundOutput {
   id: string
   refundNumber: string
   paymentId: string
   amount: number
+  /** Exact base-10 amount. Prefer this field for all calculations. */
+  amountExact: string
   status: string
   reason?: string
   createdAt: string
@@ -4560,6 +4581,13 @@ export declare class Commerce {
    * Use ":memory:" for an in-memory database
    */
   constructor(dbPath: string)
+  /**
+   * Execute a versioned commerce kernel command under host-supplied policy.
+   *
+   * `policy` must come from trusted application configuration. It must not
+   * be copied from model-generated tool arguments.
+   */
+  executeKernelCommand(command: any, policy: any): Promise<any>
   /** Get the customers API */
   get customers(): Customers
   /** Get the orders API */
@@ -4812,12 +4840,16 @@ export declare class Returns {
 }
 export declare class Payments {
   create(input: CreatePaymentInput): Promise<PaymentOutput>
+  /** Create a payment without any floating-point conversion. */
+  createExact(input: CreatePaymentExactInput): Promise<PaymentOutput>
   get(id: string): Promise<PaymentOutput | null>
   list(): Promise<Array<PaymentOutput>>
   markCompleted(id: string): Promise<PaymentOutput>
   markFailed(id: string, reason: string, code?: string | undefined | null): Promise<PaymentOutput>
   cancel(id: string): Promise<PaymentOutput>
   createRefund(input: CreateRefundInput): Promise<RefundOutput>
+  /** Create a refund without any floating-point conversion. */
+  createRefundExact(input: CreateRefundExactInput): Promise<RefundOutput>
   count(): Promise<number>
 }
 export declare class Shipments {

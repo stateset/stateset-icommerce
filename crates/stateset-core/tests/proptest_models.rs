@@ -449,7 +449,7 @@ fn valid_return_transitions(from: ReturnStatus) -> Vec<ReturnStatus> {
         }
         ReturnStatus::Approved => vec![ReturnStatus::InTransit, ReturnStatus::Cancelled],
         ReturnStatus::InTransit => vec![ReturnStatus::Received],
-        ReturnStatus::Received => vec![ReturnStatus::Inspecting],
+        ReturnStatus::Received => vec![ReturnStatus::Inspecting, ReturnStatus::Completed],
         ReturnStatus::Inspecting => vec![ReturnStatus::Completed, ReturnStatus::Rejected],
         ReturnStatus::Rejected | ReturnStatus::Completed | ReturnStatus::Cancelled => vec![],
         _ => vec![],

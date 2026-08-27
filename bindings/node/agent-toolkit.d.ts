@@ -9,6 +9,16 @@ export interface ToolExecutionOptions {
 export interface CreateEmbeddedAgentToolkitOptions {
   dbPath?: string
   allowApply?: boolean
+  /** Required when allowApply is true. Supports exact tool names, read:*, domain.*, and kernel capabilities. */
+  capabilities?: Array<string>
+  /** Trusted host configuration for governed high-risk mutations. */
+  kernel?: {
+    policy: Record<string, unknown>
+    principal: Record<string, unknown>
+    storeId: string
+    approval?: Record<string, unknown> | ((command: Record<string, unknown>) => unknown)
+    authorize?: (command: Record<string, unknown>) => unknown
+  }
   commerce?: Commerce
   autonomousEngine?: unknown | null
   policyStorePath?: string

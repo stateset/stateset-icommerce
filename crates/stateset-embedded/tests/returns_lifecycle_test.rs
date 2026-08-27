@@ -488,8 +488,18 @@ fn test_return_version_increments() {
     assert!(ret.version > v0, "Version should increment on approve");
 
     let v1 = ret.version;
-    let ret = commerce.returns().mark_received(ret.id).expect("mark received");
+    let ret = commerce
+        .returns()
+        .update(
+            ret.id,
+            UpdateReturn { status: Some(ReturnStatus::InTransit), ..Default::default() },
+        )
+        .expect("mark in transit");
     assert!(ret.version > v1, "Version should increment on status change");
+
+    let v2 = ret.version;
+    let ret = commerce.returns().mark_received(ret.id).expect("mark received");
+    assert!(ret.version > v2, "Version should increment on status change");
 }
 
 // ============================================================================

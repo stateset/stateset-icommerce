@@ -20,6 +20,7 @@
 import { parseArgs } from 'node:util';
 import { runMain } from '../src/graceful-shutdown.js';
 import { CLI_VERSION } from '../src/config.js';
+import { loadKernelConfig } from '../src/kernel-config.js';
 
 const HELP = `
 StateSet Commerce MCP Server (stdio)  v${CLI_VERSION}
@@ -32,6 +33,11 @@ OPTIONS:
   --apply                    Enable write tools (default: preview-only)
   --structured-tool-results  Emit structured content blocks in tool results
   --strict-protocol          Serve ONLY 2026-07-28; reject 2025-era clients
+  --kernel-policy <path>     Trusted kernel policy JSON (env STATESET_KERNEL_POLICY)
+  --kernel-principal <path>  Trusted principal JSON (env STATESET_KERNEL_PRINCIPAL)
+  --kernel-store-id <id>     Logical store scope (env STATESET_KERNEL_STORE_ID)
+  --kernel-allow-legacy-writes
+                             Expose writes without typed kernel commands (unsafe migration only)
   -h, --help                 Show this help
 
 EXAMPLES:
@@ -48,6 +54,10 @@ async function main() {
       apply: { type: 'boolean', default: false },
       'structured-tool-results': { type: 'boolean', default: false },
       'strict-protocol': { type: 'boolean', default: false },
+      'kernel-policy': { type: 'string' },
+      'kernel-principal': { type: 'string' },
+      'kernel-store-id': { type: 'string' },
+      'kernel-allow-legacy-writes': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -66,6 +76,13 @@ async function main() {
     ]);
 
   const dbPath = values.db || process.env.DB_PATH || './store.db';
+  const kernel = loadKernelConfig({
+    policyPath: values['kernel-policy'],
+    principalPath: values['kernel-principal'],
+    storeId: values['kernel-store-id'],
+    allowLegacyWrites: values['kernel-allow-legacy-writes'],
+    requireForApply: values.apply,
+  });
 
   let commerce;
   try {
@@ -87,6 +104,7 @@ async function main() {
         dbPath,
         allowApply: values.apply,
         structuredToolResults: values['structured-tool-results'],
+        kernel,
       }),
     {
       legacy: values['strict-protocol'] ? 'reject' : 'serve',
@@ -98,7 +116,7 @@ async function main() {
   console.error(
     `[stateset-mcp] serving commerce tools over stdio (protocol 2026-07-28, db: ${dbPath}, writes: ${
       values.apply ? 'ENABLED' : 'preview-only, pass --apply to enable'
-    })`,
+    }, kernel: ${kernel ? (kernel.strict ? 'strict' : 'legacy-write escape hatch') : 'not configured'})`,
   );
 }
 

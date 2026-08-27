@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from .stateset_embedded import Commerce, CreateOrderItemInput, CreateProductVariantInput
@@ -244,9 +246,22 @@ class AgentToolDescriptor:
 class EmbeddedAgentToolkit:
     """Small, native Python toolkit for embedding core commerce tools in agents."""
 
-    def __init__(self, commerce: Commerce, allow_apply: bool = False) -> None:
+    def __init__(
+        self,
+        commerce: Commerce,
+        allow_apply: bool = False,
+        capabilities: Optional[Sequence[str]] = None,
+        kernel: Optional[Mapping[str, Any]] = None,
+    ) -> None:
         self.commerce = commerce
         self.allow_apply = allow_apply
+        normalized = {str(capability).strip() for capability in capabilities or [] if str(capability).strip()}
+        if allow_apply and not normalized:
+            raise ValueError(
+                "allow_apply requires explicit capabilities (for example ['read:*', 'create_customer'])."
+            )
+        self.capabilities = normalized if capabilities is not None else None
+        self.kernel = dict(kernel) if kernel is not None else None
         self._tool_specs = self._build_tool_specs()
 
     def _build_tool_specs(self) -> List[_ToolSpec]:
@@ -272,6 +287,29 @@ class EmbeddedAgentToolkit:
         )
 
         return [
+            _ToolSpec(
+                name="execute_kernel_command",
+                description=(
+                    "Preview or apply a governed high-risk commerce command. "
+                    "Policy, principal, and store scope are supplied by the trusted host."
+                ),
+                input_schema=_object_schema(
+                    {
+                        "command_type": _string_schema("Namespaced governed command type."),
+                        "idempotency_key": _string_schema("Stable semantic retry key."),
+                        "payload": {
+                            "type": "object",
+                            "description": "Typed payload for the selected command.",
+                        },
+                        "expected_version": _integer_schema(
+                            "Optional expected aggregate version for optimistic concurrency."
+                        ),
+                    },
+                    required=["command_type", "idempotency_key", "payload"],
+                ),
+                side_effect="write",
+                handler=self._execute_kernel_command,
+            ),
             _ToolSpec(
                 name="list_customers",
                 description="List customers stored in the local embedded commerce engine.",
@@ -483,10 +521,24 @@ class EmbeddedAgentToolkit:
         ]
 
     def _select_specs(self, filter: Optional[Sequence[str]] = None) -> List[_ToolSpec]:
-        if not filter:
-            return list(self._tool_specs)
-        selected = {_normalize_tool_name(name) for name in filter}
-        return [spec for spec in self._tool_specs if spec.name in selected]
+        selected = {_normalize_tool_name(name) for name in filter} if filter else None
+        return [
+            spec
+            for spec in self._tool_specs
+            if (selected is None or spec.name in selected)
+            and (spec.name != "execute_kernel_command" or self.kernel is not None)
+            and self._capability_allows(spec)
+        ]
+
+    def _capability_allows(self, spec: _ToolSpec) -> bool:
+        if self.capabilities is None:
+            return True
+        return bool(
+            "*" in self.capabilities
+            or spec.name in self.capabilities
+            or f"permission:{spec.side_effect}" in self.capabilities
+            or (spec.side_effect == "read" and "read:*" in self.capabilities)
+        )
 
     def create_tool_descriptors(
         self,
@@ -607,8 +659,20 @@ class EmbeddedAgentToolkit:
                 "preview": False,
                 "error": f"Unknown tool: {normalized_name}",
             }
+        if not self._capability_allows(spec):
+            return {
+                "success": False,
+                "tool": normalized_name,
+                "status": "forbidden",
+                "preview": False,
+                "error": f"Tool '{normalized_name}' is outside this toolkit's capability scope.",
+            }
 
-        if spec.side_effect == "write" and not self.allow_apply:
+        if (
+            spec.side_effect == "write"
+            and spec.name != "execute_kernel_command"
+            and not self.allow_apply
+        ):
             return {
                 "success": True,
                 "tool": spec.name,
@@ -685,6 +749,70 @@ class EmbeddedAgentToolkit:
         if limit is not None:
             customers = customers[: int(limit)]
         return {"count": len(customers), "customers": customers}
+
+    def _execute_kernel_command(self, params: Mapping[str, Any]) -> JsonDict:
+        if self.kernel is None:
+            raise ValueError(
+                "execute_kernel_command requires trusted kernel configuration on the toolkit."
+            )
+        policy = self.kernel.get("policy")
+        principal = self.kernel.get("principal")
+        store_id = self.kernel.get("store_id") or self.kernel.get("storeId")
+        if not isinstance(policy, Mapping):
+            raise ValueError("kernel.policy must be trusted host policy configuration.")
+        if not isinstance(principal, Mapping):
+            raise ValueError("kernel.principal must be trusted host identity configuration.")
+        if not store_id:
+            raise ValueError("kernel.store_id is required.")
+
+        command_type = str(params["command_type"])
+        if self.capabilities is not None and not bool(
+            "*" in self.capabilities or command_type in self.capabilities
+        ):
+            raise PermissionError(
+                f"Kernel command '{command_type}' is outside this toolkit's capability scope."
+            )
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        command: JsonDict = {
+            "contract_version": "1.0",
+            "command_id": str(uuid.uuid4()),
+            "idempotency_key": str(params["idempotency_key"]),
+            "command_type": command_type,
+            "principal": {
+                "id": principal.get("id"),
+                "kind": principal.get("kind", "agent"),
+                "tenant_id": principal.get("tenant_id") or principal.get("tenantId"),
+                "delegated_by": principal.get("delegated_by") or principal.get("delegatedBy"),
+                "capabilities": [str(value) for value in principal.get("capabilities", [])],
+            },
+            "store_id": str(store_id),
+            "correlation_id": params.get("correlation_id"),
+            "causation_id": params.get("causation_id"),
+            "expected_version": params.get("expected_version"),
+            "policy_version": policy.get("version"),
+            "approval": None,
+            "authority": None,
+            "deadline": params.get("deadline"),
+            "trace_id": params.get("trace_id"),
+            "mode": "apply" if self.allow_apply else "preview",
+            "payload": dict(params["payload"]),
+            "issued_at": now,
+        }
+        approval = self.kernel.get("approval")
+        command["approval"] = approval(command) if callable(approval) else approval
+        authorize = self.kernel.get("authorize")
+        command["authority"] = authorize(command) if callable(authorize) else None
+
+        receipt_json = self.commerce.execute_kernel_command(
+            json.dumps(command), json.dumps(dict(policy))
+        )
+        receipt = json.loads(receipt_json)
+        return {
+            "kernel": True,
+            "command_type": command_type,
+            "receipt": receipt,
+            "result": receipt.get("result"),
+        }
 
     def _get_customer(self, params: Mapping[str, Any]) -> Any:
         customer_id = params.get("id")
@@ -824,7 +952,14 @@ class EmbeddedAgentToolkit:
 def create_embedded_agent_toolkit(
     commerce: Commerce,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
+    kernel: Optional[Mapping[str, Any]] = None,
 ) -> EmbeddedAgentToolkit:
     """Create the native Python agent toolkit over an embedded Commerce instance."""
 
-    return EmbeddedAgentToolkit(commerce=commerce, allow_apply=allow_apply)
+    return EmbeddedAgentToolkit(
+        commerce=commerce,
+        allow_apply=allow_apply,
+        capabilities=capabilities,
+        kernel=kernel,
+    )

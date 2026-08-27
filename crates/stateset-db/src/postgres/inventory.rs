@@ -1,6 +1,8 @@
 //! PostgreSQL inventory repository implementation
 
+use super::kernel_outbox::append_kernel_event_tx;
 use super::map_db_error;
+use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -53,7 +55,7 @@ struct InventoryBalanceRow {
 }
 
 #[derive(FromRow)]
-struct ReservationRow {
+pub(crate) struct ReservationRow {
     id: Uuid,
     item_id: i64,
     location_id: i32,
@@ -113,7 +115,7 @@ impl PgInventoryRepository {
         }
     }
 
-    fn row_to_reservation(row: ReservationRow) -> Result<InventoryReservation> {
+    pub(crate) fn row_to_reservation(row: ReservationRow) -> Result<InventoryReservation> {
         let status: ReservationStatus = row.status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
                 "Invalid inventory_reservation.status '{}': {}",
@@ -220,7 +222,7 @@ impl PgInventoryRepository {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         input: &ReserveInventory,
-    ) -> Result<InventoryReservation> {
+    ) -> Result<(InventoryReservation, Uuid)> {
         validate_quantity(input.quantity)?;
 
         let now = Utc::now();
@@ -318,17 +320,40 @@ impl PgInventoryRepository {
             });
         }
 
-        Ok(InventoryReservation {
-            id,
-            item_id,
-            location_id,
-            quantity: input.quantity,
-            status: ReservationStatus::Pending,
-            reference_type: input.reference_type.clone(),
-            reference_id: input.reference_id.clone(),
-            expires_at,
-            created_at: now,
-        })
+        let event = KernelOutboxEvent::domain(
+            "inventory.reservation_created.v1",
+            "inventory_reservation",
+            id.to_string(),
+            serde_json::json!({
+                "reservation_id": id.to_string(),
+                "item_id": item_id,
+                "sku": input.sku,
+                "location_id": location_id,
+                "quantity": input.quantity.to_string(),
+                "reference_type": input.reference_type,
+                "reference_id": input.reference_id,
+                "status": ReservationStatus::Pending.to_string(),
+                "balance_version": current_version + 1,
+            }),
+            None,
+        );
+        let event_id = event.id;
+        append_kernel_event_tx(tx.as_mut(), &event).await?;
+
+        Ok((
+            InventoryReservation {
+                id,
+                item_id,
+                location_id,
+                quantity: input.quantity,
+                status: ReservationStatus::Pending,
+                reference_type: input.reference_type.clone(),
+                reference_id: input.reference_id.clone(),
+                expires_at,
+                created_at: now,
+            },
+            event_id,
+        ))
     }
 
     pub(crate) async fn list_reservation_ids_by_reference_in_tx(
@@ -438,6 +463,25 @@ impl PgInventoryRepository {
             .await
             .map_err(map_db_error)?;
 
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_released.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": res.item_id,
+                    "location_id": res.location_id,
+                    "quantity": res.quantity.to_string(),
+                    "status": ReservationStatus::Released.to_string(),
+                    "balance_version": current_version + 1,
+                }),
+                None,
+            ),
+        )
+        .await?;
+
         Ok(())
     }
 
@@ -466,6 +510,9 @@ impl PgInventoryRepository {
         if status == ReservationStatus::Released || status == ReservationStatus::Cancelled {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
+        if status == ReservationStatus::Confirmed {
+            return Ok(ReservationConfirmOutcome::Confirmed);
+        }
         if status == ReservationStatus::Expired {
             return Ok(ReservationConfirmOutcome::Expired);
         }
@@ -490,6 +537,24 @@ impl PgInventoryRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_confirmed.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": res.item_id,
+                    "location_id": res.location_id,
+                    "quantity": res.quantity.to_string(),
+                    "status": ReservationStatus::Confirmed.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await?;
 
         Ok(ReservationConfirmOutcome::Confirmed)
     }
@@ -551,6 +616,9 @@ impl PgInventoryRepository {
         if matches!(status, ReservationStatus::Released | ReservationStatus::Cancelled) {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
+        if status == ReservationStatus::Confirmed {
+            return Ok(ReservationConfirmOutcome::Confirmed);
+        }
         if status == ReservationStatus::Expired {
             return Ok(ReservationConfirmOutcome::Expired);
         }
@@ -578,6 +646,7 @@ impl PgInventoryRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        let confirmed_id = Uuid::new_v4();
         sqlx::query(
             r#"
             INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status,
@@ -585,7 +654,7 @@ impl PgInventoryRepository {
             VALUES ($1, $2, $3, $4, 'confirmed', $5, $6, NULL, $7)
             "#,
         )
-        .bind(Uuid::new_v4())
+        .bind(confirmed_id)
         .bind(res.item_id)
         .bind(res.location_id)
         .bind(quantity)
@@ -595,6 +664,26 @@ impl PgInventoryRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_confirmed.v1",
+                "inventory_reservation",
+                confirmed_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": confirmed_id.to_string(),
+                    "source_reservation_id": reservation_id.to_string(),
+                    "item_id": res.item_id,
+                    "location_id": res.location_id,
+                    "quantity": quantity.to_string(),
+                    "remaining_quantity": (res.quantity - quantity).to_string(),
+                    "status": ReservationStatus::Confirmed.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await?;
 
         Ok(ReservationConfirmOutcome::Confirmed)
     }
@@ -1037,6 +1126,27 @@ impl PgInventoryRepository {
             });
         }
 
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_created.v1",
+                "inventory_reservation",
+                id.to_string(),
+                serde_json::json!({
+                    "reservation_id": id.to_string(),
+                    "item_id": item_id,
+                    "sku": input.sku,
+                    "location_id": location_id,
+                    "quantity": input.quantity.to_string(),
+                    "reference_type": input.reference_type,
+                    "reference_id": input.reference_id,
+                    "status": ReservationStatus::Pending.to_string(),
+                    "balance_version": current_version + 1,
+                }),
+                None,
+            ),
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(InventoryReservation {
@@ -1185,6 +1295,25 @@ impl PgInventoryRepository {
             .await
             .map_err(map_db_error)?;
 
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_released.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": res.item_id,
+                    "location_id": res.location_id,
+                    "quantity": res.quantity.to_string(),
+                    "status": ReservationStatus::Released.to_string(),
+                    "balance_version": current_version + 1,
+                }),
+                None,
+            ),
+        )
+        .await?;
+
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
@@ -1241,6 +1370,24 @@ impl PgInventoryRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_confirmed.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": res.item_id,
+                    "location_id": res.location_id,
+                    "quantity": res.quantity.to_string(),
+                    "status": ReservationStatus::Confirmed.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 

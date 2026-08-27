@@ -35,6 +35,11 @@ function createClient(args = []) {
   const child = spawn(process.execPath, [BIN, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map();
   let buffer = '';
+  let stderr = '';
+
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
 
   child.stdout.on('data', (chunk) => {
     buffer += chunk;
@@ -47,9 +52,27 @@ function createClient(args = []) {
       const waiter = pending.get(message.id);
       if (waiter) {
         pending.delete(message.id);
-        waiter(message);
+        clearTimeout(waiter.timer);
+        waiter.resolve(message);
       }
     }
+  });
+
+  const rejectPending = (reason) => {
+    for (const { reject, timer } of pending.values()) {
+      clearTimeout(timer);
+      reject(reason);
+    }
+    pending.clear();
+  };
+
+  child.on('error', rejectPending);
+  child.on('exit', (code, signal) => {
+    rejectPending(
+      new Error(
+        `stateset-mcp exited before responding (code=${code}, signal=${signal})${stderr ? `: ${stderr.trim()}` : ''}`,
+      ),
+    );
   });
 
   const request = (message, timeoutMs = 30_000) =>
@@ -58,10 +81,7 @@ function createClient(args = []) {
         () => reject(new Error(`timed out waiting for id ${message.id}`)),
         timeoutMs,
       );
-      pending.set(message.id, (response) => {
-        clearTimeout(timer);
-        resolve(response);
-      });
+      pending.set(message.id, { resolve, reject, timer });
       child.stdin.write(`${JSON.stringify(message)}\n`);
     });
 
@@ -79,7 +99,7 @@ describe('mcp stdio — protocol 2026-07-28', () => {
   let client;
 
   before(() => {
-    client = createClient(['--db', ':memory:', '--apply']);
+    client = createClient(['--db', ':memory:']);
   });
 
   after(() => client?.close());
@@ -87,7 +107,10 @@ describe('mcp stdio — protocol 2026-07-28', () => {
   it('lists tools with no handshake', async () => {
     const res = await modern(client, 1, 'tools/list');
     assert.ok(!res.error, `tools/list failed: ${res.error?.message}`);
-    assert.ok(res.result.tools.length > 500, `expected the full surface, got ${res.result.tools.length}`);
+    assert.ok(
+      res.result.tools.length > 500,
+      `expected the full surface, got ${res.result.tools.length}`,
+    );
   });
 
   it('calls a tool', async () => {
@@ -153,7 +176,10 @@ describe('mcp stdio — --strict-protocol', () => {
 
   it('still serves 2026-07-28 on the same connection', async () => {
     const res = await modern(client, 2, 'tools/list');
-    assert.ok(!res.error, `modern traffic must survive a rejected legacy opening: ${res.error?.message}`);
+    assert.ok(
+      !res.error,
+      `modern traffic must survive a rejected legacy opening: ${res.error?.message}`,
+    );
     assert.ok(res.result.tools.length > 500);
   });
 });

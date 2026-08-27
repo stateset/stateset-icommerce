@@ -107,7 +107,7 @@ struct SubscriptionItemRow {
 }
 
 #[derive(FromRow)]
-struct BillingCycleRow {
+pub(crate) struct BillingCycleRow {
     id: Uuid,
     subscription_id: Uuid,
     cycle_number: i32,
@@ -364,7 +364,7 @@ impl PgSubscriptionRepository {
         }
     }
 
-    fn row_to_billing_cycle(row: BillingCycleRow) -> Result<BillingCycle> {
+    pub(crate) fn row_to_billing_cycle(row: BillingCycleRow) -> Result<BillingCycle> {
         let BillingCycleRow {
             id,
             subscription_id,

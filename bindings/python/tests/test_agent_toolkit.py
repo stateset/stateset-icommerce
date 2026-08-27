@@ -77,7 +77,11 @@ def test_write_tool_previews_when_apply_disabled():
 
 def test_write_tool_executes_when_apply_enabled():
     commerce = Commerce(":memory:")
-    toolkit = create_embedded_agent_toolkit(commerce, allow_apply=True)
+    toolkit = create_embedded_agent_toolkit(
+        commerce,
+        allow_apply=True,
+        capabilities=["read:*", "create_customer"],
+    )
 
     result = toolkit.execute_tool(
         "create_customer",
@@ -92,6 +96,79 @@ def test_write_tool_executes_when_apply_enabled():
     assert result["status"] == "success"
     assert result["result"]["email"] == "write@example.com"
     assert commerce.customers.count() == 1
+
+
+def test_apply_toolkit_requires_and_enforces_capability_scope():
+    commerce = Commerce(":memory:")
+    try:
+        create_embedded_agent_toolkit(commerce, allow_apply=True)
+        assert False, "unscoped apply toolkit must be rejected"
+    except ValueError as error:
+        assert "requires explicit capabilities" in str(error)
+
+    toolkit = create_embedded_agent_toolkit(
+        commerce,
+        allow_apply=True,
+        capabilities=["read:*", "create_customer"],
+    )
+    names = {tool["name"] for tool in toolkit.get_tools()}
+    assert "list_customers" in names
+    assert "create_customer" in names
+    assert "create_order" not in names
+    result = toolkit.execute_tool("create_order", {})
+    assert result["status"] == "forbidden"
+
+
+def test_kernel_tool_uses_host_policy_and_returns_durable_receipt():
+    commerce = Commerce(":memory:")
+    toolkit = create_embedded_agent_toolkit(
+        commerce,
+        allow_apply=True,
+        capabilities=["execute_kernel_command", "payments.create"],
+        kernel={
+            "store_id": "store-1",
+            "principal": {
+                "id": "agent-1",
+                "kind": "agent",
+                "tenant_id": "tenant-1",
+                "delegated_by": "user-1",
+                "capabilities": ["payments.create"],
+            },
+            "policy": {
+                "version": "agent-policy-1",
+                "commands": {
+                    "payments.create": {
+                        "required_capabilities": ["payments.create"],
+                        "requires_approval": False,
+                        "requires_tenant": True,
+                        "requires_store": True,
+                        "requires_agent_delegation": True,
+                        "requires_signed_authority": False,
+                    }
+                },
+                "trusted_authority_keys": {},
+            },
+        },
+    )
+
+    result = toolkit.execute_tool(
+        "execute_kernel_command",
+        {
+            "command_type": "payments.create",
+            "idempotency_key": "python-payment-1",
+            "payload": {
+                "amount": "12.34",
+                "currency": "USD",
+                "payment_method": "credit_card",
+            },
+        },
+    )
+
+    assert result["success"] is True, result
+    assert result["result"]["kernel"] is True
+    assert result["result"]["receipt"]["status"] == "succeeded"
+    assert result["result"]["receipt"]["idempotency_key"] == "python-payment-1"
+    assert commerce.payments.count() == 1
 
 
 def test_execute_openai_tool_call_returns_output_message():
@@ -287,6 +364,7 @@ def test_framework_entry_points_preserve_write_gating():
     apply_tools = create_autogen_module_tools(
         Commerce(":memory:"),
         allow_apply=True,
+        capabilities=["create_customer"],
         filter=["create_customer"],
         tool_factory=factory,
     )
@@ -328,6 +406,7 @@ def test_openai_entry_points_preserve_write_gating():
             },
         },
         allow_apply=True,
+        capabilities=["create_customer"],
     )
     tools = create_openai_module_tools(Commerce(":memory:"), filter=["create_customer"])
 
@@ -365,6 +444,7 @@ def test_generic_entry_points_preserve_write_gating():
             "last_name": "Now",
         },
         allow_apply=True,
+        capabilities=["create_customer"],
     )
 
     assert descriptors[0].execute(

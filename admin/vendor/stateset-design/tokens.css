@@ -1,0 +1,371 @@
+:root {
+  color-scheme: light;
+
+  /* Intelligent Commerce — Inter throughout (display is Inter at heavier weight
+     and tighter tracking, per the brand spec). Mono for tabular values. */
+  --ds-font-sans:
+    'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ds-font-display:
+    'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ds-font-mono: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, monospace;
+
+  /* Tracking — −2% on display sizes, neutral on body (brand typography spec). */
+  --ds-tracking-display: -0.02em;
+  --ds-tracking-heading: -0.02em;
+  --ds-tracking-tight: -0.01em;
+  --ds-tracking-normal: 0em;
+  --ds-tracking-kicker: 0.16em;
+
+  /* Surfaces — light docs surface, deep-navy ink. */
+  --ds-background: 210 60% 99%;
+  --ds-foreground: 221 80% 6%;
+  --ds-card: 0 0% 100%;
+  --ds-card-foreground: 221 80% 6%;
+  --ds-popover: 0 0% 100%;
+  --ds-popover-foreground: 221 80% 6%;
+
+  /* Brand — electric indigo #0D41E1. */
+  --ds-primary: 221 83% 53%;
+  --ds-primary-foreground: 0 0% 100%;
+  --ds-secondary: 215 100% 95%;
+  --ds-secondary-foreground: 225 60% 22%;
+  --ds-muted: 220 60% 97%;
+  --ds-muted-foreground: 222 12% 42%;
+  --ds-accent: 221 84% 63%;
+  --ds-accent-foreground: 0 0% 100%;
+
+  /* Semantic (brand color spec). */
+  --ds-destructive: 4 86% 58%;
+  --ds-destructive-foreground: 0 0% 100%;
+  --ds-success: 152 82% 39%;
+  --ds-success-foreground: 0 0% 100%;
+  --ds-warning: 35 92% 50%;
+  --ds-warning-foreground: 0 0% 100%;
+  --ds-info: 211 96% 58%;
+  --ds-info-foreground: 0 0% 100%;
+
+  --ds-border: 216 38% 91%;
+  --ds-input: 216 38% 91%;
+  --ds-ring: 221 83% 53%;
+
+  --ds-sidebar-bg: 220 50% 98%;
+  --ds-sidebar-foreground: 221 60% 12%;
+  --ds-sidebar-border: 216 38% 91%;
+  --ds-sidebar-accent: 221 83% 53%;
+  --ds-sidebar-accent-foreground: 0 0% 100%;
+
+  /* Electric-indigo brand ramp (#F1F9FF → #030B1C). */
+  --ds-brand-50: 210 100% 97%;
+  --ds-brand-100: 210 100% 93%;
+  --ds-brand-200: 215 100% 87%;
+  --ds-brand-300: 220 100% 82%;
+  --ds-brand-400: 222 96% 75%;
+  --ds-brand-500: 221 84% 63%;
+  --ds-brand-600: 221 82% 58%;
+  --ds-brand-700: 221 83% 53%;
+  --ds-brand-800: 222 80% 44%;
+  --ds-brand-900: 223 78% 33%;
+  --ds-brand-950: 221 80% 6%;
+
+  /* Coral — sparing warm complement (badges/alt metric tone). */
+  --ds-coral-50: 20 100% 96%;
+  --ds-coral-100: 24 100% 91%;
+  --ds-coral-200: 26 100% 83%;
+  --ds-coral-300: 27 100% 73%;
+  --ds-coral-400: 27 98% 64%;
+  --ds-coral-500: 25 95% 53%;
+  --ds-coral-600: 22 92% 47%;
+  --ds-coral-700: 19 83% 39%;
+  --ds-coral-800: 18 75% 30%;
+  --ds-coral-900: 16 66% 22%;
+  --ds-coral-950: 15 60% 13%;
+
+  --ds-chart-1: 221 83% 53%;
+  --ds-chart-2: 152 82% 39%;
+  --ds-chart-3: 221 84% 63%;
+  --ds-chart-4: 262 83% 58%;
+  --ds-chart-5: 35 92% 50%;
+  --ds-chart-grid: 216 30% 88%;
+
+  /* Operational status tones (data tokens, not a skin). */
+  --ds-status-ok: 152 82% 39%;
+  --ds-status-run: 221 83% 53%;
+  --ds-status-warn: 35 92% 50%;
+  --ds-status-fail: 4 86% 58%;
+  --ds-status-review: 262 83% 58%;
+  --ds-status-idle: 222 10% 56%;
+
+  /* Intelligence accent — the signature of Intelligent Commerce. On-brand
+     electric indigo, reserved for agent / model / reasoning surfaces so the
+     system visibly thinks and acts. Distinct in glow, not in hue. */
+  --ds-agent: 221 83% 53%;
+  --ds-agent-foreground: 0 0% 100%;
+  --ds-agent-muted: 221 83% 53% / 0.1;
+  --ds-agent-glow: 0 0 0 1px hsl(221 83% 53% / 0.35), 0 8px 28px -12px hsl(221 84% 64% / 0.5);
+
+  --ds-enterprise-canvas: 210 50% 99%;
+  --ds-enterprise-surface: 0 0% 100%;
+  --ds-enterprise-surface-raised: 210 60% 99%;
+  --ds-enterprise-line: 216 38% 91%;
+  --ds-enterprise-line-strong: 216 34% 84%;
+  --ds-enterprise-header: 221 80% 6%;
+  --ds-enterprise-header-foreground: 210 100% 97%;
+  --ds-enterprise-focus: 221 83% 53%;
+
+  --ds-radius-sm: 0.5rem;
+  --ds-radius-md: 0.75rem;
+  --ds-radius-lg: 1rem;
+  --ds-radius-xl: 1.5rem;
+  --ds-radius-pill: 999px;
+  --ds-sidebar-width: 17.5rem;
+  --ds-density-compact: 0.75rem;
+  --ds-density-comfortable: 1rem;
+  --ds-density-spacious: 1.5rem;
+
+  --ds-shadow-card: 0 1px 2px rgba(3, 11, 28, 0.05), 0 8px 20px -18px rgba(3, 11, 28, 0.22);
+  --ds-shadow-card-hover:
+    0 2px 5px rgba(3, 11, 28, 0.08), 0 14px 32px -22px rgba(3, 11, 28, 0.3);
+  --ds-shadow-panel: 0 1px 2px rgba(3, 11, 28, 0.06), 0 24px 60px -34px rgba(3, 11, 28, 0.32);
+  --ds-shadow-focus: 0 0 0 3px hsl(221 83% 53% / 0.2);
+
+  --ds-gradient-canvas:
+    radial-gradient(circle at top right, hsl(221 83% 53% / 0.07), transparent 42%),
+    linear-gradient(180deg, hsl(var(--ds-enterprise-canvas)), hsl(var(--ds-muted)));
+  --ds-gradient-panel: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.94),
+    rgba(244, 248, 255, 0.98)
+  );
+  --ds-gradient-accent: linear-gradient(135deg, hsl(var(--ds-primary)), hsl(var(--ds-accent)));
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Deep space navy #030B1C ground. */
+  --ds-background: 221 80% 6%;
+  --ds-foreground: 210 100% 97%;
+  --ds-card: 221 56% 9%;
+  --ds-card-foreground: 210 100% 97%;
+  --ds-popover: 221 56% 9%;
+  --ds-popover-foreground: 210 100% 97%;
+
+  --ds-primary: 219 90% 66%;
+  --ds-primary-foreground: 221 80% 6%;
+  --ds-secondary: 221 40% 15%;
+  --ds-secondary-foreground: 210 60% 92%;
+  --ds-muted: 221 36% 13%;
+  --ds-muted-foreground: 215 22% 66%;
+  --ds-accent: 222 96% 75%;
+  --ds-accent-foreground: 221 80% 6%;
+
+  --ds-destructive: 4 84% 64%;
+  --ds-destructive-foreground: 0 0% 100%;
+  --ds-success: 152 70% 48%;
+  --ds-success-foreground: 0 0% 100%;
+  --ds-warning: 35 94% 58%;
+  --ds-warning-foreground: 221 80% 6%;
+  --ds-info: 211 92% 66%;
+  --ds-info-foreground: 221 80% 6%;
+
+  --ds-border: 221 32% 18%;
+  --ds-input: 221 32% 18%;
+  --ds-ring: 219 90% 66%;
+
+  --ds-sidebar-bg: 222 70% 5%;
+  --ds-sidebar-foreground: 210 60% 90%;
+  --ds-sidebar-border: 221 36% 13%;
+  --ds-sidebar-accent: 219 90% 66%;
+  --ds-sidebar-accent-foreground: 221 80% 6%;
+
+  --ds-brand-50: 221 70% 12%;
+  --ds-brand-100: 224 64% 18%;
+  --ds-brand-200: 225 66% 26%;
+  --ds-brand-300: 225 72% 36%;
+  --ds-brand-400: 225 80% 50%;
+  --ds-brand-500: 221 84% 63%;
+  --ds-brand-600: 222 96% 75%;
+  --ds-brand-700: 220 100% 82%;
+  --ds-brand-800: 215 100% 87%;
+  --ds-brand-900: 210 100% 93%;
+  --ds-brand-950: 210 100% 97%;
+
+  --ds-coral-50: 15 50% 14%;
+  --ds-coral-100: 16 54% 20%;
+  --ds-coral-200: 18 58% 28%;
+  --ds-coral-300: 19 68% 38%;
+  --ds-coral-400: 24 86% 52%;
+  --ds-coral-500: 25 100% 62%;
+  --ds-coral-600: 27 100% 70%;
+  --ds-coral-700: 27 100% 78%;
+  --ds-coral-800: 26 100% 86%;
+  --ds-coral-900: 22 100% 92%;
+  --ds-coral-950: 20 100% 97%;
+
+  --ds-chart-1: 219 90% 66%;
+  --ds-chart-2: 152 70% 48%;
+  --ds-chart-3: 222 96% 75%;
+  --ds-chart-4: 262 86% 74%;
+  --ds-chart-5: 35 94% 58%;
+  --ds-chart-grid: 221 28% 22%;
+
+  --ds-status-ok: 152 70% 48%;
+  --ds-status-run: 219 90% 66%;
+  --ds-status-warn: 35 94% 58%;
+  --ds-status-fail: 4 84% 64%;
+  --ds-status-review: 262 86% 74%;
+  --ds-status-idle: 215 16% 58%;
+
+  --ds-agent: 219 90% 66%;
+  --ds-agent-foreground: 221 80% 6%;
+  --ds-agent-muted: 219 90% 66% / 0.16;
+  --ds-agent-glow: 0 0 0 1px hsl(219 90% 66% / 0.4), 0 10px 32px -12px hsl(219 90% 66% / 0.55);
+
+  --ds-enterprise-canvas: 221 80% 6%;
+  --ds-enterprise-surface: 221 56% 9%;
+  --ds-enterprise-surface-raised: 221 44% 12%;
+  --ds-enterprise-line: 221 32% 18%;
+  --ds-enterprise-line-strong: 221 30% 26%;
+  --ds-enterprise-header: 222 70% 5%;
+  --ds-enterprise-header-foreground: 210 100% 97%;
+  --ds-enterprise-focus: 219 90% 66%;
+
+  --ds-shadow-card: 0 2px 8px -2px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --ds-shadow-card-hover:
+    0 16px 34px -16px rgba(0, 0, 0, 0.52), 0 8px 22px -18px rgba(0, 0, 0, 0.42);
+  --ds-shadow-panel: 0 32px 70px -28px rgba(0, 0, 0, 0.66), 0 12px 28px -18px rgba(0, 0, 0, 0.46);
+  --ds-shadow-focus: 0 0 0 4px hsl(219 90% 66% / 0.28);
+
+  --ds-gradient-canvas:
+    radial-gradient(circle at top right, hsl(219 90% 66% / 0.12), transparent 44%),
+    linear-gradient(180deg, hsl(var(--ds-enterprise-canvas)), hsl(var(--ds-background)));
+  --ds-gradient-panel: linear-gradient(180deg, rgba(10, 18, 38, 0.94), rgba(3, 11, 28, 0.98));
+  --ds-gradient-accent: linear-gradient(135deg, hsl(var(--ds-primary)), hsl(var(--ds-accent)));
+}
+
+html,
+body {
+  font-family: var(--ds-font-sans);
+}
+
+body {
+  background-color: hsl(var(--ds-background));
+  color: hsl(var(--ds-foreground));
+  background-image: var(--ds-gradient-canvas);
+}
+
+.ds-app-frame {
+  min-height: 100vh;
+  background-image: var(--ds-gradient-canvas);
+}
+
+.ds-premium-panel {
+  position: relative;
+  overflow: hidden;
+  background: var(--ds-gradient-panel);
+  box-shadow: var(--ds-shadow-panel);
+}
+
+.ds-enterprise-panel {
+  border: 1px solid hsl(var(--ds-enterprise-line) / 0.78);
+  background: hsl(var(--ds-enterprise-surface) / 0.96);
+  box-shadow: var(--ds-shadow-card);
+}
+
+.ds-enterprise-header {
+  background: hsl(var(--ds-enterprise-header));
+  color: hsl(var(--ds-enterprise-header-foreground));
+}
+
+.ds-focus-ring {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.ds-focus-ring:focus-visible {
+  box-shadow: var(--ds-shadow-focus);
+  outline-color: hsl(var(--ds-enterprise-focus));
+}
+
+.ds-premium-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    120deg,
+    transparent 0%,
+    hsl(221 84% 64% / 0.1) 18%,
+    transparent 36%
+  );
+  opacity: 0.5;
+}
+
+.ds-instrument-number {
+  font-family: var(--ds-font-mono);
+  font-style: normal;
+  font-weight: 650;
+  letter-spacing: var(--ds-tracking-tight);
+  line-height: 0.95;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Editorial display — confident, tightly tracked headlines (Inter). */
+.ds-display {
+  font-family: var(--ds-font-display);
+  font-weight: 700;
+  letter-spacing: var(--ds-tracking-display);
+  line-height: 1.02;
+}
+
+.ds-headline {
+  font-family: var(--ds-font-display);
+  font-weight: 600;
+  letter-spacing: var(--ds-tracking-heading);
+  line-height: 1.1;
+}
+
+.ds-kicker {
+  font-family: var(--ds-font-sans);
+  font-weight: 600;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: var(--ds-tracking-kicker);
+  color: hsl(var(--ds-accent));
+}
+
+/* Agent surface — the visible signature of Intelligent Commerce. Use only where
+   the system is reasoning or acting on the user's behalf. */
+.ds-agent-panel {
+  border: 1px solid hsl(var(--ds-agent) / 0.28);
+  background: hsl(var(--ds-agent) / 0.05);
+  box-shadow: var(--ds-agent-glow);
+}
+
+/* "Thinking" — a restrained sweep that runs only while an agent is actively
+   working. Functional motion, not decoration; it stops when work stops. */
+@keyframes ds-thinking {
+  0% {
+    background-position: -150% 0;
+  }
+  100% {
+    background-position: 150% 0;
+  }
+}
+
+.ds-thinking {
+  background-image: linear-gradient(
+    100deg,
+    transparent 30%,
+    hsl(var(--ds-agent) / 0.14) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: ds-thinking 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-thinking {
+    animation: none;
+  }
+}

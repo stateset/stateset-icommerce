@@ -34,6 +34,8 @@ mod integration_field_mappings;
 mod integration_mappings;
 mod inventory;
 mod invoices;
+mod kernel_executor;
+mod kernel_outbox;
 mod lots;
 mod loyalty;
 mod orders;
@@ -109,6 +111,8 @@ pub use integration_field_mappings::*;
 pub use integration_mappings::*;
 pub use inventory::*;
 pub use invoices::*;
+pub use kernel_executor::*;
+pub use kernel_outbox::*;
 pub use lots::*;
 pub use loyalty::*;
 pub use orders::*;
@@ -403,6 +407,29 @@ impl PostgresDatabase {
             "073_warehouse_bins_return_disposition",
             include_str!("migrations/073_warehouse_bins_return_disposition.sql"),
         ));
+        migrations.push(("074_kernel_outbox", include_str!("migrations/074_kernel_outbox.sql")));
+        migrations.push((
+            "075_kernel_outbox_delivery",
+            include_str!("migrations/075_kernel_outbox_delivery.sql"),
+        ));
+        migrations.push((
+            "076_kernel_receipt_audit_chain",
+            include_str!("migrations/076_kernel_receipt_audit_chain.sql"),
+        ));
+        migrations
+            .push(("077_a2a_escrow_kernel", include_str!("migrations/077_a2a_escrow_kernel.sql")));
+        migrations.push((
+            "078_a2a_dispute_kernel",
+            include_str!("migrations/078_a2a_dispute_kernel.sql"),
+        ));
+        migrations.push((
+            "079_product_exact_money",
+            include_str!("migrations/079_product_exact_money.sql"),
+        ));
+        migrations.push((
+            "080_inventory_exact_quantity",
+            include_str!("migrations/080_inventory_exact_quantity.sql"),
+        ));
 
         migrations
     }
@@ -566,6 +593,16 @@ impl PostgresDatabase {
     /// Get payment repository
     pub fn payments(&self) -> PgPaymentRepository {
         PgPaymentRepository::new(self.pool.clone())
+    }
+
+    /// Get the durable kernel outbox consumer API.
+    pub fn kernel_outbox(&self) -> PgKernelOutboxRepository {
+        PgKernelOutboxRepository::new(self.pool.clone())
+    }
+
+    /// Create an envelope-aware executor governed by the supplied policy revision.
+    pub fn kernel_executor(&self, policy: stateset_core::KernelPolicy) -> PgKernelExecutor {
+        PgKernelExecutor::new(self.pool.clone(), policy)
     }
 
     /// Get warranty repository

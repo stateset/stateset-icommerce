@@ -141,7 +141,10 @@ describe('A2AStore column whitelist', { skip: !A2AStore && 'A2AStore not availab
         ['a2a_payment_requests', ['status', 'amount_paid', 'payment_ids']],
         ['a2a_quotes', ['status', 'items', 'negotiation_history', 'total']],
         ['a2a_escrows', ['status', 'intent_id', 'payment_id', 'dispute_id']],
-        ['a2a_disputes', ['status', 'resolution_type', 'resolution_amount']],
+        [
+          'a2a_disputes',
+          ['status', 'resolution_type', 'buyer_amount_decimal', 'seller_amount_decimal'],
+        ],
         ['a2a_feedback', ['comment', 'response', 'is_revoked']],
         ['a2a_services', ['name', 'active', 'pricing_model', 'endpoint_url']],
         ['a2a_notification_log', ['status', 'attempts', 'last_error']],

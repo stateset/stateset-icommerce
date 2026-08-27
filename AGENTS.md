@@ -26,6 +26,22 @@ preview-only by default** — tools describe what they would do; add `--apply`
 to the args to enable mutations. The generated tool catalog is
 [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md).
 
+For an autonomous production endpoint, also provide operator-owned kernel
+policy and principal files. This enables strict mode: only typed governed write
+commands are exposed, while read tools remain available. Identity and policy
+never come from model arguments.
+
+```json
+{
+  "args": [
+    "-y", "-p", "@stateset/cli", "stateset-mcp", "--db", "./store.db", "--apply",
+    "--kernel-policy", "./kernel-policy.json",
+    "--kernel-principal", "./kernel-principal.json",
+    "--kernel-store-id", "store:production"
+  ]
+}
+```
+
 **Over HTTP instead** (hosted deployments, remote agents): `stateset-mcp-http`
 serves the same tools via MCP Streamable HTTP at protocol revision 2026-07-28,
 stateless by construction — no session ids, no per-client state, a fresh server

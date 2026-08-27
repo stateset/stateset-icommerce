@@ -37,8 +37,19 @@ use super::x402::{X402Asset, X402Network};
 // =============================================================================
 
 /// Status of an A2A payment
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
-#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum A2APaymentStatus {
@@ -235,8 +246,10 @@ impl A2APayment {
 }
 
 /// Reference type for A2A payments
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
-#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, Serialize, Deserialize,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum A2AReferenceType {
@@ -263,8 +276,19 @@ pub enum A2AReferenceType {
 // =============================================================================
 
 /// Status of a payment request
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
-#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentRequestStatus {
@@ -570,8 +594,10 @@ impl A2AQuoteStatus {
 // =============================================================================
 
 /// Type of negotiation action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
-#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, Serialize, Deserialize,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum NegotiationType {
@@ -1279,6 +1305,229 @@ pub struct A2AServiceFilter {
     pub search: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+}
+
+/// Lifecycle state for an embedded A2A escrow.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
+pub enum A2AEscrowStatus {
+    Created,
+    Funded,
+    Active,
+    Released,
+    Refunded,
+    Disputed,
+    /// Finalized with an explicit buyer/seller split allocation.
+    Resolved,
+    Expired,
+}
+
+/// Durable escrow record shared by the embedded kernel and A2A adapters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2AEscrow {
+    pub id: String,
+    pub tenant_id: String,
+    pub store_id: String,
+    pub status: A2AEscrowStatus,
+    pub quote_id: Option<String>,
+    pub payment_id: Option<String>,
+    pub buyer_address: String,
+    pub seller_address: String,
+    pub amount: i64,
+    pub amount_decimal: Decimal,
+    pub asset: String,
+    pub network: String,
+    pub release_conditions: Vec<serde_json::Value>,
+    pub funded_at: Option<DateTime<Utc>>,
+    pub released_at: Option<DateTime<Utc>>,
+    pub disputed_at: Option<DateTime<Utc>>,
+    pub dispute_id: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub auto_release_after: Option<DateTime<Utc>>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Governed request to create an exact-decimal A2A escrow.
+///
+/// `amount` is the authoritative value. The legacy integer projection on
+/// [`A2AEscrow`] is retained only for wire compatibility with older adapters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateA2AEscrow {
+    pub quote_id: Option<String>,
+    pub payment_id: Option<String>,
+    pub buyer_address: String,
+    pub seller_address: String,
+    pub amount: Decimal,
+    pub asset: String,
+    pub network: String,
+    #[serde(default)]
+    pub release_conditions: Vec<serde_json::Value>,
+    pub expires_at: DateTime<Utc>,
+    pub auto_release_after: Option<DateTime<Utc>>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Governed request to move a newly-created escrow into active custody.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FundA2AEscrow {
+    pub escrow_id: String,
+}
+
+/// Governed request to freeze an active escrow for dispute resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisputeA2AEscrow {
+    pub escrow_id: String,
+    pub reason: String,
+    pub category: Option<String>,
+}
+
+/// Governed request to release an escrow after every stored condition is met.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseA2AEscrow {
+    pub escrow_id: String,
+}
+
+/// Governed request to return escrowed value to its buyer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundA2AEscrow {
+    pub escrow_id: String,
+    /// Stable reason recorded in the event trail.
+    pub reason: Option<String>,
+}
+
+/// Lifecycle of a durable, tenant-scoped A2A dispute.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum A2ADisputeStatus {
+    #[default]
+    Filed,
+    EvidencePeriod,
+    UnderReview,
+    Escalated,
+    Resolved,
+    Cancelled,
+}
+
+/// Resolution selected by an authorized dispute resolver.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, Serialize, Deserialize,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum A2ADisputeResolutionType {
+    FullRefund,
+    ReleaseToSeller,
+    /// Exact buyer and seller allocations must both be supplied and sum to escrow value.
+    Split,
+    /// Keep funds frozen and move the case to a higher-authority resolver.
+    Escalated,
+}
+
+/// Durable dispute record. Monetary values are exact decimals throughout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2ADispute {
+    pub id: String,
+    pub tenant_id: String,
+    pub store_id: String,
+    pub status: A2ADisputeStatus,
+    pub escrow_id: String,
+    pub quote_id: Option<String>,
+    pub claimant_address: String,
+    pub respondent_address: String,
+    pub reason: String,
+    pub category: String,
+    pub amount: Decimal,
+    pub asset: String,
+    pub resolution_type: Option<A2ADisputeResolutionType>,
+    pub buyer_amount: Option<Decimal>,
+    pub seller_amount: Option<Decimal>,
+    pub resolution_note: Option<String>,
+    pub resolved_by: Option<String>,
+    pub evidence_deadline: DateTime<Utc>,
+    pub review_deadline: DateTime<Utc>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
+}
+
+/// Content-addressed evidence attached to a governed dispute.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2ADisputeEvidence {
+    pub id: String,
+    pub tenant_id: String,
+    pub store_id: String,
+    pub dispute_id: String,
+    pub submitted_by: String,
+    pub evidence_type: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub content: String,
+    pub content_hash: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Governed request to atomically file a dispute and freeze its escrow.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileA2ADispute {
+    pub escrow_id: String,
+    /// Must be either the escrow buyer or seller; the respondent is derived.
+    pub claimant_address: String,
+    pub reason: String,
+    pub category: String,
+    pub evidence_deadline: DateTime<Utc>,
+    pub review_deadline: DateTime<Utc>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Governed request to append immutable, hash-addressed dispute evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubmitA2ADisputeEvidence {
+    pub dispute_id: String,
+    pub submitted_by: String,
+    pub evidence_type: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub content: String,
+}
+
+/// Governed request to atomically resolve a dispute and its escrow.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolveA2ADispute {
+    pub dispute_id: String,
+    pub resolution_type: A2ADisputeResolutionType,
+    /// Required for split; forbidden for other final outcomes.
+    pub buyer_amount: Option<Decimal>,
+    /// Required for split; forbidden for other final outcomes.
+    pub seller_amount: Option<Decimal>,
+    pub note: Option<String>,
+}
+
+/// Atomic result returned by dispute resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2ADisputeResolution {
+    pub dispute: A2ADispute,
+    pub escrow: A2AEscrow,
 }
 
 #[cfg(test)]

@@ -3,7 +3,9 @@
 use super::bins::{
     apply_bin_delta_pg, apply_warehouse_delta_pg, find_disposition_bin_pg, insert_bin_movement_pg,
 };
+use super::kernel_outbox::append_kernel_event_tx;
 use super::{block_on, map_db_error};
+use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
@@ -118,7 +120,7 @@ async fn validate_return_item_pg(
 }
 
 #[derive(FromRow)]
-struct ReturnRow {
+pub(crate) struct ReturnRow {
     id: Uuid,
     order_id: Uuid,
     customer_id: Uuid,
@@ -136,7 +138,7 @@ struct ReturnRow {
 }
 
 #[derive(FromRow)]
-struct ReturnItemRow {
+pub(crate) struct ReturnItemRow {
     id: Uuid,
     return_id: Uuid,
     order_item_id: Uuid,
@@ -155,7 +157,7 @@ impl PgReturnRepository {
         Self { pool }
     }
 
-    fn row_to_return(row: ReturnRow, items: Vec<ReturnItem>) -> Result<Return> {
+    pub(crate) fn row_to_return(row: ReturnRow, items: Vec<ReturnItem>) -> Result<Return> {
         let ReturnRow {
             id,
             order_id,
@@ -199,7 +201,7 @@ impl PgReturnRepository {
         })
     }
 
-    fn row_to_item(row: ReturnItemRow) -> Result<ReturnItem> {
+    pub(crate) fn row_to_item(row: ReturnItemRow) -> Result<ReturnItem> {
         let ReturnItemRow {
             id,
             return_id,
@@ -489,6 +491,32 @@ impl PgReturnRepository {
             });
         }
 
+        let refund_amount: Decimal = items.iter().map(|item| item.refund_amount).sum();
+        sqlx::query("UPDATE returns SET refund_amount = $1 WHERE id = $2")
+            .bind(refund_amount)
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "returns.created.v1",
+                "return",
+                id.to_string(),
+                serde_json::json!({
+                    "return_id": id.to_string(),
+                    "order_id": input.order_id.to_string(),
+                    "status": ReturnStatus::Requested.to_string(),
+                    "refund_amount": refund_amount.to_string(),
+                    "item_count": items.len(),
+                }),
+                input.idempotency_key.clone(),
+            ),
+        )
+        .await?;
+
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(Return {
@@ -499,7 +527,7 @@ impl PgReturnRepository {
             reason: input.reason,
             reason_details: input.reason_details,
             idempotency_key: input.idempotency_key,
-            refund_amount: None,
+            refund_amount: Some(refund_amount),
             refund_method: None,
             tracking_number: None,
             items,
@@ -585,34 +613,78 @@ impl PgReturnRepository {
     /// Update a return (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let existing =
+            sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::ReturnNotFound(id))?;
+        let status_before: ReturnStatus = existing.status.parse().map_err(|error| {
+            CommerceError::DatabaseError(format!(
+                "Invalid return.status '{}': {error}",
+                existing.status
+            ))
+        })?;
+        let status_after = input.status.unwrap_or(status_before);
+        if !status_before.can_transition_to(status_after) {
+            return Err(CommerceError::ValidationError(format!(
+                "Invalid return status transition from {status_before} to {status_after}"
+            )));
+        }
+        let version_before = existing.version;
+        let tracking = input.tracking_number.or(existing.tracking_number);
+        let refund_amount = input.refund_amount.or(existing.refund_amount);
+        let refund_method = input.refund_method.or(existing.refund_method);
+        let notes = input.notes.or(existing.notes);
 
-        let existing = self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))?;
-
-        let new_status = input.status.unwrap_or(existing.status);
-        let new_tracking = input.tracking_number.or(existing.tracking_number);
-        let new_refund_amount = input.refund_amount.or(existing.refund_amount);
-        let new_refund_method = input.refund_method.or(existing.refund_method);
-        let new_notes = input.notes.or(existing.notes);
-
-        sqlx::query(
+        let updated = sqlx::query_as::<_, ReturnRow>(
             r#"
             UPDATE returns
             SET status = $1, tracking_number = $2, refund_amount = $3,
                 refund_method = $4, notes = $5, updated_at = $6,
                 version = version + 1
-            WHERE id = $7
+            WHERE id = $7 AND version = $8
+            RETURNING *
             "#,
         )
-        .bind(new_status.to_string())
-        .bind(&new_tracking)
-        .bind(new_refund_amount)
-        .bind(&new_refund_method)
-        .bind(&new_notes)
+        .bind(status_after.to_string())
+        .bind(&tracking)
+        .bind(refund_amount)
+        .bind(&refund_method)
+        .bind(&notes)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(version_before)
+        .fetch_optional(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .ok_or_else(|| CommerceError::VersionConflict {
+            entity: "return".into(),
+            id: id.to_string(),
+            expected_version: version_before,
+        })?;
+
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "returns.updated.v1",
+                "return",
+                id.to_string(),
+                serde_json::json!({
+                    "return_id": id.to_string(),
+                    "status_before": status_before.to_string(),
+                    "status_after": status_after.to_string(),
+                    "version_before": version_before,
+                    "version_after": updated.version,
+                    "refund_amount": refund_amount.map(|amount| amount.to_string()),
+                }),
+                None,
+            ),
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
     }
@@ -678,59 +750,42 @@ impl PgReturnRepository {
 
     /// Approve a return (async)
     pub async fn approve_async(&self, id: Uuid) -> Result<Return> {
-        sqlx::query(
-            "UPDATE returns SET status = 'approved', updated_at = $1, version = version + 1 WHERE id = $2",
+        self.update_async(
+            id,
+            UpdateReturn { status: Some(ReturnStatus::Approved), ..Default::default() },
         )
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
+        .await
     }
 
     /// Reject a return (async)
     pub async fn reject_async(&self, id: Uuid, reason: &str) -> Result<Return> {
-        sqlx::query(
-            "UPDATE returns SET status = 'rejected', notes = $1, updated_at = $2, version = version + 1 WHERE id = $3",
+        self.update_async(
+            id,
+            UpdateReturn {
+                status: Some(ReturnStatus::Rejected),
+                notes: Some(reason.into()),
+                ..Default::default()
+            },
         )
-        .bind(reason)
-        .bind(Utc::now())
-        .bind(id)
-        .execute(&self.pool)
         .await
-        .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Complete a return (async)
     pub async fn complete_async(&self, id: Uuid) -> Result<Return> {
-        sqlx::query(
-            "UPDATE returns SET status = 'completed', updated_at = $1, version = version + 1 WHERE id = $2",
+        self.update_async(
+            id,
+            UpdateReturn { status: Some(ReturnStatus::Completed), ..Default::default() },
         )
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
+        .await
     }
 
     /// Cancel a return (async)
     pub async fn cancel_async(&self, id: Uuid) -> Result<Return> {
-        sqlx::query(
-            "UPDATE returns SET status = 'cancelled', updated_at = $1, version = version + 1 WHERE id = $2",
+        self.update_async(
+            id,
+            UpdateReturn { status: Some(ReturnStatus::Cancelled), ..Default::default() },
         )
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
+        .await
     }
 
     /// Count returns (async)

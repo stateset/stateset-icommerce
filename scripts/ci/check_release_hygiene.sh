@@ -21,8 +21,8 @@ Validates repo-wide version sync plus release metadata hygiene.
 
 Arguments:
   VERSION_OR_TAG   Optional semantic version or tag name such as:
-                   1.25.0, v1.25.0, cli-v1.25.0, py-v1.25.0, java-v1.25.0,
-                   php-v1.25.0, ruby-v1.25.0
+                   1.26.0, v1.26.0, cli-v1.26.0, py-v1.26.0, java-v1.26.0,
+                   php-v1.26.0, ruby-v1.26.0
 
 Options:
   --github-output PATH   Write version=<normalized-version> to the given file.
@@ -152,6 +152,7 @@ node ./scripts/ci/generate_http_gateway_inventory.mjs --check >/dev/null
 node ./scripts/ci/generate_mcp_api_coverage.mjs --check >/dev/null
 node ./scripts/ci/generate_workspace_inventory.mjs --check >/dev/null
 node ./scripts/ci/generate_rust_openapi_inventory.mjs --check >/dev/null
+node ./scripts/ci/check_kernel_coverage.mjs >/dev/null
 node ./scripts/ci/check_doc_tool_refs.mjs >/dev/null
 node ./scripts/ci/check_workflow_job_refs.mjs >/dev/null
 

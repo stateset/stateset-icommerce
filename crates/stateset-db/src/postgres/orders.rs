@@ -1,10 +1,12 @@
 //! PostgreSQL order repository implementation
 
+use super::kernel_outbox::append_kernel_event_tx;
 use super::{
     backorder::PgBackorderRepository,
     inventory::{PgInventoryRepository, ReservationConfirmOutcome},
     map_db_error,
 };
+use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
@@ -27,7 +29,7 @@ pub struct PgOrderRepository {
 
 /// How a transition to `Shipped` touches the order lines.
 #[derive(Debug, Clone, Copy)]
-enum ShipMode<'a> {
+pub(crate) enum ShipMode<'a> {
     /// Not a shipping update.
     None,
     /// Ship every remaining unit on every line (legacy status flip).
@@ -38,14 +40,14 @@ enum ShipMode<'a> {
 
 /// Units to add to one line's `shipped_quantity`.
 #[derive(Debug, Clone)]
-struct LineDelta {
-    item_id: Uuid,
-    sku: String,
-    delta: i32,
+pub(crate) struct LineDelta {
+    pub(crate) item_id: Uuid,
+    pub(crate) sku: String,
+    pub(crate) delta: i32,
 }
 
 #[derive(FromRow)]
-struct OrderRow {
+pub(crate) struct OrderRow {
     id: Uuid,
     order_number: String,
     customer_id: Uuid,
@@ -67,7 +69,7 @@ struct OrderRow {
 }
 
 #[derive(FromRow)]
-struct OrderItemRow {
+pub(crate) struct OrderItemRow {
     id: Uuid,
     order_id: Uuid,
     product_id: Uuid,
@@ -145,7 +147,7 @@ impl PgOrderRepository {
         Ok(())
     }
 
-    fn validate_order_input(input: &CreateOrder) -> Result<()> {
+    pub(crate) fn validate_order_input(input: &CreateOrder) -> Result<()> {
         validate_required_uuid("order.customer_id", input.customer_id.into_uuid())?;
 
         if let Some(currency) = input.currency {
@@ -176,7 +178,45 @@ impl PgOrderRepository {
         Ok(())
     }
 
-    fn row_to_order(row: OrderRow, items: Vec<OrderItem>) -> Result<Order> {
+    pub(crate) async fn validate_create_order_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        input: &CreateOrder,
+    ) -> Result<()> {
+        Self::validate_order_input(input)?;
+        if input.stock_policy.allows_backorder() {
+            return Ok(());
+        }
+        for item in &input.items {
+            if item.quantity <= 0 {
+                continue;
+            }
+            let item_id: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM inventory_items WHERE sku = $1")
+                    .bind(&item.sku)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            let Some(item_id) = item_id else { continue };
+            let available: Decimal = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(quantity_available), 0) FROM inventory_balances WHERE item_id = $1",
+            )
+            .bind(item_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            let requested = Decimal::from(item.quantity);
+            if available < requested {
+                return Err(CommerceError::InsufficientStock {
+                    sku: item.sku.clone(),
+                    requested: requested.to_string(),
+                    available: available.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn row_to_order(row: OrderRow, items: Vec<OrderItem>) -> Result<Order> {
         let status: OrderStatus = row.status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid order.status '{}': {}", row.status, e))
         })?;
@@ -232,7 +272,7 @@ impl PgOrderRepository {
         })
     }
 
-    fn row_to_item(row: OrderItemRow) -> OrderItem {
+    pub(crate) fn row_to_item(row: OrderItemRow) -> OrderItem {
         OrderItem {
             id: OrderItemId::from(row.id),
             order_id: OrderId::from(row.order_id),
@@ -316,13 +356,37 @@ impl PgOrderRepository {
     ) -> Result<Order> {
         Self::validate_order_input(&input)?;
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let order = self.create_in_tx(&mut tx, cart_id, idempotent_by_cart_id, input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(order)
+    }
+
+    /// Create an order using the caller's transaction. Checkout uses this so
+    /// customer resolution, order/items, inventory reservations, cart state,
+    /// kernel event, and execution receipt share one commit boundary.
+    pub(crate) async fn create_from_cart_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        cart_id: Uuid,
+        input: CreateOrder,
+    ) -> Result<Order> {
+        Self::validate_order_input(&input)?;
+        self.create_in_tx(tx, Some(cart_id), true, input).await
+    }
+
+    async fn create_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        cart_id: Option<Uuid>,
+        idempotent_by_cart_id: bool,
+        input: CreateOrder,
+    ) -> Result<Order> {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
         let inventory_repo = PgInventoryRepository::new(self.pool.clone());
         let backorder_repo = PgBackorderRepository::new(self.pool.clone());
-
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         // Get next order number
         let order_number: (i64,) = sqlx::query_as("SELECT nextval('order_number_seq')")
@@ -447,8 +511,21 @@ impl PgOrderRepository {
         };
 
         if !inserted {
-            tx.rollback().await.map_err(map_db_error)?;
-            return self.get_async(order_id).await?.ok_or(CommerceError::OrderNotFound(order_id));
+            let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1")
+                .bind(order_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::OrderNotFound(order_id))?;
+            let item_rows = sqlx::query_as::<_, OrderItemRow>(
+                "SELECT * FROM order_items WHERE order_id = $1 ORDER BY created_at, id",
+            )
+            .bind(order_id)
+            .fetch_all(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            let items = item_rows.into_iter().map(Self::row_to_item).collect();
+            return Self::row_to_order(row, items);
         }
 
         // Insert order items
@@ -556,7 +633,7 @@ impl PgOrderRepository {
                     expires_in_seconds: None,
                 };
 
-                match inventory_repo.reserve_in_tx(&mut tx, &reserve_input).await {
+                match inventory_repo.reserve_in_tx(tx, &reserve_input).await {
                     Ok(_) => {
                         reserved = reserve_qty;
                     }
@@ -586,11 +663,9 @@ impl PgOrderRepository {
                     source_location_id: None,
                     notes: Some("Auto backorder: insufficient stock".to_string()),
                 };
-                backorder_repo.create_backorder_in_tx(&mut tx, &backorder_input).await?;
+                backorder_repo.create_backorder_in_tx(tx, &backorder_input).await?;
             }
         }
-
-        tx.commit().await.map_err(map_db_error)?;
 
         Ok(Order {
             id: OrderId::from(order_id),
@@ -734,7 +809,7 @@ impl PgOrderRepository {
     }
 
     /// Load the order's lines and compute how many units each ships now.
-    async fn plan_shipment_in_tx(
+    pub(crate) async fn plan_shipment_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
         ship: ShipMode<'_>,
@@ -869,6 +944,7 @@ impl PgOrderRepository {
             shipping_address,
             billing_address,
             version: expected_version,
+            total_amount,
             ..
         } = existing_row;
 
@@ -1061,6 +1137,28 @@ impl PgOrderRepository {
             }
             backorder_repo.cancel_backorders_for_order_in_tx(&mut tx, id).await?;
         }
+
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "orders.updated.v1",
+                "order",
+                id.to_string(),
+                serde_json::json!({
+                    "order_id": id.to_string(),
+                    "status_before": current_status.to_string(),
+                    "status_after": new_status.to_string(),
+                    "payment_status_before": current_payment_status.to_string(),
+                    "payment_status_after": new_payment_status.to_string(),
+                    "fulfillment_status_after": new_fulfillment_status.to_string(),
+                    "version_before": expected_version,
+                    "version_after": expected_version + 1,
+                    "total_amount": total_amount.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 

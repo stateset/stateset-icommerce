@@ -1,11 +1,13 @@
 //! SQLite inventory repository implementation
 
+use super::kernel_outbox::append_kernel_event_tx;
 use super::{
     INITIAL_BACKOFF_MS, MAX_BACKOFF_MS, MAX_RETRIES, build_in_clause, i64_params, map_db_error,
     params_refs, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
     parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid, parse_uuid_row,
     string_params, with_immediate_transaction, with_retry,
 };
+use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -178,7 +180,7 @@ impl SqliteInventoryRepository {
     pub(crate) fn reserve_in_tx(
         tx: &rusqlite::Transaction<'_>,
         input: &ReserveInventory,
-    ) -> std::result::Result<InventoryReservation, rusqlite::Error> {
+    ) -> std::result::Result<(InventoryReservation, Uuid), rusqlite::Error> {
         validate_quantity(input.quantity)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
@@ -334,17 +336,40 @@ impl SqliteInventoryRepository {
             )));
         }
 
-        Ok(InventoryReservation {
-            id: reservation_id,
-            item_id: item.id,
-            location_id,
-            quantity,
-            status: ReservationStatus::Pending,
-            reference_type,
-            reference_id,
-            expires_at,
-            created_at: now,
-        })
+        let event = KernelOutboxEvent::domain(
+            "inventory.reservation_created.v1",
+            "inventory_reservation",
+            reservation_id.to_string(),
+            serde_json::json!({
+                "reservation_id": reservation_id.to_string(),
+                "item_id": item.id,
+                "sku": input.sku,
+                "location_id": location_id,
+                "quantity": quantity.to_string(),
+                "reference_type": reference_type,
+                "reference_id": reference_id,
+                "status": ReservationStatus::Pending.to_string(),
+                "balance_version": current_version + 1,
+            }),
+            None,
+        );
+        let event_id = event.id;
+        append_kernel_event_tx(tx, &event)?;
+
+        Ok((
+            InventoryReservation {
+                id: reservation_id,
+                item_id: item.id,
+                location_id,
+                quantity,
+                status: ReservationStatus::Pending,
+                reference_type,
+                reference_id,
+                expires_at,
+                created_at: now,
+            },
+            event_id,
+        ))
     }
 
     pub(crate) fn list_reservation_ids_by_reference_in_tx(
@@ -460,6 +485,24 @@ impl SqliteInventoryRepository {
             )));
         }
 
+        append_kernel_event_tx(
+            tx,
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_released.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": item_id,
+                    "location_id": location_id,
+                    "quantity": quantity.to_string(),
+                    "status": ReservationStatus::Released.to_string(),
+                    "balance_version": current_version + 1,
+                }),
+                None,
+            ),
+        )?;
+
         Ok(())
     }
 
@@ -510,6 +553,9 @@ impl SqliteInventoryRepository {
         {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
+        if parsed_status == ReservationStatus::Confirmed {
+            return Ok(ReservationConfirmOutcome::Confirmed);
+        }
 
         if parsed_status == ReservationStatus::Expired {
             return Ok(ReservationConfirmOutcome::Expired);
@@ -533,6 +579,23 @@ impl SqliteInventoryRepository {
         tx.execute(
             "UPDATE inventory_reservations SET status = 'confirmed' WHERE id = ?",
             [reservation_id.to_string()],
+        )?;
+
+        append_kernel_event_tx(
+            tx,
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_confirmed.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": item_id,
+                    "location_id": location_id,
+                    "quantity": quantity.to_string(),
+                    "status": ReservationStatus::Confirmed.to_string(),
+                }),
+                None,
+            ),
         )?;
 
         Ok(ReservationConfirmOutcome::Confirmed)
@@ -617,6 +680,9 @@ impl SqliteInventoryRepository {
         if matches!(parsed_status, ReservationStatus::Released | ReservationStatus::Cancelled) {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
+        if parsed_status == ReservationStatus::Confirmed {
+            return Ok(ReservationConfirmOutcome::Confirmed);
+        }
         if parsed_status == ReservationStatus::Expired {
             return Ok(ReservationConfirmOutcome::Expired);
         }
@@ -638,6 +704,7 @@ impl SqliteInventoryRepository {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
 
+        let confirmed_id = Uuid::new_v4();
         tx.execute(
             "UPDATE inventory_reservations SET quantity = ? WHERE id = ?",
             rusqlite::params![(reserved - quantity).to_string(), reservation_id.to_string()],
@@ -646,7 +713,7 @@ impl SqliteInventoryRepository {
             "INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status, reference_type, reference_id, expires_at, created_at)
              VALUES (?, ?, ?, ?, 'confirmed', ?, ?, NULL, ?)",
             rusqlite::params![
-                Uuid::new_v4().to_string(),
+                confirmed_id.to_string(),
                 item_id,
                 location_id,
                 quantity.to_string(),
@@ -654,6 +721,25 @@ impl SqliteInventoryRepository {
                 reference_id,
                 now.to_rfc3339(),
             ],
+        )?;
+
+        append_kernel_event_tx(
+            tx,
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_confirmed.v1",
+                "inventory_reservation",
+                confirmed_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": confirmed_id.to_string(),
+                    "source_reservation_id": reservation_id.to_string(),
+                    "item_id": item_id,
+                    "location_id": location_id,
+                    "quantity": quantity.to_string(),
+                    "remaining_quantity": (reserved - quantity).to_string(),
+                    "status": ReservationStatus::Confirmed.to_string(),
+                }),
+                None,
+            ),
         )?;
 
         Ok(ReservationConfirmOutcome::Confirmed)
@@ -1201,14 +1287,15 @@ impl InventoryRepository for SqliteInventoryRepository {
 
     fn reserve(&self, input: ReserveInventory) -> Result<InventoryReservation> {
         with_inventory_retry(|| {
-            with_immediate_transaction(&self.pool, |tx| Self::reserve_in_tx(tx, &input)).map_err(
-                |e| {
-                    if e.is_not_found() {
-                        return CommerceError::InventoryItemNotFound(input.sku.clone());
-                    }
-                    e
-                },
-            )
+            with_immediate_transaction(&self.pool, |tx| {
+                Self::reserve_in_tx(tx, &input).map(|(reservation, _)| reservation)
+            })
+            .map_err(|e| {
+                if e.is_not_found() {
+                    return CommerceError::InventoryItemNotFound(input.sku.clone());
+                }
+                e
+            })
         })
     }
 

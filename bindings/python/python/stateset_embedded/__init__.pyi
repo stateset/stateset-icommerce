@@ -20,6 +20,13 @@ class Commerce:
         """
         ...
 
+    def execute_kernel_command(self, command_json: str, policy_json: str) -> str:
+        """Execute a governed command and return its durable receipt as JSON.
+
+        The policy must be trusted host configuration, not model-generated input.
+        """
+        ...
+
     @property
     def customers(self) -> Customers:
         """Get the customers API."""
@@ -303,8 +310,16 @@ FrameworkToolFactory = Callable[[AgentToolDescriptor], FrameworkToolT]
 class EmbeddedAgentToolkit:
     commerce: Commerce
     allow_apply: bool
+    capabilities: Optional[set[str]]
+    kernel: Optional[Dict[str, Any]]
 
-    def __init__(self, commerce: Commerce, allow_apply: bool = False) -> None:
+    def __init__(
+        self,
+        commerce: Commerce,
+        allow_apply: bool = False,
+        capabilities: Optional[Sequence[str]] = None,
+        kernel: Optional[Mapping[str, Any]] = None,
+    ) -> None:
         ...
 
     def get_tools(
@@ -379,6 +394,8 @@ class EmbeddedAgentToolkit:
 def create_embedded_agent_toolkit(
     commerce: Commerce,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
+    kernel: Optional[Mapping[str, Any]] = None,
 ) -> EmbeddedAgentToolkit:
     ...
 
@@ -386,6 +403,7 @@ def create_tool_descriptors(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     filter: Optional[Sequence[str]] = None,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
 ) -> List[AgentToolDescriptor]:
     ...
 
@@ -393,6 +411,7 @@ def create_callable_registry(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     filter: Optional[Sequence[str]] = None,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
 ) -> Dict[str, Callable[[Optional[Mapping[str, Any]]], Dict[str, Any]]]:
     ...
 
@@ -401,6 +420,7 @@ def execute_tool(
     tool_name: str,
     params: Optional[Mapping[str, Any]] = None,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     ...
 
@@ -408,6 +428,7 @@ def execute_tool_calls(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     tool_calls: Sequence[Mapping[str, Any]],
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
 ) -> List[Mapping[str, Any]]:
     ...
 
@@ -415,6 +436,7 @@ def create_openai_tools(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     filter: Optional[Sequence[str]] = None,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
 ) -> List[Mapping[str, Any]]:
     ...
 
@@ -422,6 +444,7 @@ def execute_openai_tool_call(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     tool_call: Mapping[str, Any],
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
 ) -> Mapping[str, Any]:
     ...
 
@@ -429,6 +452,7 @@ def execute_openai_tool_calls(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     tool_calls: Sequence[Mapping[str, Any]],
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
 ) -> List[Mapping[str, Any]]:
     ...
 
@@ -436,6 +460,7 @@ def create_langchain_tools(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     filter: Optional[Sequence[str]] = None,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
     tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
 ) -> List[FrameworkToolT]:
     ...
@@ -444,6 +469,7 @@ def create_crewai_tools(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     filter: Optional[Sequence[str]] = None,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
     tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
 ) -> List[FrameworkToolT]:
     ...
@@ -452,6 +478,7 @@ def create_autogen_tools(
     commerce_or_toolkit: Union[Commerce, EmbeddedAgentToolkit],
     filter: Optional[Sequence[str]] = None,
     allow_apply: bool = False,
+    capabilities: Optional[Sequence[str]] = None,
     tool_factory: Optional[Callable[[AgentToolDescriptor], FrameworkToolT]] = None,
 ) -> List[FrameworkToolT]:
     ...
@@ -1816,6 +1843,7 @@ class Payment:
     customer_id: Optional[str]
     idempotency_key: Optional[str]
     amount: float
+    amount_exact: str
     currency: str
     status: str
     payment_method: str
@@ -1829,6 +1857,7 @@ class Refund:
     payment_id: str
     idempotency_key: Optional[str]
     amount: float
+    amount_exact: str
     status: str
     reason: Optional[str]
     created_at: str
@@ -1839,6 +1868,16 @@ class Payments:
     def create(
         self,
         amount: float,
+        currency: Optional[str] = None,
+        order_id: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        payment_method: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Payment: ...
+
+    def create_exact(
+        self,
+        amount: str,
         currency: Optional[str] = None,
         order_id: Optional[str] = None,
         customer_id: Optional[str] = None,
@@ -1858,6 +1897,14 @@ class Payments:
         self,
         payment_id: str,
         amount: float,
+        reason: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Refund: ...
+
+    def create_refund_exact(
+        self,
+        payment_id: str,
+        amount: str,
         reason: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Refund: ...

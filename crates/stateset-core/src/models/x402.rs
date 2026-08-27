@@ -457,6 +457,14 @@ pub struct X402PaymentIntent {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Kernel command payload for recording confirmed on-chain settlement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettleX402Intent {
+    pub intent_id: Uuid,
+    pub tx_hash: String,
+    pub block_number: u64,
+}
+
 impl X402PaymentIntent {
     /// Create a new payment intent
     pub fn new(

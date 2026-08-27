@@ -1,5 +1,6 @@
 //! SQLite order repository implementation
 
+use super::kernel_outbox::append_kernel_event_tx;
 use super::{
     backorder::{cancel_backorders_for_order_in_tx, create_backorder_in_tx},
     build_in_clause,
@@ -7,6 +8,7 @@ use super::{
     map_db_error, params_refs, parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
     parse_json_opt_row, parse_uuid_row, sum_decimal_query, uuid_params, with_immediate_transaction,
 };
+use crate::KernelOutboxEvent;
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -28,7 +30,7 @@ pub struct SqliteOrderRepository {
 
 /// How a transition to `Shipped` touches the order lines.
 #[derive(Debug, Clone, Copy)]
-enum ShipMode<'a> {
+pub(crate) enum ShipMode<'a> {
     /// Not a shipping update.
     None,
     /// Ship every remaining unit on every line (legacy status flip).
@@ -39,10 +41,10 @@ enum ShipMode<'a> {
 
 /// Units to add to one line's `shipped_quantity`.
 #[derive(Debug, Clone)]
-struct LineDelta {
-    item_id: String,
-    sku: String,
-    delta: i32,
+pub(crate) struct LineDelta {
+    pub(crate) item_id: String,
+    pub(crate) sku: String,
+    pub(crate) delta: i32,
 }
 
 fn to_sql_err(err: CommerceError) -> rusqlite::Error {
@@ -70,7 +72,7 @@ impl SqliteOrderRepository {
         format!("ORD-{}-{:06}-{:08X}", timestamp, nanos / 1000, seq as u32)
     }
 
-    fn row_to_order(row: &rusqlite::Row<'_>) -> rusqlite::Result<Order> {
+    pub(crate) fn row_to_order(row: &rusqlite::Row<'_>) -> rusqlite::Result<Order> {
         let shipping_addr: Option<Address> = parse_json_opt_row(
             row.get::<_, Option<String>>("shipping_address")?,
             "order",
@@ -191,7 +193,7 @@ impl SqliteOrderRepository {
         Ok(())
     }
 
-    fn validate_order_input(input: &CreateOrder) -> Result<()> {
+    pub(crate) fn validate_order_input(input: &CreateOrder) -> Result<()> {
         validate_required_uuid("order.customer_id", input.customer_id.into_uuid())?;
 
         if let Some(ref currency) = input.currency {
@@ -222,7 +224,51 @@ impl SqliteOrderRepository {
         Ok(())
     }
 
-    fn load_order_items_with_conn(
+    pub(crate) fn validate_create_order_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        input: &CreateOrder,
+    ) -> std::result::Result<(), rusqlite::Error> {
+        Self::validate_order_input(input)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        if input.stock_policy.allows_backorder() {
+            return Ok(());
+        }
+        for item in &input.items {
+            if item.quantity <= 0 {
+                continue;
+            }
+            let item_id = match tx.query_row(
+                "SELECT id FROM inventory_items WHERE sku = ?",
+                [&item.sku],
+                |row| row.get::<_, i64>(0),
+            ) {
+                Ok(id) => id,
+                Err(rusqlite::Error::QueryReturnedNoRows) => continue,
+                Err(error) => return Err(error),
+            };
+            let available = sum_decimal_query(
+                tx,
+                "SELECT quantity_available FROM inventory_balances WHERE item_id = ?",
+                &[&item_id],
+                "inventory_balance",
+                "quantity_available",
+            )
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            let requested = Decimal::from(item.quantity);
+            if available < requested {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::InsufficientStock {
+                        sku: item.sku.clone(),
+                        requested: requested.to_string(),
+                        available: available.to_string(),
+                    },
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn load_order_items_with_conn(
         conn: &rusqlite::Connection,
         order_id: OrderId,
     ) -> Result<Vec<OrderItem>> {
@@ -690,7 +736,7 @@ impl SqliteOrderRepository {
     ///
     /// Returns the resolved order status (`PartiallyShipped` while
     /// Σ shipped < Σ ordered, else `Shipped`) and the per-line increments.
-    fn plan_shipment_in_tx(
+    pub(crate) fn plan_shipment_in_tx(
         tx: &rusqlite::Transaction<'_>,
         id: OrderId,
         ship: &ShipMode<'_>,
@@ -775,7 +821,7 @@ impl SqliteOrderRepository {
     /// Returns the first expired reservation, if any; the caller then surfaces
     /// [`CommerceError::ReservationExpired`] after committing the expiry
     /// bookkeeping (matching the legacy full-ship behaviour).
-    fn confirm_shipped_reservations_in_tx(
+    pub(crate) fn confirm_shipped_reservations_in_tx(
         tx: &rusqlite::Transaction<'_>,
         id: OrderId,
         ship: &ShipMode<'_>,
@@ -1080,6 +1126,27 @@ impl SqliteOrderRepository {
 
             order.items = Self::load_order_items_with_conn(tx, id)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+            append_kernel_event_tx(
+                tx,
+                &KernelOutboxEvent::domain(
+                    "orders.updated.v1",
+                    "order",
+                    id.to_string(),
+                    serde_json::json!({
+                        "order_id": id.to_string(),
+                        "status_before": current_status.to_string(),
+                        "status_after": order.status.to_string(),
+                        "payment_status_before": current_payment_status.to_string(),
+                        "payment_status_after": order.payment_status.to_string(),
+                        "fulfillment_status_after": order.fulfillment_status.to_string(),
+                        "version_before": current_version,
+                        "version_after": order.version,
+                        "total_amount": order.total_amount.to_string(),
+                    }),
+                    None,
+                ),
+            )?;
 
             Ok(UpdateOutcome { order, post_commit_error: None })
         })?;

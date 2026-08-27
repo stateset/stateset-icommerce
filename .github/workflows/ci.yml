@@ -16,6 +16,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  kernel-contract:
+    name: AI Kernel Contract & Adversarial Evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: stateset_kernel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d stateset_kernel"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/stateset_kernel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+      - name: Install CLI dependencies for catalog verification
+        working-directory: cli
+        run: npm ci
+      - name: Verify governed command coverage
+        run: node scripts/ci/check_kernel_coverage.mjs
+      - name: Run authority, policy, atomicity, replay, and tamper evals
+        run: |
+          cargo test --locked -p stateset-core kernel::tests
+          cargo test --locked -p stateset-db --test sqlite_kernel_outbox
+          cargo test --locked -p stateset-db --features postgres --test postgres_kernel_executor
+          cargo test --locked -p stateset-db --test snapshot_migrations
+
   fmt:
     name: Formatting
     runs-on: ubuntu-latest
@@ -1185,6 +1229,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs:
+      - kernel-contract
       - fmt
       - clippy
       - clippy-features
