@@ -14,6 +14,8 @@ const manifestPath = path.join(root, 'kernel/coverage.json');
 const boundaryPath = path.join(root, 'kernel/mutation-boundary.json');
 const sqlitePath = path.join(root, 'crates/stateset-db/src/sqlite/kernel_executor.rs');
 const postgresPath = path.join(root, 'crates/stateset-db/src/postgres/kernel_executor.rs');
+const coreKernelPath = path.join(root, 'crates/stateset-core/src/kernel.rs');
+const sharedKernelOutboxPath = path.join(root, 'crates/stateset-db/src/kernel_outbox.rs');
 const sqliteOutboxPath = path.join(root, 'crates/stateset-db/src/sqlite/kernel_outbox.rs');
 const postgresOutboxPath = path.join(root, 'crates/stateset-db/src/postgres/kernel_outbox.rs');
 const testsPath = path.join(root, 'crates/stateset-db/tests/sqlite_kernel_outbox.rs');
@@ -85,6 +87,8 @@ const [
   boundaryText,
   sqlite,
   postgres,
+  coreKernel,
+  sharedKernelOutbox,
   sqliteOutbox,
   postgresOutbox,
   tests,
@@ -109,6 +113,8 @@ const [
   readFile(boundaryPath, 'utf8'),
   readFile(sqlitePath, 'utf8'),
   readFile(postgresPath, 'utf8'),
+  readFile(coreKernelPath, 'utf8'),
+  readFile(sharedKernelOutboxPath, 'utf8'),
   readFile(sqliteOutboxPath, 'utf8'),
   readFile(postgresOutboxPath, 'utf8'),
   readFile(testsPath, 'utf8'),
@@ -133,10 +139,7 @@ const manifest = JSON.parse(manifestText);
 const boundary = JSON.parse(boundaryText);
 const errors = [];
 
-const derivedBoundary = classifyKernelToolBoundary([
-  ...ALL_DOMAIN_TOOLS,
-  ...AGENTIC_RUNTIME_TOOLS,
-]);
+const derivedBoundary = classifyKernelToolBoundary([...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS]);
 if (JSON.stringify(boundary) !== JSON.stringify(derivedBoundary)) {
   errors.push(
     'kernel/mutation-boundary.json is stale; run node scripts/ci/generate_kernel_boundary.mjs',
@@ -145,17 +148,25 @@ if (JSON.stringify(boundary) !== JSON.stringify(derivedBoundary)) {
 for (const [toolName, commandType] of Object.entries(KERNEL_CAPABILITY_BY_TOOL)) {
   const entry = derivedBoundary.entries.find((candidate) => candidate.name === toolName);
   if (!entry) errors.push(`${toolName}: governed tool is absent from the MCP registry`);
-  else if (!entry.mutation) errors.push(`${toolName}: governed tool is not classified as a mutation`);
+  else if (!entry.mutation)
+    errors.push(`${toolName}: governed tool is not classified as a mutation`);
   else if (entry.commandType !== commandType || entry.disposition !== 'governed') {
     errors.push(`${toolName}: governed tool classification does not match ${commandType}`);
   }
 }
 if (
   derivedBoundary.entries.some(
-    (entry) => entry.mutation && !['governed', 'blocked'].includes(entry.disposition),
+    (entry) =>
+      entry.mutation && !['governed', 'governed_composite', 'blocked'].includes(entry.disposition),
   )
 ) {
   errors.push('one or more mutations are neither governed nor blocked');
+}
+const planComposite = derivedBoundary.entries.find(
+  (entry) => entry.name === 'agentic_execute_plan',
+);
+if (planComposite?.permission !== 'write' || planComposite?.disposition !== 'governed_composite') {
+  errors.push('agentic_execute_plan must be an explicit governed composite mutation');
 }
 
 if (manifest.schemaVersion !== 1) errors.push('unsupported schemaVersion');
@@ -254,7 +265,9 @@ if (!mcpServer.includes('strictKernelBoundary') || !mcpServer.includes('exposedT
 if (!mcpServer.includes('selectStrictKernelToolDefinitions')) {
   errors.push('MCP strict boundary is not using the fail-closed registry classifier');
 }
-if (!nodeToolkitTests.includes('strict kernel mode hides and rejects every unmapped mutation tool')) {
+if (
+  !nodeToolkitTests.includes('strict kernel mode hides and rejects every unmapped mutation tool')
+) {
   errors.push('Node strict kernel exposure test is missing');
 }
 if (!mcpPlanExecutor.includes('executeGovernedTool')) {
@@ -322,6 +335,44 @@ if (!tests.includes('audit_checkpoints_are_portable_append_stable_and_tamper_evi
 }
 if (!postgresTests.includes('verify_audit_checkpoint_async')) {
   errors.push('PostgreSQL external audit checkpoint eval is missing');
+}
+if (!postgresTests.includes('postgres_audit_checkpoint_rejects_resealed_wrong_sequence')) {
+  errors.push('PostgreSQL checkpoint sequence-binding adversarial eval is missing');
+}
+if (
+  !postgresTests.includes('postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable')
+) {
+  errors.push('PostgreSQL durable outbox recovery parity eval is missing');
+}
+if (!sqliteOutbox.includes('WHERE sequence = ? AND audit_hash = ?')) {
+  errors.push('SQLite audit checkpoint is not bound to its claimed sequence');
+}
+if (!postgresOutbox.includes('WHERE sequence = $1 AND audit_hash = $2')) {
+  errors.push('PostgreSQL audit checkpoint is not bound to its claimed sequence');
+}
+if (!coreKernel.includes('"authority": authority')) {
+  errors.push('signed authority digest does not bind authority claim metadata');
+}
+if (!coreKernel.includes('changed.authority.as_mut().expect("authority").expires_at')) {
+  errors.push('signed authority validity-window adversarial eval is missing');
+}
+if (!sharedKernelOutbox.includes('"authority": command.authority')) {
+  errors.push('semantic idempotency hash does not bind authority evidence');
+}
+if (
+  !sharedKernelOutbox.includes(
+    'semantic_request_hash_binds_authority_but_not_retry_invocation_metadata',
+  )
+) {
+  errors.push('semantic authority/idempotency adversarial eval is missing');
+}
+for (const source of [sqlite, postgres]) {
+  if (!source.includes('use crate::kernel_outbox::semantic_request_hash;')) {
+    errors.push('a database executor is not using the shared semantic request hash');
+  }
+  if (/fn semantic_request_hash\s*</.test(source)) {
+    errors.push('a database executor has drifted to a backend-local semantic request hash');
+  }
 }
 
 if (errors.length > 0) fail(errors);

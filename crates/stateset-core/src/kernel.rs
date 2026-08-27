@@ -85,7 +85,9 @@ pub struct AuthorityEvidence {
     pub key_id: String,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
-    /// Hex-encoded Ed25519 signature over [`authority_signing_hash`].
+    /// Hex-encoded Ed25519 signature over [`authority_signing_hash`]. Attach
+    /// the authority claim with an empty signature before computing the hash;
+    /// the digest binds every claim field except this signature value.
     pub signature: String,
 }
 
@@ -474,9 +476,21 @@ impl KernelPolicy {
 }
 
 /// Canonical SHA-256 digest signed by command authorities.
+///
+/// The command must already contain the authority claim (issuer, key ID, and
+/// validity window), normally with an empty `signature`. Those fields are part
+/// of the digest; only the signature bytes themselves are excluded.
 pub fn authority_signing_hash<T: Serialize>(
     command: &CommandEnvelope<T>,
 ) -> Result<[u8; 32], KernelContractError> {
+    let authority = command.authority.as_ref().map(|authority| {
+        serde_json::json!({
+            "issuer": authority.issuer,
+            "key_id": authority.key_id,
+            "issued_at": authority.issued_at,
+            "expires_at": authority.expires_at,
+        })
+    });
     let value = serde_json::json!({
         "contract_version": command.contract_version,
         "idempotency_key": command.idempotency_key,
@@ -488,6 +502,7 @@ pub fn authority_signing_hash<T: Serialize>(
         "expected_version": command.expected_version,
         "policy_version": command.policy_version,
         "approval": command.approval,
+        "authority": authority,
         "deadline": command.deadline,
         "payload": command.payload,
         "issued_at": command.issued_at,
@@ -740,19 +755,118 @@ mod tests {
             CommandEnvelope::preview("payments.create", "retry-signed-1", agent(), 42_u8);
         command.store_id = Some("store-1".into());
         command.policy_version = Some("policy-1".into());
-        let hash = authority_signing_hash(&command).expect("canonical intent");
-        let signature = stateset_crypto::sign::sign_event_hash(&hash, &private_key).expect("sign");
+        command.approval = Some(ApprovalEvidence {
+            approval_id: "approval-signed-1".into(),
+            approved_by: "user-42".into(),
+            scope: "payments.create".into(),
+            tenant_id: Some("tenant-1".into()),
+            store_id: Some("store-1".into()),
+            idempotency_key: Some("retry-signed-1".into()),
+            approved_at: now,
+            expires_at: Some(now + chrono::Duration::minutes(5)),
+        });
         command.authority = Some(AuthorityEvidence {
             issuer: "user-42".into(),
             key_id: "delegator-key-1".into(),
             issued_at: now,
             expires_at: now + chrono::Duration::minutes(5),
-            signature: hex::encode(signature),
+            signature: String::new(),
         });
+        let hash = authority_signing_hash(&command).expect("canonical intent");
+        let signature = stateset_crypto::sign::sign_event_hash(&hash, &private_key).expect("sign");
+        command.authority.as_mut().expect("authority claim").signature = hex::encode(signature);
         assert!(policy.evaluate(&command, now).allowed);
 
-        command.payload = 43;
-        let denied = policy.evaluate(&command, now);
-        assert!(denied.reason_codes.contains(&"policy.authority_signature_invalid".to_string()));
+        let assert_signature_invalid = |changed: &CommandEnvelope<u8>| {
+            let denied = policy.evaluate(changed, now);
+            assert!(
+                denied.reason_codes.contains(&"policy.authority_signature_invalid".to_string()),
+                "expected signature rejection, got {:?}",
+                denied.reason_codes
+            );
+        };
+
+        let mut changed = command.clone();
+        changed.payload = 43;
+        assert_signature_invalid(&changed);
+        let mut changed = command.clone();
+        changed.principal.tenant_id = Some("tenant-2".into());
+        assert_signature_invalid(&changed);
+        let mut changed = command.clone();
+        changed.store_id = Some("store-2".into());
+        assert_signature_invalid(&changed);
+        let mut changed = command.clone();
+        changed.expected_version = Some(2);
+        assert_signature_invalid(&changed);
+        let mut changed = command.clone();
+        changed.approval.as_mut().expect("approval").approval_id = "approval-substitute".into();
+        assert_signature_invalid(&changed);
+        let mut changed = command.clone();
+        changed.deadline = Some(now + chrono::Duration::hours(1));
+        assert_signature_invalid(&changed);
+        let mut changed = command.clone();
+        changed.authority.as_mut().expect("authority").issued_at -= chrono::Duration::minutes(1);
+        assert_signature_invalid(&changed);
+        let mut changed = command.clone();
+        changed.authority.as_mut().expect("authority").expires_at += chrono::Duration::hours(1);
+        assert_signature_invalid(&changed);
+
+        let mut absent = command.clone();
+        absent.authority = None;
+        assert!(
+            policy
+                .evaluate(&absent, now)
+                .reason_codes
+                .contains(&"policy.signed_authority_required".to_string())
+        );
+        let mut untrusted = command.clone();
+        untrusted.authority.as_mut().expect("authority").key_id = "unknown-key".into();
+        assert!(
+            policy
+                .evaluate(&untrusted, now)
+                .reason_codes
+                .contains(&"policy.authority_key_untrusted".to_string())
+        );
+        let mut wrong_issuer = command.clone();
+        wrong_issuer.authority.as_mut().expect("authority").issuer = "user:other".into();
+        assert!(
+            policy
+                .evaluate(&wrong_issuer, now)
+                .reason_codes
+                .contains(&"policy.authority_issuer_mismatch".to_string())
+        );
+        let mut expired = command.clone();
+        {
+            let authority = expired.authority.as_mut().expect("authority");
+            authority.issued_at = now - chrono::Duration::minutes(10);
+            authority.expires_at = now;
+            authority.signature.clear();
+        }
+        let hash = authority_signing_hash(&expired).expect("expired canonical intent");
+        let signature = stateset_crypto::sign::sign_event_hash(&hash, &private_key).expect("sign");
+        expired.authority.as_mut().expect("authority").signature = hex::encode(signature);
+        assert!(
+            policy
+                .evaluate(&expired, now)
+                .reason_codes
+                .contains(&"policy.authority_expired".to_string())
+        );
+
+        let mut future = command.clone();
+        {
+            let authority = future.authority.as_mut().expect("authority");
+            authority.issued_at = now + chrono::Duration::minutes(1);
+            authority.expires_at = now + chrono::Duration::minutes(10);
+            authority.signature.clear();
+        }
+        let hash = authority_signing_hash(&future).expect("future canonical intent");
+        let signature = stateset_crypto::sign::sign_event_hash(&hash, &private_key).expect("sign");
+        future.authority.as_mut().expect("authority").signature = hex::encode(signature);
+        assert!(
+            policy
+                .evaluate(&future, now)
+                .reason_codes
+                .contains(&"policy.authority_not_yet_valid".to_string())
+        );
     }
 }

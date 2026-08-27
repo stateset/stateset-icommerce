@@ -16,8 +16,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | Total tools | 956 |
 | MCP servers | 3 |
 | Policy domains | 89 |
-| Read tools | 474 |
-| Write tools | 414 |
+| Read tools | 473 |
+| Write tools | 415 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -130,8 +130,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 474 |
-| write | 414 |
+| read | 473 |
+| write | 415 |
 
 ## Tool Registry
 
@@ -344,7 +344,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `agent_tick` | `stateset-commerce` | `agent_runtime` | `write` |
 | `agent_trip_all_breakers` | `stateset-commerce` | `circuit_breaker` | `admin` |
 | `agent_trip_breaker` | `stateset-commerce` | `circuit_breaker` | `admin` |
-| `agentic_execute_plan` | `stateset-commerce` | `agentic` | `read` |
+| `agentic_execute_plan` | `stateset-commerce` | `agentic` | `write` |
 | `agentic_get_event_history` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_list_event_subscriptions` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_payment_discovery` | `stateset-commerce` | `agentic` | `read` |

@@ -43,11 +43,7 @@ describe('agentic-runtime-tools · array structure', () => {
 
   it('tool names use snake_case', () => {
     for (const tool of AGENTIC_RUNTIME_TOOLS) {
-      assert.match(
-        tool.name,
-        /^[a-z][a-z0-9_]*$/,
-        `tool name '${tool.name}' should be snake_case`,
-      );
+      assert.match(tool.name, /^[a-z][a-z0-9_]*$/, `tool name '${tool.name}' should be snake_case`);
     }
   });
 
@@ -85,16 +81,16 @@ describe('agentic-runtime-tools · expected tool surface', () => {
     }
   });
 
-  it('only delegate_to_agent is a write-permission tool', () => {
+  it('classifies the governed plan orchestrator and delegation as writes', () => {
     const writers = AGENTIC_RUNTIME_TOOLS.filter((t) => t.permission === 'write').map(
       (t) => t.name,
     );
-    assert.deepEqual(writers, ['delegate_to_agent']);
+    assert.deepEqual(writers, ['agentic_execute_plan', 'delegate_to_agent']);
   });
 
-  it('all other tools are read-permission', () => {
+  it('all non-mutating tools are read-permission', () => {
     const reads = AGENTIC_RUNTIME_TOOLS.filter((t) => t.permission === 'read');
-    assert.ok(reads.length >= expectedNames.length - 1);
+    assert.ok(reads.length >= expectedNames.length - 2);
   });
 });
 

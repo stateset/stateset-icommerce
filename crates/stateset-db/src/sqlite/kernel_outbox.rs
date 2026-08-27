@@ -433,10 +433,14 @@ impl SqliteKernelOutboxRepository {
         let expected_hash = checkpoint.head_hash.as_deref().ok_or_else(|| {
             CommerceError::ValidationError("non-empty checkpoint is missing head_hash".into())
         })?;
+        let Ok(expected_sequence) = i64::try_from(checkpoint.entries) else {
+            return Ok(false);
+        };
         let local_hash = conn
             .query_row(
-                "SELECT audit_hash FROM kernel_receipt_audit_log WHERE audit_hash = ?",
-                [expected_hash],
+                "SELECT audit_hash FROM kernel_receipt_audit_log
+                 WHERE sequence = ? AND audit_hash = ?",
+                params![expected_sequence, expected_hash],
                 |row| row.get::<_, String>(0),
             )
             .optional()

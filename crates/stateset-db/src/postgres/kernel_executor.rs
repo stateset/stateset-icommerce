@@ -14,6 +14,7 @@ use super::payments::{
 use super::returns::{PgReturnRepository, ReturnItemRow, ReturnRow};
 use super::subscriptions::{BillingCycleRow, PgSubscriptionRepository};
 use super::x402_payment_intents::{IntentRow, PgX402PaymentIntentRepository};
+use crate::kernel_outbox::semantic_request_hash;
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
 use serde::{Serialize, de::DeserializeOwned};
@@ -4314,35 +4315,6 @@ impl PgKernelExecutor {
         tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         Ok(receipt)
     }
-}
-
-fn semantic_request_hash<C: Serialize, T: Serialize>(
-    command: &CommandEnvelope<C>,
-    payload: &T,
-) -> Result<String> {
-    let mut capabilities = command.principal.capabilities.clone();
-    capabilities.sort();
-    capabilities.dedup();
-    let value = serde_json::json!({
-        "contract_version": command.contract_version,
-        "command_type": command.command_type,
-        "principal": {
-            "id": command.principal.id,
-            "kind": command.principal.kind,
-            "tenant_id": command.principal.tenant_id,
-            "delegated_by": command.principal.delegated_by,
-            "capabilities": capabilities,
-        },
-        "store_id": command.store_id,
-        "expected_version": command.expected_version,
-        "policy_version": command.policy_version,
-        "approval": command.approval,
-        "deadline": command.deadline,
-        "payload": payload,
-    });
-    let bytes = serde_json::to_vec(&value)
-        .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 async fn lock_kernel_idempotency_pg(

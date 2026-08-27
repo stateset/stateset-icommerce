@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use stateset_core::{CommandEnvelope, CommerceError, Result};
 use uuid::Uuid;
 
 /// Event waiting for reliable publication to downstream consumers.
@@ -132,6 +133,41 @@ pub(crate) fn receipt_audit_hash(
     Ok(format!("{:x}", Sha256::digest(canonical)))
 }
 
+/// Canonical hash of the semantic intent bound to a durable idempotency key.
+/// Invocation identity, tracing, issue time, and preview/apply posture are
+/// deliberately excluded so a fresh invocation can promote an authorized
+/// preview. Authority evidence is included so it cannot be replaced or have
+/// its validity window extended under an existing retry key.
+pub(crate) fn semantic_request_hash<C: Serialize, T: Serialize>(
+    command: &CommandEnvelope<C>,
+    payload: &T,
+) -> Result<String> {
+    let mut capabilities = command.principal.capabilities.clone();
+    capabilities.sort();
+    capabilities.dedup();
+    let value = serde_json::json!({
+        "contract_version": command.contract_version,
+        "command_type": command.command_type,
+        "principal": {
+            "id": command.principal.id,
+            "kind": command.principal.kind,
+            "tenant_id": command.principal.tenant_id,
+            "delegated_by": command.principal.delegated_by,
+            "capabilities": capabilities,
+        },
+        "store_id": command.store_id,
+        "expected_version": command.expected_version,
+        "policy_version": command.policy_version,
+        "approval": command.approval,
+        "authority": command.authority,
+        "deadline": command.deadline,
+        "payload": payload,
+    });
+    let canonical = serde_jcs::to_vec(&value)
+        .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
+    Ok(format!("{:x}", Sha256::digest(canonical)))
+}
+
 impl KernelOutboxEvent {
     /// Build an event for a repository mutation. Kernel-aware executors can
     /// additionally attach command, principal, and causal context.
@@ -164,5 +200,58 @@ impl KernelOutboxEvent {
             next_attempt_at: None,
             dead_lettered_at: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stateset_core::{AuthorityEvidence, ExecutionMode, KernelPrincipal, PrincipalKind};
+
+    #[test]
+    fn semantic_request_hash_binds_authority_but_not_retry_invocation_metadata() {
+        let now = Utc::now();
+        let mut command = CommandEnvelope::preview(
+            "payments.create",
+            "semantic-authority-1",
+            KernelPrincipal {
+                id: "agent:checkout".into(),
+                kind: PrincipalKind::Agent,
+                tenant_id: Some("tenant:one".into()),
+                delegated_by: Some("user:operator".into()),
+                capabilities: vec!["payments.create".into(), "payments.create".into()],
+            },
+            serde_json::json!({"amount": "12.34", "currency": "USD"}),
+        );
+        command.store_id = Some("store:one".into());
+        command.policy_version = Some("policy:one".into());
+        command.authority = Some(AuthorityEvidence {
+            issuer: "user:operator".into(),
+            key_id: "authority-key-1".into(),
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(5),
+            signature: "ab".repeat(64),
+        });
+        let baseline = semantic_request_hash(&command, &command.payload).expect("baseline hash");
+
+        let mut changed = command.clone();
+        changed.authority.as_mut().expect("authority").expires_at += chrono::Duration::minutes(5);
+        assert_ne!(
+            semantic_request_hash(&changed, &changed.payload).expect("expiry hash"),
+            baseline
+        );
+        let mut changed = command.clone();
+        changed.authority.as_mut().expect("authority").signature = "cd".repeat(64);
+        assert_ne!(
+            semantic_request_hash(&changed, &changed.payload).expect("signature hash"),
+            baseline
+        );
+
+        let mut retry = command;
+        retry.command_id = Uuid::new_v4();
+        retry.issued_at += chrono::Duration::seconds(1);
+        retry.trace_id = Some("new-retry-trace".into());
+        retry.mode = ExecutionMode::Apply;
+        assert_eq!(semantic_request_hash(&retry, &retry.payload).expect("retry hash"), baseline);
     }
 }

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   classifyKernelToolBoundary,
   isMutationPermission,
+  KERNEL_GOVERNED_COMPOSITE_TOOLS,
   selectStrictKernelToolDefinitions,
 } from '../../src/kernel-boundary.js';
 import { KERNEL_CAPABILITY_BY_TOOL } from '../../src/kernel-tool-execution.js';
@@ -17,7 +18,10 @@ describe('kernel mutation boundary', () => {
     const report = classifyKernelToolBoundary(ALL_TOOLS);
     assert.equal(report.counts.total, ALL_TOOLS.length);
     assert.equal(report.counts.readOnly + report.counts.mutations, report.counts.total);
-    assert.equal(report.counts.governed + report.counts.blocked, report.counts.mutations);
+    assert.equal(
+      report.counts.governed + report.counts.governedComposite + report.counts.blocked,
+      report.counts.mutations,
+    );
     assert.match(report.digest, /^sha256:[0-9a-f]{64}$/);
 
     for (const entry of report.entries) {
@@ -28,19 +32,23 @@ describe('kernel mutation boundary', () => {
           ? 'read_only'
           : KERNEL_CAPABILITY_BY_TOOL[entry.name]
             ? 'governed'
-            : 'blocked',
+            : KERNEL_GOVERNED_COMPOSITE_TOOLS.includes(entry.name)
+              ? 'governed_composite'
+              : 'blocked',
       );
     }
   });
 
-  it('strict exposure contains only reads and typed governed mutations', () => {
+  it('strict exposure contains only reads, typed commands, and governed composites', () => {
     const exposed = selectStrictKernelToolDefinitions(ALL_TOOLS);
     const exposedNames = new Set(exposed.map((tool) => tool.name));
 
     for (const tool of ALL_TOOLS) {
       assert.equal(
         exposedNames.has(tool.name),
-        tool.permission === 'read' || Boolean(KERNEL_CAPABILITY_BY_TOOL[tool.name]),
+        tool.permission === 'read' ||
+          Boolean(KERNEL_CAPABILITY_BY_TOOL[tool.name]) ||
+          KERNEL_GOVERNED_COMPOSITE_TOOLS.includes(tool.name),
         tool.name,
       );
     }
@@ -48,6 +56,12 @@ describe('kernel mutation boundary', () => {
     assert.equal(exposedNames.has('backup_database'), false);
     assert.equal(exposedNames.has('set_exchange_rate'), false);
     assert.equal(exposedNames.has('create_payment'), true);
+    assert.equal(exposedNames.has('agentic_execute_plan'), true);
+    const composite = classifyKernelToolBoundary(ALL_TOOLS).entries.find(
+      (entry) => entry.name === 'agentic_execute_plan',
+    );
+    assert.equal(composite.permission, 'write');
+    assert.equal(composite.disposition, 'governed_composite');
   });
 
   it('treats missing and future permission classes as mutations', () => {

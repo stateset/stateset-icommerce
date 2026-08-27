@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:237b7be5fbb2245971c23855ef87fdc46963d673cc64235a81fd51865669aa76",
+  "digest": "sha256:e1013b1f01b7dd24eaf7cfd4342da85f4af4ca268cc6e48dbd66743da4a5ae70",
   "counts": {
     "total": 938,
-    "readOnly": 465,
-    "mutations": 473,
+    "readOnly": 464,
+    "mutations": 474,
     "governed": 25,
+    "governedComposite": 1,
     "blocked": 448
   },
   "entries": [
@@ -1460,9 +1461,9 @@
     },
     {
       "name": "agentic_execute_plan",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed_composite",
       "commandType": null
     },
     {

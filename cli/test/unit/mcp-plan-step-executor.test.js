@@ -209,6 +209,26 @@ describe('createExecuteToolStepInPlan — execution', () => {
     assert.equal(handlerCalls.length, 0);
   });
 
+  it('requires every live nested write to cross the governed executor', async () => {
+    const governedCalls = [];
+    const { execute, handlerCalls } = makeExecutor({
+      deps: {
+        executeGovernedTool: async (toolName, params, options) => {
+          governedCalls.push({ toolName, params, options });
+          throw new Error(`Tool '${toolName}' is outside the governed kernel catalog.`);
+        },
+      },
+    });
+
+    const out = await execute({ ...base, dryRun: false, requestId: 'strict-plan' });
+    assert.equal(out.status, 'error');
+    assert.match(out.error, /outside the governed kernel catalog/);
+    assert.equal(governedCalls.length, 1);
+    assert.equal(governedCalls[0].toolName, 'create_order');
+    assert.equal(governedCalls[0].options.requireGoverned, true);
+    assert.equal(handlerCalls.length, 0);
+  });
+
   it('executes the handler with the lazily-read tool context and runs after_tool_call', async () => {
     const { execute, handlerCalls, hookCalls } = makeExecutor();
     const out = await execute({

@@ -1,6 +1,7 @@
 #![cfg(feature = "sqlite")]
 
 use rust_decimal_macros::dec;
+use sha2::{Digest, Sha256};
 use stateset_core::{
     A2ADisputeResolutionType, AccountType, AddCartItem, BillingCycleFilter, BillingCycleStatus,
     BillingInterval, CartAddress, CartRepository, ChargeSubscription, CommandEnvelope,
@@ -21,6 +22,18 @@ use stateset_core::{
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
+
+fn reseal_checkpoint(checkpoint: &mut stateset_db::kernel_outbox::KernelAuditCheckpoint) {
+    let preimage = serde_json::json!({
+        "contract_version": checkpoint.contract_version,
+        "algorithm": checkpoint.algorithm,
+        "entries": checkpoint.entries,
+        "head_hash": checkpoint.head_hash,
+        "generated_at": checkpoint.generated_at,
+    });
+    let canonical = serde_jcs::to_vec(&preimage).expect("canonical checkpoint");
+    checkpoint.checkpoint_hash = format!("{:x}", Sha256::digest(canonical));
+}
 
 fn payment_policy() -> KernelPolicy {
     KernelPolicy::new("commerce-policy-1")
@@ -1904,6 +1917,16 @@ fn audit_checkpoints_are_portable_append_stable_and_tamper_evident() {
         db.kernel_outbox()
             .verify_audit_checkpoint(&checkpoint)
             .expect("old checkpoint remains valid")
+    );
+
+    let mut wrong_sequence = db.kernel_outbox().audit_checkpoint().expect("later checkpoint");
+    assert!(wrong_sequence.entries > checkpoint.entries);
+    wrong_sequence.entries = checkpoint.entries;
+    reseal_checkpoint(&mut wrong_sequence);
+    assert!(
+        !db.kernel_outbox()
+            .verify_audit_checkpoint(&wrong_sequence)
+            .expect("head hash must match the claimed sequence")
     );
 
     let mut forged = checkpoint;
