@@ -2,7 +2,7 @@
 # Version-bump every synced release surface, in the right order, with the
 # exclusions that hand-run seds kept getting wrong.
 #
-#   scripts/release-bump.sh 1.26.0 1.27.0
+#   scripts/release-bump.sh 1.27.0 1.28.0
 #
 # What this encodes (each learned the hard way during the 1.23.x line):
 #   * Never touch ANY Cargo.lock with the sed — including the STANDALONE
@@ -13,13 +13,12 @@
 #     artifacts/inventories (regenerate instead), supply-chain/config.toml
 #     (cargo-vet exemptions for third-party crates), or the crypto fuzz
 #     workspace lock.
-#   * npm lockfiles that reference INTERNAL packages by registry version
-#     (@stateset/embedded, @stateset/cli, the platform packages) can only
-#     regenerate AFTER those versions are published to npm — before that,
-#     npm errors with ETARGET. The old flow hid this behind >/dev/null and
-#     silently kept stale locks, which is exactly what broke four CI lanes.
-#     So: run this script, publish, then run `release-bump.sh --sync-locks`
-#     and commit the lock changes.
+#   * npm lockfile package/workspace metadata is safe to bump immediately,
+#     and CI expects it to match the manifests. Registry-resolved INTERNAL
+#     dependencies (@stateset/embedded, @stateset/cli, platform packages)
+#     can only regenerate AFTER those versions are published to npm — before
+#     that, npm errors with ETARGET. So the initial bump updates metadata only;
+#     publish, then run `release-bump.sh --sync-locks` for full resolution.
 #   * The untracked-at-the-time bindings/node/npm/ platform dirs were missed
 #     by `git grep`; this script bumps them explicitly.
 #
@@ -79,6 +78,31 @@ echo "==> Bumping npm platform package dirs (may be untracked on new platforms)"
 for f in bindings/node/npm/*/package.json; do
   [ -f "$f" ] && sed -i "s/${FROM_RE}/${TO}/g" "$f"
 done
+
+echo "==> Bumping npm lockfile package/workspace metadata"
+node --input-type=module - "$TO" <<'NODE'
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const version = process.argv[2];
+const lockfiles = [
+  'bindings/node/package-lock.json',
+  'bindings/wasm/package-lock.json',
+  'cli/package-lock.json',
+  'admin/package-lock.json',
+  'examples/node/package-lock.json',
+];
+
+for (const path of lockfiles) {
+  const lock = JSON.parse(readFileSync(path, 'utf8'));
+  lock.version = version;
+  for (const [packagePath, metadata] of Object.entries(lock.packages ?? {})) {
+    if ((packagePath === '' || packagePath.startsWith('../')) && metadata.version) {
+      metadata.version = version;
+    }
+  }
+  writeFileSync(path, `${JSON.stringify(lock, null, 2)}\n`);
+}
+NODE
 
 # README "What's New" anchor tracks the version.
 old_anchor="whats-new-in-v${FROM//./}"

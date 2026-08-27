@@ -66,40 +66,55 @@ async function detectCoverageStyle(moduleName) {
 }
 
 async function buildInventory() {
-  const toolModules = await listModuleNames(toolsDir, { exclude: ['index.js', 'domain-registry.js'] });
+  const toolModules = await listModuleNames(toolsDir, {
+    exclude: ['index.js', 'domain-registry.js'],
+  });
   const commandModulesOnDisk = await listModuleNames(commandsDir, { exclude: ['index.js'] });
-  const commandRegistryModules = Object.keys(commands).sort((left, right) => left.localeCompare(right));
+  const commandRegistryModules = Object.keys(commands).sort((left, right) =>
+    left.localeCompare(right),
+  );
 
   const uncoveredToolModules = toolModules.filter((name) => !commandRegistryModules.includes(name));
   const commandOnlyModules = commandRegistryModules.filter((name) => !toolModules.includes(name));
-  const registryMismatches = commandModulesOnDisk.filter((name) => !commandRegistryModules.includes(name));
-  const missingOnDisk = commandRegistryModules.filter((name) => !commandModulesOnDisk.includes(name));
+  const registryMismatches = commandModulesOnDisk.filter(
+    (name) => !commandRegistryModules.includes(name),
+  );
+  const missingOnDisk = commandRegistryModules.filter(
+    (name) => !commandModulesOnDisk.includes(name),
+  );
 
   const coverageByModule = await Promise.all(
-    commandRegistryModules.map(async (name) => ({
-      ...(async () => {
-        const toolBacked = TOOL_BACKED_COMMANDS.get(name);
-        const mappedToolNames = new Set((toolBacked?.actionMap || []).map((entry) => entry.tool));
-        const actualToolNames = new Set((toolBacked?.tools || []).map((entry) => entry.name));
-        const uncoveredToolNames = [...actualToolNames].filter((tool) => !mappedToolNames.has(tool)).sort();
-        const unknownMappedToolNames = [...mappedToolNames].filter((tool) => !actualToolNames.has(tool)).sort();
-
-        return {
-          module: name,
-          toolModulePresent: toolModules.includes(name),
-          commandFilePresent: commandModulesOnDisk.includes(name),
-          actionCount: Object.keys(commands[name]?.metadata?.actions ?? {}).length,
-          aliasCount: Object.entries(RESOURCE_ALIASES).filter(([, target]) => target === name).length,
-          coverageStyle: toolModules.includes(name) ? await detectCoverageStyle(name) : 'command-only',
-          toolBacked: Boolean(toolBacked),
-          toolCount: actualToolNames.size,
-          mappedToolCount: mappedToolNames.size,
-          uncoveredToolNames,
-          unknownMappedToolNames,
-        };
-      })(),
-    })),
+    commandRegistryModules.map(async (name) => {
+      const toolBacked = TOOL_BACKED_COMMANDS.get(name);
+      const mappedToolNames = new Set((toolBacked?.actionMap || []).map((entry) => entry.tool));
+      const actualToolNames = new Set((toolBacked?.tools || []).map((entry) => entry.name));
+      const uncoveredToolNames = [...actualToolNames]
+        .filter((tool) => !mappedToolNames.has(tool))
+        .sort();
+      const unknownMappedToolNames = [...mappedToolNames]
+        .filter((tool) => !actualToolNames.has(tool))
+        .sort();
+      return {
+        module: name,
+        toolModulePresent: toolModules.includes(name),
+        commandFilePresent: commandModulesOnDisk.includes(name),
+        actionCount: Object.keys(commands[name]?.metadata?.actions ?? {}).length,
+        aliasCount: Object.entries(RESOURCE_ALIASES).filter(([, target]) => target === name).length,
+        coverageStyle: toolModules.includes(name)
+          ? await detectCoverageStyle(name)
+          : 'command-only',
+        toolBacked: Boolean(toolBacked),
+        toolCount: actualToolNames.size,
+        mappedToolCount: mappedToolNames.size,
+        uncoveredToolNames,
+        unknownMappedToolNames,
+      };
+    }),
   );
+
+  if (coverageByModule.some((entry) => !entry.module || !entry.coverageStyle)) {
+    throw new Error('Coverage generator produced an incomplete module entry');
+  }
 
   const toolBackedCoverage = coverageByModule.filter((entry) => entry.toolBacked);
   const uncoveredToolBackedActions = toolBackedCoverage.reduce(
@@ -163,10 +178,19 @@ function renderMarkdownInventory(inventory) {
   const uncoveredRows =
     inventory.uncoveredToolModules.length === 0
       ? [['None', '-', '-', '-']]
-      : inventory.uncoveredToolModules.map((entry) => [`\`${entry}\``, 'missing command coverage', '-', '-']);
+      : inventory.uncoveredToolModules.map((entry) => [
+          `\`${entry}\``,
+          'missing command coverage',
+          '-',
+          '-',
+        ]);
 
   const uncoveredToolBackedRows = inventory.coverageByModule
-    .filter((entry) => entry.toolBacked && (entry.uncoveredToolNames.length > 0 || entry.unknownMappedToolNames.length > 0))
+    .filter(
+      (entry) =>
+        entry.toolBacked &&
+        (entry.uncoveredToolNames.length > 0 || entry.unknownMappedToolNames.length > 0),
+    )
     .flatMap((entry) => {
       const rows = [];
       for (const tool of entry.uncoveredToolNames) {
@@ -220,7 +244,9 @@ async function verifyOutput(filePath, expectedContent, instruction) {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown error';
-    console.error(`::error file=${relativePath}::Unable to read generated coverage output (${message}). ${instruction}`);
+    console.error(
+      `::error file=${relativePath}::Unable to read generated coverage output (${message}). ${instruction}`,
+    );
     return false;
   }
 

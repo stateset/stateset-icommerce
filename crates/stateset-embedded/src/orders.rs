@@ -2,8 +2,8 @@
 
 use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
-    CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
-    OrderStatus, PaymentStatus, Result, ShipOrder, ShipmentLineInput, UpdateOrder,
+    CartId, CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId, OrderItem,
+    OrderItemId, OrderStatus, PaymentStatus, Result, ShipOrder, ShipmentLineInput, UpdateOrder,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -190,6 +190,18 @@ impl Orders {
                 timestamp: order.created_at,
             });
         }
+        Ok(order)
+    }
+
+    /// Create an order associated with a cart. Repeated calls for the same
+    /// cart return the original order, allowing checkout recovery after a
+    /// process crash or request retry.
+    pub fn create_from_cart(&self, cart_id: CartId, input: CreateOrder) -> Result<Order> {
+        let order = self.db.orders().create_from_cart(cart_id, input)?;
+        self.metrics.record_order_created(
+            &order.customer_id.to_string(),
+            order.total_amount.to_f64().unwrap_or(0.0),
+        );
         Ok(order)
     }
 

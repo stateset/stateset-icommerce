@@ -36,7 +36,7 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 | --- | --- | --- | --- | --- |
 | `agents` | Agents Agent | 53 named tools | `stateset-commerce` | Multi-agent runtime orchestration, A2A commerce, and agent lifecycle management |
 | `analytics` | Analytics Agent | 14 named tools | `stateset-commerce` | Business intelligence and forecasting specialist |
-| `checkout` | Checkout Agent | 32 named tools | `stateset-commerce` | Shopping cart and checkout flow specialist (Agentic Commerce Protocol) |
+| `checkout` | Checkout Agent | 32 named tools | `stateset-commerce` | Shopping cart and protocol-neutral checkout flow specialist |
 | `currency` | Currency Agent | 12 named tools | `stateset-commerce` | Multi-currency support and exchange rate management specialist |
 | `customer-service` | Customer Service | All 938 commerce MCP tools | `stateset-commerce` | Full-service agent with access to all commerce tools |
 | `inventory` | Inventory Agent | 6 named tools | `stateset-commerce` | Stock and inventory management specialist |

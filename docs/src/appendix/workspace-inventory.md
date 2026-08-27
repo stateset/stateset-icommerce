@@ -13,7 +13,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.26.0` |
+| Workspace version | `1.27.0` |
 | Workspace members | 30 |
 | Default members | 19 |
 | Rust crates in workspace | 22 |
@@ -93,7 +93,7 @@ workspace membership because they require host runtimes or headers.
 | `tools` | 93 |
 | `commands` | 88 |
 | `a2a` | 61 |
-| `mcp` | 30 |
+| `mcp` | 31 |
 | `channels` | 29 |
 | `adapters` | 20 |
 | `sync` | 18 |

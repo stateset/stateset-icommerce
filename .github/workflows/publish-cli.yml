@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.26.0)'
+        description: 'Version to release (e.g., 1.27.0)'
         required: true
 
 env:
@@ -334,6 +334,76 @@ jobs:
           version=$(node -p "require('./package.json').version")
           if npm view "@stateset/cli@${version}" version >/dev/null 2>&1; then
             echo "@stateset/cli@${version} already published; skipping"
+          else
+            npm publish --access public --provenance
+          fi
+
+  # Publish the storefront generator only after its native dependency exists.
+  publish-create-stateset-app:
+    needs: publish-embedded
+    runs-on: ubuntu-latest
+    name: Publish create-stateset-app
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Test generator
+        working-directory: packages/create-stateset-app
+        run: npm test
+
+      - name: Pack generator
+        working-directory: packages/create-stateset-app
+        run: npm pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Wait for embedded package availability
+        run: |
+          version=$(node -p "require('./bindings/node/package.json').version")
+          for attempt in {1..12}; do
+            if npm view "@stateset/embedded@${version}" version >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "Waiting for @stateset/embedded@${version} to become available (attempt ${attempt}/12)"
+            sleep 10
+          done
+          echo "@stateset/embedded@${version} did not become available" >&2
+          exit 1
+
+      - name: Smoke-test generated storefront
+        env:
+          SMOKE_DIR: ${{ runner.temp }}/stateset-storefront-smoke
+        run: |
+          node --input-type=module -e "import { scaffold } from './packages/create-stateset-app/src/index.js'; await scaffold({ projectName: 'stateset-storefront-smoke', storeName: 'StateSet Smoke Store', targetDir: process.env.SMOKE_DIR, skipInstall: true, pm: 'npm' });"
+          cd "$SMOKE_DIR"
+          npm install
+          npm audit --audit-level=moderate
+          npm run typecheck
+          npm run build
+
+      - name: Attest package
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ runner.temp }}/create-stateset-app-*.tgz
+
+      - name: Publish to npm
+        working-directory: packages/create-stateset-app
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "create-stateset-app@${version}" version >/dev/null 2>&1; then
+            echo "create-stateset-app@${version} already published; skipping"
           else
             npm publish --access public --provenance
           fi

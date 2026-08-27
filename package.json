@@ -42,8 +42,9 @@
     "check:bindings:node": "npm --prefix bindings/node run check",
     "check:bindings:python": "bash ./scripts/ci/check_python_bindings.sh",
     "check:admin": "npm --prefix admin run check",
+    "check:create-app": "npm --prefix packages/create-stateset-app test",
     "check:cli": "npm run check:env && npm run test:env-check && npm --prefix cli run check",
-    "check": "npm run check:versions && npm run test:release-hygiene && npm run check:rust && npm run check:shell && npm run check:bindings:node && npm run check:bindings:python && npm run check:admin && npm run check:cli && npm run check:engine-examples",
+    "check": "npm run check:versions && npm run test:release-hygiene && npm run check:rust && npm run check:shell && npm run check:bindings:node && npm run check:bindings:python && npm run check:admin && npm run check:create-app && npm run check:cli && npm run check:engine-examples",
     "check:release": "npm run check && npm run check:doc-tool-refs && npm run check:docs:book && npm run check:docs:snapshot && npm run check:agent-inventory && npm run check:api-command-coverage && npm run check:binding-api-inventory && npm run check:http-gateway-inventory && npm run check:mcp-api-coverage && npm run check:mcp-inventory && npm run check:rust-openapi-inventory && npm run check:workspace-inventory"
   },
   "devDependencies": {

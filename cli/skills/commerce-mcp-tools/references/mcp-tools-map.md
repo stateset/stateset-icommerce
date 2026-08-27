@@ -8,7 +8,7 @@
   - [Product Tools](#product-tools)
   - [Inventory Tools](#inventory-tools)
   - [Returns Tools](#returns-tools)
-  - [Cart/Checkout Tools (Agentic Commerce Protocol)](#cart-checkout-tools-agentic-commerce-protocol)
+  - [Cart/Checkout Tools](#cartcheckout-tools)
   - [Analytics & Forecasting Tools](#analytics-forecasting-tools)
   - [Currency & Exchange Rate Tools](#currency-exchange-rate-tools)
   - [Tax Calculation Tools](#tax-calculation-tools)
@@ -477,7 +477,7 @@ Example:
 }
 ```
 
-### Cart/Checkout Tools (Agentic Commerce Protocol)
+### Cart/Checkout Tools
 
 #### list_carts
 

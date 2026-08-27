@@ -84,7 +84,7 @@ test('Commerce: basic operations', async (t) => {
 
     const fetched = await commerce.customObjects.getObjectByHandle(
       'warranty_registration',
-      'wr_001'
+      'wr_001',
     );
     assert.ok(fetched, 'should fetch record by handle');
     assert.strictEqual(fetched.id, obj.id);
@@ -99,7 +99,9 @@ test('Commerce: basic operations', async (t) => {
     assert.ok(updated, 'should update record');
     assert.strictEqual(updated.id, obj.id);
 
-    const listed = await commerce.customObjects.listObjects({ typeHandle: 'warranty_registration' });
+    const listed = await commerce.customObjects.listObjects({
+      typeHandle: 'warranty_registration',
+    });
     assert.ok(listed.length >= 1);
 
     await commerce.customObjects.deleteObject(obj.id);
@@ -117,7 +119,7 @@ test('Commerce: basic operations', async (t) => {
       firstName: 'Alice',
       lastName: 'Smith',
       phone: '+1-555-0123',
-      acceptsMarketing: true
+      acceptsMarketing: true,
     });
 
     assert.ok(customer.id, 'customer should have an ID');
@@ -183,8 +185,8 @@ test('Commerce: basic operations', async (t) => {
       description: 'A high-quality widget for all your widget needs',
       variants: [
         { sku: 'WIDGET-001', name: 'Small', price: 19.99 },
-        { sku: 'WIDGET-002', name: 'Large', price: 29.99, compareAtPrice: 39.99 }
-      ]
+        { sku: 'WIDGET-002', name: 'Large', price: 29.99, compareAtPrice: 39.99 },
+      ],
     });
 
     assert.ok(product.id, 'product should have an ID');
@@ -213,7 +215,7 @@ test('Commerce: basic operations', async (t) => {
       name: 'Test Item',
       description: 'A test inventory item',
       initialQuantity: 100,
-      reorderPoint: 10
+      reorderPoint: 10,
     });
 
     assert.ok(item.id, 'inventory item should have an ID');
@@ -236,7 +238,7 @@ test('Commerce: basic operations', async (t) => {
       5,
       'order',
       'test-order-123',
-      3600 // 1 hour expiry
+      3600, // 1 hour expiry
     );
     assert.ok(reservation.id, 'reservation should have an ID');
     assert.strictEqual(reservation.quantity, '5');
@@ -254,13 +256,29 @@ test('Commerce: basic operations', async (t) => {
     const customer = await commerce.customers.create({
       email: 'bob@example.com',
       firstName: 'Bob',
-      lastName: 'Johnson'
+      lastName: 'Johnson',
     });
 
     if (!widgetSmall) widgetSmall = await commerce.products.getVariantBySku('WIDGET-001');
     if (!widgetLarge) widgetLarge = await commerce.products.getVariantBySku('WIDGET-002');
     assert.ok(widgetSmall, 'expected widgetSmall variant to exist');
     assert.ok(widgetLarge, 'expected widgetLarge variant to exist');
+
+    await assert.rejects(
+      commerce.orders.createExact({
+        customerId: customer.id,
+        stockPolicy: 'reject_if_insufficient',
+        items: [
+          {
+            sku: 'INV-001',
+            name: 'Overcommitted inventory item',
+            quantity: 100000,
+            unitPrice: '1',
+          },
+        ],
+      }),
+      /insufficient stock/i,
+    );
 
     // Create order
     const order = await commerce.orders.create({
@@ -284,7 +302,7 @@ test('Commerce: basic operations', async (t) => {
         },
       ],
       currency: 'USD',
-      notes: 'Test order'
+      notes: 'Test order',
     });
 
     assert.ok(order.id, 'order should have an ID');
@@ -306,6 +324,39 @@ test('Commerce: basic operations', async (t) => {
     // Count orders
     const count = await commerce.orders.count();
     assert.strictEqual(count, 1);
+
+    // A checkout retry keyed by cart must return the original order.
+    const cart = await commerce.carts.create({ customerId: customer.id });
+    const checkoutInput = {
+      customerId: customer.id,
+      cartId: cart.id,
+      items: [
+        {
+          sku: widgetSmall.sku,
+          name: widgetSmall.name,
+          quantity: 1,
+          unitPrice: widgetSmall.priceExact,
+          taxAmount: '1.65',
+          productId: widgetSmall.productId,
+          variantId: widgetSmall.id,
+        },
+      ],
+      currency: 'USD',
+      stockPolicy: 'reject_if_insufficient',
+      shippingMethod: 'standard',
+      shippingAddress: {
+        line1: '123 Test Street',
+        city: 'San Francisco',
+        state: 'CA',
+        postalCode: '94105',
+        country: 'US',
+      },
+    };
+    const firstCheckoutOrder = await commerce.orders.createExact(checkoutInput);
+    const replayedCheckoutOrder = await commerce.orders.createExact(checkoutInput);
+    assert.strictEqual(replayedCheckoutOrder.id, firstCheckoutOrder.id);
+    assert.strictEqual(firstCheckoutOrder.shippingAddress.postalCode, '94105');
+    assert.strictEqual(firstCheckoutOrder.shippingMethod, 'standard');
   });
 
   await t.test('should handle returns', async () => {
@@ -313,7 +364,7 @@ test('Commerce: basic operations', async (t) => {
     const customer = await commerce.customers.create({
       email: 'carol@example.com',
       firstName: 'Carol',
-      lastName: 'Williams'
+      lastName: 'Williams',
     });
 
     if (!widgetSmall) widgetSmall = await commerce.products.getVariantBySku('WIDGET-001');
@@ -330,7 +381,7 @@ test('Commerce: basic operations', async (t) => {
           productId: widgetSmall.productId,
           variantId: widgetSmall.id,
         },
-      ]
+      ],
     });
 
     // A return requires a shipped order (the engine enforces this).
@@ -345,9 +396,7 @@ test('Commerce: basic operations', async (t) => {
       orderId: order.id,
       reason: 'defective',
       reasonDetails: 'Item arrived broken',
-      items: [
-        { orderItemId: orderItemId, quantity: 1 }
-      ]
+      items: [{ orderItemId: orderItemId, quantity: 1 }],
     });
 
     assert.ok(ret.id, 'return should have an ID');
@@ -374,7 +423,7 @@ test('Commerce: basic operations', async (t) => {
       baseCurrency: 'USD',
       quoteCurrency: 'EUR',
       rate: 0.9,
-      source: 'test'
+      source: 'test',
     });
 
     const conversion = await commerce.currency.convert({ from: 'USD', to: 'EUR', amount: 100 });

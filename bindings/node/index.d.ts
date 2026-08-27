@@ -28,6 +28,8 @@ export interface CreateCustomerInput {
   lastName: string
   phone?: string
   acceptsMarketing?: boolean
+  tags?: Array<string>
+  metadata?: any
 }
 export interface CustomerOutput {
   id: string
@@ -37,6 +39,9 @@ export interface CustomerOutput {
   phone?: string
   status: string
   acceptsMarketing: boolean
+  emailVerified: boolean
+  tags: Array<string>
+  metadata?: any
   createdAt: string
   updatedAt: string
 }
@@ -47,6 +52,8 @@ export interface UpdateCustomerInput {
   phone?: string
   status?: string
   acceptsMarketing?: boolean
+  tags?: Array<string>
+  metadata?: any
 }
 export interface CreateCustomerAddressInput {
   customerId: string
@@ -89,11 +96,46 @@ export interface CreateOrderItemInput {
   productId?: string
   variantId?: string
 }
+/** Exact-money order item input. Monetary values are base-10 strings. */
+export interface CreateOrderItemExactInput {
+  sku: string
+  name: string
+  quantity: number
+  unitPrice: string
+  taxAmount?: string
+  productId?: string
+  variantId?: string
+}
+export interface OrderAddressInput {
+  line1: string
+  line2?: string
+  city: string
+  state?: string
+  postalCode: string
+  country: string
+}
 export interface CreateOrderInput {
   customerId: string
+  cartId?: string
   items: Array<CreateOrderItemInput>
   currency?: string
   notes?: string
+  stockPolicy?: string
+  shippingMethod?: string
+  shippingAddress?: OrderAddressInput
+  billingAddress?: OrderAddressInput
+}
+/** Exact-money order input. Prefer this for financial and agent integrations. */
+export interface CreateOrderExactInput {
+  customerId: string
+  cartId?: string
+  items: Array<CreateOrderItemExactInput>
+  currency?: string
+  notes?: string
+  stockPolicy?: string
+  shippingMethod?: string
+  shippingAddress?: OrderAddressInput
+  billingAddress?: OrderAddressInput
 }
 export interface OrderItemOutput {
   id: string
@@ -101,7 +143,19 @@ export interface OrderItemOutput {
   name: string
   quantity: number
   unitPrice: number
+  /** Exact base-10 unit price. Prefer this field for calculations. */
+  unitPriceExact: string
   total: number
+  /** Exact base-10 line total. Prefer this field for calculations. */
+  totalExact: string
+}
+export interface OrderAddressOutput {
+  line1: string
+  line2?: string
+  city: string
+  state?: string
+  postalCode: string
+  country: string
 }
 export interface OrderOutput {
   id: string
@@ -109,10 +163,16 @@ export interface OrderOutput {
   customerId: string
   status: string
   totalAmount: number
+  /** Exact base-10 order total. Prefer this field for calculations. */
+  totalAmountExact: string
   currency: string
   paymentStatus: string
   fulfillmentStatus: string
   trackingNumber?: string
+  shippingMethod?: string
+  notes?: string
+  shippingAddress?: OrderAddressOutput
+  billingAddress?: OrderAddressOutput
   items: Array<OrderItemOutput>
   version: number
   createdAt: string
@@ -123,10 +183,13 @@ export interface CreateProductVariantInput {
   name?: string
   price: number
   compareAtPrice?: number
+  isDefault?: boolean
 }
 export interface CreateProductInput {
   name: string
+  slug?: string
   description?: string
+  category?: string
   variants?: Array<CreateProductVariantInput>
 }
 export interface ProductOutput {
@@ -134,6 +197,7 @@ export interface ProductOutput {
   name: string
   slug: string
   description: string
+  category?: string
   status: string
   createdAt: string
   updatedAt: string
@@ -144,7 +208,11 @@ export interface ProductVariantOutput {
   sku: string
   name: string
   price: number
+  /** Exact base-10 price. Prefer this field for calculations. */
+  priceExact: string
   compareAtPrice?: number
+  /** Exact base-10 comparison price. */
+  compareAtPriceExact?: string
   isDefault: boolean
 }
 export interface UpdateProductInput {
@@ -541,6 +609,20 @@ export interface AddCartItemInput {
   weight?: number
   requiresShipping?: boolean
 }
+/** Exact-money cart item input. Monetary values are base-10 strings. */
+export interface AddCartItemExactInput {
+  productId?: string
+  variantId?: string
+  sku: string
+  name: string
+  description?: string
+  imageUrl?: string
+  quantity: number
+  unitPrice: string
+  originalPrice?: string
+  weight?: string
+  requiresShipping?: boolean
+}
 export interface CreateCartInput {
   customerId?: string
   customerEmail?: string
@@ -584,10 +666,15 @@ export interface CartItemOutput {
   imageUrl?: string
   quantity: number
   unitPrice: number
+  unitPriceExact: string
   originalPrice?: number
+  originalPriceExact?: string
   discountAmount: number
+  discountAmountExact: string
   taxAmount: number
+  taxAmountExact: string
   total: number
+  totalExact: string
   requiresShipping: boolean
   createdAt: string
   updatedAt: string
@@ -612,10 +699,15 @@ export interface CartOutput {
   status: string
   currency: string
   subtotal: number
+  subtotalExact: string
   taxAmount: number
+  taxAmountExact: string
   shippingAmount: number
+  shippingAmountExact: string
   discountAmount: number
+  discountAmountExact: string
   grandTotal: number
+  grandTotalExact: string
   customerEmail?: string
   customerPhone?: string
   customerName?: string
@@ -641,6 +733,7 @@ export interface CheckoutResultOutput {
   orderNumber: string
   paymentId?: string
   totalCharged: number
+  totalChargedExact: string
   currency: string
 }
 export interface ShippingRateOutput {
@@ -4776,6 +4869,8 @@ export declare class Customers {
 }
 export declare class Orders {
   create(input: CreateOrderInput): Promise<OrderOutput>
+  /** Create an order without any floating-point conversion. */
+  createExact(input: CreateOrderExactInput): Promise<OrderOutput>
   get(id: string): Promise<OrderOutput | null>
   list(): Promise<Array<OrderOutput>>
   updateStatus(id: string, status: string): Promise<OrderOutput>
@@ -4939,6 +5034,8 @@ export declare class Carts {
   delete(id: string): Promise<void>
   /** Add an item to the cart */
   addItem(cartId: string, item: AddCartItemInput): Promise<CartItemOutput>
+  /** Add a cart item without any floating-point conversion. */
+  addItemExact(cartId: string, item: AddCartItemExactInput): Promise<CartItemOutput>
   /** Update a cart item */
   updateItem(itemId: string, input: UpdateCartItemInput): Promise<CartItemOutput>
   /** Remove an item from the cart */

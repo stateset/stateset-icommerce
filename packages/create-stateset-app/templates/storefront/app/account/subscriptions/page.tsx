@@ -2,17 +2,19 @@
 
 import { useCustomer } from '@/contexts/CustomerContext';
 import Link from 'next/link';
+import { useAccount } from 'wagmi';
 
 export default function SubscriptionsPage() {
-  const { subscriptions, isLoading, refreshSubscriptions } = useCustomer();
+  const { subscriptions, isLoading, refreshSubscriptions, authenticatedFetch } = useCustomer();
+  const { address } = useAccount();
 
   const handleCancel = async (subscriptionId: string) => {
     if (!confirm('Are you sure you want to cancel this subscription?')) return;
     try {
-      const response = await fetch(`/api/subscriptions/${subscriptionId}`, {
+      const response = await authenticatedFetch(`/api/subscriptions/${subscriptionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'cancel' }),
+        body: JSON.stringify({ action: 'cancel', walletAddress: address }),
       });
       if (response.ok) {
         refreshSubscriptions();
@@ -50,18 +52,18 @@ export default function SubscriptionsPage() {
             <div key={sub.id} className="bg-white border rounded-lg p-6">
               <div className="flex justify-between items-start">
                 <div>
-                  <h3 className="font-semibold text-lg">{sub.planName || sub.sku || 'Subscription'}</h3>
-                  <p className="text-gray-500 text-sm mt-1">
-                    ${(sub.price || 0).toFixed(2)}/month
-                  </p>
+                  <h3 className="font-semibold text-lg">
+                    {sub.planName || sub.sku || 'Subscription'}
+                  </h3>
+                  <p className="text-gray-500 text-sm mt-1">${(sub.price || 0).toFixed(2)}/month</p>
                 </div>
                 <span
                   className={`px-3 py-1 text-sm rounded-full ${
                     sub.status === 'active'
                       ? 'bg-green-100 text-green-800'
                       : sub.status === 'cancelled'
-                      ? 'bg-red-100 text-red-800'
-                      : 'bg-yellow-100 text-yellow-800'
+                        ? 'bg-red-100 text-red-800'
+                        : 'bg-yellow-100 text-yellow-800'
                   }`}
                 >
                   {sub.status}

@@ -27,10 +27,15 @@ async function getProductInfoBySku(commerce: ReturnType<typeof getCommerce>, sku
           if (product?.name) productName = product.name;
         } catch {}
       }
-      return { name: productName, unitPrice: variant.price || 0 };
+      return {
+        name: productName,
+        unitPrice: variant.priceExact || String(variant.price || 0),
+        productId: variant.productId,
+        variantId: variant.id,
+      };
     }
   } catch {}
-  return { name: sku, unitPrice: 0 };
+  throw new Error(`Unknown SKU: ${sku}`);
 }
 
 async function getCartWithItems(commerce: ReturnType<typeof getCommerce>, cartId: string) {
@@ -53,7 +58,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to get cart' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -65,11 +70,16 @@ export async function POST(request: NextRequest) {
 
     if (body.cartId && body.sku) {
       const productInfo = await getProductInfoBySku(commerce, body.sku);
-      await commerce.carts.addItem(body.cartId, {
+      const quantity = Number(body.quantity ?? 1);
+      if (!Number.isSafeInteger(quantity) || quantity < 1)
+        throw new Error('Quantity must be a positive integer');
+      await commerce.carts.addItemExact(body.cartId, {
+        productId: productInfo.productId,
+        variantId: productInfo.variantId,
         sku: body.sku,
-        name: body.name || productInfo.name,
-        quantity: body.quantity || 1,
-        unitPrice: body.unitPrice ?? productInfo.unitPrice,
+        name: productInfo.name,
+        quantity,
+        unitPrice: productInfo.unitPrice,
       });
       const cart = await getCartWithItems(commerce, body.cartId);
       return NextResponse.json({ cart });
@@ -79,11 +89,16 @@ export async function POST(request: NextRequest) {
 
     if (body.sku) {
       const productInfo = await getProductInfoBySku(commerce, body.sku);
-      await commerce.carts.addItem(newCart.id, {
+      const quantity = Number(body.quantity ?? 1);
+      if (!Number.isSafeInteger(quantity) || quantity < 1)
+        throw new Error('Quantity must be a positive integer');
+      await commerce.carts.addItemExact(newCart.id, {
+        productId: productInfo.productId,
+        variantId: productInfo.variantId,
         sku: body.sku,
-        name: body.name || productInfo.name,
-        quantity: body.quantity || 1,
-        unitPrice: body.unitPrice ?? productInfo.unitPrice,
+        name: productInfo.name,
+        quantity,
+        unitPrice: productInfo.unitPrice,
       });
       const cart = await getCartWithItems(commerce, newCart.id);
       return NextResponse.json({ cart });
@@ -94,7 +109,7 @@ export async function POST(request: NextRequest) {
     console.error('Cart error:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to process cart' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -113,7 +128,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to remove item' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -123,7 +138,10 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const { cartId, itemId, quantity } = body;
     if (!cartId || !itemId || quantity === undefined) {
-      return NextResponse.json({ error: 'Cart ID, Item ID, and quantity required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Cart ID, Item ID, and quantity required' },
+        { status: 400 },
+      );
     }
     const commerce = getCommerce();
     await commerce.carts.updateItem(itemId, { quantity });
@@ -132,7 +150,7 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to update item' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

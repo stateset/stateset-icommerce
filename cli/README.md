@@ -2,7 +2,7 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 1.26.0
+**Version:** 1.27.0
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
@@ -25,7 +25,7 @@ The StateSet CLI is built on the premise that commerce infrastructure should be 
 
 - **Runs locally** without cloud dependencies
 - **Deterministic operations** for agent reliability
-- **Agentic Commerce Protocol (ACP)** for standardized agent interactions
+- **Protocol-neutral checkout primitives** for adapter and agent integrations
 - **Safety-first architecture** — read-only by default, explicit `--apply` for writes
 
 ## Features
@@ -273,7 +273,7 @@ stateset --apply --batch orders.txt --parallel 3
 
 | Command | Agent | Description |
 |---------|-------|-------------|
-| `stateset-checkout` | checkout | Shopping cart & checkout flow (ACP) |
+| `stateset-checkout` | checkout | Shopping cart and embedded checkout flow |
 | `stateset-orders` | orders | Order lifecycle management |
 | `stateset-inventory` | inventory | Stock & reservation management |
 | `stateset-returns` | returns | RMA & refund processing |
@@ -413,7 +413,7 @@ stateset-icommerce/
 | **Customers** | Profiles, addresses, preferences, history |
 | **Products** | Catalog with variants and attributes |
 | **Inventory** | Multi-location stock, reservations, adjustments |
-| **Carts** | Shopping cart with ACP checkout flow |
+| **Carts** | Shopping cart with embedded checkout flow |
 | **Returns** | RMA processing with refund management |
 | **Shipments** | Fulfillment tracking with carrier integration |
 
@@ -599,7 +599,7 @@ stateset --apply "create an order for alice@example.com: 2x WIDGET-001"
 stateset --apply --resume <session> "ship that order with tracking FEDEX123"
 ```
 
-### Shopping Cart Checkout (ACP)
+### Shopping Cart Checkout
 
 ```bash
 # Create a cart

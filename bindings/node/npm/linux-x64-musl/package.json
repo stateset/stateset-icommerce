@@ -1,6 +1,6 @@
 {
   "name": "@stateset/embedded-linux-x64-musl",
-  "version": "1.26.0",
+  "version": "1.27.0",
   "os": [
     "linux"
   ],

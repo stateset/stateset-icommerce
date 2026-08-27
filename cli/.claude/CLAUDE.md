@@ -8,7 +8,7 @@ This CLI provides natural language access to commerce operations across
 **73 tool domains (802 MCP tools)** — see [docs/TOOLS.md](../docs/TOOLS.md) for the
 full generated catalog. Major areas:
 - **Core commerce** - Customers, orders, products, inventory, returns, shipments
-- **Carts/Checkout** - Shopping cart and checkout flow (Agentic Commerce Protocol)
+- **Carts/Checkout** - Protocol-neutral shopping cart and checkout flow
 - **Payments** - Payments, refunds, stablecoin, x402, treasury
 - **Finance suite** - General ledger, AP (bills, 3-way match), AR (credit memos, aging), fixed assets, revenue recognition, cost accounting, credit, prepayments, vendor credits
 - **Warehouse (WMS)** - Warehouses/locations, fulfillment waves, pick tasks, receiving, cycle counts, backorders
@@ -29,7 +29,7 @@ full generated catalog. Major areas:
 
 | Command | Agent | Description |
 |---------|-------|-------------|
-| `stateset-checkout` | checkout | Shopping cart & checkout flow (ACP) |
+| `stateset-checkout` | checkout | Engine-native shopping cart and checkout flow |
 | `stateset-orders` | orders | Order lifecycle management |
 | `stateset-inventory` | inventory | Stock & reservation management |
 | `stateset-returns` | returns | RMA & refund processing |
@@ -124,7 +124,7 @@ major domains with representative tools only — the complete, generated catalog
 - `approve_return` - Approve return (requires --apply)
 - `reject_return` - Reject with reason (requires --apply)
 
-### commerce-carts (Agentic Commerce Protocol)
+### commerce-carts (protocol-neutral engine API)
 - `list_carts` - List shopping carts
 - `get_cart` - Get cart with items
 - `create_cart` - Create cart (requires --apply)
@@ -440,7 +440,7 @@ stateset "show me pending orders"
 stateset --apply --resume <id> "ship order #12345 with tracking FEDEX123"
 ```
 
-### Cart Checkout (ACP)
+### Cart Checkout (engine API)
 ```bash
 stateset --apply "create a cart for alice@example.com"
 stateset --apply --resume <id> "add 2 widgets at $29.99"

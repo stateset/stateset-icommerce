@@ -797,7 +797,11 @@ pub struct OrderItem {
     #[pyo3(get)]
     unit_price: f64,
     #[pyo3(get)]
+    unit_price_exact: String,
+    #[pyo3(get)]
     total: f64,
+    #[pyo3(get)]
+    total_exact: String,
 }
 
 #[pymethods]
@@ -821,6 +825,8 @@ pub struct Order {
     status: String,
     #[pyo3(get)]
     total_amount: f64,
+    #[pyo3(get)]
+    total_amount_exact: String,
     #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
@@ -859,12 +865,14 @@ impl TryFrom<stateset_core::Order> for Order {
     type Error = PyErr;
 
     fn try_from(o: stateset_core::Order) -> PyResult<Self> {
+        let total_amount_exact = o.total_amount.to_string();
         Ok(Self {
             id: o.id.to_string(),
             order_number: o.order_number,
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
             total_amount: to_f64_result(o.total_amount, "order total amount")?,
+            total_amount_exact,
             currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
@@ -873,13 +881,17 @@ impl TryFrom<stateset_core::Order> for Order {
                 .items
                 .into_iter()
                 .map(|i| {
+                    let unit_price_exact = i.unit_price.to_string();
+                    let total_exact = i.total.to_string();
                     Ok(OrderItem {
                         id: i.id.to_string(),
                         sku: i.sku,
                         name: i.name,
                         quantity: i.quantity,
                         unit_price: to_f64_result(i.unit_price, "order item unit price")?,
+                        unit_price_exact,
                         total: to_f64_result(i.total, "order item total")?,
+                        total_exact,
                     })
                 })
                 .collect::<PyResult<Vec<_>>>()?,
@@ -1197,7 +1209,11 @@ pub struct ProductVariant {
     #[pyo3(get)]
     price: f64,
     #[pyo3(get)]
+    price_exact: String,
+    #[pyo3(get)]
     compare_at_price: Option<f64>,
+    #[pyo3(get)]
+    compare_at_price_exact: Option<String>,
     #[pyo3(get)]
     is_default: bool,
 }
@@ -1213,16 +1229,20 @@ impl TryFrom<stateset_core::ProductVariant> for ProductVariant {
     type Error = PyErr;
 
     fn try_from(v: stateset_core::ProductVariant) -> PyResult<Self> {
+        let price_exact = v.price.to_string();
+        let compare_at_price_exact = v.compare_at_price.map(|value| value.to_string());
         Ok(Self {
             id: v.id.to_string(),
             product_id: v.product_id.to_string(),
             sku: v.sku,
             name: v.name,
             price: to_f64_result(v.price, "product variant price")?,
+            price_exact,
             compare_at_price: optional_to_f64_result(
                 v.compare_at_price,
                 "product variant compare at price",
             )?,
+            compare_at_price_exact,
             is_default: v.is_default,
         })
     }
@@ -4554,13 +4574,23 @@ pub struct CartItem {
     #[pyo3(get)]
     unit_price: f64,
     #[pyo3(get)]
+    unit_price_exact: String,
+    #[pyo3(get)]
     original_price: Option<f64>,
+    #[pyo3(get)]
+    original_price_exact: Option<String>,
     #[pyo3(get)]
     discount_amount: f64,
     #[pyo3(get)]
+    discount_amount_exact: String,
+    #[pyo3(get)]
     tax_amount: f64,
     #[pyo3(get)]
+    tax_amount_exact: String,
+    #[pyo3(get)]
     total: f64,
+    #[pyo3(get)]
+    total_exact: String,
     #[pyo3(get)]
     created_at: String,
     #[pyo3(get)]
@@ -4578,6 +4608,11 @@ impl TryFrom<stateset_core::CartItem> for CartItem {
     type Error = PyErr;
 
     fn try_from(i: stateset_core::CartItem) -> PyResult<Self> {
+        let unit_price_exact = i.unit_price.to_string();
+        let original_price_exact = i.original_price.map(|value| value.to_string());
+        let discount_amount_exact = i.discount_amount.to_string();
+        let tax_amount_exact = i.tax_amount.to_string();
+        let total_exact = i.total.to_string();
         Ok(Self {
             id: i.id.to_string(),
             cart_id: i.cart_id.to_string(),
@@ -4589,10 +4624,15 @@ impl TryFrom<stateset_core::CartItem> for CartItem {
             image_url: i.image_url,
             quantity: i.quantity,
             unit_price: to_f64_result(i.unit_price, "cart item unit price")?,
+            unit_price_exact,
             original_price: optional_to_f64_result(i.original_price, "cart item original price")?,
+            original_price_exact,
             discount_amount: to_f64_result(i.discount_amount, "cart item discount amount")?,
+            discount_amount_exact,
             tax_amount: to_f64_result(i.tax_amount, "cart item tax amount")?,
+            tax_amount_exact,
             total: to_f64_result(i.total, "cart item total")?,
+            total_exact,
             created_at: i.created_at.to_rfc3339(),
             updated_at: i.updated_at.to_rfc3339(),
         })
@@ -4663,6 +4703,8 @@ pub struct CheckoutResult {
     #[pyo3(get)]
     total_charged: f64,
     #[pyo3(get)]
+    total_charged_exact: String,
+    #[pyo3(get)]
     currency: String,
 }
 
@@ -4680,12 +4722,14 @@ impl TryFrom<stateset_core::CheckoutResult> for CheckoutResult {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::CheckoutResult) -> PyResult<Self> {
+        let total_charged_exact = r.total_charged.to_string();
         Ok(Self {
             order_id: r.order_id.to_string(),
             order_number: r.order_number,
             cart_id: r.cart_id.to_string(),
             payment_id: r.payment_id.map(|id| id.to_string()),
             total_charged: to_f64_result(r.total_charged, "checkout total charged")?,
+            total_charged_exact,
             currency: r.currency.to_string(),
         })
     }
@@ -4708,13 +4752,23 @@ pub struct Cart {
     #[pyo3(get)]
     subtotal: f64,
     #[pyo3(get)]
+    subtotal_exact: String,
+    #[pyo3(get)]
     tax_amount: f64,
+    #[pyo3(get)]
+    tax_amount_exact: String,
     #[pyo3(get)]
     shipping_amount: f64,
     #[pyo3(get)]
+    shipping_amount_exact: String,
+    #[pyo3(get)]
     discount_amount: f64,
     #[pyo3(get)]
+    discount_amount_exact: String,
+    #[pyo3(get)]
     grand_total: f64,
+    #[pyo3(get)]
+    grand_total_exact: String,
     #[pyo3(get)]
     customer_email: Option<String>,
     #[pyo3(get)]
@@ -4779,6 +4833,11 @@ impl TryFrom<stateset_core::Cart> for Cart {
     fn try_from(c: stateset_core::Cart) -> PyResult<Self> {
         let item_count = c.items.len() as i32;
         let items = convert_outputs(c.items)?;
+        let subtotal_exact = c.subtotal.to_string();
+        let tax_amount_exact = c.tax_amount.to_string();
+        let shipping_amount_exact = c.shipping_amount.to_string();
+        let discount_amount_exact = c.discount_amount.to_string();
+        let grand_total_exact = c.grand_total.to_string();
         Ok(Self {
             id: c.id.to_string(),
             cart_number: c.cart_number,
@@ -4786,10 +4845,15 @@ impl TryFrom<stateset_core::Cart> for Cart {
             status: format!("{}", c.status),
             currency: c.currency.to_string(),
             subtotal: to_f64_result(c.subtotal, "cart subtotal")?,
+            subtotal_exact,
             tax_amount: to_f64_result(c.tax_amount, "cart tax amount")?,
+            tax_amount_exact,
             shipping_amount: to_f64_result(c.shipping_amount, "cart shipping amount")?,
+            shipping_amount_exact,
             discount_amount: to_f64_result(c.discount_amount, "cart discount amount")?,
+            discount_amount_exact,
             grand_total: to_f64_result(c.grand_total, "cart grand total")?,
+            grand_total_exact,
             customer_email: c.customer_email,
             customer_name: c.customer_name,
             payment_method: c.payment_method,

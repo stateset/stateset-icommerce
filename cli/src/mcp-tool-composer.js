@@ -1,6 +1,6 @@
 /**
  * Tool Composition Engine for StateSet MCP Server
- * Enables agents to orchestrate multi-step commerce operations with atomicity
+ * Enables agents to orchestrate multi-step commerce operations with compensating actions
  */
 
 import { EventEmitter } from 'events';
@@ -24,7 +24,7 @@ export class ToolComposer extends EventEmitter {
   }
 
   /**
-   * Create a multi-step orchestration with atomic rollback
+   * Create a multi-step orchestration with best-effort compensating rollback
    * @param {string} name - Orchestration name
    * @param {Array} steps - Array of steps { tool, params, validate }
    * @returns {Promise<Object>} - Orchestration result with rollbacks on failure
@@ -89,7 +89,26 @@ export class ToolComposer extends EventEmitter {
       const rollbackResults = [];
       for (const rollback of rollbackStack) {
         try {
-          const result = await rollback.rollbackFn();
+          const rollbackPlan = await rollback.rollbackFn();
+          if (
+            rollbackPlan &&
+            typeof rollbackPlan === 'object' &&
+            Object.hasOwn(rollbackPlan, 'tool')
+          ) {
+            if (!rollbackPlan.tool) {
+              rollbackResults.push({
+                step: rollback.step,
+                tool: rollback.tool,
+                status: 'skipped',
+                reason: 'No compensating tool is available',
+              });
+              this.emit('rollback:skipped', { orchestrationId, step: rollback.step });
+              continue;
+            }
+          }
+          const result = rollbackPlan?.tool
+            ? await this.executeTool(rollbackPlan.tool, rollbackPlan.params ?? {})
+            : rollbackPlan;
           rollbackResults.push({
             step: rollback.step,
             tool: rollback.tool,
@@ -171,7 +190,7 @@ export class ToolComposer extends EventEmitter {
   }
 
   /**
-   * Create order with inventory reservation (atomic)
+   * Create order with inventory reservation (best-effort compensation)
    * Example: Reserve inventory → Create order → Confirm reservation
    */
   async createOrderWithReservation(params) {
@@ -216,7 +235,7 @@ export class ToolComposer extends EventEmitter {
   }
 
   /**
-   * Process return with restock (atomic)
+   * Process return with restock (best-effort compensation)
    * Example: Approve return → Credit payment → Restock inventory
    */
   async processReturnWithRestock(params) {

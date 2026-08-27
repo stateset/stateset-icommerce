@@ -42,7 +42,7 @@ Available Tutorials:
   quickstart    Learn the basics in 5 minutes (recommended for new users)
   orders        Order lifecycle management
   inventory     Stock tracking and reservations
-  checkout      Shopping cart and checkout flow (ACP)
+  checkout      Shopping cart and embedded checkout flow
   analytics     Business intelligence and forecasting
 
 Examples:

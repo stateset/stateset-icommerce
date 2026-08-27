@@ -59,7 +59,7 @@
     {
       "id": "checkout",
       "name": "Checkout Agent",
-      "description": "Shopping cart and checkout flow specialist (Agentic Commerce Protocol)",
+      "description": "Shopping cart and protocol-neutral checkout flow specialist",
       "toolCount": 32,
       "usesAllCommerceTools": false,
       "serverCounts": {

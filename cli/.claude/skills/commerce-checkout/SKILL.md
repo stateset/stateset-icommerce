@@ -1,15 +1,18 @@
 ---
 name: commerce-checkout
-description: Use when managing shopping carts, checkout flows, or implementing the Agentic Commerce Protocol (ACP).
+description: Use when managing StateSet's protocol-neutral shopping cart and checkout flow.
 ---
 
 # Commerce Checkout Skill
 
-Domain knowledge for shopping cart and checkout operations using the Agentic Commerce Protocol (ACP).
+Domain knowledge for StateSet's embedded shopping cart and checkout operations.
 
-## Agentic Commerce Protocol (ACP)
+## Protocol boundary
 
-ACP is a standardized protocol for AI agents to interact with commerce systems. It defines:
+These tools are engine-native APIs, not ACP wire messages. An ACP or UCP adapter
+must authenticate its caller, validate the protocol schema, map it to these
+operations, and produce protocol-specific responses. Do not claim conformance
+from use of the cart state machine alone.
 
 1. **Cart Lifecycle** - Creation, modification, completion
 2. **Checkout Flow** - Address, shipping, payment, confirmation

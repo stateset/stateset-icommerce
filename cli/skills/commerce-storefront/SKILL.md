@@ -1,6 +1,6 @@
 ---
 name: commerce-storefront
-description: Build and adapt storefront templates and Agentic Commerce Protocol flows. Use when designing storefront pages, checkout UI, or ACP flows.
+description: Build and adapt storefront templates and protocol-neutral checkout flows. Use when designing storefront pages, checkout UI, or commerce adapter flows.
 ---
 
 # Commerce Storefront

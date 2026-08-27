@@ -1,12 +1,11 @@
-import { http, createConfig } from 'wagmi';
+import { http, createConfig, injected } from 'wagmi';
 import { base } from 'wagmi/chains';
-import { injected, coinbaseWallet } from 'wagmi/connectors';
 
 export const activeChain = base;
 
 export const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 export const USDC_DECIMALS = 6;
-export const MERCHANT_ADDRESS = (process.env.NEXT_PUBLIC_MERCHANT_ADDRESS ||
+export const MERCHANT_ADDRESS = (process.env.NEXT_PUBLIC_STORE_WALLET_ADDRESS ||
   '0x0000000000000000000000000000000000000000') as `0x${string}`;
 
 export const ERC20_ABI = [
@@ -41,10 +40,7 @@ export const ERC20_ABI = [
 
 export const wagmiConfig = createConfig({
   chains: [base],
-  connectors: [
-    injected(),
-    coinbaseWallet({ appName: '{{STORE_NAME}}' }),
-  ],
+  connectors: [injected()],
   transports: {
     [base.id]: http(),
   },

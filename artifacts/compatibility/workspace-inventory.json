@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.26.0",
+    "version": "1.27.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -563,7 +563,7 @@
       },
       {
         "name": "mcp",
-        "count": 30
+        "count": 31
       },
       {
         "name": "channels",

@@ -214,6 +214,7 @@ required_version_snippets=(
   "examples/node/package.json|\"version\": \"${workspace_version}\""
   "examples/node/package.json|\"@stateset/embedded\": \"^${workspace_version}\""
   "packages/create-stateset-app/templates/storefront/package.json|\"@stateset/embedded\": \"^${workspace_version}\""
+  "packages/create-stateset-app/package.json|\"version\": \"${workspace_version}\""
 )
 
 for entry in "${required_version_snippets[@]}"; do

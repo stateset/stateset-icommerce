@@ -180,6 +180,14 @@ export const DOMAIN_TOOL_ARRAYS = Object.freeze(Object.fromEntries(DOMAIN_TOOL_E
 export const ALL_DOMAIN_TOOLS = Object.freeze(DOMAIN_TOOL_ENTRIES.flatMap(([, tools]) => tools));
 export const TOOL_MODULE_NAMES = Object.freeze(DOMAIN_TOOL_ENTRIES.map(([name]) => name));
 
+export const TOOL_MODULE_BY_NAME = Object.freeze(
+  Object.fromEntries(
+    DOMAIN_TOOL_ENTRIES.flatMap(([moduleName, tools]) =>
+      tools.filter((tool) => tool?.name).map((tool) => [tool.name, moduleName]),
+    ),
+  ),
+);
+
 export const TOOL_POLICY_DOMAIN_BY_NAME = Object.freeze(
   Object.fromEntries(
     DOMAIN_TOOL_ENTRIES.flatMap(([moduleName, tools]) =>

@@ -15,13 +15,15 @@ end-to-end; every mutation is auditable.
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "-p", "@stateset/cli", "stateset-mcp", "--db", "./store.db"]
+      "args": ["-y", "-p", "@stateset/cli", "stateset-mcp", "--db", "./store.db", "--profile", "core"]
     }
   }
 }
 ```
 
-That serves 900+ tools across 89 domains over stdio. **Writes are
+The `core` profile keeps the model-facing catalog focused; use `--profile all`
+for the complete 900+ tool surface, or `finance`, `operations`, and `agents`
+for curated workloads. Add individual modules with `--domains a,b`. **Writes are
 preview-only by default** — tools describe what they would do; add `--apply`
 to the args to enable mutations. The generated tool catalog is
 [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md).

@@ -19,8 +19,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Commerce getters | 67 |
 | Mapped getters | 67 |
 | Audited classes | 32 |
-| Audited methods | 388 |
-| Mapped audited methods | 388 |
+| Audited methods | 390 |
+| Mapped audited methods | 390 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -104,7 +104,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `Analytics` | 14 | 14 | 0 | 0 | 0 |
 | `Backorders` | 10 | 10 | 0 | 0 | 0 |
 | `Bom` | 7 | 7 | 0 | 0 | 0 |
-| `Carts` | 32 | 32 | 0 | 0 | 0 |
+| `Carts` | 33 | 33 | 0 | 0 | 0 |
 | `CostAccounting` | 5 | 5 | 0 | 0 | 0 |
 | `Credit` | 9 | 9 | 0 | 0 | 0 |
 | `CurrencyOperations` | 15 | 15 | 0 | 0 | 0 |
@@ -115,7 +115,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `Inventory` | 6 | 6 | 0 | 0 | 0 |
 | `Invoices` | 8 | 8 | 0 | 0 | 0 |
 | `Lots` | 12 | 12 | 0 | 0 | 0 |
-| `Orders` | 7 | 7 | 0 | 0 | 0 |
+| `Orders` | 8 | 8 | 0 | 0 | 0 |
 | `Payments` | 10 | 10 | 0 | 0 | 0 |
 | `Products` | 16 | 16 | 0 | 0 | 0 |
 | `Promotions` | 17 | 17 | 0 | 0 | 0 |

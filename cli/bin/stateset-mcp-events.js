@@ -40,6 +40,8 @@ OPTIONS:
   --history-limit <n>     In-memory event history size (default: 500)
   --stream-name <name>    Event stream name (default: stateset-mcp)
   --structured-tool-results  Include machine-readable _agentic metadata in MCP tool results
+  --profile <name>           Tool profile: core, operations, finance, agents, all
+  --domains <a,b,...>        Add specific tool domains to the selected profile
   --strict-protocol          Serve ONLY 2026-07-28; reject 2025-era clients
   --help, -h              Show this help message
   --version, -v           Show version
@@ -182,6 +184,8 @@ async function main() {
       'history-limit': { type: 'string', default: '500' },
       'stream-name': { type: 'string', default: 'stateset-mcp' },
       'structured-tool-results': { type: 'boolean', short: 's', default: false },
+      profile: { type: 'string', default: 'all' },
+      domains: { type: 'string' },
       'strict-protocol': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
@@ -242,6 +246,13 @@ async function main() {
         commerce,
         dbPath,
         structuredToolResults: values['structured-tool-results'],
+        toolProfile: values.profile,
+        toolDomains: values.domains
+          ? values.domains
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean)
+          : [],
         mcpEventStream: eventStreamer,
       }),
     {
@@ -258,6 +269,13 @@ async function main() {
     commerce,
     dbPath,
     structuredToolResults: values['structured-tool-results'],
+    toolProfile: values.profile,
+    toolDomains: values.domains
+      ? values.domains
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : [],
     mcpEventStream: eventStreamer,
   });
 

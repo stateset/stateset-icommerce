@@ -14,8 +14,8 @@ interface Props {
 
 export function AddToCartButton({ sku, productName, price, isSubscription = false }: Props) {
   const { addItem } = useCart();
-  const { isConnected } = useAccount();
-  const { customer } = useCustomer();
+  const { address, isConnected } = useAccount();
+  const { customer, authenticatedFetch } = useCustomer();
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -32,7 +32,7 @@ export function AddToCartButton({ sku, productName, price, isSubscription = fals
       setIsLoading(true);
       try {
         const discountedPrice = price * 0.9;
-        const response = await fetch('/api/subscriptions', {
+        const response = await authenticatedFetch('/api/subscriptions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -40,6 +40,7 @@ export function AddToCartButton({ sku, productName, price, isSubscription = fals
             sku,
             productName,
             price: discountedPrice,
+            walletAddress: address,
           }),
         });
         if (response.ok) {
@@ -74,16 +75,18 @@ export function AddToCartButton({ sku, productName, price, isSubscription = fals
       onClick={handleClick}
       disabled={isLoading}
       className={`w-full py-3 px-4 rounded-lg font-medium transition-colors ${
-        success
-          ? 'bg-green-600 text-white'
-          : 'bg-black text-white hover:bg-gray-800'
+        success ? 'bg-green-600 text-white' : 'bg-black text-white hover:bg-gray-800'
       } disabled:opacity-50`}
     >
       {isLoading
         ? 'Adding...'
         : success
-        ? isSubscription ? 'Subscribed!' : 'Added to Cart!'
-        : isSubscription ? 'Subscribe' : 'Add to Cart'}
+          ? isSubscription
+            ? 'Subscribed!'
+            : 'Added to Cart!'
+          : isSubscription
+            ? 'Subscribe'
+            : 'Add to Cart'}
     </button>
   );
 }

@@ -707,6 +707,8 @@ pub struct CreateCustomerInput {
     pub last_name: String,
     pub phone: Option<String>,
     pub accepts_marketing: Option<bool>,
+    pub tags: Option<Vec<String>>,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[napi(object)]
@@ -719,6 +721,9 @@ pub struct CustomerOutput {
     pub phone: Option<String>,
     pub status: String,
     pub accepts_marketing: bool,
+    pub email_verified: bool,
+    pub tags: Vec<String>,
+    pub metadata: Option<serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -733,6 +738,9 @@ impl From<stateset_core::Customer> for CustomerOutput {
             phone: c.phone,
             status: format!("{}", c.status),
             accepts_marketing: c.accepts_marketing,
+            email_verified: c.email_verified,
+            tags: c.tags,
+            metadata: c.metadata,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
         }
@@ -748,6 +756,8 @@ pub struct UpdateCustomerInput {
     pub phone: Option<String>,
     pub status: Option<String>,
     pub accepts_marketing: Option<bool>,
+    pub tags: Option<Vec<String>>,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[napi(object)]
@@ -857,7 +867,8 @@ impl Customers {
                 last_name: input.last_name,
                 phone: input.phone,
                 accepts_marketing: input.accepts_marketing,
-                ..Default::default()
+                tags: input.tags,
+                metadata: input.metadata,
             })
             .map_err(|e| Error::from_reason(format!("Failed to create customer: {}", e)))?;
 
@@ -930,7 +941,8 @@ impl Customers {
                     phone: input.phone,
                     status,
                     accepts_marketing: input.accepts_marketing,
-                    ..Default::default()
+                    tags: input.tags,
+                    metadata: input.metadata,
                 },
             )
             .map_err(|e| Error::from_reason(format!("Failed to update customer: {}", e)))?;
@@ -1056,13 +1068,82 @@ pub struct CreateOrderItemInput {
     pub variant_id: Option<String>,
 }
 
+/// Exact-money order item input. Monetary values are base-10 strings.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateOrderItemExactInput {
+    pub sku: String,
+    pub name: String,
+    pub quantity: i32,
+    pub unit_price: String,
+    pub tax_amount: Option<String>,
+    pub product_id: Option<String>,
+    pub variant_id: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OrderAddressInput {
+    pub line1: String,
+    pub line2: Option<String>,
+    pub city: String,
+    pub state: Option<String>,
+    pub postal_code: String,
+    pub country: String,
+}
+
+fn input_to_order_address(input: OrderAddressInput) -> stateset_core::Address {
+    stateset_core::Address {
+        line1: input.line1,
+        line2: input.line2,
+        city: input.city,
+        state: input.state,
+        postal_code: input.postal_code,
+        country: input.country,
+    }
+}
+
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateOrderInput {
     pub customer_id: String,
+    pub cart_id: Option<String>,
     pub items: Vec<CreateOrderItemInput>,
     pub currency: Option<String>,
     pub notes: Option<String>,
+    pub stock_policy: Option<String>,
+    pub shipping_method: Option<String>,
+    pub shipping_address: Option<OrderAddressInput>,
+    pub billing_address: Option<OrderAddressInput>,
+}
+
+/// Exact-money order input. Prefer this for financial and agent integrations.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateOrderExactInput {
+    pub customer_id: String,
+    pub cart_id: Option<String>,
+    pub items: Vec<CreateOrderItemExactInput>,
+    pub currency: Option<String>,
+    pub notes: Option<String>,
+    pub stock_policy: Option<String>,
+    pub shipping_method: Option<String>,
+    pub shipping_address: Option<OrderAddressInput>,
+    pub billing_address: Option<OrderAddressInput>,
+}
+
+fn parse_stock_policy(value: Option<String>) -> Result<stateset_core::StockPolicy> {
+    match value.as_deref().map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        None | Some("") | Some("allow_backorder") | Some("allow-backorder") => {
+            Ok(stateset_core::StockPolicy::AllowBackorder)
+        }
+        Some("reject_if_insufficient") | Some("reject-if-insufficient") => {
+            Ok(stateset_core::StockPolicy::RejectIfInsufficient)
+        }
+        Some(other) => Err(Error::from_reason(format!(
+            "Invalid stock policy '{other}'; expected allow_backorder or reject_if_insufficient"
+        ))),
+    }
 }
 
 #[napi(object)]
@@ -1073,7 +1154,35 @@ pub struct OrderItemOutput {
     pub name: String,
     pub quantity: i32,
     pub unit_price: f64,
+    /// Exact base-10 unit price. Prefer this field for calculations.
+    pub unit_price_exact: String,
     pub total: f64,
+    /// Exact base-10 line total. Prefer this field for calculations.
+    pub total_exact: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OrderAddressOutput {
+    pub line1: String,
+    pub line2: Option<String>,
+    pub city: String,
+    pub state: Option<String>,
+    pub postal_code: String,
+    pub country: String,
+}
+
+impl From<stateset_core::Address> for OrderAddressOutput {
+    fn from(address: stateset_core::Address) -> Self {
+        Self {
+            line1: address.line1,
+            line2: address.line2,
+            city: address.city,
+            state: address.state,
+            postal_code: address.postal_code,
+            country: address.country,
+        }
+    }
 }
 
 #[napi(object)]
@@ -1084,10 +1193,16 @@ pub struct OrderOutput {
     pub customer_id: String,
     pub status: String,
     pub total_amount: f64,
+    /// Exact base-10 order total. Prefer this field for calculations.
+    pub total_amount_exact: String,
     pub currency: String,
     pub payment_status: String,
     pub fulfillment_status: String,
     pub tracking_number: Option<String>,
+    pub shipping_method: Option<String>,
+    pub notes: Option<String>,
+    pub shipping_address: Option<OrderAddressOutput>,
+    pub billing_address: Option<OrderAddressOutput>,
     pub items: Vec<OrderItemOutput>,
     pub version: i32,
     pub created_at: String,
@@ -1098,27 +1213,37 @@ impl TryFrom<stateset_core::Order> for OrderOutput {
     type Error = Error;
 
     fn try_from(o: stateset_core::Order) -> Result<Self> {
+        let total_amount_exact = o.total_amount.to_string();
         Ok(Self {
             id: o.id.to_string(),
             order_number: o.order_number,
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
             total_amount: to_f64_result(o.total_amount, "order total amount")?,
+            total_amount_exact,
             currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
             tracking_number: o.tracking_number,
+            shipping_method: o.shipping_method,
+            notes: o.notes,
+            shipping_address: o.shipping_address.map(Into::into),
+            billing_address: o.billing_address.map(Into::into),
             items: o
                 .items
                 .into_iter()
                 .map(|i| {
+                    let unit_price_exact = i.unit_price.to_string();
+                    let total_exact = i.total.to_string();
                     Ok(OrderItemOutput {
                         id: i.id.to_string(),
                         sku: i.sku,
                         name: i.name,
                         quantity: i.quantity,
                         unit_price: to_f64_result(i.unit_price, "order item unit price")?,
+                        unit_price_exact,
                         total: to_f64_result(i.total, "order item total")?,
+                        total_exact,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?,
@@ -1142,6 +1267,9 @@ impl Orders {
 
         let customer_id =
             input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let stock_policy = parse_stock_policy(input.stock_policy)?;
+        let shipping_address = input.shipping_address.map(input_to_order_address);
+        let billing_address = input.billing_address.map(input_to_order_address);
 
         let items: Vec<stateset_core::CreateOrderItem> = input
             .items
@@ -1162,17 +1290,79 @@ impl Orders {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let order = commerce
-            .orders()
-            .create(stateset_core::CreateOrder {
-                customer_id,
-                items,
-                currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
-                notes: input.notes,
-                ..Default::default()
-            })
-            .map_err(|e| Error::from_reason(format!("Failed to create order: {}", e)))?;
+        let create = stateset_core::CreateOrder {
+            customer_id,
+            items,
+            currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
+            notes: input.notes,
+            stock_policy,
+            shipping_method: input.shipping_method,
+            shipping_address,
+            billing_address,
+            ..Default::default()
+        };
+        let order = match input.cart_id {
+            Some(cart_id) => commerce.orders().create_from_cart(
+                cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?,
+                create,
+            ),
+            None => commerce.orders().create(create),
+        }
+        .map_err(|e| Error::from_reason(format!("Failed to create order: {}", e)))?;
 
+        convert_output(order)
+    }
+
+    /// Create an order without any floating-point conversion.
+    #[napi]
+    pub async fn create_exact(&self, input: CreateOrderExactInput) -> Result<OrderOutput> {
+        let commerce = self.commerce.lock().await;
+        let customer_id =
+            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let stock_policy = parse_stock_policy(input.stock_policy)?;
+        let shipping_address = input.shipping_address.map(input_to_order_address);
+        let billing_address = input.billing_address.map(input_to_order_address);
+        let items = input
+            .items
+            .into_iter()
+            .map(|i| {
+                let product_id = i.product_id.and_then(|s| s.parse().ok()).unwrap_or_default();
+                let variant_id = i.variant_id.and_then(|s| s.parse().ok());
+                Ok(stateset_core::CreateOrderItem {
+                    product_id,
+                    variant_id,
+                    sku: i.sku,
+                    name: i.name,
+                    quantity: i.quantity,
+                    unit_price: parse_decimal_str(&i.unit_price, "order item unit price")?,
+                    tax_amount: i
+                        .tax_amount
+                        .as_deref()
+                        .map(|value| parse_decimal_str(value, "order item tax amount"))
+                        .transpose()?,
+                    ..Default::default()
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let create = stateset_core::CreateOrder {
+            customer_id,
+            items,
+            currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
+            notes: input.notes,
+            stock_policy,
+            shipping_method: input.shipping_method,
+            shipping_address,
+            billing_address,
+            ..Default::default()
+        };
+        let order = match input.cart_id {
+            Some(cart_id) => commerce.orders().create_from_cart(
+                cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?,
+                create,
+            ),
+            None => commerce.orders().create(create),
+        }
+        .map_err(|e| Error::from_reason(format!("Failed to create order: {}", e)))?;
         convert_output(order)
     }
 
@@ -1273,13 +1463,16 @@ pub struct CreateProductVariantInput {
     pub name: Option<String>,
     pub price: f64,
     pub compare_at_price: Option<f64>,
+    pub is_default: Option<bool>,
 }
 
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateProductInput {
     pub name: String,
+    pub slug: Option<String>,
     pub description: Option<String>,
+    pub category: Option<String>,
     pub variants: Option<Vec<CreateProductVariantInput>>,
 }
 
@@ -1290,6 +1483,7 @@ pub struct ProductOutput {
     pub name: String,
     pub slug: String,
     pub description: String,
+    pub category: Option<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -1297,11 +1491,17 @@ pub struct ProductOutput {
 
 impl From<stateset_core::Product> for ProductOutput {
     fn from(p: stateset_core::Product) -> Self {
+        let category = p
+            .attributes
+            .iter()
+            .find(|attribute| attribute.name.eq_ignore_ascii_case("category"))
+            .map(|attribute| attribute.value.clone());
         Self {
             id: p.id.to_string(),
             name: p.name,
             slug: p.slug,
             description: p.description,
+            category,
             status: format!("{}", p.status),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
@@ -1317,7 +1517,11 @@ pub struct ProductVariantOutput {
     pub sku: String,
     pub name: String,
     pub price: f64,
+    /// Exact base-10 price. Prefer this field for calculations.
+    pub price_exact: String,
     pub compare_at_price: Option<f64>,
+    /// Exact base-10 comparison price.
+    pub compare_at_price_exact: Option<String>,
     pub is_default: bool,
 }
 
@@ -1325,16 +1529,20 @@ impl TryFrom<stateset_core::ProductVariant> for ProductVariantOutput {
     type Error = Error;
 
     fn try_from(v: stateset_core::ProductVariant) -> Result<Self> {
+        let price_exact = v.price.to_string();
+        let compare_at_price_exact = v.compare_at_price.map(|value| value.to_string());
         Ok(Self {
             id: v.id.to_string(),
             product_id: v.product_id.to_string(),
             sku: v.sku,
             name: v.name,
             price: to_f64_result(v.price, "product variant price")?,
+            price_exact,
             compare_at_price: optional_to_f64_result(
                 v.compare_at_price,
                 "product variant compare at price",
             )?,
+            compare_at_price_exact,
             is_default: v.is_default,
         })
     }
@@ -1360,6 +1568,7 @@ fn create_variant_from_input(
             v.compare_at_price,
             "variant compare at price",
         )?,
+        is_default: v.is_default,
         ..Default::default()
     })
 }
@@ -1388,6 +1597,7 @@ impl Products {
                                 v.compare_at_price,
                                 "variant compare at price",
                             )?,
+                            is_default: v.is_default,
                             ..Default::default()
                         })
                     })
@@ -1399,7 +1609,17 @@ impl Products {
             .products()
             .create(stateset_core::CreateProduct {
                 name: input.name,
+                slug: input.slug,
                 description: input.description,
+                attributes: input.category.map(|category| {
+                    vec![stateset_core::ProductAttribute {
+                        name: "category".to_string(),
+                        value: category,
+                        group: Some("storefront".to_string()),
+                        is_visible: true,
+                        is_variation: false,
+                    }]
+                }),
                 variants,
                 ..Default::default()
             })
@@ -4136,6 +4356,23 @@ pub struct AddCartItemInput {
     pub requires_shipping: Option<bool>,
 }
 
+/// Exact-money cart item input. Monetary values are base-10 strings.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AddCartItemExactInput {
+    pub product_id: Option<String>,
+    pub variant_id: Option<String>,
+    pub sku: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub image_url: Option<String>,
+    pub quantity: i32,
+    pub unit_price: String,
+    pub original_price: Option<String>,
+    pub weight: Option<String>,
+    pub requires_shipping: Option<bool>,
+}
+
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateCartInput {
@@ -4196,10 +4433,15 @@ pub struct CartItemOutput {
     pub image_url: Option<String>,
     pub quantity: i32,
     pub unit_price: f64,
+    pub unit_price_exact: String,
     pub original_price: Option<f64>,
+    pub original_price_exact: Option<String>,
     pub discount_amount: f64,
+    pub discount_amount_exact: String,
     pub tax_amount: f64,
+    pub tax_amount_exact: String,
     pub total: f64,
+    pub total_exact: String,
     pub requires_shipping: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -4209,6 +4451,11 @@ impl TryFrom<stateset_core::CartItem> for CartItemOutput {
     type Error = Error;
 
     fn try_from(item: stateset_core::CartItem) -> Result<Self> {
+        let unit_price_exact = item.unit_price.to_string();
+        let original_price_exact = item.original_price.map(|value| value.to_string());
+        let discount_amount_exact = item.discount_amount.to_string();
+        let tax_amount_exact = item.tax_amount.to_string();
+        let total_exact = item.total.to_string();
         Ok(Self {
             id: item.id.to_string(),
             cart_id: item.cart_id.to_string(),
@@ -4220,13 +4467,18 @@ impl TryFrom<stateset_core::CartItem> for CartItemOutput {
             image_url: item.image_url,
             quantity: item.quantity,
             unit_price: to_f64_result(item.unit_price, "cart item unit price")?,
+            unit_price_exact,
             original_price: optional_to_f64_result(
                 item.original_price,
                 "cart item original price",
             )?,
+            original_price_exact,
             discount_amount: to_f64_result(item.discount_amount, "cart item discount amount")?,
+            discount_amount_exact,
             tax_amount: to_f64_result(item.tax_amount, "cart item tax amount")?,
+            tax_amount_exact,
             total: to_f64_result(item.total, "cart item total")?,
+            total_exact,
             requires_shipping: item.requires_shipping,
             created_at: item.created_at.to_rfc3339(),
             updated_at: item.updated_at.to_rfc3339(),
@@ -4277,10 +4529,15 @@ pub struct CartOutput {
     pub status: String,
     pub currency: String,
     pub subtotal: f64,
+    pub subtotal_exact: String,
     pub tax_amount: f64,
+    pub tax_amount_exact: String,
     pub shipping_amount: f64,
+    pub shipping_amount_exact: String,
     pub discount_amount: f64,
+    pub discount_amount_exact: String,
     pub grand_total: f64,
+    pub grand_total_exact: String,
     pub customer_email: Option<String>,
     pub customer_phone: Option<String>,
     pub customer_name: Option<String>,
@@ -4307,6 +4564,11 @@ impl TryFrom<stateset_core::Cart> for CartOutput {
     fn try_from(cart: stateset_core::Cart) -> Result<Self> {
         // Compute item_count first before any fields are moved
         let item_count = cart.item_count();
+        let subtotal_exact = cart.subtotal.to_string();
+        let tax_amount_exact = cart.tax_amount.to_string();
+        let shipping_amount_exact = cart.shipping_amount.to_string();
+        let discount_amount_exact = cart.discount_amount.to_string();
+        let grand_total_exact = cart.grand_total.to_string();
         Ok(Self {
             id: cart.id.to_string(),
             cart_number: cart.cart_number,
@@ -4314,10 +4576,15 @@ impl TryFrom<stateset_core::Cart> for CartOutput {
             status: format!("{}", cart.status),
             currency: cart.currency.to_string(),
             subtotal: to_f64_result(cart.subtotal, "cart subtotal")?,
+            subtotal_exact,
             tax_amount: to_f64_result(cart.tax_amount, "cart tax amount")?,
+            tax_amount_exact,
             shipping_amount: to_f64_result(cart.shipping_amount, "cart shipping amount")?,
+            shipping_amount_exact,
             discount_amount: to_f64_result(cart.discount_amount, "cart discount amount")?,
+            discount_amount_exact,
             grand_total: to_f64_result(cart.grand_total, "cart grand total")?,
+            grand_total_exact,
             customer_email: cart.customer_email,
             customer_phone: cart.customer_phone,
             customer_name: cart.customer_name,
@@ -4348,6 +4615,7 @@ pub struct CheckoutResultOutput {
     pub order_number: String,
     pub payment_id: Option<String>,
     pub total_charged: f64,
+    pub total_charged_exact: String,
     pub currency: String,
 }
 
@@ -4355,12 +4623,14 @@ impl TryFrom<stateset_core::CheckoutResult> for CheckoutResultOutput {
     type Error = Error;
 
     fn try_from(result: stateset_core::CheckoutResult) -> Result<Self> {
+        let total_charged_exact = result.total_charged.to_string();
         Ok(Self {
             cart_id: result.cart_id.to_string(),
             order_id: result.order_id.to_string(),
             order_number: result.order_number,
             payment_id: result.payment_id.map(|id| id.to_string()),
             total_charged: to_f64_result(result.total_charged, "checkout total charged")?,
+            total_charged_exact,
             currency: result.currency.to_string(),
         })
     }
@@ -4586,6 +4856,57 @@ impl Carts {
             )
             .map_err(|e| Error::from_reason(format!("Failed to add item: {}", e)))?;
 
+        convert_output(cart_item)
+    }
+
+    /// Add a cart item without any floating-point conversion.
+    #[napi]
+    pub async fn add_item_exact(
+        &self,
+        cart_id: String,
+        item: AddCartItemExactInput,
+    ) -> Result<CartItemOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid: uuid::Uuid =
+            cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+        let product_id = item
+            .product_id
+            .map(|id| id.parse())
+            .transpose()
+            .map_err(|_| Error::from_reason("Invalid product UUID"))?;
+        let variant_id = item
+            .variant_id
+            .map(|id| id.parse())
+            .transpose()
+            .map_err(|_| Error::from_reason("Invalid variant UUID"))?;
+        let cart_item = commerce
+            .carts()
+            .add_item(
+                uuid.into(),
+                stateset_core::AddCartItem {
+                    product_id,
+                    variant_id,
+                    sku: item.sku,
+                    name: item.name,
+                    description: item.description,
+                    image_url: item.image_url,
+                    quantity: item.quantity,
+                    unit_price: parse_decimal_str(&item.unit_price, "cart item unit price")?,
+                    original_price: item
+                        .original_price
+                        .as_deref()
+                        .map(|value| parse_decimal_str(value, "cart item original price"))
+                        .transpose()?,
+                    weight: item
+                        .weight
+                        .as_deref()
+                        .map(|value| parse_decimal_str(value, "cart item weight"))
+                        .transpose()?,
+                    requires_shipping: item.requires_shipping,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to add item: {}", e)))?;
         convert_output(cart_item)
     }
 

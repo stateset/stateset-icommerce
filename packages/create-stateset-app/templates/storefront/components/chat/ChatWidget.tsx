@@ -2,17 +2,20 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useChat } from '@ai-sdk/react';
-import { useAccount } from 'wagmi';
 
 export function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
+  const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { address } = useAccount();
+  const { messages, sendMessage, status, error } = useChat();
+  const isLoading = status === 'submitted' || status === 'streaming';
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
-    api: '/api/chat',
-    body: { walletAddress: address },
-  });
+  const submitMessage = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || isLoading) return;
+    setInput('');
+    await sendMessage({ text: trimmed });
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -39,16 +42,14 @@ export function ChatWidget() {
               <div className="text-center py-8">
                 <p className="text-gray-500 mb-4">How can I help you today?</p>
                 <div className="space-y-2">
-                  {['What products do you have?', 'Check my order status', 'Recommend something'].map((q) => (
+                  {[
+                    'What products do you have?',
+                    'Check my order status',
+                    'Recommend something',
+                  ].map((q) => (
                     <button
                       key={q}
-                      onClick={() => {
-                        handleInputChange({ target: { value: q } } as any);
-                        setTimeout(() => {
-                          const form = document.querySelector('#chat-form') as HTMLFormElement;
-                          form?.requestSubmit();
-                        }, 50);
-                      }}
+                      onClick={() => submitMessage(q)}
                       className="block w-full text-left px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 transition-colors"
                     >
                       {q}
@@ -65,12 +66,12 @@ export function ChatWidget() {
               >
                 <div
                   className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
-                    m.role === 'user'
-                      ? 'bg-black text-white'
-                      : 'bg-gray-100 text-gray-900'
+                    m.role === 'user' ? 'bg-black text-white' : 'bg-gray-100 text-gray-900'
                   }`}
                 >
-                  {m.content}
+                  {m.parts.map((part, index) =>
+                    part.type === 'text' ? <span key={index}>{part.text}</span> : null,
+                  )}
                 </div>
               </div>
             ))}
@@ -83,17 +84,26 @@ export function ChatWidget() {
               </div>
             )}
 
+            {error && (
+              <p className="text-sm text-red-600" role="alert">
+                The store assistant is unavailable. Please try again later.
+              </p>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
 
           <form
             id="chat-form"
-            onSubmit={handleSubmit}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitMessage(input);
+            }}
             className="p-4 border-t flex gap-2"
           >
             <input
               value={input}
-              onChange={handleInputChange}
+              onChange={(event) => setInput(event.target.value)}
               placeholder="Ask a question..."
               className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />

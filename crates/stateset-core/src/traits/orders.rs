@@ -8,6 +8,11 @@ pub trait OrderRepository: Send + Sync {
     /// Create a new order
     fn create(&self, input: CreateOrder) -> Result<Order>;
 
+    /// Create an order for a cart, returning the existing order when that cart
+    /// has already been checked out. This is the durable idempotency boundary
+    /// for retryable checkout adapters.
+    fn create_from_cart(&self, cart_id: CartId, input: CreateOrder) -> Result<Order>;
+
     /// Get order by ID
     fn get(&self, id: OrderId) -> Result<Option<Order>>;
 

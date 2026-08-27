@@ -239,7 +239,7 @@ BATCH/PIPELINE MODE:
 AGENTS:
   Core Commerce:
     customer-service   Full-service agent (default fallback, 90+ tools)
-    checkout           Shopping cart & checkout flow (ACP)
+    checkout           Shopping cart and embedded checkout flow
     orders             Order lifecycle management
     inventory          Stock & reservation management
     returns            RMA & refund processing
@@ -317,7 +317,7 @@ EXAMPLES:
   stateset --apply "create an order for customer X with 2 widgets at $29.99 each"
   stateset --apply --resume <session-id> "now ship that order with tracking ABC123"
 
-  # Shopping cart checkout flow (ACP)
+  # Shopping cart checkout flow
   stateset --apply "create a cart for alice@example.com"
   stateset --apply --resume <session-id> "add 2 widgets at $29.99"
   stateset --apply --resume <session-id> "set shipping to 123 Main St, Anytown, CA"

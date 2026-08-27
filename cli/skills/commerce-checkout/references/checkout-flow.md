@@ -1,4 +1,4 @@
-# Checkout Flow (ACP)
+# Embedded Checkout Flow
 
 ## Steps
 
