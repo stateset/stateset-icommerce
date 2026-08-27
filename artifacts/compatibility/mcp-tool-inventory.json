@@ -389,18 +389,18 @@
     },
     {
       "name": "read",
-      "count": 474
+      "count": 473
     },
     {
       "name": "write",
-      "count": 414
+      "count": 415
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 474,
-    "write": 414
+    "read": 473,
+    "write": 415
   },
   "tools": [
     {
@@ -2273,7 +2273,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__agentic_execute_plan",
       "policyDomain": "agentic",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "agentic_get_event_history",

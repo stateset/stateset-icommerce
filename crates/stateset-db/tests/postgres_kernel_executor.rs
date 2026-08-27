@@ -3,6 +3,7 @@
 //! Live PostgreSQL proofs for the governed AI-commerce command boundary.
 
 use rust_decimal_macros::dec;
+use sha2::{Digest, Sha256};
 use stateset_core::{
     A2ADisputeResolutionType, AccountType, AddCartItem, BillingCycleFilter, BillingCycleStatus,
     BillingInterval, CartAddress, CartStatus, ChargeSubscription, CommandEnvelope, CommitCheckout,
@@ -21,6 +22,18 @@ use stateset_core::{
 use stateset_db::PostgresDatabase;
 use std::{env, sync::Arc};
 use uuid::Uuid;
+
+fn reseal_checkpoint(checkpoint: &mut stateset_db::kernel_outbox::KernelAuditCheckpoint) {
+    let preimage = serde_json::json!({
+        "contract_version": checkpoint.contract_version,
+        "algorithm": checkpoint.algorithm,
+        "entries": checkpoint.entries,
+        "head_hash": checkpoint.head_hash,
+        "generated_at": checkpoint.generated_at,
+    });
+    let canonical = serde_jcs::to_vec(&preimage).expect("canonical checkpoint");
+    checkpoint.checkpoint_hash = format!("{:x}", Sha256::digest(canonical));
+}
 
 fn postgres_url() -> Option<String> {
     env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
@@ -319,6 +332,174 @@ async fn postgres_kernel_same_key_concurrency_executes_once_and_replays_one_rece
             .await
             .expect("verify checkpoint")
     );
+}
+
+#[tokio::test]
+async fn postgres_audit_checkpoint_rejects_resealed_wrong_sequence() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping checkpoint sequence proof");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect and migrate");
+    let first = payment_command(format!("pg-kernel-checkpoint-first-{}", Uuid::new_v4()));
+    db.kernel_executor(policy())
+        .execute_create_payment_async(&first)
+        .await
+        .expect("append first checkpoint receipt");
+    let checkpoint = db.kernel_outbox().audit_checkpoint_async().await.expect("checkpoint");
+    let second = payment_command(format!("pg-kernel-checkpoint-sequence-{}", Uuid::new_v4()));
+    db.kernel_executor(policy())
+        .execute_create_payment_async(&second)
+        .await
+        .expect("append later receipt");
+    let mut wrong_sequence =
+        db.kernel_outbox().audit_checkpoint_async().await.expect("later checkpoint");
+    assert!(wrong_sequence.entries > checkpoint.entries);
+    wrong_sequence.entries = checkpoint.entries;
+    reseal_checkpoint(&mut wrong_sequence);
+    assert!(
+        !db.kernel_outbox()
+            .verify_audit_checkpoint_async(&wrong_sequence)
+            .await
+            .expect("head hash must match the claimed sequence")
+    );
+}
+
+#[tokio::test]
+async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping outbox recovery proof");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect and migrate");
+    let suffix = Uuid::new_v4();
+    let event_id = Uuid::new_v4();
+    let worker_a = format!("pg-outbox-worker-a-{suffix}");
+    let worker_b = format!("pg-outbox-worker-b-{suffix}");
+    let worker_c = format!("pg-outbox-worker-c-{suffix}");
+
+    sqlx::query(
+        "INSERT INTO kernel_outbox (
+            id, event_type, aggregate_type, aggregate_id, payload, created_at
+         ) VALUES ($1, $2, 'kernel_recovery_probe', $3, $4, $5)",
+    )
+    .bind(event_id)
+    .bind("kernel.recovery.probe.v1")
+    .bind(suffix.to_string())
+    .bind(serde_json::json!({"probe": suffix}))
+    .bind(
+        chrono::DateTime::parse_from_rfc3339("0001-01-01T00:00:00Z")
+            .expect("old timestamp")
+            .with_timezone(&chrono::Utc),
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert recovery probe");
+
+    let claimed = db
+        .kernel_outbox()
+        .claim_pending_async(&worker_a, 1, 300)
+        .await
+        .expect("first worker claims probe");
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].id, event_id);
+    assert_eq!(claimed[0].lease_owner.as_deref(), Some(worker_a.as_str()));
+    assert!(
+        !db.kernel_outbox()
+            .mark_published_by_async(event_id, &worker_b)
+            .await
+            .expect("wrong worker cannot acknowledge")
+    );
+
+    let competing_claim = db
+        .kernel_outbox()
+        .claim_pending_async(&worker_b, 1, 1)
+        .await
+        .expect("competing worker skips leased rows");
+    assert!(competing_claim.iter().all(|event| event.id != event_id));
+    for event in competing_claim {
+        sqlx::query(
+            "UPDATE kernel_outbox SET lease_owner = NULL, lease_expires_at = NULL
+             WHERE id = $1 AND lease_owner = $2",
+        )
+        .bind(event.id)
+        .bind(&worker_b)
+        .execute(db.pool())
+        .await
+        .expect("release unrelated test lease");
+    }
+
+    assert!(
+        db.kernel_outbox()
+            .record_failure_by_async(event_id, &worker_a, "transient", 3_600, 2)
+            .await
+            .expect("schedule retry")
+    );
+    let delayed = db.kernel_outbox().delivery_health_async().await.expect("delayed health");
+    assert!(delayed.delayed >= 1);
+    assert!(
+        db.kernel_outbox()
+            .pending_async(10_000)
+            .await
+            .expect("pending excludes delayed")
+            .iter()
+            .all(|event| event.id != event_id)
+    );
+
+    sqlx::query(
+        "UPDATE kernel_outbox SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE id = $1",
+    )
+    .bind(event_id)
+    .execute(db.pool())
+    .await
+    .expect("make retry due");
+    let retried =
+        db.kernel_outbox().claim_pending_async(&worker_b, 1, 300).await.expect("claim due retry");
+    assert_eq!(retried.len(), 1);
+    assert_eq!(retried[0].id, event_id);
+    assert!(
+        db.kernel_outbox()
+            .record_failure_by_async(event_id, &worker_b, "permanent", 0, 2)
+            .await
+            .expect("dead letter exhausted event")
+    );
+
+    let dead_letters = db.kernel_outbox().dead_letters_async(10_000).await.expect("dead letters");
+    let dead = dead_letters.iter().find(|event| event.id == event_id).expect("probe dead letter");
+    assert_eq!(dead.attempts, 2);
+    assert_eq!(dead.last_error.as_deref(), Some("permanent"));
+    assert!(dead.dead_lettered_at.is_some());
+    let dead_health = db.kernel_outbox().delivery_health_async().await.expect("dead health");
+    assert!(dead_health.dead_lettered >= 1);
+
+    assert!(
+        db.kernel_outbox()
+            .redrive_dead_letter_async(event_id, true)
+            .await
+            .expect("redrive dead letter")
+    );
+    let redriven = db
+        .kernel_outbox()
+        .claim_pending_async(&worker_c, 1, 300)
+        .await
+        .expect("claim redriven event");
+    assert_eq!(redriven.len(), 1);
+    assert_eq!(redriven[0].id, event_id);
+    assert_eq!(redriven[0].attempts, 0);
+    assert!(
+        db.kernel_outbox()
+            .mark_published_by_async(event_id, &worker_c)
+            .await
+            .expect("owner acknowledges redriven event")
+    );
+    let published = db.kernel_outbox().delivery_health_async().await.expect("published health");
+    assert!(published.published >= 1);
+
+    sqlx::query("DELETE FROM kernel_outbox WHERE id = $1")
+        .bind(event_id)
+        .execute(db.pool())
+        .await
+        .expect("remove recovery probe");
 }
 
 #[tokio::test]

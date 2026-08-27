@@ -406,7 +406,7 @@ export const AGENTIC_RUNTIME_TOOLS = [
         .optional()
         .describe('Optional plan-level per-currency cost cap values'),
     },
-    permission: 'read',
+    permission: 'write',
     policyDomain: 'agentic',
     handler: async ({ params, executeAgenticPlan }) => {
       return executeAgenticPlan({

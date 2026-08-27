@@ -39,6 +39,12 @@ tenant, store, payload, versions, deadline, and approval. Changing any bound
 field invalidates the signature; key ID, issuer, and validity-window failures
 produce stable policy reason codes.
 
+To produce the signature, first attach `AuthorityEvidence` with its issuer, key
+ID, issue time, expiry, and an empty signature. Compute
+`authority_signing_hash`, sign that digest, then replace the empty signature
+with its hex-encoded Ed25519 value. The authority metadata is itself in the
+signed preimage, so a bearer cannot extend the expiry or substitute an issuer.
+
 `ExecutionReceipt<T>` is the stable response contract. It includes structured
 status and retry guidance, affected aggregate/version, committed event IDs,
 policy evidence, and an optional audit hash. Agents should branch on status,
@@ -147,7 +153,9 @@ envelope-aware executors. Receipts are stored under both `command_id` and
 the invocation ID, issue time, and preview/apply mode are excluded. A genuine
 retry can therefore use a new invocation ID, and an authorized apply can
 atomically promote its stored preview. Changes to command type, principal,
-authority, deadline, or payload produce `kernel.idempotency_conflict`.
+authority evidence (including its signature and validity window), deadline, or
+payload produce `kernel.idempotency_conflict`. SQLite and PostgreSQL call the
+same RFC 8785 canonical hashing implementation for this contract.
 
 `SqliteDatabase::kernel_executor(policy)` now executes checkout commit, payment
 creation, refund creation, inventory reservation, reservation
@@ -232,8 +240,10 @@ the entry count, chain head, generation time, and its own SHA-256 digest. Publis
 that JSON outside the commerce database—such as to an append-only transparency
 log, immutable object store, ledger, or notarization service. Later,
 `verify_audit_checkpoint` proves the retained checkpoint still names the exact
-historical chain head, even after newer receipts have been appended. Altering
-either the checkpoint or any earlier local receipt fails verification.
+historical chain head at the checkpoint's declared entry sequence, even after
+newer receipts have been appended. A valid hash copied from another position in
+the chain is rejected, as is altering either the checkpoint or any earlier
+local receipt.
 
 `x402.settle` accepts only sequenced intents and atomically binds the confirmed
 transaction hash and block number to the intent, causal event, receipt, and
@@ -297,7 +307,11 @@ demo store durable.
 When a trusted `kernel` configuration is supplied to the Node toolkit or MCP
 server, strict exposure is the default: read tools remain discoverable, but a
 mutation is advertised and executable only when it maps to a typed command in
-the governed catalog. Mutation classification is fail closed: `write`,
+the governed catalog. The one explicit governed composite,
+`agentic_execute_plan`, is classified as `write`; it remains available for
+multi-step automation, but every nested live write crosses the same typed
+command executor and an unmapped step fails closed before its handler runs.
+Mutation classification is fail closed: `write`,
 `delete`, `admin`, missing, and any future permission class are mutating; only
 an explicit `read` permission bypasses the command boundary. This closes direct
 calls, plans, rollback execution, and MCP transport over the same boundary.

@@ -436,9 +436,14 @@ impl PgKernelOutboxRepository {
         let expected_hash = checkpoint.head_hash.as_deref().ok_or_else(|| {
             CommerceError::ValidationError("non-empty checkpoint is missing head_hash".into())
         })?;
+        let Ok(expected_sequence) = i64::try_from(checkpoint.entries) else {
+            return Ok(false);
+        };
         let local_hash = sqlx::query_scalar::<_, String>(
-            "SELECT audit_hash FROM kernel_receipt_audit_log WHERE audit_hash = $1",
+            "SELECT audit_hash FROM kernel_receipt_audit_log
+             WHERE sequence = $1 AND audit_hash = $2",
         )
+        .bind(expected_sequence)
         .bind(expected_hash)
         .fetch_optional(&self.pool)
         .await

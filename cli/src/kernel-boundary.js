@@ -4,6 +4,14 @@ import { KERNEL_CAPABILITY_BY_TOOL } from './kernel-tool-execution.js';
 
 export const KERNEL_BOUNDARY_SCHEMA_VERSION = 1;
 
+// These tools may orchestrate mutations, but never perform one directly. In
+// strict mode every nested write still traverses executeGovernedTool and fails
+// closed unless it has a typed kernel command mapping. Keep this allow-list
+// deliberately small and explicit so an orchestration surface cannot masquerade
+// as a read merely to remain discoverable.
+export const KERNEL_GOVERNED_COMPOSITE_TOOLS = Object.freeze(['agentic_execute_plan']);
+const KERNEL_GOVERNED_COMPOSITE_TOOL_SET = new Set(KERNEL_GOVERNED_COMPOSITE_TOOLS);
+
 /**
  * Kernel strict mode is intentionally fail closed. Only an explicit `read`
  * permission is non-mutating; write, delete, admin, missing, and future
@@ -17,7 +25,11 @@ export function isMutationToolDefinition(tool) {
   return isMutationPermission(tool?.permission);
 }
 
-export function classifyKernelToolBoundary(toolDefs, capabilityByTool = KERNEL_CAPABILITY_BY_TOOL) {
+export function classifyKernelToolBoundary(
+  toolDefs,
+  capabilityByTool = KERNEL_CAPABILITY_BY_TOOL,
+  governedCompositeTools = KERNEL_GOVERNED_COMPOSITE_TOOL_SET,
+) {
   const seen = new Set();
   const entries = [];
 
@@ -30,11 +42,18 @@ export function classifyKernelToolBoundary(toolDefs, capabilityByTool = KERNEL_C
     const permission = String(tool?.permission || 'unknown');
     const mutation = isMutationPermission(permission);
     const commandType = capabilityByTool[name] || null;
+    const governedComposite = governedCompositeTools.has(name);
     entries.push({
       name,
       permission,
       mutation,
-      disposition: mutation ? (commandType ? 'governed' : 'blocked') : 'read_only',
+      disposition: mutation
+        ? commandType
+          ? 'governed'
+          : governedComposite
+            ? 'governed_composite'
+            : 'blocked'
+        : 'read_only',
       commandType,
     });
   }
@@ -46,6 +65,7 @@ export function classifyKernelToolBoundary(toolDefs, capabilityByTool = KERNEL_C
     readOnly: entries.filter((entry) => entry.disposition === 'read_only').length,
     mutations: entries.filter((entry) => entry.mutation).length,
     governed: entries.filter((entry) => entry.disposition === 'governed').length,
+    governedComposite: entries.filter((entry) => entry.disposition === 'governed_composite').length,
     blocked: entries.filter((entry) => entry.disposition === 'blocked').length,
   };
 
@@ -60,8 +80,12 @@ export function classifyKernelToolBoundary(toolDefs, capabilityByTool = KERNEL_C
 export function selectStrictKernelToolDefinitions(
   toolDefs,
   capabilityByTool = KERNEL_CAPABILITY_BY_TOOL,
+  governedCompositeTools = KERNEL_GOVERNED_COMPOSITE_TOOL_SET,
 ) {
   return (toolDefs || []).filter(
-    (tool) => !isMutationToolDefinition(tool) || Boolean(capabilityByTool[tool.name]),
+    (tool) =>
+      !isMutationToolDefinition(tool) ||
+      Boolean(capabilityByTool[tool.name]) ||
+      governedCompositeTools.has(tool.name),
   );
 }

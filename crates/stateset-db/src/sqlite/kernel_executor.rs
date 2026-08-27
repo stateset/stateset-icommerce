@@ -16,6 +16,7 @@ use super::{
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_uuid_row,
     with_immediate_transaction,
 };
+use crate::kernel_outbox::semantic_request_hash;
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
 use r2d2::Pool;
@@ -4293,35 +4294,6 @@ fn find_inventory_lifecycle_event_tx(
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(error) => Err(error),
     }
-}
-
-fn semantic_request_hash<C: Serialize, T: Serialize>(
-    command: &CommandEnvelope<C>,
-    payload: &T,
-) -> Result<String> {
-    let mut capabilities = command.principal.capabilities.clone();
-    capabilities.sort();
-    capabilities.dedup();
-    let value = serde_json::json!({
-        "contract_version": command.contract_version,
-        "command_type": command.command_type,
-        "principal": {
-            "id": command.principal.id,
-            "kind": command.principal.kind,
-            "tenant_id": command.principal.tenant_id,
-            "delegated_by": command.principal.delegated_by,
-            "capabilities": capabilities,
-        },
-        "store_id": command.store_id,
-        "expected_version": command.expected_version,
-        "policy_version": command.policy_version,
-        "approval": command.approval,
-        "deadline": command.deadline,
-        "payload": payload,
-    });
-    let bytes = serde_json::to_vec(&value)
-        .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 fn a2a_transition_guard<T>(

@@ -15,5 +15,6 @@ const report = classifyKernelToolBoundary([...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTI
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 process.stdout.write(
   `kernel boundary: ${report.counts.mutations} mutations classified ` +
-    `(${report.counts.governed} governed, ${report.counts.blocked} blocked)\n`,
+    `(${report.counts.governed} governed, ${report.counts.governedComposite} governed composite, ` +
+    `${report.counts.blocked} blocked)\n`,
 );
