@@ -367,6 +367,14 @@ fn test_multi_product_order_partial_return() {
         .returns()
         .update(
             ret.id,
+            UpdateReturn { status: Some(ReturnStatus::InTransit), ..Default::default() },
+        )
+        .expect("mark in transit");
+    commerce.returns().mark_received(ret.id).expect("mark received");
+    commerce
+        .returns()
+        .update(
+            ret.id,
             UpdateReturn {
                 status: Some(ReturnStatus::Completed),
                 refund_amount: Some(dec!(25.00)),

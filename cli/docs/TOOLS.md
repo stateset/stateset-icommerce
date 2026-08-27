@@ -490,7 +490,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `a2a_list_escrows` | read | List escrows with optional filters. |
 | `a2a_file_dispute` | write | File a formal dispute against an escrow. Begins the dispute resolution process with evidence collection and review. |
 | `a2a_submit_evidence` | write | Submit evidence for an active dispute. |
-| `a2a_resolve_dispute` | write | Resolve a dispute with a resolution type (full refund, partial refund, release to seller, split, or escalate). |
+| `a2a_resolve_dispute` | write | Resolve a dispute atomically with a full refund, seller release, exact split, or escalation. |
 | `a2a_get_dispute` | read | Get details of a dispute by ID, including evidence count. |
 | `a2a_list_disputes` | read | List disputes with optional filters. |
 | `a2a_rate_agent` | write | Rate an agent after a transaction. Scores 1-5 with optional dimension ratings (reliability, quality, speed, communication). |
