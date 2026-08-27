@@ -32,6 +32,8 @@ OPTIONS:
   --db <path>                SQLite database path (default: ./store.db, env DB_PATH)
   --apply                    Enable write tools (default: preview-only)
   --structured-tool-results  Emit structured content blocks in tool results
+  --profile <name>           Tool profile: core, operations, finance, agents, all (default: all)
+  --domains <a,b,...>        Add specific tool domains to the selected profile
   --strict-protocol          Serve ONLY 2026-07-28; reject 2025-era clients
   --kernel-policy <path>     Trusted kernel policy JSON (env STATESET_KERNEL_POLICY)
   --kernel-principal <path>  Trusted principal JSON (env STATESET_KERNEL_PRINCIPAL)
@@ -53,6 +55,8 @@ async function main() {
       db: { type: 'string' },
       apply: { type: 'boolean', default: false },
       'structured-tool-results': { type: 'boolean', default: false },
+      profile: { type: 'string', default: 'all' },
+      domains: { type: 'string' },
       'strict-protocol': { type: 'boolean', default: false },
       'kernel-policy': { type: 'string' },
       'kernel-principal': { type: 'string' },
@@ -104,6 +108,13 @@ async function main() {
         dbPath,
         allowApply: values.apply,
         structuredToolResults: values['structured-tool-results'],
+        toolProfile: values.profile,
+        toolDomains: values.domains
+          ? values.domains
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean)
+          : [],
         kernel,
       }),
     {
@@ -116,7 +127,7 @@ async function main() {
   console.error(
     `[stateset-mcp] serving commerce tools over stdio (protocol 2026-07-28, db: ${dbPath}, writes: ${
       values.apply ? 'ENABLED' : 'preview-only, pass --apply to enable'
-    }, kernel: ${kernel ? (kernel.strict ? 'strict' : 'legacy-write escape hatch') : 'not configured'})`,
+    }, profile: ${values.profile}, kernel: ${kernel ? (kernel.strict ? 'strict' : 'legacy-write escape hatch') : 'not configured'})`,
   );
 }
 

@@ -6,6 +6,51 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-08-27
+
+### Added
+- **Production-oriented embedded storefront.** `create-stateset-app` now emits
+  a verified Next.js 16 storefront with exact-money cart and checkout flows,
+  server-verified Base USDC settlement, wallet ownership challenges, product
+  search, crash-safe order finalization, typed shipping addresses, configurable
+  fail-closed tax jurisdictions, configurable exact shipping methods, and an
+  operator-owned carrier-provider boundary. The generated app has dedicated
+  security, concurrency, recovery, tax, and shipping integration tests in the
+  root release gate.
+- **Exact-money Node and Python APIs.** Financial create operations accept
+  base-10 decimal strings without a floating-point round trip. Node orders also
+  expose cart-keyed idempotency, strict stock policy, typed shipping addresses,
+  and shipping methods.
+- **Focused MCP catalogs.** Stdio, events, and stateless HTTP MCP entry points
+  support named tool profiles so clients can start with a smaller core catalog
+  while retaining the generated full surface. Strict governed deployments keep
+  operator-owned identity and policy outside model arguments.
+- **Release evidence and integration status.** New evidence documentation and
+  protocol-status guidance distinguish implemented engine capabilities from
+  ACP/UCP wire-conformance claims.
+
+### Changed
+- **Cart checkout is durably idempotent.** SQLite and PostgreSQL order creation
+  can key an order to its cart, so retries and concurrent settlement delivery
+  converge on one customer, order, payment, inventory reservation, and closed
+  cart. Partial finalization is resumed safely after process interruption.
+- **Storefront checkout rejects overselling.** Generated orders use the
+  engine's transactional `reject_if_insufficient` inventory policy. Paid
+  shipping participates in the verified settlement total and is persisted as
+  an explicit order line because order totals are line-derived.
+- **Generated coverage is evidence-based.** API-command and MCP inventories now
+  audit the actual registered domain surface and are checked alongside binding
+  and workspace inventories during release.
+
+### Security
+- Base payments require the exact token, payer, recipient, amount, successful
+  receipt, and configured confirmation depth. Transaction/log idempotency,
+  cross-cart replay rejection, normalized identity checks, and server-side tax
+  and shipping recomputation prevent client-controlled settlement values.
+- Unsupported tax jurisdictions, malformed operator configuration, invalid US
+  states or ZIP formats, and unavailable shipping methods fail closed before
+  an order or payment claim is written.
+
 ## [1.26.0] - 2026-08-26
 
 ### Added

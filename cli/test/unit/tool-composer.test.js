@@ -195,6 +195,43 @@ describe('ToolComposer.orchestrate — rollback order', () => {
   });
 });
 
+describe('ToolComposer.orchestrate — compensating tools', () => {
+  it('executes a rollback tool descriptor instead of only returning it', async () => {
+    const calls = [];
+    class RecordingComposer extends ToolComposer {
+      async executeTool(tool, params) {
+        calls.push({ tool, params });
+        if (tool === 'fail') throw new Error('boom');
+        return { id: 'created' };
+      }
+    }
+    const composer = new RecordingComposer(null);
+    const result = await composer.orchestrate('compensate', [
+      {
+        tool: 'create',
+        params: {},
+        rollback: async () => ({ tool: 'cancel', params: { id: 'created' } }),
+      },
+      { tool: 'fail', params: {} },
+    ]);
+    assert.equal(result.success, false);
+    assert.deepEqual(
+      calls.map((call) => call.tool),
+      ['create', 'fail', 'cancel'],
+    );
+    assert.equal(result.rollbacks[0].status, 'success');
+  });
+
+  it('reports an unavailable compensation as skipped', async () => {
+    const composer = new ToolComposer(null);
+    const result = await composer.orchestrate('skip-compensation', [
+      { tool: 'create', params: {}, rollback: async () => ({ tool: undefined }) },
+      { tool: 'fail', params: {}, validate: () => ({ valid: false, error: 'stop' }) },
+    ]);
+    assert.equal(result.rollbacks[0].status, 'skipped');
+  });
+});
+
 // ===========================================================================
 // orchestrate — events
 // ===========================================================================

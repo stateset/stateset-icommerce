@@ -48,7 +48,7 @@ When the user asks to create, update, or delete something, first explain what wo
   // Checkout specialist
   checkout: {
     name: 'Checkout Agent',
-    description: 'Shopping cart and checkout flow specialist (Agentic Commerce Protocol)',
+    description: 'Shopping cart and protocol-neutral checkout flow specialist',
     tools: [
       'mcp__stateset-commerce__list_carts',
       'mcp__stateset-commerce__get_cart',
@@ -84,7 +84,7 @@ When the user asks to create, update, or delete something, first explain what wo
       'mcp__stateset-commerce__get_customer',
       'mcp__stateset-commerce__list_customers',
     ],
-    systemPrompt: `You are a checkout flow specialist for StateSet Commerce implementing the Agentic Commerce Protocol (ACP).
+    systemPrompt: `You are a protocol-neutral checkout flow specialist for StateSet Commerce.
 
 ## Your Role
 Guide customers through the shopping cart and checkout process.

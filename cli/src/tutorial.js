@@ -253,12 +253,12 @@ Reservations prevent overselling.
 
   checkout: {
     name: 'Checkout Flow',
-    description: 'Learn the Agentic Commerce Protocol',
+    description: 'Learn the protocol-neutral cart and checkout lifecycle',
     steps: [
       {
-        title: 'Agentic Commerce Protocol (ACP)',
+        title: 'Cart and Checkout Lifecycle',
         content: `
-The checkout agent implements the Agentic Commerce Protocol:
+The checkout agent operates the embedded commerce lifecycle:
 
   1. Create Cart     → Start a shopping session
   2. Add Items       → Add products to cart

@@ -81,6 +81,32 @@ describe('scaffold', () => {
     assert.equal(pkg.name, 'urban-thread');
   });
 
+  it('uses installable, supported storefront dependencies', async () => {
+    const dir = uniqueDir();
+    await scaffold({
+      projectName: 'dependency-check',
+      storeName: 'Dependency Check',
+      targetDir: dir,
+      skipInstall: true,
+      pm: 'npm',
+    });
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const embeddedPkg = JSON.parse(
+      fs.readFileSync(
+        path.resolve(import.meta.dirname, '../../../bindings/node/package.json'),
+        'utf8',
+      ),
+    );
+
+    assert.equal(pkg.dependencies['@stateset/embedded'], `^${embeddedPkg.version}`);
+    assert.equal(pkg.dependencies.next, '16.3.3');
+    assert.equal(pkg.dependencies['better-sqlite3'], undefined);
+    assert.equal(pkg.devDependencies['better-sqlite3'], undefined);
+    assert.equal(pkg.scripts.lint, undefined);
+    assert.equal(pkg.scripts.typecheck, 'tsc --noEmit');
+  });
+
   it('replaces {{STORE_NAME}} placeholders in all files', async () => {
     const dir = uniqueDir();
     await scaffold({
@@ -148,11 +174,11 @@ describe('scaffold', () => {
             const content = fs.readFileSync(fullPath, 'utf8');
             assert.ok(
               !content.includes('{{STORE_NAME}}'),
-              `${path.relative(dir, fullPath)} still contains {{STORE_NAME}}`
+              `${path.relative(dir, fullPath)} still contains {{STORE_NAME}}`,
             );
             assert.ok(
               !content.includes('{{PACKAGE_NAME}}'),
-              `${path.relative(dir, fullPath)} still contains {{PACKAGE_NAME}}`
+              `${path.relative(dir, fullPath)} still contains {{PACKAGE_NAME}}`,
             );
           }
         }
@@ -184,14 +210,15 @@ describe('scaffold', () => {
     fs.writeFileSync(path.join(dir, 'existing-file.txt'), 'hello');
 
     await assert.rejects(
-      () => scaffold({
-        projectName: 'blocked',
-        storeName: 'Blocked Store',
-        targetDir: dir,
-        skipInstall: true,
-        pm: 'npm',
-      }),
-      /already exists and is not empty/
+      () =>
+        scaffold({
+          projectName: 'blocked',
+          storeName: 'Blocked Store',
+          targetDir: dir,
+          skipInstall: true,
+          pm: 'npm',
+        }),
+      /already exists and is not empty/,
     );
   });
 
@@ -232,15 +259,15 @@ describe('scaffold', () => {
             const content = fs.readFileSync(fullPath, 'utf8').toLowerCase();
             assert.ok(
               !content.includes('alli-os') && !content.includes('alli_os'),
-              `${path.relative(dir, fullPath)} contains alli-os reference`
+              `${path.relative(dir, fullPath)} contains alli-os reference`,
             );
             assert.ok(
               !content.includes('pickle'),
-              `${path.relative(dir, fullPath)} contains pickle reference`
+              `${path.relative(dir, fullPath)} contains pickle reference`,
             );
             assert.ok(
               !content.includes('onions28'),
-              `${path.relative(dir, fullPath)} contains onions28 reference`
+              `${path.relative(dir, fullPath)} contains onions28 reference`,
             );
           }
         }
@@ -323,7 +350,10 @@ describe('scaffold', () => {
     assert.ok(!useCart.includes('alli_os_'), 'useCart should not use alli_os_ key');
 
     const useWishlist = fs.readFileSync(path.join(dir, 'hooks', 'useWishlist.tsx'), 'utf8');
-    assert.ok(useWishlist.includes('stateset_wishlist'), 'useWishlist should use stateset_wishlist key');
+    assert.ok(
+      useWishlist.includes('stateset_wishlist'),
+      'useWishlist should use stateset_wishlist key',
+    );
     assert.ok(!useWishlist.includes('alli_os_'), 'useWishlist should not use alli_os_ key');
   });
 });

@@ -6,9 +6,9 @@ use rust_decimal_macros::dec;
 use stateset_core::CurrencyCode;
 use stateset_core::{CustomerId, OrderId};
 use stateset_embedded::{
-    Address, BackorderStatus, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder,
-    CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderStatus, PaymentStatus,
-    ReservationStatus, UpdateOrder,
+    Address, BackorderStatus, Commerce, CreateCart, CreateCustomer, CreateInventoryItem,
+    CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderStatus,
+    PaymentStatus, ReservationStatus, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -94,6 +94,43 @@ fn test_create_order_basic() {
     assert_eq!(order.payment_status, PaymentStatus::Pending);
     assert_eq!(order.fulfillment_status, FulfillmentStatus::Unfulfilled);
     assert_eq!(order.items.len(), 1);
+}
+
+#[test]
+fn test_create_order_from_cart_is_idempotent() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+    let cart_id = commerce
+        .carts()
+        .create(CreateCart { customer_id: Some(customer_id), ..Default::default() })
+        .expect("cart should be created")
+        .id;
+    let input = CreateOrder {
+        customer_id,
+        items: vec![CreateOrderItem {
+            product_id: Uuid::new_v4().into(),
+            sku: "RETRY-SKU".into(),
+            name: "Retry-safe item".into(),
+            quantity: 1,
+            unit_price: dec!(12.34),
+            tax_amount: Some(dec!(0.99)),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let first = commerce
+        .orders()
+        .create_from_cart(cart_id, input.clone())
+        .expect("first cart order should succeed");
+    let replay = commerce
+        .orders()
+        .create_from_cart(cart_id, input)
+        .expect("cart order retry should succeed");
+
+    assert_eq!(replay.id, first.id);
+    assert_eq!(replay.order_number, first.order_number);
+    assert_eq!(commerce.orders().count(OrderFilter::default()).unwrap(), 1);
 }
 
 #[test]

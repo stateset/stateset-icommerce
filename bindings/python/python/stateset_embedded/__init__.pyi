@@ -839,7 +839,9 @@ class OrderItem:
     name: str
     quantity: int
     unit_price: float
+    unit_price_exact: str
     total: float
+    total_exact: str
 
 class Order:
     """Order data returned from operations."""
@@ -849,6 +851,7 @@ class Order:
     customer_id: str
     status: str
     total_amount: float
+    total_amount_exact: str
     currency: str
     payment_status: str
     fulfillment_status: str
@@ -942,7 +945,9 @@ class ProductVariant:
     sku: str
     name: str
     price: float
+    price_exact: str
     compare_at_price: Optional[float]
+    compare_at_price_exact: Optional[str]
     is_default: bool
 
 class CreateProductVariantInput:
@@ -2212,7 +2217,12 @@ class CartItem:
     name: str
     quantity: int
     unit_price: float
+    unit_price_exact: str
+    original_price_exact: Optional[str]
+    discount_amount_exact: str
+    tax_amount_exact: str
     total: float
+    total_exact: str
 
 class Cart:
     """Cart data."""
@@ -2221,7 +2231,12 @@ class Cart:
     cart_number: str
     status: str
     currency: str
+    subtotal_exact: str
+    tax_amount_exact: str
+    shipping_amount_exact: str
+    discount_amount_exact: str
     grand_total: float
+    grand_total_exact: str
     item_count: int
 
     @property
@@ -2270,6 +2285,7 @@ class CheckoutResult:
     order_number: str
     payment_id: Optional[str]
     total_charged: float
+    total_charged_exact: str
     currency: str
 
 class Carts:

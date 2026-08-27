@@ -1,31 +1,35 @@
-import { StateSetCommerce } from '@stateset/embedded';
+import { Commerce } from '@stateset/embedded';
 
-let commerce: ReturnType<typeof StateSetCommerce.create> | null = null;
+let commerce: Commerce | null = null;
 
 export function getCommerce() {
   if (!commerce) {
-    commerce = StateSetCommerce.create({
-      dbPath: process.env.STATESET_DB_PATH || './store.db',
-    });
+    commerce = new Commerce(process.env.STATESET_DB_PATH || './store.db');
   }
   return commerce;
 }
 
-export async function getProducts(opts: {
-  search?: string;
-  category?: string;
-  limit?: number;
-} = {}) {
+export async function getProducts(
+  opts: {
+    search?: string;
+    category?: string;
+    limit?: number;
+  } = {},
+) {
   const c = getCommerce();
-  const products = await c.products.list({ limit: opts.limit || 20 });
-  let filtered = products;
+  const products = await c.products.list();
+  const enriched: any[] = await Promise.all(
+    products.map(async (product) => ({
+      ...product,
+      variants: await c.products.getVariants(product.id),
+    })),
+  );
+  let filtered = enriched.slice(0, opts.limit || 20);
 
   if (opts.search) {
     const q = opts.search.toLowerCase();
     filtered = filtered.filter(
-      (p: any) =>
-        p.name?.toLowerCase().includes(q) ||
-        p.description?.toLowerCase().includes(q)
+      (p: any) => p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q),
     );
   }
 
@@ -33,8 +37,7 @@ export async function getProducts(opts: {
     const cat = opts.category.toLowerCase();
     filtered = filtered.filter(
       (p: any) =>
-        p.category?.toLowerCase() === cat ||
-        p.tags?.some((t: string) => t.toLowerCase() === cat)
+        p.category?.toLowerCase() === cat || p.tags?.some((t: string) => t.toLowerCase() === cat),
     );
   }
 
@@ -43,10 +46,15 @@ export async function getProducts(opts: {
 
 export async function getProductBySlug(slug: string) {
   const c = getCommerce();
-  const products = await c.products.list({ limit: 200 });
-  return products.find(
-    (p: any) =>
-      p.slug === slug ||
-      p.name?.toLowerCase().replace(/\s+/g, '-') === slug
-  ) || null;
+  const products: any[] = await Promise.all(
+    (await c.products.list()).map(async (product) => ({
+      ...product,
+      variants: await c.products.getVariants(product.id),
+    })),
+  );
+  return (
+    products.find(
+      (p: any) => p.slug === slug || p.name?.toLowerCase().replace(/\s+/g, '-') === slug,
+    ) || null
+  );
 }

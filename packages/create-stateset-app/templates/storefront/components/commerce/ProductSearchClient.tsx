@@ -6,15 +6,21 @@ import { ProductCard } from './ProductCard';
 
 interface Props {
   initialProducts: any[];
-  categories: { slug: string; name: string }[];
+  categories?: { slug: string; name: string }[];
+  initialCategory?: string;
 }
 
-export function ProductSearchClient({ initialProducts, categories }: Props) {
+export function ProductSearchClient({
+  initialProducts,
+  categories = [],
+  initialCategory = '',
+}: Props) {
   const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('');
+  const [category, setCategory] = useState(initialCategory);
   const { products, isLoading } = useProducts({ search, category });
 
-  const displayProducts = search || category ? products : initialProducts;
+  const displayProducts =
+    search || (category && category !== initialCategory) ? products : initialProducts;
 
   return (
     <div>

@@ -13,10 +13,11 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 [![npm](https://img.shields.io/npm/v/@stateset/embedded.svg?label=npm)](https://www.npmjs.com/package/@stateset/embedded)
 [![PyPI](https://img.shields.io/pypi/v/stateset-embedded.svg?label=PyPI)](https://pypi.org/project/stateset-embedded/)
 
-> **Looking to accept ChatGPT checkout?** iCommerce 1.0 pairs with
-> [`stateset-acp-handler`](https://github.com/stateset/stateset-acp-handler)
-> as the reference implementation of the Agentic Commerce Protocol.
-> One container, 60 seconds: `npx create-acp-commerce@latest my-store`.
+> **Checkout protocol adapters:** The cart APIs in this repository are
+> protocol-neutral engine APIs, not ACP or UCP wire conformance. No ACP adapter
+> artifact or conformance evidence ships from this repository; consult
+> [Protocol Integration Status](./docs/src/integrations/checkout-protocols.md)
+> before making interoperability claims.
 
 > 🆕 **Intelligent Commerce Protocol (ICP).** This repo also hosts the
 > open spec and reference implementations of ICP-1.0 — the operational
@@ -34,17 +35,17 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.26.0     # Python
-npm install @stateset/embedded@1.26.0     # Node.js
-npm install -g @stateset/cli@1.26.0       # CLI
-gem install stateset_embedded -v 1.26.0   # Ruby
+pip install stateset-embedded==1.27.0     # Python
+npm install @stateset/embedded@1.27.0     # Node.js
+npm install -g @stateset/cli@1.27.0       # CLI
+gem install stateset_embedded -v 1.27.0   # Ruby
 ```
 
 **Connect an AI agent in one line** (Claude Desktop, Cursor, any MCP client —
 900+ commerce tools, writes gated behind `--apply`):
 
 ```bash
-npx -y -p @stateset/cli stateset-mcp --db ./store.db        # stdio, your database
+npx -y -p @stateset/cli stateset-mcp --db ./store.db --profile core  # focused stdio catalog
 npx -y -p @stateset/cli stateset-mcp-http                   # Streamable HTTP, protocol 2026-07-28, stateless
 ```
 
@@ -84,7 +85,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.26.0](#whats-new-in-v1260)
+- [What's New in v1.27.0](#whats-new-in-v1270)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -95,7 +96,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Configuration](#configuration) — SQLite vs Postgres, env vars
 - [Examples & Development](#examples)
 - [Project Structure](#project-structure) — how the monorepo is laid out
-- [Core Concepts](#core-concepts) — ACP, safety architecture, event-driven design
+- [Core Concepts](#core-concepts) — protocol adapters, safety architecture, event-driven design
 
 </details>
 
@@ -119,7 +120,7 @@ autonomous agents actually need to transact safely:
 - **📜 [Policy DSL](./crates/stateset-policy/)** — declarative, deny-overrides
   rules with explainable denials. Block agents from writes when limits are
   exceeded; record the reason for every decision.
-- **🛠️ [898 MCP Tools](./docs/whitepaper.md#8-mcp-tool-surface) across 87 domain modules** —
+- **🛠️ 900+ MCP tools across generated domain modules** —
   the largest known domain-specific MCP surface, generated from the domain
   registry ([`cli/docs/TOOLS.md`](./cli/docs/TOOLS.md) is the source of truth).
   Discoverable, payable per call via Machine Payments Protocol, replayable,
@@ -182,7 +183,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.26.0 @stateset/cli@1.26.0
+npm install @stateset/embedded@1.27.0 @stateset/cli@1.27.0
 ```
 
 ```javascript
@@ -332,33 +333,32 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.26.0
+## What's New in v1.27.0
 
-**v1.26.0 turns the embedded engine into a governed execution kernel for
-autonomous businesses and agent-to-agent commerce.**
+**v1.27.0 makes the embedded engine substantially easier to adopt safely in a
+real storefront or autonomous agent runtime.**
 
-- **One enforceable command boundary.** Twenty-two versioned commands cover
-  checkout, exact products and stock, payments/refunds, fulfillment,
-  subscriptions, ledger posting, x402, and formal A2A escrow disputes. Every
-  command can preview before apply and produces a durable, replay-safe receipt.
-- **Authority is verifiable.** Host policy binds tenant, store, delegated
-  capabilities, approvals, deadlines, and optional Ed25519 authority to the
-  semantic command. Receipts and outbox facts are transactionally committed,
-  hash-chained, checkpointable, and independently auditable.
-- **Agent tools fail closed.** A generated inventory classifies every registered
-  MCP tool. Strict mode exposes reads and typed governed mutations while hiding
-  all unmapped writes, deletes, admin actions, and future permission classes.
-- **Autonomy survives failure and concurrency.** Durable outbox leases,
-  retries, dead letters, and redrive recover delivery. SQLite immediate
-  transactions and PostgreSQL advisory locks make idempotency and semantic
-  uniqueness converge under races.
-- **Exact launch primitives work end to end.** Agents can atomically create a
-  product with exact-price variants and establish fractional inventory with an
-  initial stock ledger fact. Node returns quantities as decimal strings, and
-  PostgreSQL no longer truncates them to four decimal places.
-- **The same kernel ships everywhere.** Rust, Node, Python, framework adapters,
-  stdio MCP, and stateless Streamable HTTP all route governed work into the
-  embedded database without requiring an external commerce service.
+- **A production-oriented storefront scaffold.** `npm create stateset-app`
+  generates a Next.js 16 application with exact-money carts, secure Base USDC
+  verification, wallet ownership challenges, account flows, product search,
+  and current AI SDK integrations.
+- **Checkout converges under retries and crashes.** Cart-keyed orders, payment
+  idempotency, unique-key race recovery, and resumable finalization ensure that
+  concurrent delivery produces one order and a partially completed checkout
+  can safely finish later.
+- **Tax, shipping, and stock fail closed.** Operators own exact tax and shipping
+  configuration; malformed or unsupported jurisdictions are rejected. Address
+  and method validation is repeated by the server, shipping participates in
+  settlement verification, and transactional stock policy prevents oversells.
+- **Exact money reaches the bindings.** Node and Python financial inputs accept
+  decimal strings end to end. Node orders additionally expose typed addresses,
+  shipping methods, strict stock policy, and cart idempotency.
+- **MCP clients can start focused.** Named catalogs reduce initial tool volume
+  for stdio, events, and stateless HTTP deployments without weakening the
+  generated full catalog or governed-write boundary.
+- **Claims are tied to evidence.** Generated API/MCP/binding inventories,
+  release evidence, and protocol integration status now distinguish shipped
+  engine behavior from external wire-conformance claims.
 
 **The v1.17.0 → v1.24.0 series makes the platform whole: full backend
 parity, complete language-binding coverage, a real disaster-recovery
@@ -392,7 +392,7 @@ surface — closing the gaps the back-office build-out left behind.**
   more) landed, and a binding-parity CI gate now fails the build if any
   future accessor is left unbound. Python caught up to Node across all
   16 remaining domains.
-- **898 MCP tools across 87 domains.** The tool surface grew to match
+- **900+ MCP tools across generated domains.** The tool surface grew to match
   the full binding surface (new EDI, prepayment, vendor-credit,
   price-schedule, transfer-order, production-batch, supplier-SKU, and
   inbound-shipment modules, among others), with the API-coverage gate
@@ -475,7 +475,7 @@ observability, and query discipline.**
   (fixed assets, revenue recognition, cycle counts, 3-way match,
   GL revalue/close-month), with async API parity in Rust
   (`AsyncCommerce`) and a generated tool catalog
-  ([`cli/docs/TOOLS.md`](./cli/docs/TOOLS.md), 898 tools across 87
+  ([`cli/docs/TOOLS.md`](./cli/docs/TOOLS.md), with current counts generated
   domains) kept fresh by a regenerate-and-diff test.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the full per-release entries
@@ -1284,7 +1284,7 @@ A capability matrix — what ships in v1.0.x, with depth links. The agentic
 primitives that distinguish iCommerce from a generic commerce engine
 ([A2A](./AGENTIC_COMMERCE.md), [x402](./docs/src/payments/x402.md),
 [VES v1.0](./docs/PQC_INITIAL_SPEC.md), [Policy DSL](./crates/stateset-policy/),
-[898 MCP tools](./docs/whitepaper.md#8-mcp-tool-surface)) are summarized in
+[the generated MCP tool catalog](./cli/docs/TOOLS.md)) are summarized in
 [Why iCommerce](#why-icommerce) and not duplicated here.
 
 | Domain | Capabilities |
@@ -1323,7 +1323,7 @@ Platform-specific notes that don't fit either:
   <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.26.0</version>
+    <version>1.27.0</version>
   </dependency>
   ```
 
@@ -1333,7 +1333,7 @@ Platform-specific notes that don't fit either:
   the autoloaded stubs throw at runtime.
 
 - **Swift** — Swift Package Manager is the supported path. CocoaPods is
-  community-maintained at `pod 'StateSet', '~> 1.26.0'`.
+  community-maintained at `pod 'StateSet', '~> 1.27.0'`.
 
 - **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
   that, `stateset --help` works anywhere.
@@ -1346,16 +1346,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.26.0"` | [docs.rs](https://docs.rs/stateset-sdk) |
-| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.26.0` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.27.0"` | [docs.rs](https://docs.rs/stateset-sdk) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.27.0` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
-| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.26.0'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
-| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.26.0")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
-| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.26.0")` | [GitHub](https://github.com/stateset/stateset-swift) |
-| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.26.0` / `<PackageReference Include="StateSet.Embedded" Version="1.26.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
-| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.26.0` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.27.0'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.27.0")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.27.0")` | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.27.0` / `<PackageReference Include="StateSet.Embedded" Version="1.27.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.27.0` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use
@@ -1615,12 +1615,16 @@ Current manifest-backed counts and topology live in [Workspace Inventory](./docs
 
 ## Core Concepts
 
-### Agentic Commerce Protocol (ACP)
+### Checkout Protocol Adapters
 
-StateSet implements the Agentic Commerce Protocol, an open standard defining how AI agents perform commerce operations:
+StateSet provides deterministic commerce primitives that protocol adapters can call. The
+embedded cart and order APIs below are not themselves ACP or UCP wire implementations.
+No ACP or UCP adapter artifact ships from this repository. Consult
+[Protocol Integration Status](./docs/src/integrations/checkout-protocols.md) before
+making interoperability or conformance claims.
 
 ```javascript
-// ACP operations are deterministic and auditable
+// Engine operations are deterministic and auditable
 commerce.orders.create(...)     // Create order
 commerce.inventory.reserve(...) // Reserve stock
 commerce.returns.approve(...)   // Approve return

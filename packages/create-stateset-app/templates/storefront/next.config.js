@@ -2,11 +2,9 @@
 const nextConfig = {
   output: 'standalone',
   images: {
-    remotePatterns: [
-      { protocol: 'https', hostname: 'images.unsplash.com' },
-    ],
+    remotePatterns: [{ protocol: 'https', hostname: 'images.unsplash.com' }],
   },
-  serverExternalPackages: ['@stateset/embedded', 'better-sqlite3'],
+  serverExternalPackages: ['@stateset/embedded'],
 };
 
-module.exports = nextConfig;
+export default nextConfig;

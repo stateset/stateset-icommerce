@@ -4,6 +4,7 @@ import { useEffect, useState, use } from 'react';
 import { useAccount } from 'wagmi';
 import Link from 'next/link';
 import { getExplorerTxUrl, activeChain } from '@/lib/wagmi';
+import { useCustomer } from '@/contexts/CustomerContext';
 
 interface OrderItem {
   id: string;
@@ -27,22 +28,21 @@ interface Order {
 export default function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { address } = useAccount();
+  const { authenticatedFetch } = useCustomer();
   const [order, setOrder] = useState<Order | null>(null);
   const [items, setItems] = useState<OrderItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const txHash = order?.notes?.match(/Tx: (0x[a-fA-F0-9]+)/)?.[1];
+  const txHash = order?.notes?.match(/Verified Base settlement: (0x[a-fA-F0-9]{64})/)?.[1];
 
   useEffect(() => {
     async function fetchOrder() {
       if (!id) return;
       setIsLoading(true);
       try {
-        const url = address
-          ? `/api/orders/${id}?wallet=${address}`
-          : `/api/orders/${id}`;
-        const response = await fetch(url);
+        const url = address ? `/api/orders/${id}?wallet=${address}` : `/api/orders/${id}`;
+        const response = await authenticatedFetch(url);
         const data = await response.json();
         if (response.ok) {
           setOrder(data.order);
@@ -57,7 +57,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
       }
     }
     fetchOrder();
-  }, [id, address]);
+  }, [id, address, authenticatedFetch]);
 
   if (isLoading) {
     return (
@@ -87,21 +87,17 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">
-          Order #{order.orderNumber || order.id.slice(0, 8)}
-        </h2>
+        <h2 className="text-2xl font-bold">Order #{order.orderNumber || order.id.slice(0, 8)}</h2>
         <span
           className={`px-3 py-1 text-sm rounded-full ${
             order.status === 'completed' || order.status === 'delivered'
               ? 'bg-green-100 text-green-800'
               : order.status === 'cancelled'
-              ? 'bg-red-100 text-red-800'
-              : 'bg-blue-100 text-blue-800'
+                ? 'bg-red-100 text-red-800'
+                : 'bg-blue-100 text-blue-800'
           }`}
         >
-          {order.status
-            ? order.status.charAt(0).toUpperCase() + order.status.slice(1)
-            : 'Pending'}
+          {order.status ? order.status.charAt(0).toUpperCase() + order.status.slice(1) : 'Pending'}
         </span>
       </div>
 
@@ -142,9 +138,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                     Qty: {item.quantity} @ ${item.unitPrice.toFixed(2)}
                   </p>
                 </div>
-                <p className="font-medium">
-                  ${(item.quantity * item.unitPrice).toFixed(2)}
-                </p>
+                <p className="font-medium">${(item.quantity * item.unitPrice).toFixed(2)}</p>
               </div>
             ))
           ) : (
@@ -154,7 +148,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         <div className="border-t mt-4 pt-4">
           <div className="flex justify-between font-bold text-lg">
             <span>Total</span>
-            <span>${total.toFixed(2)} {order.currency || 'USDC'}</span>
+            <span>
+              ${total.toFixed(2)} {order.currency || 'USDC'}
+            </span>
           </div>
         </div>
       </div>
@@ -178,10 +174,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       )}
 
-      <Link
-        href="/account/orders"
-        className="inline-block text-gray-600 hover:text-gray-800"
-      >
+      <Link href="/account/orders" className="inline-block text-gray-600 hover:text-gray-800">
         &larr; Back to Order History
       </Link>
     </div>

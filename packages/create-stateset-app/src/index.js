@@ -9,9 +9,7 @@ import { print, success, info, error, bold, cyan, dim } from './output.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_DIR = path.resolve(__dirname, '..', 'templates', 'storefront');
-const PKG = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8'),
-);
+const PKG = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8'));
 
 const HELP = `
   ${bold('create-stateset-app')} — Create a StateSet-powered commerce storefront
@@ -55,7 +53,19 @@ function generateEnvExample(targetDir, storeName) {
 #   cp .env.example .env.local
 
 # Database path (SQLite via @stateset/embedded)
-DATABASE_PATH=./store.db
+STATESET_DB_PATH=./store.db
+
+# Base JSON-RPC URL used only by the server to verify USDC settlement.
+STATESET_BASE_RPC_URL=https://mainnet.base.org
+STATESET_USDC_CONFIRMATIONS=2
+
+# Operator-owned state tax rates as exact decimal strings. When omitted, the
+# documented starter table is used and unsupported states fail closed.
+# STATESET_TAX_RATES_JSON={"CA":"0.0725","OR":"0"}
+
+# Operator-owned shipping methods with exact amounts. The starter method is
+# free standard shipping when this setting is omitted.
+# STATESET_SHIPPING_METHODS_JSON=[{"id":"ground","label":"Ground","amount":"7.50","carrier":"UPS","estimatedDays":"3-5 business days","countries":["US"]}]
 
 # Store wallet address for receiving USDC payments (Base chain)
 # Get one at https://www.coinbase.com/wallet
@@ -64,6 +74,7 @@ NEXT_PUBLIC_STORE_WALLET_ADDRESS=0x0000000000000000000000000000000000000000
 # Anthropic API key (required for AI chat assistant)
 # Get one at https://console.anthropic.com
 ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-4-5
 
 # Base URL for server-side API calls
 NEXT_PUBLIC_BASE_URL=http://localhost:3000
@@ -86,7 +97,7 @@ function printNextSteps(projectName, pm) {
   print(`  Then open ${cyan('http://localhost:3000')}`);
   print('');
   print(`  ${dim('Configure your store by editing .env.local')}`);
-  print(`  ${dim('Learn more: https://docs.stateset.io')}`);
+  print(`  ${dim('Learn more: https://docs.stateset.com')}`);
   print('');
 }
 
@@ -157,7 +168,7 @@ export async function main(argv) {
   print('');
 
   // Get project name
-  const rawName = positionals[0] || await promptProjectName();
+  const rawName = positionals[0] || (await promptProjectName());
   const targetDir = path.resolve(process.cwd(), rawName);
   const projectName = path.basename(targetDir);
 

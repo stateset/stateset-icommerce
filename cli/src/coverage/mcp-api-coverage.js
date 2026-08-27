@@ -135,6 +135,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
     tools: orderTools,
     methodToTools: {
       create: ['create_order'],
+      createExact: ['create_order'],
       get: ['get_order'],
       list: ['list_orders'],
       updateStatus: ['update_order_status'],
@@ -635,6 +636,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       forCustomer: ['list_customer_carts'],
       delete: ['delete_cart'],
       addItem: ['add_cart_item'],
+      addItemExact: ['add_cart_item'],
       updateItem: ['update_cart_item'],
       removeItem: ['remove_cart_item'],
       getItems: ['list_cart_items'],

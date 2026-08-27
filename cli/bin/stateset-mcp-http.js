@@ -73,6 +73,8 @@ OPTIONS:
   --host <host>          Bind host (default: 127.0.0.1; use 0.0.0.0 to expose)
   --port <port>          Bind port (default: 8090)
   --db <path>            Shared store path (default: :memory:, seeded at boot)
+  --profile <name>       Tool profile: core, operations, finance, agents, all
+  --domains <a,b,...>    Add specific tool domains to the selected profile
   --apply                Enable write tools against a durable --db
   --read-only            Disable write tools (default for a durable --db)
   --no-seed              Start with an EMPTY store (default: seeded demo data)
@@ -141,6 +143,8 @@ async function main() {
       host: { type: 'string' },
       port: { type: 'string' },
       db: { type: 'string' },
+      profile: { type: 'string', default: 'all' },
+      domains: { type: 'string' },
       apply: { type: 'boolean', default: false },
       'read-only': { type: 'boolean', default: false },
       'no-seed': { type: 'boolean', default: false },
@@ -287,6 +291,13 @@ async function main() {
         dbPath: storageDbPath,
         allowApply,
         kernel,
+        toolProfile: values.profile,
+        toolDomains: values.domains
+          ? values.domains
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean)
+          : [],
         createServer: createStatesetMcpServer,
       }),
     {
@@ -303,6 +314,13 @@ async function main() {
     dbPath: storageDbPath,
     allowApply,
     kernel,
+    toolProfile: values.profile,
+    toolDomains: values.domains
+      ? values.domains
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : [],
     createServer: createStatesetMcpServer,
   });
 

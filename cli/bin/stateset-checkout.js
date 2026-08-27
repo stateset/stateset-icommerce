@@ -3,7 +3,7 @@
 /**
  * StateSet iCheckout Agent - Shopping cart and checkout flow specialist
  *
- * Implements the Agentic Commerce Protocol (ACP) for AI-powered checkout.
+ * Operates StateSet's protocol-neutral embedded checkout lifecycle.
  *
  * Usage:
  *   stateset-checkout "create a cart for alice@example.com"
@@ -18,7 +18,7 @@ import { createAgentCliMain } from '../src/utils/agent-cli.js';
 const agentConfig = AGENTS['checkout'];
 
 const HELP = `
-StateSet Checkout Agent - Agentic Commerce Protocol (ACP)
+StateSet Checkout Agent - Embedded Cart and Checkout
 ${agentConfig.description}
 
 USAGE:

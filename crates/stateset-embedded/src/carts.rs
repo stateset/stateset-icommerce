@@ -1,6 +1,6 @@
 //! Cart and Checkout operations for shopping cart management
 //!
-//! Based on the Agentic Commerce Protocol (ACP) checkout system.
+//! Protocol-neutral embedded cart and checkout API.
 //!
 //! # Example
 //!
@@ -325,8 +325,8 @@ impl Carts {
         Ok(result)
     }
 
-    /// Complete the checkout for a cart settled outside the engine (ACP,
-    /// external PSP): the minted order is `Confirmed` + `Paid` with no
+    /// Complete the checkout for a cart settled outside the engine (for
+    /// example, by a protocol adapter or external PSP): the minted order is `Confirmed` + `Paid` with no
     /// engine-side payment record. This is an explicit opt-in — prefer
     /// [`complete`](Self::complete) plus a payment record when the engine
     /// processes the payment.

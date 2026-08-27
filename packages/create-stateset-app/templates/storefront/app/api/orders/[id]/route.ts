@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';
+import { verifyWalletRequest } from '@/lib/wallet-auth';
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const wallet = request.nextUrl.searchParams.get('wallet');
 
   try {
+    if (!wallet || !(await verifyWalletRequest(request, wallet))) {
+      return NextResponse.json({ error: 'Wallet signature required' }, { status: 401 });
+    }
     const commerce = getCommerce();
     const order = await commerce.orders.get(id);
 
@@ -20,20 +21,19 @@ export async function GET(
     if (wallet && order.customerId) {
       try {
         const customer = await commerce.customers.get(order.customerId);
-        if (customer && !customer.notes?.toLowerCase().includes(wallet.toLowerCase())) {
+        if (customer && customer.metadata?.walletAddress?.toLowerCase() !== wallet.toLowerCase()) {
           return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
         }
       } catch {}
     }
 
-    let items: any[] = [];
-    try {
-      items = await commerce.orders.getItems(id);
-    } catch {}
+    const items = order.items || [];
 
     let payment = null;
     try {
-      const payments = await commerce.payments.list({ orderId: id });
+      const payments = (await commerce.payments.list()).filter(
+        (candidate) => candidate.orderId === id,
+      );
       if (payments?.length) payment = payments[0];
     } catch {}
 
@@ -41,7 +41,7 @@ export async function GET(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to fetch order' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

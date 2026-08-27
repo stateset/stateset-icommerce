@@ -1,5 +1,5 @@
 /**
- * Cart/Checkout Tools Module (Agentic Commerce Protocol)
+ * Protocol-neutral cart and checkout tools module
  *
  * MCP tool definitions for shopping cart and checkout operations.
  * Modularized from mcp-server.js for better maintainability.

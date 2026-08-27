@@ -15,7 +15,11 @@ We considered three approaches:
 
 ## Decision
 
-Define the public binding surface once in a declarative generator spec and derive bindings from it. The generator spec is the source of truth for exposed types and operations, while each binding remains free to provide language-idiomatic wrappers.
+Adopt a declarative binding spec incrementally, with the Rust API and each
+binding's compiled/exported surface remaining authoritative until generation is
+implemented. `bindings/generator/spec.yaml` is currently a design document and
+must not be described as a generator or source of truth. Generated inventory
+checks measure drift between shipped surfaces while this migration is open.
 
 ### Binding Technologies
 

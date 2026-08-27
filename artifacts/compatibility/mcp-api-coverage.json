@@ -347,8 +347,8 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 388,
-  "mappedAuditedMethods": 388,
+  "totalAuditedMethods": 390,
+  "mappedAuditedMethods": 390,
   "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
@@ -395,8 +395,8 @@
     },
     {
       "className": "Carts",
-      "methodCount": 32,
-      "mappedMethodCount": 32,
+      "methodCount": 33,
+      "mappedMethodCount": 33,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -483,8 +483,8 @@
     },
     {
       "className": "Orders",
-      "methodCount": 7,
-      "mappedMethodCount": 7,
+      "methodCount": 8,
+      "mappedMethodCount": 8,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []

@@ -14,11 +14,12 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, CustomerId,
-    FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId, OrderRepository,
-    OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, ShipOrder, ShipmentLineInput,
-    UpdateOrder, validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
-    validate_required_text, validate_required_uuid, validate_sku,
+    Address, BatchResult, CartId, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
+    CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
+    OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, ShipOrder,
+    ShipmentLineInput, UpdateOrder, validate_batch_size, validate_currency_code,
+    validate_postal_code, validate_price, validate_required_text, validate_required_uuid,
+    validate_sku,
 };
 use uuid::Uuid;
 
@@ -1162,6 +1163,10 @@ impl SqliteOrderRepository {
 impl OrderRepository for SqliteOrderRepository {
     fn create(&self, input: CreateOrder) -> Result<Order> {
         self.create_internal(None, false, input)
+    }
+
+    fn create_from_cart(&self, cart_id: CartId, input: CreateOrder) -> Result<Order> {
+        Self::create_from_cart(self, cart_id.into_uuid(), input)
     }
 
     fn get(&self, id: OrderId) -> Result<Option<Order>> {

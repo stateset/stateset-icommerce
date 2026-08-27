@@ -12,7 +12,7 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
+    Address, BatchResult, CartId, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
     CurrencyCode, CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem,
     OrderItemId, OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result,
     ShipOrder, ShipmentLineInput, UpdateOrder, validate_batch_size, validate_currency_code,
@@ -1778,6 +1778,10 @@ impl PgOrderRepository {
 impl OrderRepository for PgOrderRepository {
     fn create(&self, input: CreateOrder) -> Result<Order> {
         super::block_on(self.create_async(input))
+    }
+
+    fn create_from_cart(&self, cart_id: CartId, input: CreateOrder) -> Result<Order> {
+        super::block_on(self.create_from_cart_async(cart_id.into_uuid(), input))
     }
 
     fn get(&self, id: OrderId) -> Result<Option<Order>> {

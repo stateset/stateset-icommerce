@@ -1,7 +1,7 @@
 //! Cart and Checkout domain models
 //!
-//! Based on the Agentic Commerce Protocol (ACP) checkout system.
-//! Supports full checkout flow with items, totals, addresses, and fulfillment.
+//! Engine-native checkout aggregates with items, totals, addresses, and
+//! fulfillment. These types are protocol-neutral and are not ACP/UCP wire types.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
