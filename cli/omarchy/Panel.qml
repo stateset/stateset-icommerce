@@ -44,8 +44,7 @@ Panel {
 
   function launch(command) {
     if (!bar || allowedCommands.indexOf(command) < 0) return
-    var controller = "if command -v stateset-omarchy >/dev/null 2>&1; then stateset-omarchy " + command
-      + "; else npx -y -p @stateset/cli stateset-omarchy " + command + "; fi"
+    var controller = "stateset-omarchy " + command
     bar.run("omarchy-launch-floating-terminal-with-presentation '" + controller + "'")
     close()
   }
@@ -128,6 +127,7 @@ Panel {
             Text {
               Layout.fillWidth: true
               text: service.message.toUpperCase()
+              textFormat: Text.PlainText
               color: service.ready ? root.dim : root.urgent
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -148,6 +148,7 @@ Panel {
         Text {
           Layout.fillWidth: true
           text: service.dbPath || "Run stateset-omarchy install inside a store project"
+          textFormat: Text.PlainText
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -179,6 +180,7 @@ Panel {
               spacing: 0
               Text {
                 text: (service.alerts.total || 0) + " NEED ATTENTION"
+                textFormat: Text.PlainText
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -192,6 +194,7 @@ Panel {
                   (service.alerts.pendingReturns || 0) > 0 ? service.alerts.pendingReturns + " returns" : "",
                   (service.alerts.pendingOrders || 0) > 0 ? service.alerts.pendingOrders + " orders" : ""
                 ].filter(function(value) { return value !== "" }).join(" · ")
+                textFormat: Text.PlainText
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -248,6 +251,7 @@ Panel {
                 Text {
                   Layout.alignment: Qt.AlignHCenter
                   text: metric.modelData.value
+                  textFormat: Text.PlainText
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
@@ -256,6 +260,7 @@ Panel {
                 Text {
                   Layout.alignment: Qt.AlignHCenter
                   text: metric.modelData.label
+                  textFormat: Text.PlainText
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -268,6 +273,7 @@ Panel {
         Text {
           Layout.fillWidth: true
           text: service.mode === "preview" ? "PREVIEW ONLY · WRITES REQUIRE EXPLICIT APPLY" : "GOVERNED APPLY · OPERATOR POLICY ACTIVE"
+          textFormat: Text.PlainText
           color: service.mode === "preview" ? Color.accent : root.urgent
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

@@ -61,15 +61,17 @@ check(
   /allowedCommands\.indexOf\(command\)/.test(panel),
   'Panel.qml must allowlist controller actions',
 );
-check(/command -v stateset-omarchy/.test(panel), 'Panel.qml must prefer the offline controller');
+check(!/\bnpx\b/.test(panel), 'Panel.qml must not download code at runtime');
+check(/stateset-omarchy/.test(panel), 'Panel.qml must require the installed controller');
 check(/root\.launch\("attention"\)/.test(panel), 'Panel.qml must expose an attention workflow');
 check(/root\.launch\("remediate"\)/.test(panel), 'Panel.qml must expose safe remediation');
-check(/Model\.normalizeAlerts/.test(service), 'Service.qml must normalize status alerts');
+check(/Model\.parseStatusJson/.test(service), 'Service.qml must strictly normalize status output');
 check(/notify-send/.test(service), 'Service.qml must provide desktop alert delivery');
-check(
-  /command -v stateset-omarchy/.test(service),
-  'Service.qml must prefer the installed offline controller',
-);
+check(!/\bnpx\b/.test(service), 'Service.qml must not download code at runtime');
+check(/\/usr\/bin\/timeout/.test(service), 'Service.qml must enforce a producer deadline');
+check(/\/usr\/bin\/head -c 65537/.test(service), 'Service.qml must cap producer output');
+check(/SplitParser/.test(service), 'Service.qml must bound streamed output while consuming it');
+check(/Text\.PlainText/.test(panel), 'Panel.qml must force plain-text rendering');
 
 if (errors.length > 0) {
   for (const error of errors) console.error(`ERROR: ${error}`);

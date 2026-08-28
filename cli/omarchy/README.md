@@ -7,30 +7,32 @@ service.
 
 ## Install with Omarchy
 
-Install the plugin directly from its public repository:
+Install the version-matched controller explicitly, then add the plugin from its
+public repository:
 
 ```bash
+npm install --global @stateset/cli@1.28.0
 omarchy plugin add https://github.com/stateset/stateset-omarchy-plugin.git --enable
 ```
 
 The plugin contains no install hooks and does not request elevated privileges.
-Omarchy clones and validates the QML before enabling it. The StateSet controller
-is resolved locally when installed and otherwise launched from the published
-`@stateset/cli` package through `npx`.
+Omarchy clones and validates the QML before enabling it. Routine plugin use
+never downloads or executes code: install the StateSet controller separately
+before enabling the shell surface.
 
 To configure a store, run this from its project directory:
 
 ```bash
-npx -y -p @stateset/cli stateset-omarchy install --db ./store.db
+stateset-omarchy install --db ./store.db
 ```
 
 The configurator recognizes the Git-managed plugin and leaves its checkout
 intact, so `omarchy plugin update com.stateset.icommerce` remains the owner of
 shell upgrades.
 
-Requirements are Omarchy Quattro with shell plugin support and the StateSet CLI
-on Node.js 20.20 or newer. The panel prefers a locally installed
-`stateset-omarchy` executable and otherwise uses `npx -y -p @stateset/cli`.
+Requirements are Omarchy Quattro with shell plugin support and a separately
+installed StateSet CLI on Node.js 20.20 or newer. If the controller is missing,
+the widget fails closed and displays a bounded installation error.
 
 Upgrade atomically with `--force`. If the updated plugin cannot be enabled, the
 installer restores the previous plugin. Remove the shell integration with
@@ -52,8 +54,8 @@ The optional loopback MCP service supports explicit `status`, `start`, `stop`,
 Use `stateset-omarchy attention` for a sanitized, provider-free operations
 report, `stateset-omarchy remediate` to open the matching preview-only
 specialist, and `stateset-omarchy doctor` to verify a target desktop installation.
-Shell and menu actions prefer the locally installed controller and use `npx`
-only as a fallback.
+Shell and menu actions require the locally installed controller and never fetch
+packages at runtime.
 
 ## Remove
 

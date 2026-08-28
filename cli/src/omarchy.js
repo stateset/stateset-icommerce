@@ -19,7 +19,7 @@ function terminalControllerAction(command) {
   ) {
     throw new Error(`Unsafe Omarchy menu command: ${command}`);
   }
-  return `omarchy-launch-floating-terminal-with-presentation 'if command -v stateset-omarchy >/dev/null 2>&1; then stateset-omarchy ${command}; else npx -y -p @stateset/cli stateset-omarchy ${command}; fi'`;
+  return `omarchy-launch-floating-terminal-with-presentation 'stateset-omarchy ${command}'`;
 }
 
 const MENU_ENTRIES = {

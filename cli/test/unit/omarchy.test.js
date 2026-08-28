@@ -288,7 +288,7 @@ describe('Omarchy integration', () => {
     const menu = JSON.parse(fs.readFileSync(menuFile));
     assert.equal(menu.stateset.label, 'Commerce');
     assert.match(menu['stateset.dashboard'].action, /stateset-omarchy dashboard/);
-    assert.match(menu['stateset.dashboard'].action, /command -v stateset-omarchy/);
+    assert.doesNotMatch(menu['stateset.dashboard'].action, /\bnpx\b/);
     assert.match(menu['stateset.attention'].action, /stateset-omarchy attention/);
     assert.match(menu['stateset.remediate'].action, /stateset-omarchy remediate/);
   });

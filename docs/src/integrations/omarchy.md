@@ -150,6 +150,12 @@ The configurator detects and preserves the Git-managed checkout, leaving future
 shell upgrades to `omarchy plugin update`. The repository contains no install
 hooks and never requests elevated privileges.
 
+The shell never downloads controller code during refreshes or panel actions.
+Install `@stateset/cli` separately before enabling the plugin. Status execution
+has independent producer and consumer output caps, a process deadline, a strict
+fixed-field schema, bounded values, and plain-text rendering for controller
+output.
+
 Remove the Git-managed shell surface through Omarchy before cleaning up the
 optional StateSet menu and user service:
 
