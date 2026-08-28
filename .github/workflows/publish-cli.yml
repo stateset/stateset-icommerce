@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.27.0)'
+        description: 'Version to release (e.g., 1.28.0)'
         required: true
 
 env:
@@ -307,16 +307,25 @@ jobs:
         run: |
           npm pack --silent
 
+      - name: Create standalone Omarchy plugin
+        run: |
+          version=$(node -p "require('./cli/package.json').version")
+          node scripts/package-omarchy-plugin.mjs
+          tar -C dist -czf "stateset-omarchy-plugin-${version}.tar.gz" stateset-omarchy-plugin
+
       - name: Generate release checksums
         run: |
           cd cli
           sha256sum -- *.tgz > ../cli-release-checksums.txt
+          cd ..
+          sha256sum -- stateset-omarchy-plugin-*.tar.gz >> cli-release-checksums.txt
 
       - name: Attest package
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
             cli/*.tgz
+            stateset-omarchy-plugin-*.tar.gz
             cli-release-checksums.txt
 
       - name: Publish checksums
@@ -324,6 +333,13 @@ jobs:
         with:
           name: cli-package-release-checksums
           path: cli-release-checksums.txt
+          if-no-files-found: error
+
+      - name: Publish standalone Omarchy plugin
+        uses: actions/upload-artifact@v6
+        with:
+          name: stateset-omarchy-plugin-release
+          path: stateset-omarchy-plugin-*.tar.gz
           if-no-files-found: error
 
       - name: Publish to npm

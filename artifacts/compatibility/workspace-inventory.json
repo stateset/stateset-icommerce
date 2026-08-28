@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.27.0",
+    "version": "1.28.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -545,7 +545,7 @@
     }
   ],
   "cli": {
-    "binaryCount": 52,
+    "binaryCount": 53,
     "dependencyCount": 13,
     "optionalDependencyCount": 15,
     "topLevelSourceCounts": [
@@ -867,6 +867,10 @@
       },
       {
         "name": "offline.js",
+        "count": 1
+      },
+      {
+        "name": "omarchy.js",
         "count": 1
       },
       {

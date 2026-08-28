@@ -101,6 +101,7 @@
 
 # Operations & Guides
 
+- [Omarchy](integrations/omarchy.md)
 - [CLI](guides/cli.md)
 - [MCP Tools](guides/mcp-tools.md)
 - [Sync (VES)](guides/sync.md)

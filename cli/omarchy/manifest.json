@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "com.stateset.icommerce",
+  "name": "StateSet iCommerce",
+  "version": "1.28.0",
+  "author": "StateSet",
+  "license": "MIT OR Apache-2.0",
+  "description": "Local commerce status, backups, and agent access for Omarchy.",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "StateSet Commerce",
+    "description": "Store health, operating mode, and commerce actions.",
+    "category": "System",
+    "aliases": ["commerce", "icommerce", "stateset"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 120,
+      "notifications": true
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 30,
+        "max": 1800,
+        "step": 30,
+        "defaultValue": 120
+      },
+      {
+        "key": "notifications",
+        "type": "boolean",
+        "label": "Desktop notifications",
+        "defaultValue": true
+      }
+    ]
+  }
+}

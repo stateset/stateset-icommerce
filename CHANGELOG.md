@@ -6,6 +6,24 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-08-27
+
+### Added
+- **Native Omarchy integration.** `stateset-omarchy install` adds a shell bar
+  widget and operator panel, Super-key Commerce actions, persistent store
+  discovery, consistent backups, and project-local MCP configuration for
+  Claude, Codex, and OpenCode. An optional hardened systemd user service exposes
+  a loopback MCP endpoint. Agent writes remain preview-only by default; apply
+  mode requires complete operator-owned kernel policy and identity. Operational
+  attention signals and opt-out desktop notifications cover failed payments,
+  low stock, pending returns, and pending orders; service lifecycle commands,
+  standalone plugin packaging, and a dedicated acceptance gate make the native
+  integration maintainable and independently distributable. Provider-free
+  attention review, an installation doctor, offline-first allowlisted shell
+  actions, large-snapshot performance coverage, pinned upstream CI validation,
+  and attested standalone release artifacts complete the production integration
+  layer.
+
 ## [1.27.0] - 2026-08-27
 
 ### Added
