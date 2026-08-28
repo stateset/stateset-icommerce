@@ -30,9 +30,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
+            bindings/node/package-lock.json
             cli/package-lock.json
       - name: Install root tooling
         run: HUSKY=0 npm ci
+      - name: Install embedded binding dependencies
+        working-directory: bindings/node
+        run: npm ci
       - name: Install CLI dependencies
         working-directory: cli
         run: npm ci

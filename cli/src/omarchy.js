@@ -595,36 +595,94 @@ export function installMenu(homeDir = os.homedir()) {
   return writeJsonMerged(file, (value) => Object.assign(value, MENU_ENTRIES));
 }
 
+export function uninstallMenu(homeDir = os.homedir()) {
+  const file = configPaths(homeDir).menuFile;
+  if (!fs.existsSync(file)) return { file, removed: false, fileRemoved: false };
+  const value = readJson(file);
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    throw new Error(`Refusing to modify non-JSON configuration: ${file}`);
+  }
+  let removed = false;
+  for (const key of Object.keys(MENU_ENTRIES)) {
+    if (Object.hasOwn(value, key)) {
+      delete value[key];
+      removed = true;
+    }
+  }
+  if (!removed) return { file, removed: false, fileRemoved: false };
+  if (Object.keys(value).length === 0) {
+    fs.unlinkSync(file);
+    return { file, removed: true, fileRemoved: true };
+  }
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+  return { file, removed: true, fileRemoved: false };
+}
+
 export function bundledPluginDir() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../omarchy');
 }
 
-export function installPlugin({ homeDir = os.homedir(), force = false, enable = true } = {}) {
+export function installPlugin({
+  homeDir = os.homedir(),
+  force = false,
+  enable = true,
+  runner = spawnSync,
+} = {}) {
   const target = configPaths(homeDir).pluginDir;
   if (fs.existsSync(target)) {
     if (!force) throw new Error(`Plugin already exists: ${target} (use --force to update)`);
   }
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const staged = `${target}.install-${process.pid}-${Date.now()}`;
+  const rollback = `${target}.rollback-${process.pid}-${Date.now()}`;
+  const replacing = fs.existsSync(target);
   try {
     fs.cpSync(bundledPluginDir(), staged, { recursive: true, errorOnExist: true });
     const manifest = readJson(path.join(staged, 'manifest.json'));
     if (manifest?.id !== OMARCHY_PLUGIN_ID) throw new Error('Bundled Omarchy manifest is invalid');
-    if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
+    if (replacing) fs.renameSync(target, rollback);
     fs.renameSync(staged, target);
+
+    let enabled = false;
+    if (enable) {
+      const result = runner('omarchy', ['plugin', 'enable', OMARCHY_PLUGIN_ID], {
+        encoding: 'utf8',
+      });
+      enabled = result.status === 0;
+      if (replacing && !enabled) {
+        throw new Error(
+          result.stderr?.trim() || 'Unable to enable updated StateSet Omarchy plugin',
+        );
+      }
+    }
+    if (replacing) fs.rmSync(rollback, { recursive: true, force: true });
+    return { target, enabled, replaced: replacing };
   } catch (error) {
     fs.rmSync(staged, { recursive: true, force: true });
+    if (fs.existsSync(rollback)) {
+      fs.rmSync(target, { recursive: true, force: true });
+      fs.renameSync(rollback, target);
+    }
     throw error;
   }
+}
 
-  let enabled = false;
-  if (enable) {
-    const result = spawnSync('omarchy', ['plugin', 'enable', OMARCHY_PLUGIN_ID], {
+export function uninstallPlugin({
+  homeDir = os.homedir(),
+  disable = true,
+  runner = spawnSync,
+} = {}) {
+  const target = configPaths(homeDir).pluginDir;
+  if (!fs.existsSync(target)) return { target, removed: false, disabled: false };
+  let disabled = false;
+  if (disable) {
+    const result = runner('omarchy', ['plugin', 'disable', OMARCHY_PLUGIN_ID], {
       encoding: 'utf8',
     });
-    enabled = result.status === 0;
+    disabled = result.status === 0;
   }
-  return { target, enabled };
+  fs.rmSync(target, { recursive: true });
+  return { target, removed: true, disabled };
 }
 
 export async function backupStore({ dbPath, destination, cwd, homeDir } = {}) {
