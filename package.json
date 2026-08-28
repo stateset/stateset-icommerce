@@ -33,6 +33,8 @@
     "check:mcp-inventory": "npm run check:env && node ./scripts/ci/generate_mcp_inventory.mjs --check",
     "check:rust-openapi-inventory": "npm run check:env && node ./scripts/ci/generate_rust_openapi_inventory.mjs --check",
     "check:workspace-inventory": "npm run check:env && node ./scripts/ci/generate_workspace_inventory.mjs --check",
+    "check:omarchy": "npm run check:env && node ./scripts/ci/check_omarchy_integration.mjs && node --test ./cli/test/unit/omarchy.test.js ./cli/test/unit/omarchy-model.test.js",
+    "package:omarchy-plugin": "npm run check:env && node ./scripts/package-omarchy-plugin.mjs",
     "test:release-hygiene": "npm run check:env && bash ./scripts/ci/check_release_hygiene.test.sh",
     "test:env-check": "node --test scripts/check-node.test.mjs",
     "check:shell": "bash -n docs/scripts/snapshot-version.sh examples/setup-sync.sh examples/verify-setup.sh scripts/arc_e2e_demo.sh scripts/ci/cargo_ci.sh scripts/ci/check_docs_snapshot_flow.sh scripts/ci/check_python_bindings.sh scripts/ci/check_rust_feature_matrix.sh scripts/ci/check_release_hygiene.sh scripts/ci/check_release_hygiene.test.sh .github/scripts/shellcheck.sh .github/scripts/actionlint.sh",
@@ -44,7 +46,7 @@
     "check:admin": "npm --prefix admin run check",
     "check:create-app": "npm --prefix packages/create-stateset-app test",
     "check:cli": "npm run check:env && npm run test:env-check && npm --prefix cli run check",
-    "check": "npm run check:versions && npm run test:release-hygiene && npm run check:rust && npm run check:shell && npm run check:bindings:node && npm run check:bindings:python && npm run check:admin && npm run check:create-app && npm run check:cli && npm run check:engine-examples",
+    "check": "npm run check:versions && npm run test:release-hygiene && npm run check:omarchy && npm run check:rust && npm run check:shell && npm run check:bindings:node && npm run check:bindings:python && npm run check:admin && npm run check:create-app && npm run check:cli && npm run check:engine-examples",
     "check:release": "npm run check && npm run check:doc-tool-refs && npm run check:docs:book && npm run check:docs:snapshot && npm run check:agent-inventory && npm run check:api-command-coverage && npm run check:binding-api-inventory && npm run check:http-gateway-inventory && npm run check:mcp-api-coverage && npm run check:mcp-inventory && npm run check:rust-openapi-inventory && npm run check:workspace-inventory"
   },
   "devDependencies": {

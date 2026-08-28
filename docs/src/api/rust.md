@@ -8,10 +8,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-stateset-embedded = "1.27.0"
+stateset-embedded = "1.28.0"
 
 # For PostgreSQL support
-stateset-embedded = { version = "1.27.0", features = ["postgres"] }
+stateset-embedded = { version = "1.28.0", features = ["postgres"] }
 ```
 
 ## Quick Start
