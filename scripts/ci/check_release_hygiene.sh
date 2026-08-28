@@ -159,6 +159,7 @@ node ./scripts/ci/check_workflow_job_refs.mjs >/dev/null
 required_release_surface_snippets=(
   "bindings/python/pyproject.toml|\"Development Status :: 5 - Production/Stable\""
   ".github/workflows/publish-cli.yml|description: 'Version to release (e.g., ${workspace_version})'"
+  ".github/workflows/publish-cli.yml|CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-unknown-linux-gnu-gcc"
   ".github/workflows/publish-python.yml|description: \"Version to release (e.g., ${workspace_version})\""
   ".github/workflows/publish-rust-crates.yml|description: 'Version to release (e.g., ${workspace_version})'"
   "scripts/ci/check_release_hygiene.sh|                   ${workspace_version}, v${workspace_version}, cli-v${workspace_version}, py-v${workspace_version}, java-v${workspace_version},"
