@@ -18,7 +18,7 @@ import React from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { BuildInfoView } from '@/app/build-info/page';
+import { BuildInfoView } from '@/components/build-info-view';
 
 afterEach(() => {
   cleanup();
@@ -73,9 +73,7 @@ describe('<BuildInfoView />', () => {
 
     expect(screen.getByTestId('trust-badge').textContent).toBe('Unsigned build');
     // The warning copy makes "did not come from a verified release pipeline" prominent.
-    expect(
-      screen.getByText(/did not come from a verified release pipeline/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/did not come from a verified release pipeline/i)).toBeInTheDocument();
   });
 
   it('renders "Not set" for missing optional fields', () => {
@@ -97,16 +95,10 @@ describe('<BuildInfoView />', () => {
   });
 
   it('renders the engine-unreachable error path', () => {
-    render(
-      <BuildInfoView
-        result={{ error: 'connect ECONNREFUSED 127.0.0.1:8080' }}
-      />,
-    );
+    render(<BuildInfoView result={{ error: 'connect ECONNREFUSED 127.0.0.1:8080' }} />);
 
     expect(screen.getByText('Engine unreachable')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Could not fetch.*ECONNREFUSED/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Could not fetch.*ECONNREFUSED/i)).toBeInTheDocument();
     // Build-metadata card should be suppressed on error.
     expect(screen.queryByText('Build metadata')).toBeNull();
   });
@@ -135,8 +127,6 @@ describe('<BuildInfoView />', () => {
     // Even on error, the "how signing works" section explains the model.
     render(<BuildInfoView result={{ error: 'down' }} />);
     expect(screen.getByText('How signing works')).toBeInTheDocument();
-    expect(
-      screen.getByText(/sigstore using OIDC keyless signing/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/sigstore using OIDC keyless signing/i)).toBeInTheDocument();
   });
 });

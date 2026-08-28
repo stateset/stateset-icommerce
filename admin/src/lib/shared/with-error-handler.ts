@@ -25,10 +25,19 @@ interface ErrorHandlerOptions {
   requireCsrf?: boolean;
 }
 
-type RouteHandler = (
+type RouteParams = Record<string, string | string[]>;
+type RouteContext<TParams extends RouteParams = RouteParams> = { params: Promise<TParams> };
+
+type SimpleRouteHandler = (request: NextRequest) => Promise<NextResponse | Response>;
+
+type ContextRouteHandler<TParams extends RouteParams = RouteParams> = (
   request: NextRequest,
-  context?: { params: Promise<Record<string, string>> },
+  context: RouteContext<TParams>,
 ) => Promise<NextResponse | Response>;
+
+type RouteHandler = SimpleRouteHandler | ContextRouteHandler<never>;
+type SimpleWrappedRouteHandler = SimpleRouteHandler & ContextRouteHandler;
+type WrappedRouteHandler = SimpleWrappedRouteHandler | ContextRouteHandler<never>;
 
 async function requestBodyExceedsLimit(request: NextRequest, maxSize: number): Promise<boolean> {
   if (SAFE_METHODS.has(request.method.toUpperCase()) || !request.body) {
@@ -73,10 +82,18 @@ async function requestBodyExceedsLimit(request: NextRequest, maxSize: number): P
  * Wrap an API route handler with error handling, request context, and logging.
  */
 export function withErrorHandler(
+  handler: SimpleRouteHandler,
+  options?: ErrorHandlerOptions,
+): SimpleWrappedRouteHandler;
+export function withErrorHandler<TParams extends RouteParams>(
+  handler: ContextRouteHandler<TParams>,
+  options?: ErrorHandlerOptions,
+): ContextRouteHandler<TParams>;
+export function withErrorHandler(
   handler: RouteHandler,
   options: ErrorHandlerOptions = {},
-): RouteHandler {
-  return async (request: NextRequest, routeContext?) => {
+): WrappedRouteHandler {
+  return async (request: NextRequest, routeContext?: RouteContext) => {
     const requestId = generateRequestId();
     const startTime = Date.now();
 
@@ -137,7 +154,12 @@ export function withErrorHandler(
           method: reqContext.method,
         });
 
-        const response = await handler(request, routeContext);
+        const response = await (
+          handler as (
+            request: NextRequest,
+            context?: RouteContext,
+          ) => Promise<NextResponse | Response>
+        )(request, routeContext);
 
         const durationMs = Date.now() - startTime;
         logger.info('Request completed', {

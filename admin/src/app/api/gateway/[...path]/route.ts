@@ -96,16 +96,18 @@ async function proxyToGateway(request: NextRequest, path: string): Promise<NextR
   }
 }
 
-export const GET = withErrorHandler(async (request: NextRequest, context) => {
-  const params = await context!.params;
-  const path = '/' + (params.path as unknown as string[]).join('/');
-  return proxyToGateway(request, path);
-});
+export const GET = withErrorHandler(
+  async (request: NextRequest, context: { params: Promise<{ path: string[] }> }) => {
+    const params = await context.params;
+    const path = '/' + params.path.join('/');
+    return proxyToGateway(request, path);
+  },
+);
 
 export const POST = withErrorHandler(
-  async (request: NextRequest, context) => {
-    const params = await context!.params;
-    const path = '/' + (params.path as unknown as string[]).join('/');
+  async (request: NextRequest, context: { params: Promise<{ path: string[] }> }) => {
+    const params = await context.params;
+    const path = '/' + params.path.join('/');
     return proxyToGateway(request, path);
   },
   { requireCsrf: true },

@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const WarehouseClient = dynamic(() => import('@/components/operations/warehouse-client'), {

@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const SessionsDashboard = dynamic(() => import('@/components/gateway/sessions-dashboard'), {

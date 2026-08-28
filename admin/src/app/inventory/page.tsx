@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const InventoryAnalytics = dynamic(() => import('@/components/inventory/inventory-analytics'), {

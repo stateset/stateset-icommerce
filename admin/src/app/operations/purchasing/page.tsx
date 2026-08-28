@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const PurchasingClient = dynamic(() => import('@/components/operations/purchasing-client'), {

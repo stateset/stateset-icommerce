@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const RevenueClient = dynamic(() => import('@/components/finance/revenue-client'), {

@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const LedgerClient = dynamic(() => import('@/components/finance/ledger-client'), {

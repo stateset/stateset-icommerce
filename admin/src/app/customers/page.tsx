@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const CustomerHealthScore = dynamic(() => import('@/components/customers/customer-health-score'), {
