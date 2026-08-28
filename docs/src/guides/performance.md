@@ -156,6 +156,14 @@ STATESET_PERF_GATE=1 cargo bench -p stateset-benches
 
 StateSet ships explicit perf budgets in [`crates/stateset-benches/perf-gates.json`](../../../crates/stateset-benches/perf-gates.json). Those thresholds are what CI treats as the regression guardrail.
 
+Every CI run uploads a `perf-regression-<commit>-<attempt>` artifact containing
+the threshold result, raw Criterion median estimates, their SHA-256 digests,
+the exact threshold-file digest, benchmark parameters, toolchain, commit, and
+runner hardware/image metadata. Link that immutable artifact for release
+evidence; a copied table or local run is not sufficient. Hosted-runner numbers
+are regression guardrails, not universal hardware claims—measure production
+SLOs on the deployment's own hardware and workload.
+
 ### Published Perf Gates
 
 | Benchmark | Baseline budget | Notes |

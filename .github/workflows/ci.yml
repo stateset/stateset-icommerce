@@ -1257,14 +1257,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
+      - name: Verify perf evidence reporter
+        run: ./scripts/ci/perf_regression_gate.test.sh
+
       - name: Run perf regression gate
         run: ./scripts/ci/perf_regression_gate.sh
 
       - name: Upload perf regression report
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@v6
         with:
-          name: perf-regression-report
+          name: perf-regression-${{ github.sha }}-${{ github.run_attempt }}
           path: artifacts/perf-regression
+          if-no-files-found: error
+          retention-days: 90
 
   ci-success:
     name: CI Success
