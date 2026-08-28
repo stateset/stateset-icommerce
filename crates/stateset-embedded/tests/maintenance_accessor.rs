@@ -59,6 +59,30 @@ fn backup_then_restore_reproduces_the_data() {
         .list(stateset_core::CustomerFilter { limit: Some(50), ..Default::default() })
         .expect("list");
     assert_eq!(customers.len(), 3);
+
+    // The recovery drill must prove both logical and physical integrity. A
+    // domain read alone can succeed even when unrelated database pages are
+    // damaged, so verify the complete restored image with SQLite itself.
+    let restored_conn = rusqlite::Connection::open(&restored_path).expect("open restored sqlite");
+    let integrity: String = restored_conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .expect("integrity check");
+    assert_eq!(integrity, "ok");
+    let migration_count: usize = restored_conn
+        .query_row("SELECT COUNT(*) FROM _migrations", [], |row| row.get(0))
+        .expect("migration count");
+    assert_eq!(migration_count, report.manifest.migration_count);
+    assert_eq!(restore.schema_version, report.manifest.schema_version);
+    assert_eq!(restore.size_bytes, report.manifest.size_bytes);
+
+    println!(
+        "recovery-proof checksum={} schema={} migrations={} bytes={} integrity={}",
+        report.manifest.checksum,
+        report.manifest.schema_version,
+        migration_count,
+        restore.size_bytes,
+        integrity
+    );
 }
 
 #[test]

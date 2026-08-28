@@ -14,7 +14,7 @@ do not mark a row complete from a local run alone.
 | Storefront settlement | Invalid token/from/to/amount, reverted, low-confirmation, and replay tests | Pending |
 | Protocol claims | Versioned external conformance-suite artifact for every claimed protocol | Pending |
 | Supply chain | SBOM, dependency audit, provenance/signature, and package smoke installs | Pending |
-| Operations | Backup/restore drill, migration rollback rehearsal, and incident runbook link | Pending |
+| Operations | `Operations Recovery Evidence` run URL and `operations-recovery-<commit>-<attempt>` artifact; runbook: [`operations-recovery.md`](src/guides/operations-recovery.md) | Pending |
 
 Release notes must identify skipped gates and their user-visible impact. A
 planned feature, adjacent repository, or skipped platform is never counted as

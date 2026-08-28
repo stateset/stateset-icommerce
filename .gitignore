@@ -49,6 +49,7 @@ Thumbs.db
 
 # Build artifacts
 *.dSYM/
+/artifacts/
 examples/go/go
 examples/go/go.exe
 bindings/go/example/example

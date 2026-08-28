@@ -502,21 +502,53 @@ mod tests {
 
     #[test]
     fn migrate_then_rollback_then_remigrate() {
-        let conn = memory_conn();
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("migration-rehearsal.db");
+        let conn = Connection::open(&db_path).unwrap();
         let migrator = SqliteMigrator::new(test_registry());
 
         // Apply all
         migrator.migrate(&conn).unwrap();
         assert_eq!(migrator.status(&conn).unwrap().schema_version.current, 3);
+        conn.execute("INSERT INTO users (id, name) VALUES (1, 'Ada')", []).unwrap();
+        conn.execute("INSERT INTO posts (id, user_id, title) VALUES (1, 1, 'proof')", []).unwrap();
 
-        // Rollback to v1
-        migrator.rollback(&conn, 1).unwrap();
+        // Rollback to v1. Data owned by the retained migration must survive,
+        // while schema introduced above the target must disappear.
+        let rolled_back = migrator.rollback(&conn, 1).unwrap();
+        assert_eq!(rolled_back.iter().map(|record| record.version).collect::<Vec<_>>(), [3, 2]);
         assert_eq!(migrator.status(&conn).unwrap().schema_version.current, 1);
+        let user_name: String =
+            conn.query_row("SELECT name FROM users WHERE id = 1", [], |row| row.get(0)).unwrap();
+        assert_eq!(user_name, "Ada");
+        let posts_table: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'posts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(posts_table, 0);
 
         // Re-migrate
         let applied = migrator.migrate(&conn).unwrap();
         assert_eq!(applied.len(), 2);
-        assert_eq!(migrator.status(&conn).unwrap().schema_version.current, 3);
+        let status = migrator.status(&conn).unwrap();
+        assert_eq!(status.schema_version.current, 3);
+        assert!(status.is_healthy());
+        let user_name: String =
+            conn.query_row("SELECT name FROM users WHERE id = 1", [], |row| row.get(0)).unwrap();
+        assert_eq!(user_name, "Ada");
+        conn.execute("INSERT INTO posts (id, user_id, title) VALUES (2, 1, 'restored')", [])
+            .unwrap();
+        let integrity: String =
+            conn.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
+        assert_eq!(integrity, "ok");
+
+        println!(
+            "migration-proof path={} rollback=3,2 target=1 remigrated=2,3 data_preserved=true integrity={integrity}",
+            db_path.display()
+        );
     }
 
     #[test]

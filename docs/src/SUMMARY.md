@@ -106,6 +106,7 @@
 - [MCP Tools](guides/mcp-tools.md)
 - [Sync (VES)](guides/sync.md)
 - [Operations](guides/operations.md)
+  - [SQLite Recovery Runbook](guides/operations-recovery.md)
 - [Heartbeat Monitor](guides/heartbeat.md)
 - [Observability & Telemetry](guides/observability.md)
 - [Multi-Agent System](guides/multi-agent.md)
