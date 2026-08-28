@@ -33,7 +33,7 @@
     "check:mcp-inventory": "npm run check:env && node ./scripts/ci/generate_mcp_inventory.mjs --check",
     "check:rust-openapi-inventory": "npm run check:env && node ./scripts/ci/generate_rust_openapi_inventory.mjs --check",
     "check:workspace-inventory": "npm run check:env && node ./scripts/ci/generate_workspace_inventory.mjs --check",
-    "check:omarchy": "npm run check:env && node ./scripts/ci/check_omarchy_integration.mjs && node --test ./cli/test/unit/omarchy.test.js ./cli/test/unit/omarchy-model.test.js",
+    "check:omarchy": "npm run check:env && node ./scripts/ci/check_omarchy_integration.mjs && node --test ./cli/test/unit/omarchy.test.js ./cli/test/unit/omarchy-model.test.js && node ./scripts/ci/check_omarchy_clean_install.mjs",
     "package:omarchy-plugin": "npm run check:env && node ./scripts/package-omarchy-plugin.mjs",
     "test:release-hygiene": "npm run check:env && bash ./scripts/ci/check_release_hygiene.test.sh",
     "test:env-check": "node --test scripts/check-node.test.mjs",

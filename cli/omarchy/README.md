@@ -10,6 +10,11 @@ Install from a store project:
 npx -y -p @stateset/cli stateset-omarchy install --db ./store.db
 ```
 
+Upgrade atomically with `--force`. If the updated plugin cannot be enabled, the
+installer restores the previous plugin. Remove the shell integration with
+`stateset-omarchy uninstall`; store data, StateSet configuration, and agent
+configuration are retained.
+
 The installer adds the widget, Commerce entries in the Omarchy menu, and local
 MCP configuration for Claude, Codex, and OpenCode. The widget surfaces failed
 payments, low stock, pending returns, and pending orders, with optional desktop

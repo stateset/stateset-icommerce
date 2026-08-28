@@ -21,6 +21,8 @@ import {
   saveOmarchyConfig,
   selectAttention,
   summarizeOperations,
+  uninstallMenu,
+  uninstallPlugin,
   validateOperatorConfig,
   userServiceUnit,
 } from '../../src/omarchy.js';
@@ -295,5 +297,45 @@ describe('Omarchy integration', () => {
     installPlugin({ homeDir, enable: false });
     assert.throws(() => installPlugin({ homeDir, enable: false }), /use --force/);
     assert.doesNotThrow(() => installPlugin({ homeDir, enable: false, force: true }));
+  });
+
+  it('rolls back a forced plugin update when activation fails', () => {
+    const installed = installPlugin({ homeDir, enable: false });
+    const sentinel = path.join(installed.target, 'operator-local.txt');
+    fs.writeFileSync(sentinel, 'keep previous plugin');
+    assert.throws(
+      () =>
+        installPlugin({
+          homeDir,
+          force: true,
+          runner: () => ({ status: 1, stdout: '', stderr: 'activation failed' }),
+        }),
+      /activation failed/,
+    );
+    assert.equal(fs.readFileSync(sentinel, 'utf8'), 'keep previous plugin');
+    assert.equal(
+      fs.readdirSync(path.dirname(installed.target)).some((name) => name.includes('.rollback-')),
+      false,
+    );
+  });
+
+  it('uninstalls only StateSet plugin and menu entries', () => {
+    const installed = installPlugin({ homeDir, enable: false });
+    const menuFile = configPaths(homeDir).menuFile;
+    fs.mkdirSync(path.dirname(menuFile), { recursive: true });
+    fs.writeFileSync(menuFile, `${JSON.stringify({ existing: { label: 'Keep me' } })}\n`);
+    installMenu(homeDir);
+
+    const plugin = uninstallPlugin({ homeDir, disable: false });
+    const menu = uninstallMenu(homeDir);
+
+    assert.equal(plugin.removed, true);
+    assert.equal(fs.existsSync(installed.target), false);
+    assert.equal(menu.removed, true);
+    assert.deepEqual(JSON.parse(fs.readFileSync(menuFile, 'utf8')), {
+      existing: { label: 'Keep me' },
+    });
+    assert.deepEqual(uninstallPlugin({ homeDir, disable: false }).removed, false);
+    assert.deepEqual(uninstallMenu(homeDir).removed, false);
   });
 });

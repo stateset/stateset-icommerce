@@ -33,6 +33,14 @@ Re-run the installer with `--force` to update the bundled plugin:
 npx -y -p @stateset/cli stateset-omarchy install --db ./store.db --force
 ```
 
+Updates are atomic: if the new plugin cannot be enabled, the previous plugin is
+restored. Remove the shell plugin, StateSet menu entries, and any installed
+StateSet user service while retaining store data and agent configuration:
+
+```bash
+stateset-omarchy uninstall
+```
+
 ## Safety model
 
 Agent writes are preview-only by default. The Omarchy shell plugin only reads
@@ -56,6 +64,7 @@ the local operator configuration, never from model arguments.
 
 ```bash
 stateset-omarchy status --json
+stateset-omarchy uninstall
 stateset-omarchy dashboard
 stateset-omarchy attention
 stateset-omarchy remediate
@@ -138,7 +147,8 @@ omarchy plugin add /tmp/stateset-omarchy-plugin
 The exporter verifies that the plugin and CLI versions match and includes the
 project licenses. `npm run check:omarchy` validates the manifest, entry points,
 shell safety invariants, command allowlist, alert model, large-snapshot refresh
-budget, diagnostics, and service controls. CI additionally validates the
-artifact against a pinned upstream Omarchy revision and uploads an installable
-plugin directory. CLI release builds produce an attested, checksummed standalone
-plugin archive alongside the npm package.
+budget, diagnostics, service controls, and a clean-home install/update/uninstall
+lifecycle. CI additionally validates the artifact against a pinned upstream
+Omarchy revision and uploads an installable plugin directory. CLI release builds
+produce an attested, checksummed standalone plugin archive alongside the npm
+package.

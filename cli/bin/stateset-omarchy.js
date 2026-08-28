@@ -17,6 +17,8 @@ import {
   remediationForKind,
   saveOmarchyConfig,
   selectAttention,
+  uninstallMenu,
+  uninstallPlugin,
   validateOperatorConfig,
 } from '../src/omarchy.js';
 import { runMain } from '../src/graceful-shutdown.js';
@@ -26,6 +28,7 @@ StateSet iCommerce for Omarchy
 
 USAGE:
   stateset-omarchy install [--db PATH] [--force] [--no-enable] [--service]
+  stateset-omarchy uninstall [--no-disable]
   stateset-omarchy status [--json] [--db PATH]
   stateset-omarchy doctor [--json] [--db PATH]
   stateset-omarchy dashboard
@@ -174,6 +177,21 @@ async function main() {
           : `MCP service unit: ${service.file}${service.error ? ` (${service.error})` : ''}`,
       );
     }
+    return;
+  }
+
+  if (command === 'uninstall') {
+    const service = manageUserService('status');
+    if (service.installed) manageUserService('remove');
+    const plugin = uninstallPlugin({ disable: !has(args, '--no-disable') });
+    const menu = uninstallMenu();
+    console.log(
+      plugin.removed
+        ? `Removed StateSet Omarchy plugin from ${plugin.target}`
+        : `StateSet Omarchy plugin is not installed at ${plugin.target}`,
+    );
+    if (menu.removed) console.log(`Removed StateSet entries from ${menu.file}`);
+    console.log('Store data, StateSet configuration, and agent configuration were retained.');
     return;
   }
 
