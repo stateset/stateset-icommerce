@@ -2,6 +2,8 @@
 
 Scaffold a full-featured commerce storefront powered by [StateSet](https://stateset.com) in seconds.
 
+Requires Node.js 20.20 or newer and npm 10 or newer.
+
 ## Quick Start
 
 ```bash
@@ -41,6 +43,7 @@ A production-oriented Next.js 16 starter storefront with:
 ```bash
 npx create-stateset-app my-store              # interactive setup
 npx create-stateset-app my-store --skip-install
+npx create-stateset-app my-store --yes          # non-interactive, accepts defaults
 npx create-stateset-app my-store --use-pnpm
 npx create-stateset-app my-store --use-yarn
 ```

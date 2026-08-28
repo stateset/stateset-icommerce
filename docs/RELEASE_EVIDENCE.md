@@ -7,6 +7,7 @@ do not mark a row complete from a local run alone.
 | --- | --- | --- |
 | Rust correctness | CI URL for workspace tests, clippy, format, and invariant suite | Pending |
 | Binding compatibility | Cross-binding vectors and generated binding inventory artifact | Pending |
+| Storefront golden path | `Storefront Golden Path` run URL and `storefront-golden-path-<commit>-<attempt>` artifact proving packed CLI, install, seed/query, audit, typecheck, and production build | Pending |
 | Exact money | Boundary tests covering parse, serialization, arithmetic, and refunds | Pending |
 | SQLite/Postgres parity | Backend parity matrix artifact | Pending |
 | MCP catalog | Generated catalog/profile counts and command-coverage artifact | Pending |
