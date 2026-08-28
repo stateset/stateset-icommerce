@@ -1,0 +1,60 @@
+name: Operations Recovery Evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/operations-recovery.yml"
+      - "crates/stateset-db/**"
+      - "crates/stateset-embedded/**"
+      - "crates/stateset-migrations/**"
+      - "scripts/ci/run_operations_recovery_drill.sh"
+      - "docs/src/guides/operations-recovery.md"
+      - "docs/RELEASE_EVIDENCE.md"
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/operations-recovery.yml"
+      - "crates/stateset-db/**"
+      - "crates/stateset-embedded/**"
+      - "crates/stateset-migrations/**"
+      - "scripts/ci/run_operations_recovery_drill.sh"
+      - "docs/src/guides/operations-recovery.md"
+      - "docs/RELEASE_EVIDENCE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operations-recovery-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  recovery-drill:
+    name: Backup, Restore & Migration Rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Run recovery drill
+        run: ./scripts/ci/run_operations_recovery_drill.sh
+
+      - name: Upload immutable drill evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: operations-recovery-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/operations-recovery
+          if-no-files-found: error
+          retention-days: 90

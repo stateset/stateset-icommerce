@@ -67,6 +67,7 @@ vector = ["stateset-db/vector", "stateset-core/embeddings"]
 [dev-dependencies]
 stateset-crypto = { workspace = true }
 tempfile = "3.10"
+rusqlite = { workspace = true }
 rust_decimal_macros = "1.36"
 tokio = { version = "1.0", features = ["rt", "macros"] }
 criterion = { version = "0.5", features = ["html_reports"] }

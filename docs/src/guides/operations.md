@@ -219,6 +219,8 @@ const result = await toolkit.executeTool('a2a_batch_pay', {
 
 ## Further Reading
 
+- [SQLite operations recovery runbook](operations-recovery.md) — verified backup/restore, migration rollback rehearsal, and incident cutover steps
+
 - [Core Commerce](../commerce/domain-model.md) — Detailed domain operations
 - [B2B Operations](../commerce/b2b-operations.md) — Supplier and invoice workflows
 - [Saga Orchestration](../a2a/sagas.md) — Multi-step flows with rollback
