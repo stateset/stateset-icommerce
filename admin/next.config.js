@@ -3,14 +3,14 @@ const path = require('path');
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  outputFileTracingRoot: path.join(__dirname, '..'),
   // The design system ships raw .jsx ESM source (single source of truth), so Next
   // must transpile it rather than treat it as a pre-built node_modules package.
   transpilePackages: ['@stateset/design'],
-  experimental: {
-    serverComponentsExternalPackages: ['@stateset/embedded'],
-  },
+  serverExternalPackages: ['@stateset/embedded'],
   env: {
-    NEXT_PUBLIC_STATESET_API_URL: process.env.NEXT_PUBLIC_STATESET_API_URL || 'https://api.sandbox.stateset.app',
+    NEXT_PUBLIC_STATESET_API_URL:
+      process.env.NEXT_PUBLIC_STATESET_API_URL || 'https://api.sandbox.stateset.app',
   },
   webpack: (config, { isServer }) => {
     if (isServer) {

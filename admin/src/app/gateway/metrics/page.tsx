@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const MetricsDashboard = dynamic(() => import('@/components/gateway/metrics-dashboard'), {

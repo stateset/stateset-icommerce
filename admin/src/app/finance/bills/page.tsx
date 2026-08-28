@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const BillsClient = dynamic(() => import('@/components/finance/bills-client'), {

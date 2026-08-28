@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const EdiClient = dynamic(() => import('@/components/operations/edi-client'), {

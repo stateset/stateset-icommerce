@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const LogsDashboard = dynamic(() => import('@/components/gateway/logs-dashboard'), {

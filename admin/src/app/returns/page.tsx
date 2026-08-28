@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const ReturnsManagement = dynamic(() => import('@/components/returns/returns-management'), {

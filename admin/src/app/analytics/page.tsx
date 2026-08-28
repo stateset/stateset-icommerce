@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const AnalyticsDashboard = dynamic(() => import('@/components/analytics/analytics-dashboard'), {

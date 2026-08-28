@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 // Client-only because EventSource and rolling-buffer state are inherently

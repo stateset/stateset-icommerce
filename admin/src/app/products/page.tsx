@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 const ProductCatalog = dynamic(() => import('@/components/products/product-catalog'), {

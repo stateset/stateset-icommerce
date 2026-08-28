@@ -18,8 +18,8 @@ const API_URL = getServerStateSetApiUrl();
  * Fetches a specific agent session with its events.
  */
 export const GET = withErrorHandler(
-  async (request: NextRequest, context?: { params: Promise<Record<string, string>> }) => {
-    const { id: rawId } = await context!.params;
+  async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
+    const { id: rawId } = await context.params;
     const idResult = safeIdSchema.safeParse(rawId);
     if (!idResult.success) throw AppError.badRequest('Invalid session ID');
     const id = idResult.data;
@@ -64,8 +64,8 @@ export const GET = withErrorHandler(
  * Cancel a session (action: cancel)
  */
 export const POST = withErrorHandler(
-  async (request: NextRequest, context?: { params: Promise<Record<string, string>> }) => {
-    const { id: rawId } = await context!.params;
+  async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
+    const { id: rawId } = await context.params;
     const idResult = safeIdSchema.safeParse(rawId);
     if (!idResult.success) throw AppError.badRequest('Invalid session ID');
     const id = idResult.data;
