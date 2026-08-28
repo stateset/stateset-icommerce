@@ -202,7 +202,7 @@
   },
   "optionalDependencies": {
     "@google-cloud/pubsub": "^4.3.0",
-    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.7.15",
     "@slack/bolt": "^3.17.0",
     "@solana/spl-token": "^0.4.14",
@@ -216,6 +216,20 @@
     "matrix-js-sdk": "^34.0.0",
     "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0"
+  },
+  "overrides": {
+    "@slack/socket-mode": {
+      "ws": "7.5.11"
+    },
+    "axios": "1.18.0",
+    "botframework-streaming": {
+      "ws": "7.5.11"
+    },
+    "form-data@2.5.5": "2.5.6",
+    "form-data@4.0.5": "4.0.6",
+    "protobufjs": "7.6.6",
+    "sharp": "0.35.0",
+    "undici": "6.28.0"
   },
   "publishConfig": {
     "access": "public"
