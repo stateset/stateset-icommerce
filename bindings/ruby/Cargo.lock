@@ -972,7 +972,7 @@ checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
 
 [[package]]
 name = "stateset-crypto"
-version = "1.28.0"
+version = "1.28.1"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "stateset_embedded"
-version = "1.28.0"
+version = "1.28.1"
 dependencies = [
  "magnus",
  "serde_json",
