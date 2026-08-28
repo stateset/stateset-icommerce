@@ -299,6 +299,33 @@ describe('Omarchy integration', () => {
     assert.doesNotThrow(() => installPlugin({ homeDir, enable: false, force: true }));
   });
 
+  it('preserves a plugin checkout installed by Omarchy', () => {
+    const target = configPaths(homeDir).pluginDir;
+    fs.mkdirSync(path.join(target, '.git'), { recursive: true });
+    fs.writeFileSync(
+      path.join(target, 'manifest.json'),
+      `${JSON.stringify({ id: OMARCHY_PLUGIN_ID, version: '1.28.0' })}\n`,
+    );
+    const sentinel = path.join(target, 'git-managed.txt');
+    fs.writeFileSync(sentinel, 'preserve checkout');
+    const calls = [];
+
+    const result = installPlugin({
+      homeDir,
+      force: true,
+      runner: (command, args) => {
+        calls.push([command, ...args]);
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    assert.equal(result.managedExternally, true);
+    assert.equal(result.replaced, false);
+    assert.equal(result.enabled, true);
+    assert.equal(fs.readFileSync(sentinel, 'utf8'), 'preserve checkout');
+    assert.deepEqual(calls, [['omarchy', 'plugin', 'enable', OMARCHY_PLUGIN_ID]]);
+  });
+
   it('rolls back a forced plugin update when activation fails', () => {
     const installed = installPlugin({ homeDir, enable: false });
     const sentinel = path.join(installed.target, 'operator-local.txt');

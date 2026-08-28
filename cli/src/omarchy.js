@@ -630,6 +630,23 @@ export function installPlugin({
 } = {}) {
   const target = configPaths(homeDir).pluginDir;
   if (fs.existsSync(target)) {
+    if (fs.existsSync(path.join(target, '.git'))) {
+      const manifest = readJson(path.join(target, 'manifest.json'));
+      if (manifest?.id !== OMARCHY_PLUGIN_ID) {
+        throw new Error(`Git-managed plugin at ${target} has an unexpected manifest`);
+      }
+      let enabled = false;
+      if (enable) {
+        const result = runner('omarchy', ['plugin', 'enable', OMARCHY_PLUGIN_ID], {
+          encoding: 'utf8',
+        });
+        enabled = result.status === 0;
+        if (!enabled) {
+          throw new Error(result.stderr?.trim() || 'Unable to enable StateSet Omarchy plugin');
+        }
+      }
+      return { target, enabled, replaced: false, managedExternally: true };
+    }
     if (!force) throw new Error(`Plugin already exists: ${target} (use --force to update)`);
   }
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -656,7 +673,7 @@ export function installPlugin({
       }
     }
     if (replacing) fs.rmSync(rollback, { recursive: true, force: true });
-    return { target, enabled, replaced: replacing };
+    return { target, enabled, replaced: replacing, managedExternally: false };
   } catch (error) {
     fs.rmSync(staged, { recursive: true, force: true });
     if (fs.existsSync(rollback)) {

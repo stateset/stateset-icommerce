@@ -1,0 +1,31 @@
+name: Validate Omarchy plugin
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Reject symbolic links
+        run: test -z "$(find . -type l -print -quit)"
+      - name: Validate against pinned Omarchy
+        env:
+          OMARCHY_REVISION: 83881e979b35468c3e7d60b171e319ede61a88fd
+        run: |
+          git clone --filter=blob:none https://github.com/basecamp/omarchy.git "$RUNNER_TEMP/omarchy"
+          git -C "$RUNNER_TEMP/omarchy" checkout "$OMARCHY_REVISION"
+          "$RUNNER_TEMP/omarchy/bin/omarchy-plugin-validate" .

@@ -1,14 +1,36 @@
 # StateSet iCommerce for Omarchy
 
-This is the native Omarchy shell surface bundled with `@stateset/cli`. It adds
-a StateSet bar widget and popup operator panel backed by a shared, read-only
-status service.
+The native Omarchy surface for
+[StateSet iCommerce](https://github.com/stateset/stateset-icommerce). It adds a
+commerce health widget and operator panel backed by a local, read-only status
+service.
 
-Install from a store project:
+## Install with Omarchy
+
+Install the plugin directly from its public repository:
+
+```bash
+omarchy plugin add https://github.com/stateset/stateset-omarchy-plugin.git --enable
+```
+
+The plugin contains no install hooks and does not request elevated privileges.
+Omarchy clones and validates the QML before enabling it. The StateSet controller
+is resolved locally when installed and otherwise launched from the published
+`@stateset/cli` package through `npx`.
+
+To configure a store, run this from its project directory:
 
 ```bash
 npx -y -p @stateset/cli stateset-omarchy install --db ./store.db
 ```
+
+The configurator recognizes the Git-managed plugin and leaves its checkout
+intact, so `omarchy plugin update com.stateset.icommerce` remains the owner of
+shell upgrades.
+
+Requirements are Omarchy Quattro with shell plugin support and the StateSet CLI
+on Node.js 20.20 or newer. The panel prefers a locally installed
+`stateset-omarchy` executable and otherwise uses `npx -y -p @stateset/cli`.
 
 Upgrade atomically with `--force`. If the updated plugin cannot be enabled, the
 installer restores the previous plugin. Remove the shell integration with
@@ -32,3 +54,35 @@ report, `stateset-omarchy remediate` to open the matching preview-only
 specialist, and `stateset-omarchy doctor` to verify a target desktop installation.
 Shell and menu actions prefer the locally installed controller and use `npx`
 only as a fallback.
+
+## Remove
+
+Remove a native Git installation through Omarchy, then clean up the optional
+StateSet menu and user service:
+
+```bash
+omarchy plugin remove com.stateset.icommerce
+stateset-omarchy uninstall --no-disable
+```
+
+Store data, StateSet configuration, and project agent configuration are
+retained.
+
+## Security
+
+Commerce writes remain preview-only unless an operator explicitly configures
+governed apply mode with kernel policy, principal, and store identity files.
+The plugin never receives those identities as model arguments. Review
+[the trust model](https://github.com/stateset/stateset-icommerce/blob/master/TRUST_FOUNDATION.md)
+before enabling mutations.
+
+## Development
+
+The source of truth is
+[`cli/omarchy`](https://github.com/stateset/stateset-icommerce/tree/master/cli/omarchy).
+Release automation opens synchronization PRs in this standalone repository so
+that plugin updates remain reviewable. Validate a checkout with:
+
+```bash
+omarchy plugin validate .
+```
