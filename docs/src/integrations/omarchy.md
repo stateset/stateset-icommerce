@@ -134,6 +134,38 @@ Omarchy CLI, notification support, and optional MCP user service. Required
 failures produce a non-zero exit code, making the command suitable for machine
 provisioning and acceptance checks.
 
+## Install through Omarchy's native plugin manager
+
+The shell plugin is published as a root-level Omarchy plugin repository, so it
+can be installed, reviewed, and updated through Omarchy itself:
+
+```bash
+omarchy plugin add https://github.com/stateset/stateset-omarchy-plugin.git --enable
+omarchy plugin update com.stateset.icommerce
+```
+
+This installs only the QML shell surface. Run `stateset-omarchy install` from a
+store project to record its database and configure the optional agent surfaces.
+The configurator detects and preserves the Git-managed checkout, leaving future
+shell upgrades to `omarchy plugin update`. The repository contains no install
+hooks and never requests elevated privileges.
+
+The shell never downloads controller code during refreshes or panel actions.
+Install `@stateset/cli` separately before enabling the plugin. Status execution
+has independent producer and consumer output caps, a process deadline, a strict
+fixed-field schema, bounded values, and plain-text rendering for controller
+output.
+
+Remove the Git-managed shell surface through Omarchy before cleaning up the
+optional StateSet menu and user service:
+
+```bash
+omarchy plugin remove com.stateset.icommerce
+stateset-omarchy uninstall --no-disable
+```
+
+Both commands retain store data and project agent configuration.
+
 ## Build a standalone plugin
 
 Maintainers can export the bundled shell files as an independently installable
@@ -141,7 +173,7 @@ Omarchy plugin directory:
 
 ```bash
 npm run package:omarchy-plugin -- --output /tmp/stateset-omarchy-plugin
-omarchy plugin add /tmp/stateset-omarchy-plugin
+omarchy plugin validate /tmp/stateset-omarchy-plugin
 ```
 
 The exporter verifies that the plugin and CLI versions match and includes the
@@ -151,4 +183,6 @@ budget, diagnostics, service controls, and a clean-home install/update/uninstall
 lifecycle. CI additionally validates the artifact against a pinned upstream
 Omarchy revision and uploads an installable plugin directory. CLI release builds
 produce an attested, checksummed standalone plugin archive alongside the npm
-package.
+package. The public plugin repository checks for new immutable `cli-v*` release
+tags and opens a synchronization pull request when its generated contents
+change; the plugin is published only after that review is merged.

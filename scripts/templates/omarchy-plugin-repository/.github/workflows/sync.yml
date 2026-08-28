@@ -1,0 +1,81 @@
+name: Sync from iCommerce releases
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-icommerce-release
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/checkout@v6
+        with:
+          repository: stateset/stateset-icommerce
+          path: upstream
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20.20.0'
+      - name: Generate from the latest CLI release
+        id: release
+        run: |
+          tag=$(git -C upstream tag --list 'cli-v*' --sort=-version:refname | head -n 1)
+          test -n "$tag"
+          version=${tag#cli-v}
+          current=$(node -p "require('./manifest.json').version")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Plugin already tracks $tag"
+            exit 0
+          fi
+          git -C upstream checkout "$tag"
+          node upstream/scripts/package-omarchy-plugin.mjs --output "$RUNNER_TEMP/plugin"
+          rm -rf upstream
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: Replace generated files
+        if: steps.release.outputs.changed == 'true'
+        run: |
+          git rm -r --ignore-unmatch .
+          cp -a "$RUNNER_TEMP/plugin/." .
+          git add --all
+      - name: Open synchronization pull request
+        if: steps.release.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if git diff --cached --quiet; then
+            echo "Plugin already matches $RELEASE_TAG"
+            exit 0
+          fi
+          branch="sync/icommerce-v${VERSION}"
+          git config user.name "stateset-release-bot"
+          git config user.email "release-bot@stateset.com"
+          git commit -m "chore: sync iCommerce plugin v${VERSION}"
+          git switch -C "$branch"
+          git push --force-with-lease origin "$branch"
+          if ! gh pr view "$branch" >/dev/null 2>&1; then
+            gh pr create \
+              --base master \
+              --head "$branch" \
+              --title "chore: sync iCommerce plugin v${VERSION}" \
+              --body "Generated from stateset/stateset-icommerce release tag ${RELEASE_TAG}. Merge after the Omarchy validation check passes."
+          fi

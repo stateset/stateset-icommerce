@@ -157,7 +157,11 @@ async function main() {
         console.warn(`${agent} configuration skipped: ${error.message}`);
       }
     }
-    console.log(`Installed StateSet Omarchy plugin at ${plugin.target}`);
+    console.log(
+      plugin.managedExternally
+        ? `Using Git-managed StateSet Omarchy plugin at ${plugin.target}`
+        : `Installed StateSet Omarchy plugin at ${plugin.target}`,
+    );
     console.log(
       plugin.enabled
         ? 'Plugin enabled.'

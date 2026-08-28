@@ -9,6 +9,8 @@
 
 # CLI
 /cli/ @stateset/cli
+/cli/omarchy/ @stateset/cli @stateset/devops
+/scripts/templates/omarchy-plugin-repository/ @stateset/cli @stateset/devops
 
 # Admin UI
 /admin/ @stateset/admin

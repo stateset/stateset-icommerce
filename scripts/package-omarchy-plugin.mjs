@@ -6,6 +6,12 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDir = path.join(repoRoot, 'cli', 'omarchy');
+const repositoryTemplateDir = path.join(
+  repoRoot,
+  'scripts',
+  'templates',
+  'omarchy-plugin-repository',
+);
 const args = process.argv.slice(2);
 
 function option(name) {
@@ -40,6 +46,7 @@ if (manifest.version !== cliPackage.version) {
 
 fs.mkdirSync(path.dirname(outputDir), { recursive: true });
 fs.cpSync(sourceDir, outputDir, { recursive: true, errorOnExist: true });
+fs.cpSync(repositoryTemplateDir, outputDir, { recursive: true });
 for (const license of ['LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE']) {
   fs.copyFileSync(path.join(repoRoot, license), path.join(outputDir, license));
 }
