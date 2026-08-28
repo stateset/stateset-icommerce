@@ -256,12 +256,33 @@ jobs:
           for dir in npm/*/; do
             name=$(node -p "require('./${dir}package.json').name")
             version=$(node -p "require('./${dir}package.json').version")
-            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            published=$(npm view "${name}@${version}" version 2>/dev/null || true)
+            if [ "${published}" = "${version}" ]; then
               echo "${name}@${version} already published; skipping"
               continue
             fi
             ls "${dir}"*.node >/dev/null 2>&1 || { echo "missing binary in ${dir}" >&2; exit 1; }
             (cd "${dir}" && npm publish --access public --provenance)
+          done
+
+      - name: Wait for platform package availability
+        working-directory: bindings/node
+        run: |
+          for dir in npm/*/; do
+            name=$(node -p "require('./${dir}package.json').name")
+            version=$(node -p "require('./${dir}package.json').version")
+            for attempt in {1..80}; do
+              published=$(npm view "${name}@${version}" version 2>/dev/null || true)
+              if [ "${published}" = "${version}" ]; then
+                echo "${name}@${version} is available"
+                break
+              fi
+              if [ "${attempt}" -eq 80 ]; then
+                echo "${name}@${version} did not become available" >&2
+                exit 1
+              fi
+              sleep 15
+            done
           done
 
       - name: Publish to npm
@@ -271,7 +292,8 @@ jobs:
         run: |
           name=$(node -p "require('./package.json').name")
           version=$(node -p "require('./package.json').version")
-          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+          published=$(npm view "${name}@${version}" version 2>/dev/null || true)
+          if [ "${published}" = "${version}" ]; then
             echo "${name}@${version} already published; skipping"
           else
             npm publish --access public --provenance
@@ -348,7 +370,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version=$(node -p "require('./package.json').version")
-          if npm view "@stateset/cli@${version}" version >/dev/null 2>&1; then
+          published=$(npm view "@stateset/cli@${version}" version 2>/dev/null || true)
+          if [ "${published}" = "${version}" ]; then
             echo "@stateset/cli@${version} already published; skipping"
           else
             npm publish --access public --provenance
@@ -387,7 +410,8 @@ jobs:
         run: |
           version=$(node -p "require('./bindings/node/package.json').version")
           for attempt in {1..12}; do
-            if npm view "@stateset/embedded@${version}" version >/dev/null 2>&1; then
+            published=$(npm view "@stateset/embedded@${version}" version 2>/dev/null || true)
+            if [ "${published}" = "${version}" ]; then
               exit 0
             fi
             echo "Waiting for @stateset/embedded@${version} to become available (attempt ${attempt}/12)"
@@ -418,7 +442,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version=$(node -p "require('./package.json').version")
-          if npm view "create-stateset-app@${version}" version >/dev/null 2>&1; then
+          published=$(npm view "create-stateset-app@${version}" version 2>/dev/null || true)
+          if [ "${published}" = "${version}" ]; then
             echo "create-stateset-app@${version} already published; skipping"
           else
             npm publish --access public --provenance
