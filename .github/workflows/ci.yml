@@ -32,11 +32,19 @@ jobs:
             package-lock.json
             bindings/node/package-lock.json
             cli/package-lock.json
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
       - name: Install root tooling
         run: HUSKY=0 npm ci
       - name: Install embedded binding dependencies
         working-directory: bindings/node
         run: npm ci
+      - name: Build local embedded native binding
+        working-directory: bindings/node
+        run: npm run build:debug
       - name: Install CLI dependencies
         working-directory: cli
         run: npm ci
