@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="StateSet.Embedded" Version="1.28.1" />
+    <PackageReference Include="StateSet.Embedded" Version="1.28.2" />
   </ItemGroup>
 
 </Project>

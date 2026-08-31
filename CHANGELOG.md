@@ -6,6 +6,40 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.28.2] - 2026-08-31
+
+### Fixed
+- **General ledger money-integrity guards** (SQLite, Postgres, and the
+  governed kernel `ledger.post` path):
+  - Every `auto_post_*` operation (invoice, payment, bill, bill payment,
+    inventory cost, write-off) is idempotent under retry — a source document
+    with an existing non-voided journal entry returns that entry instead of
+    posting a duplicate.
+  - Posting or voiding a journal entry now requires its accounting period to
+    be open; the kernel command path rejects durably with
+    `commerce.ledger.period_not_open`.
+  - The income statement excludes closing entries, so a closed period's P&L
+    reports its actual activity instead of zero.
+  - `run_period_close` refuses while a posted closing entry stands for the
+    period; re-closing a reopened period requires voiding that entry first.
+- **Accounts receivable guards** (SQLite and Postgres):
+  - `apply_payment_to_invoices` is bounded by the payment's own amount,
+    counting prior applications, so a payment can never be applied beyond its
+    value.
+  - Payments and credit memos cannot be applied to voided or written-off
+    invoices.
+  - Write-offs must be positive and no larger than the invoice balance due;
+    credit memos must be positive.
+- **Accounts payable guards** (SQLite, Postgres, and the core model):
+  - `perform_three_way_match` aggregates billed quantities per purchase-order
+    line across the whole bill, so duplicating a bill line can no longer pass
+    over-billing through the match. Per-line unit-price checks are unchanged.
+  - `clear_payment`, `cancel_bill`, `dispute_bill`, and `approve_bill` are
+    status-guarded transitions; a non-matching state now returns a conflict
+    instead of overwriting or silently succeeding.
+  - `count_payments` applies the same `from_date`/`to_date` filters as
+    `list_payments`, so paginated counts match listed rows.
+
 ## [1.28.1] - 2026-08-28
 
 ### Added

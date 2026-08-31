@@ -7,13 +7,13 @@
     "url": "https://github.com/stateset/stateset-icommerce",
     "source": "github"
   },
-  "version": "1.28.1",
+  "version": "1.28.2",
   "websiteUrl": "https://stateset.com",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@stateset/cli",
-      "version": "1.28.1",
+      "version": "1.28.2",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

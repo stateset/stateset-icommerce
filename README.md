@@ -35,10 +35,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.28.1     # Python
-npm install @stateset/embedded@1.28.1     # Node.js
-npm install -g @stateset/cli@1.28.1       # CLI
-gem install stateset_embedded -v 1.28.1   # Ruby
+pip install stateset-embedded==1.28.2     # Python
+npm install @stateset/embedded@1.28.2     # Node.js
+npm install -g @stateset/cli@1.28.2       # CLI
+gem install stateset_embedded -v 1.28.2   # Ruby
 ```
 
 **Connect an AI agent in one line** (Claude Desktop, Cursor, any MCP client —
@@ -102,7 +102,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.28.1](#whats-new-in-v1281)
+- [What's New in v1.28.2](#whats-new-in-v1282)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -200,7 +200,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.28.1 @stateset/cli@1.28.1
+npm install @stateset/embedded@1.28.2 @stateset/cli@1.28.2
 ```
 
 ```javascript
@@ -350,9 +350,29 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.28.1
+## What's New in v1.28.2
 
-**v1.28.1 makes StateSet iCommerce a marketplace-verified, native part of
+**v1.28.2 hardens the finance suite: money-integrity guards across the
+general ledger, accounts payable, and accounts receivable.**
+
+- **The ledger cannot double-post.** Every `auto_post_*` operation is
+  idempotent under retry: a source document that already has a non-voided
+  journal entry returns that entry instead of posting again.
+- **Closed periods stay closed.** Posting or voiding a journal entry requires
+  its period to be open — including through the governed kernel command path,
+  which rejects with `commerce.ledger.period_not_open`. Closing a period twice
+  is refused while its closing entry stands, and a closed period's income
+  statement now reports its actual P&L instead of zero.
+- **Payments cannot exceed themselves.** AR payment application is bounded by
+  the payment's own amount, terminal (voided/written-off) invoices reject new
+  applications, and write-offs and credit memos validate their amounts against
+  the balance due.
+- **Three-way match catches split over-billing.** Billed quantities aggregate
+  per purchase-order line across the whole bill, so duplicating a bill line
+  can no longer slip past the ordered/received comparison. AP payment and bill
+  lifecycle transitions (clear, cancel, dispute, approve) are status-guarded.
+
+**v1.28.1 made StateSet iCommerce a marketplace-verified, native part of
 Omarchy.**
 
 - **Native installation and discovery.** The public, root-level Omarchy plugin
@@ -1359,7 +1379,7 @@ Platform-specific notes that don't fit either:
   <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.28.1</version>
+    <version>1.28.2</version>
   </dependency>
   ```
 
@@ -1369,7 +1389,7 @@ Platform-specific notes that don't fit either:
   the autoloaded stubs throw at runtime.
 
 - **Swift** — Swift Package Manager is the supported path. CocoaPods is
-  community-maintained at `pod 'StateSet', '~> 1.28.1'`.
+  community-maintained at `pod 'StateSet', '~> 1.28.2'`.
 
 - **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
   that, `stateset --help` works anywhere.
@@ -1382,16 +1402,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.28.1"` | [docs.rs](https://docs.rs/stateset-sdk) |
-| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.28.1` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.28.2"` | [docs.rs](https://docs.rs/stateset-sdk) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.28.2` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
-| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.28.1'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
-| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.28.1")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
-| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.28.1")` | [GitHub](https://github.com/stateset/stateset-swift) |
-| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.28.1` / `<PackageReference Include="StateSet.Embedded" Version="1.28.1" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
-| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.28.1` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.28.2'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.28.2")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.28.2")` | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.28.2` / `<PackageReference Include="StateSet.Embedded" Version="1.28.2" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.28.2` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use

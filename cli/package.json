@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "1.28.1",
+  "version": "1.28.2",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -195,7 +195,7 @@
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@stateset/embedded": "^1.28.1",
+    "@stateset/embedded": "^1.28.2",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ethers": "^6.16.0",
