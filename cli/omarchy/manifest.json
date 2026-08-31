@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "com.stateset.icommerce",
   "name": "StateSet iCommerce",
-  "version": "1.28.0",
+  "version": "1.28.1",
   "author": "StateSet",
   "license": "MIT OR Apache-2.0",
   "description": "Local commerce status, backups, and agent access for Omarchy.",

@@ -35,10 +35,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.28.0     # Python
-npm install @stateset/embedded@1.28.0     # Node.js
-npm install -g @stateset/cli@1.28.0       # CLI
-gem install stateset_embedded -v 1.28.0   # Ruby
+pip install stateset-embedded==1.28.1     # Python
+npm install @stateset/embedded@1.28.1     # Node.js
+npm install -g @stateset/cli@1.28.1       # CLI
+gem install stateset_embedded -v 1.28.1   # Ruby
 ```
 
 **Connect an AI agent in one line** (Claude Desktop, Cursor, any MCP client —
@@ -96,7 +96,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.28.0](#whats-new-in-v1280)
+- [What's New in v1.28.1](#whats-new-in-v1281)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -194,7 +194,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.28.0 @stateset/cli@1.28.0
+npm install @stateset/embedded@1.28.1 @stateset/cli@1.28.1
 ```
 
 ```javascript
@@ -344,24 +344,26 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.28.0
+## What's New in v1.28.1
 
-**v1.28.0 makes StateSet iCommerce a native, operational part of Omarchy.**
+**v1.28.1 makes StateSet iCommerce a marketplace-verified, native part of
+Omarchy.**
 
-- **Native Omarchy shell experience.** A Quattro bar widget and operator panel
-  surface store health, exact entity counts, failed payments, low stock,
-  pending returns, and pending orders directly on the desktop.
+- **Native installation and discovery.** The public, root-level Omarchy plugin
+  repository installs with `omarchy plugin add`, updates with
+  `omarchy plugin update`, and is listed as `approved-and-verified` in the
+  community marketplace. Release tags produce protected synchronization PRs.
 - **Useful without a model or network.** Offline-first Review reports expose
   sanitized operational samples locally. Resolve routes an alert to the
   matching preview-only Payments, Inventory, Returns, or Orders specialist.
+- **Reviewed runtime boundaries.** Routine shell actions never download code.
+  Controller calls have independent deadlines, forced termination, producer
+  and consumer output caps, bounded fixed-schema JSON, sanitized strings, and
+  explicit plain-text rendering.
 - **Safe autonomous operation.** Writes remain preview-only unless complete
-  operator-owned kernel policy and identity enable governed apply. The optional
-  MCP service is loopback-only and has explicit install/status/start/stop/
-  restart/remove controls.
-- **Production diagnostics and distribution.** `stateset-omarchy doctor`
-  validates a target desktop. CI checks a pinned upstream Omarchy contract and
-  large operational snapshots, while release builds emit an attested,
-  checksummed standalone plugin archive alongside `@stateset/cli`.
+  operator-owned kernel policy and identity enable governed apply. The
+  installer preserves Git-managed plugin checkouts, while diagnostics and the
+  optional loopback MCP service retain explicit operator control.
 
 **v1.27.0 made the embedded engine substantially easier to adopt safely in a
 real storefront or autonomous agent runtime.**
@@ -1351,7 +1353,7 @@ Platform-specific notes that don't fit either:
   <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.28.0</version>
+    <version>1.28.1</version>
   </dependency>
   ```
 
@@ -1361,7 +1363,7 @@ Platform-specific notes that don't fit either:
   the autoloaded stubs throw at runtime.
 
 - **Swift** — Swift Package Manager is the supported path. CocoaPods is
-  community-maintained at `pod 'StateSet', '~> 1.28.0'`.
+  community-maintained at `pod 'StateSet', '~> 1.28.1'`.
 
 - **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
   that, `stateset --help` works anywhere.
@@ -1374,16 +1376,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.28.0"` | [docs.rs](https://docs.rs/stateset-sdk) |
-| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.28.0` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.28.1"` | [docs.rs](https://docs.rs/stateset-sdk) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.28.1` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
-| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.28.0'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
-| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.28.0")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
-| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.28.0")` | [GitHub](https://github.com/stateset/stateset-swift) |
-| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.28.0` / `<PackageReference Include="StateSet.Embedded" Version="1.28.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
-| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.28.0` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.28.1'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.28.1")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.28.1")` | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.28.1` / `<PackageReference Include="StateSet.Embedded" Version="1.28.1" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.28.1` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use

@@ -6,6 +6,31 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.28.1] - 2026-08-28
+
+### Added
+- **Marketplace-verified Omarchy distribution.** The native shell surface is
+  available as the public `stateset/stateset-omarchy-plugin` Git repository and
+  is listed as `approved-and-verified` in the Omarchy community marketplace.
+  Standalone artifacts now include pinned upstream validation and a protected,
+  review-first synchronization workflow for immutable `cli-v*` releases.
+
+### Changed
+- `stateset-omarchy install` detects and preserves plugins installed through
+  Omarchy's Git plugin manager, leaving updates under `omarchy plugin update`.
+  Shell and menu actions require a separately installed, version-matched
+  controller and never download packages during routine operation.
+
+### Security
+- Controller status execution now has an eight-second producer deadline, an
+  independent ten-second shell watchdog, forced termination, and matching
+  producer/consumer output caps. Status JSON is constrained by size, depth,
+  field and array budgets and normalized into a fixed bounded schema before it
+  reaches the UI. Controller strings strip control, bidi, and markup-significant
+  characters, and dynamic QML output is rendered explicitly as plain text.
+- Added adversarial coverage for oversized output, excessive arrays and fields,
+  deep or malformed JSON, invalid counts, bidi controls, and markup injection.
+
 ## [1.28.0] - 2026-08-27
 
 ### Added

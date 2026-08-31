@@ -17,7 +17,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "3.0.114",
     "@ai-sdk/react": "3.0.273",
-    "@stateset/embedded": "^1.28.0",
+    "@stateset/embedded": "^1.28.1",
     "@tanstack/react-query": "^5.90.12",
     "ai": "6.0.270",
     "lucide-react": "^0.563.0",

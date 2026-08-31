@@ -304,7 +304,7 @@ describe('Omarchy integration', () => {
     fs.mkdirSync(path.join(target, '.git'), { recursive: true });
     fs.writeFileSync(
       path.join(target, 'manifest.json'),
-      `${JSON.stringify({ id: OMARCHY_PLUGIN_ID, version: '1.28.0' })}\n`,
+      `${JSON.stringify({ id: OMARCHY_PLUGIN_ID, version: '1.28.1' })}\n`,
     );
     const sentinel = path.join(target, 'git-managed.txt');
     fs.writeFileSync(sentinel, 'preserve checkout');
