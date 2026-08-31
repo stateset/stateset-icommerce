@@ -1,8 +1,16 @@
 # ICP-1.0 — Intelligent Commerce Protocol
 
-**Status:** Draft
+**Status:** Last Call (review window 2026-08-31 → 2026-09-14; see `LAST-CALL.md`)
 **Editors:** StateSet, Inc. (interim steward)
-**Date:** 2026-05-09
+**Date:** 2026-08-31
+
+> **Last Call notice.** The normative surface of this document is frozen.
+> Only editorial corrections and resolutions of material objections filed
+> during the review window may change it before promotion to Final. New
+> capabilities go to ICP-1.1 via the ICPIP process
+> (`governance/ICPIP-process.md`). Objections: open a GitHub issue on the
+> spec repository or write to the editor; material objections are resolved
+> on-record in `LAST-CALL.md`.
 
 ## 1. Abstract
 

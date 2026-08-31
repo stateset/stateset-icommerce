@@ -5,9 +5,16 @@ by every tick of the multibillion-dollar build loop.
 
 ## Last updated
 
-2026-05-12 — tick 31
+2026-08-31 — ICP-1.0 Last Call entered
 
 ## Done
+
+- [x] **ICP-1.0 Last Call entered (2026-08-31)** — normative surface frozen
+  (`ICP-1.0-DRAFT.md`, `SETTLERS.md`, `schemas/canonicalization.md`,
+  `schemas/error-codes.md`); 14-day review window to 2026-09-14; objection
+  log and promotion criteria in `LAST-CALL.md`. Evidence: ten vector
+  families, four IUTs byte-identical in CI, suite released as
+  `icp-conformance 1.0.0`, all open questions deferred to ICP-1.1.
 
 - [x] `README.md`, `ICP-1.0-DRAFT.md` (§1–§13), `governance/ICPIP-process.md`,
   `test-vectors/README.md`, `schemas/intent.purchase.create.schema.json` (tick 1)
