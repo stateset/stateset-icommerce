@@ -6,6 +6,7 @@ do not mark a row complete from a local run alone.
 | Gate | Required evidence | Status |
 | --- | --- | --- |
 | Rust correctness | CI URL for workspace tests, clippy, format, and invariant suite | Pending |
+| Performance | `Perf Regression Gate` run URL and `perf-regression-<commit>-<attempt>` artifact with runner/toolchain provenance and raw Criterion estimates | Pending |
 | Binding compatibility | Cross-binding vectors and generated binding inventory artifact | Pending |
 | Exact money | Boundary tests covering parse, serialization, arithmetic, and refunds | Pending |
 | SQLite/Postgres parity | Backend parity matrix artifact | Pending |
