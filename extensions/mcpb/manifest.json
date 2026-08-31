@@ -14,19 +14,15 @@
   "license": "MIT OR Apache-2.0",
   "keywords": ["commerce", "ecommerce", "orders", "inventory", "payments", "mcp", "ai-agents", "local-first"],
   "server": {
-    "type": "binary",
+    "type": "node",
+    "entry_point": "server/index.js",
     "mcp_config": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "-p",
-        "@stateset/cli@1.28.1",
-        "stateset-mcp",
-        "--db",
-        "${user_config.db_path}",
-        "--profile",
-        "${user_config.profile}"
-      ]
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "STATESET_DB_PATH": "${user_config.db_path}",
+        "STATESET_TOOL_PROFILE": "${user_config.profile}"
+      }
     }
   },
   "user_config": {
