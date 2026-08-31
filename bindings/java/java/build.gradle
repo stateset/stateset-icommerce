@@ -19,7 +19,7 @@ repositories {
 }
 
 dependencies {
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter:6.1.3'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     // Gson is only used by CryptoVectorTests to read the cross-binding
     // corpus; production code has no JSON dependency.
