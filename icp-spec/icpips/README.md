@@ -15,6 +15,7 @@ spec.
 | [0005](./icpip-0005-push-channels.md) | Push channels — webhooks + Server-Sent Events for merchant→Agent push delivery | Standards (Core) | Draft |
 | [0006](./icpip-0006-idempotency-pagination.md) | Idempotency keys (`purchase.create`) and cursor pagination (`inventory.query`) | Standards (Core) | Draft |
 | 0007 | Hybrid X25519 + ML-KEM-768 mandate for confidential PrincipalBinding transport | Standards (Core) | Solicited (companion to 0002) |
+| [0008](./icpip-0008-compliance-checkpoints.md) | Pre-settlement compliance checkpoints (sanctions, jurisdiction, KYC attestation references) | Standards (Core) | Draft |
 
 ## Template
 
