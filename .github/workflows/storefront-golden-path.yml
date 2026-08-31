@@ -1,0 +1,57 @@
+name: Storefront Golden Path
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/storefront-golden-path.yml"
+      - "packages/create-stateset-app/**"
+      - "bindings/node/package.json"
+      - "scripts/ci/run_storefront_golden_path.sh"
+      - "docs/RELEASE_EVIDENCE.md"
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/storefront-golden-path.yml"
+      - "packages/create-stateset-app/**"
+      - "bindings/node/package.json"
+      - "scripts/ci/run_storefront_golden_path.sh"
+      - "docs/RELEASE_EVIDENCE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storefront-golden-path-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  storefront:
+    name: Pack, Install, Seed & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Test generator
+        run: npm --prefix packages/create-stateset-app test
+
+      - name: Run public storefront golden path
+        run: ./scripts/ci/run_storefront_golden_path.sh
+
+      - name: Upload immutable golden-path evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: storefront-golden-path-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/storefront-golden-path
+          if-no-files-found: error
+          retention-days: 90

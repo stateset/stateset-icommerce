@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { scaffold } from '../src/index.js';
 
 const tmpBase = path.join(os.tmpdir(), 'create-stateset-app-tests');
@@ -21,6 +22,23 @@ after(() => {
 });
 
 describe('scaffold', () => {
+  it('supports a non-interactive public CLI path', () => {
+    const dir = uniqueDir();
+    const cli = path.resolve(import.meta.dirname, '../bin/create-stateset-app.js');
+    const result = spawnSync(process.execPath, [cli, dir, '--yes', '--skip-install'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.ok(fs.existsSync(path.join(dir, 'package.json')));
+    const layout = fs.readFileSync(path.join(dir, 'app', 'layout.tsx'), 'utf8');
+    const expectedStoreName = path.basename(dir).replaceAll('-', ' ').replace(/\b\w/g, (c) =>
+      c.toUpperCase(),
+    );
+    assert.ok(layout.includes(expectedStoreName));
+  });
+
   it('creates project directory with all expected files', async () => {
     const dir = uniqueDir();
     await scaffold({
@@ -219,6 +237,21 @@ describe('scaffold', () => {
           pm: 'npm',
         }),
       /already exists and is not empty/,
+    );
+  });
+
+  it('rejects unsupported package managers instead of invoking a shell command', async () => {
+    const dir = uniqueDir();
+    await assert.rejects(
+      () =>
+        scaffold({
+          projectName: 'safe-install',
+          storeName: 'Safe Install',
+          targetDir: dir,
+          skipInstall: false,
+          pm: 'npm; echo unsafe',
+        }),
+      /Unsupported package manager/,
     );
   });
 

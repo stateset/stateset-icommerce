@@ -18,7 +18,8 @@
     "templates/"
   ],
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=20.20.0",
+    "npm": ">=10.0.0"
   },
   "keywords": [
     "stateset",

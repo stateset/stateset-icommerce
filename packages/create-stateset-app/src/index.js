@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { promptProjectName, promptStoreName, promptInstall } from './prompts.js';
 import { copyTemplate } from './copy.js';
 import { print, success, info, error, bold, cyan, dim } from './output.js';
@@ -10,6 +10,7 @@ import { print, success, info, error, bold, cyan, dim } from './output.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_DIR = path.resolve(__dirname, '..', 'templates', 'storefront');
 const PKG = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8'));
+const SUPPORTED_PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn']);
 
 const HELP = `
   ${bold('create-stateset-app')} — Create a StateSet-powered commerce storefront
@@ -22,11 +23,13 @@ const HELP = `
     --skip-install    Skip npm install
     --use-pnpm        Use pnpm instead of npm
     --use-yarn        Use yarn instead of npm
+    -y, --yes         Accept defaults and skip interactive prompts
     -h, --help        Show this help
     -v, --version     Show version
 
   ${dim('Examples:')}
     npx create-stateset-app my-store
+    npx create-stateset-app my-store --yes
     npx create-stateset-app urban-thread --use-pnpm
     npx create-stateset-app --skip-install
 `;
@@ -103,6 +106,9 @@ function printNextSteps(projectName, pm) {
 
 export async function scaffold({ projectName, storeName, targetDir, skipInstall, pm }) {
   const packageName = toPackageName(projectName);
+  if (!skipInstall && !SUPPORTED_PACKAGE_MANAGERS.has(pm)) {
+    throw new Error(`Unsupported package manager "${pm}".`);
+  }
 
   // Validate target doesn't exist or is empty
   if (fs.existsSync(targetDir)) {
@@ -133,10 +139,11 @@ export async function scaffold({ projectName, storeName, targetDir, skipInstall,
     info(`  Installing dependencies with ${pm}...`);
     print('');
     try {
-      execSync(`${pm} install`, { cwd: targetDir, stdio: 'inherit' });
-    } catch {
+      execFileSync(pm, ['install'], { cwd: targetDir, stdio: 'inherit' });
+    } catch (cause) {
       print('');
       error(`  ${pm} install failed. You can run it manually later.`);
+      throw new Error(`${pm} install failed`, { cause });
     }
   }
 }
@@ -148,6 +155,7 @@ export async function main(argv) {
       'skip-install': { type: 'boolean', default: false },
       'use-pnpm': { type: 'boolean', default: false },
       'use-yarn': { type: 'boolean', default: false },
+      yes: { type: 'boolean', short: 'y', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -168,20 +176,20 @@ export async function main(argv) {
   print('');
 
   // Get project name
-  const rawName = positionals[0] || (await promptProjectName());
+  const rawName = positionals[0] || (values.yes ? 'stateset-store' : await promptProjectName());
   const targetDir = path.resolve(process.cwd(), rawName);
   const projectName = path.basename(targetDir);
 
   // Get store name
   const defaultStoreName = toTitleCase(projectName);
-  const storeName = await promptStoreName(defaultStoreName);
+  const storeName = values.yes ? defaultStoreName : await promptStoreName(defaultStoreName);
 
   const pm = values['use-pnpm'] ? 'pnpm' : values['use-yarn'] ? 'yarn' : 'npm';
   const skipInstall = values['skip-install'];
 
   // Check if we should prompt for install
   let shouldInstall = !skipInstall;
-  if (shouldInstall && !skipInstall) {
+  if (shouldInstall && !values.yes) {
     shouldInstall = await promptInstall(pm);
   }
 
