@@ -1,0 +1,41 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.stateset/icommerce",
+  "title": "StateSet iCommerce",
+  "description": "Embedded commerce engine for AI agents: orders, inventory, payments. Local SQLite, no API keys.",
+  "repository": {
+    "url": "https://github.com/stateset/stateset-icommerce",
+    "source": "github"
+  },
+  "version": "1.28.1",
+  "websiteUrl": "https://stateset.com",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@stateset/cli",
+      "version": "1.28.1",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--db",
+          "description": "Path to the SQLite database file (created if missing)",
+          "format": "string",
+          "isRequired": false,
+          "default": "./store.db"
+        },
+        {
+          "type": "named",
+          "name": "--profile",
+          "description": "Tool catalog profile: core (focused commerce catalog) or full (all tools)",
+          "format": "string",
+          "isRequired": false,
+          "default": "core"
+        }
+      ]
+    }
+  ]
+}

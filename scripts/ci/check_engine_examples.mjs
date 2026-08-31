@@ -172,6 +172,30 @@ if (!pythonOnly) {
     'success',
     'Framework adapter demo should execute list_customers successfully.',
   );
+
+  for (const guardrails of [
+    'examples/agents/vercel-ai-guardrails.mjs',
+    'examples/agents/langchain-guardrails.mjs',
+    'examples/agents/openai-guardrails.mjs',
+    'examples/agents/custom-runtime-guardrails.mjs',
+  ]) {
+    const summary = runNodeExample(guardrails);
+    assert.equal(
+      summary.overRefundBlocked,
+      true,
+      `${guardrails} should block the over-refund attempt.`,
+    );
+    assert.equal(
+      summary.invariantCode,
+      'commerce.refund.exceeds_captured',
+      `${guardrails} should surface the stable invariant code.`,
+    );
+    assert.equal(
+      summary.legitRefundExecuted,
+      true,
+      `${guardrails} should execute the legitimate refund.`,
+    );
+  }
 }
 
 if (!jsOnly) {
