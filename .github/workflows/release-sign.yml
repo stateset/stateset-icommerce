@@ -58,7 +58,7 @@ jobs:
           fi
 
       - name: Checkout (full history at the tag)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.target.outputs.ref }}
           fetch-depth: 0
