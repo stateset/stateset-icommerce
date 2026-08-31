@@ -161,14 +161,14 @@ jobs:
           persist-credentials: false
 
       - name: Download wheels
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: wheel-*
           merge-multiple: true
 
       - name: Download sdist
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: dist
           name: sdist
