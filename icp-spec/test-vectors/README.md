@@ -32,8 +32,9 @@ Each test case is a directory containing:
 | `inputs.json` | Deterministic inputs (seeds, payloads, signatures) |
 | `expected.json` | Expected verification results, derived state, computed values |
 
-The vector set grows alongside the spec; full coverage is targeted for
-ICP-1.0 Last Call.
+The vector set reached full normative coverage (ten families, four IUTs
+byte-identical) at ICP-1.0 Last Call — see `../LAST-CALL.md`. Within the
+1.0 major it now only grows by suite-patch additions.
 
 ## Determinism
 

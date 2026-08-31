@@ -141,12 +141,14 @@ the multi-step commerce lifecycle.
 
 - **2026-Q2** (now): ICP-1.0 Draft published. RI shipping. RFC outreach to
   the four protocol teams above and to top-25 commerce platforms.
-- **2026-Q3**: Conformance suite v0.1. Second independent implementation
-  (target: TS + Saleor or Medusa plugin). First three SettlementReceipts
-  on real USDC volume.
-- **2026-Q4**: ICP Foundation incorporated. Founding members announced.
-  ICP-1.0 Last Call.
-- **2027-Q1**: ICP-1.0 Final. Conformance certification opens.
+- **2026-Q3**: Conformance suite 1.0.0 shipped (ten vector families, four
+  reference IUTs byte-identical in CI). **ICP-1.0 Last Call entered
+  2026-08-31** (`LAST-CALL.md`) — ahead of the original Q4 target.
+- **2026-Q4**: ICP-1.0 Final (window permitting). ICP Foundation
+  incorporated. Founding members announced. Conformance certification
+  opens. First three SettlementReceipts on real USDC volume.
+- **2027-Q1**: Second-party (non-StateSet) implementation passes
+  `icp-1.0-core` in their own CI.
 
 ## Contact
 

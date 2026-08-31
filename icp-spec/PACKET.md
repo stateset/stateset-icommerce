@@ -32,7 +32,7 @@ settlement. No other public protocol covers this layer.
 
 | Asset | Status | Where |
 |---|---|---|
-| Open spec, ICP-1.0 draft | Normative, frozen surface | `icp-spec/ICP-1.0-DRAFT.md` |
+| Open spec, ICP-1.0 in Last Call | Normative, frozen surface | `icp-spec/ICP-1.0-DRAFT.md`, `icp-spec/LAST-CALL.md` |
 | Canonical serialization rules | Normative (RFC 8785 JCS; CBOR reserved for icp-1.1) | `icp-spec/schemas/canonicalization.md` |
 | Error code enumeration | 60+ codes, 13 namespaces, frozen | `icp-spec/schemas/error-codes.md` |
 | Settler interface | Normative spec | `icp-spec/SETTLERS.md` |
