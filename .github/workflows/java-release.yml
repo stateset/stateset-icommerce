@@ -136,7 +136,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Download all native libraries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: natives
           pattern: native-*
@@ -186,7 +186,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Download all native libraries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: natives
           pattern: native-*
@@ -213,7 +213,7 @@ jobs:
         run: ./gradlew publish
 
       - name: Download JAR artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: jar
           path: jars
