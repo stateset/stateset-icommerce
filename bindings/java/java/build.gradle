@@ -23,7 +23,7 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     // Gson is only used by CryptoVectorTests to read the cross-binding
     // corpus; production code has no JSON dependency.
-    testImplementation 'com.google.code.gson:gson:2.10.1'
+    testImplementation 'com.google.code.gson:gson:2.14.0'
 }
 
 tasks.named('test') {
