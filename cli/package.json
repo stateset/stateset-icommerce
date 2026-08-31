@@ -203,7 +203,7 @@
   "optionalDependencies": {
     "@google-cloud/pubsub": "^4.3.0",
     "@grpc/grpc-js": "^1.14.4",
-    "@grpc/proto-loader": "^0.7.15",
+    "@grpc/proto-loader": "^0.8.1",
     "@slack/bolt": "^3.17.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
