@@ -907,6 +907,12 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn create_write_off(&self, input: CreateWriteOff) -> Result<WriteOff> {
+        if input.amount <= Decimal::ZERO {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Write-off amount must be greater than zero".into(),
+            ));
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let write_off_number = generate_write_off_number();
@@ -920,12 +926,31 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 rusqlite::Error::ToSqlConversionFailure(Box::new(e))
             };
 
-            let customer_str: String = tx.query_row(
-                "SELECT customer_id FROM invoices WHERE id = ?1",
-                params![input.invoice_id.to_string()],
-                |row| row.get(0),
-            )?;
+            let (customer_str, invoice_status, balance_str): (String, String, String) = tx
+                .query_row(
+                    "SELECT customer_id, status, balance_due FROM invoices WHERE id = ?1",
+                    params![input.invoice_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
             let customer_id = parse_uuid_row(&customer_str, "invoice", "customer_id")?;
+
+            // A voided/cancelled invoice cannot be written off; an already
+            // written-off invoice is rejected by the guarded UPDATE below.
+            if matches!(invoice_status.as_str(), "voided" | "cancelled") {
+                return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
+                    "Cannot write off invoice {} with status {invoice_status}",
+                    input.invoice_id
+                ))));
+            }
+
+            let balance_due =
+                parse_decimal_safe(&balance_str, "invoice", "balance_due").map_err(to_rusqlite)?;
+            if input.amount > balance_due {
+                return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
+                    "Write-off amount ({}) exceeds invoice balance due ({balance_due})",
+                    input.amount
+                ))));
+            }
 
             let rows = tx.execute(
                 "UPDATE invoices SET status = 'written_off', collection_status = 'written_off'
@@ -1076,6 +1101,12 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn create_credit_memo(&self, input: CreateCreditMemo) -> Result<CreditMemo> {
+        if input.amount <= Decimal::ZERO {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Credit memo amount must be greater than zero".into(),
+            ));
+        }
+
         let conn = self
             .pool
             .get()
@@ -1284,12 +1315,21 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                     )));
                 }
 
-                // Re-read the invoice balance under the same lock.
-                let balance_str: String = tx.query_row(
-                    "SELECT balance_due FROM invoices WHERE id = ?1",
+                // Re-read the invoice balance and status under the same lock: a
+                // credit memo must not be applied to a terminal invoice.
+                let (balance_str, invoice_status): (String, String) = tx.query_row(
+                    "SELECT balance_due, status FROM invoices WHERE id = ?1",
                     params![invoice_id_str],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )?;
+                if matches!(invoice_status.as_str(), "voided" | "cancelled" | "written_off") {
+                    return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
+                        format!(
+                            "Cannot apply credit memo to invoice {} with status {invoice_status}",
+                            input.invoice_id
+                        ),
+                    )));
+                }
                 let balance_due = parse_decimal_safe(&balance_str, "invoice", "balance_due")
                     .map_err(to_rusqlite)?;
                 if input.amount > balance_due {
@@ -1424,22 +1464,67 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             let mut applications = Vec::new();
             let mut expected_customer_id: Option<Uuid> = None;
 
+            // The payment itself bounds the total that can be applied: read its
+            // amount and what is already applied under the same write lock, so a
+            // payment can never be applied beyond its own value.
+            let payment_id_str = input.payment_id.to_string();
+            let payment_amount_str: String = match tx.query_row(
+                "SELECT amount FROM payments WHERE id = ?1",
+                params![payment_id_str],
+                |row| row.get(0),
+            ) {
+                Ok(amount) => amount,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
+                        format!("Payment {} not found", input.payment_id),
+                    )));
+                }
+                Err(e) => return Err(e),
+            };
+            let payment_amount = parse_decimal_safe(&payment_amount_str, "payment", "amount")
+                .map_err(to_rusqlite)?;
+            let existing_applied = sum_decimal_query(
+                tx,
+                "SELECT applied_amount FROM ar_payment_applications WHERE payment_id = ?1",
+                &[&payment_id_str],
+                "payment_application",
+                "applied_amount",
+            )
+            .map_err(to_rusqlite)?;
+
+            let mut total_new = Decimal::ZERO;
             for app in &input.applications {
                 if app.amount <= Decimal::ZERO {
                     return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
                         "Payment application amount must be greater than zero".into(),
                     )));
                 }
+                total_new += app.amount;
+            }
+            if existing_applied + total_new > payment_amount {
+                return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
+                    "Payment applications ({total_new}) plus already applied ({existing_applied}) exceed payment amount ({payment_amount})"
+                ))));
+            }
 
-                // Read the customer id on the transaction's own connection — a
-                // nested `self.pool.get()` here would take a second pooled
-                // connection while this one is held, deadlocking the pool under
-                // concurrency.
-                let customer_str: String = tx.query_row(
-                    "SELECT customer_id FROM invoices WHERE id = ?1",
+            for app in &input.applications {
+                // Read the customer id and status on the transaction's own
+                // connection — a nested `self.pool.get()` here would take a
+                // second pooled connection while this one is held, deadlocking
+                // the pool under concurrency.
+                let (customer_str, invoice_status): (String, String) = tx.query_row(
+                    "SELECT customer_id, status FROM invoices WHERE id = ?1",
                     params![app.invoice_id.to_string()],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )?;
+                if matches!(invoice_status.as_str(), "voided" | "cancelled" | "written_off") {
+                    return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
+                        format!(
+                            "Cannot apply payment to invoice {} with status {invoice_status}",
+                            app.invoice_id
+                        ),
+                    )));
+                }
                 let invoice_customer_id = parse_uuid_row(&customer_str, "invoice", "customer_id")?;
                 if let Some(expected) = expected_customer_id {
                     if expected != invoice_customer_id {

@@ -483,6 +483,64 @@ mod tests {
         }
 
         #[test]
+        fn duplicated_po_line_aggregates_billed_quantity() {
+            let line = Uuid::new_v4();
+            // Two bill lines of 10 each against a PO line of 10 (10 received):
+            // the aggregate billed quantity is 20, which must mismatch exactly
+            // like a single over-billed line of 20 would.
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[receipt_item(line, dec!(10))],
+                &[
+                    bill_item(Some(line), dec!(10), dec!(5)),
+                    bill_item(Some(line), dec!(10), dec!(5)),
+                ],
+                dec!(5),
+            );
+            assert_eq!(result.match_status, MatchStatus::Variance { variance_line_count: 2 });
+            assert!(result.lines.iter().all(|l| !l.matched));
+            assert!(result.lines.iter().all(|l| {
+                l.issues.iter().any(|i| i.contains("ordered"))
+                    && l.issues.iter().any(|i| i.contains("received"))
+            }));
+            // The variance reflects the aggregate over-billing (20 - 10).
+            assert!(result.lines.iter().all(|l| l.quantity_variance == dec!(10)));
+        }
+
+        #[test]
+        fn duplicated_po_line_within_aggregate_tolerance_matches() {
+            let line = Uuid::new_v4();
+            // Two bill lines of 5 each against a PO line of 10 (10 received):
+            // aggregate billed quantity is exactly 10, so the bill matches even
+            // though each individual line bills less than the PO line.
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[receipt_item(line, dec!(10))],
+                &[bill_item(Some(line), dec!(5), dec!(5)), bill_item(Some(line), dec!(5), dec!(5))],
+                Decimal::ZERO,
+            );
+            assert_eq!(result.match_status, MatchStatus::Matched);
+            assert!(result.lines.iter().all(|l| l.matched));
+        }
+
+        #[test]
+        fn duplicated_po_line_keeps_per_line_price_checks() {
+            let line = Uuid::new_v4();
+            // Aggregate quantity is fine (5 + 5 = 10), but one line's unit price
+            // is off: only that line is flagged, on price alone.
+            let result = perform_three_way_match(
+                &[po_item(line, dec!(10), dec!(5))],
+                &[receipt_item(line, dec!(10))],
+                &[bill_item(Some(line), dec!(5), dec!(5)), bill_item(Some(line), dec!(5), dec!(6))],
+                Decimal::ZERO,
+            );
+            assert_eq!(result.match_status, MatchStatus::Variance { variance_line_count: 1 });
+            assert!(result.lines[0].matched);
+            assert!(!result.lines[1].matched);
+            assert!(result.lines[1].issues.iter().all(|i| i.contains("unit price")));
+        }
+
+        #[test]
         fn unlinked_bill_line_is_variance() {
             let line = Uuid::new_v4();
             let result = perform_three_way_match(
@@ -697,7 +755,8 @@ pub struct ThreeWayMatchLine {
     pub billed_quantity: Decimal,
     /// Unit price billed on this bill line.
     pub billed_unit_cost: Decimal,
-    /// `billed_quantity - received_quantity`.
+    /// Total quantity billed against the PO line (across all bill lines) minus
+    /// `received_quantity`.
     pub quantity_variance: Decimal,
     /// `billed_unit_cost - ordered_unit_cost` (zero when no PO line).
     pub price_variance: Decimal,
@@ -744,9 +803,12 @@ fn within_tolerance(expected: Decimal, actual: Decimal, tolerance_percent: Decim
 ///
 /// Lines are correlated by PO line ID: each bill line's `po_line_id` is matched
 /// to a [`crate::PurchaseOrderItem`] and to the sum of received quantities of
-/// all [`crate::ReceiptItem`]s referencing that PO line. `tolerance_percent` is
-/// a relative tolerance (e.g. `dec!(5)` allows a 5% deviation) applied to both
-/// quantity and unit-cost comparisons.
+/// all [`crate::ReceiptItem`]s referencing that PO line. Billed quantities are
+/// likewise aggregated across ALL bill lines referencing the same PO line before
+/// being compared against the ordered/received quantities, so splitting an
+/// over-billing across duplicate lines cannot pass the match; unit-price checks
+/// remain per-line. `tolerance_percent` is a relative tolerance (e.g. `dec!(5)`
+/// allows a 5% deviation) applied to both quantity and unit-cost comparisons.
 ///
 /// Returns [`MatchStatus::Pending`] when nothing has been received yet,
 /// [`MatchStatus::Matched`] when all lines agree within tolerance, and
@@ -763,6 +825,17 @@ pub fn perform_three_way_match(
     let nothing_received =
         receipt_items.iter().fold(Decimal::ZERO, |acc, r| acc + r.received_quantity).is_zero();
 
+    // Aggregate billed quantity per PO line across the WHOLE bill so a bill
+    // that references the same PO line on multiple lines (e.g. 10 + 10 against
+    // a PO line of 10) is compared as its total, not line-by-line.
+    let mut billed_by_po_line: std::collections::HashMap<Uuid, Decimal> =
+        std::collections::HashMap::new();
+    for bill_line in bill_lines {
+        if let Some(po_line_id) = bill_line.po_line_id {
+            *billed_by_po_line.entry(po_line_id).or_insert(Decimal::ZERO) += bill_line.quantity;
+        }
+    }
+
     let mut lines = Vec::with_capacity(bill_lines.len());
     for bill_line in bill_lines {
         let po_item = bill_line.po_line_id.and_then(|id| po_items.iter().find(|p| p.id == id));
@@ -772,15 +845,21 @@ pub fn perform_three_way_match(
                 .filter(|r| r.po_line_id == Some(id))
                 .fold(Decimal::ZERO, |acc, r| acc + r.received_quantity)
         });
+        // Total billed against this PO line across the whole bill (falls back to
+        // the line's own quantity for unlinked lines, which fail on linkage anyway).
+        let total_billed = bill_line
+            .po_line_id
+            .and_then(|id| billed_by_po_line.get(&id).copied())
+            .unwrap_or(bill_line.quantity);
 
         let mut issues = Vec::new();
         match po_item {
             None => issues.push("bill line is not linked to a purchase order line".to_string()),
             Some(po) => {
-                if !within_tolerance(po.quantity_ordered, bill_line.quantity, tolerance_percent) {
+                if !within_tolerance(po.quantity_ordered, total_billed, tolerance_percent) {
                     issues.push(format!(
-                        "billed quantity {} differs from ordered quantity {} beyond tolerance",
-                        bill_line.quantity, po.quantity_ordered
+                        "billed quantity {total_billed} (across all bill lines for this purchase order line) differs from ordered quantity {} beyond tolerance",
+                        po.quantity_ordered
                     ));
                 }
                 if !within_tolerance(po.unit_cost, bill_line.unit_price, tolerance_percent) {
@@ -789,13 +868,12 @@ pub fn perform_three_way_match(
                         bill_line.unit_price, po.unit_cost
                     ));
                 }
-                if !within_tolerance(received_quantity, bill_line.quantity, tolerance_percent) {
+                if !within_tolerance(received_quantity, total_billed, tolerance_percent) {
                     issues.push(if received_quantity.is_zero() {
                         "no quantity received against this purchase order line".to_string()
                     } else {
                         format!(
-                            "billed quantity {} differs from received quantity {received_quantity} beyond tolerance",
-                            bill_line.quantity
+                            "billed quantity {total_billed} (across all bill lines for this purchase order line) differs from received quantity {received_quantity} beyond tolerance"
                         )
                     });
                 }
@@ -811,7 +889,7 @@ pub fn perform_three_way_match(
             received_quantity,
             billed_quantity: bill_line.quantity,
             billed_unit_cost: bill_line.unit_price,
-            quantity_variance: bill_line.quantity - received_quantity,
+            quantity_variance: total_billed - received_quantity,
             price_variance: po_item.map_or(Decimal::ZERO, |p| bill_line.unit_price - p.unit_cost),
             matched: issues.is_empty(),
             issues,
