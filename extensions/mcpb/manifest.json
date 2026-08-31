@@ -1,0 +1,54 @@
+{
+  "manifest_version": "0.2",
+  "name": "stateset-icommerce",
+  "display_name": "StateSet iCommerce",
+  "version": "1.28.1",
+  "description": "Embedded commerce engine for AI agents: orders, inventory, payments, returns, subscriptions, finance. Local SQLite, no API keys, exact-decimal money with enforced invariants.",
+  "long_description": "Gives your agent a complete local commerce backend: orders, inventory, customers, products, carts and checkout, payments and refunds, returns/RMA, subscriptions, analytics, and a full finance suite. Everything runs in-process against a local SQLite file — no accounts, no API keys, no rate limits. Money is exact-decimal and guarded by enforced invariants (an agent cannot over-refund, over-capture, or oversell), and writes are preview-only until you pass --apply.",
+  "author": {
+    "name": "StateSet",
+    "url": "https://stateset.com"
+  },
+  "homepage": "https://github.com/stateset/stateset-icommerce",
+  "documentation": "https://github.com/stateset/stateset-icommerce/blob/master/README.md",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["commerce", "ecommerce", "orders", "inventory", "payments", "mcp", "ai-agents", "local-first"],
+  "server": {
+    "type": "binary",
+    "mcp_config": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "-p",
+        "@stateset/cli@1.28.1",
+        "stateset-mcp",
+        "--db",
+        "${user_config.db_path}",
+        "--profile",
+        "${user_config.profile}"
+      ]
+    }
+  },
+  "user_config": {
+    "db_path": {
+      "type": "string",
+      "title": "Database path",
+      "description": "Path to the SQLite store file (created if missing)",
+      "default": "${HOME}/stateset-store.db",
+      "required": false
+    },
+    "profile": {
+      "type": "string",
+      "title": "Tool profile",
+      "description": "core = focused commerce catalog, full = every generated tool",
+      "default": "core",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "linux", "win32"],
+    "runtimes": {
+      "node": ">=20.20.0"
+    }
+  }
+}

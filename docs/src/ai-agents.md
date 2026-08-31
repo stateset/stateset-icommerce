@@ -28,6 +28,26 @@ From the repo checkout, the examples under `examples/agents/` also run against
 workspace modules directly, so the embedded path is smoke-tested before
 publish.
 
+## Guardrails quickstarts
+
+Four runnable examples show the property that distinguishes this engine: give
+an agent real refund powers and it still cannot over-refund, because the
+invariant is enforced inside the database transaction and comes back as a
+sealed kernel receipt with the stable code `commerce.refund.exceeds_captured`.
+
+```bash
+node examples/agents/vercel-ai-guardrails.mjs      # Vercel AI SDK
+node examples/agents/langchain-guardrails.mjs      # LangChain structured tools
+node examples/agents/openai-guardrails.mjs         # OpenAI tool calls
+node examples/agents/custom-runtime-guardrails.mjs # any agent loop / Claude Agent SDK
+```
+
+Each runs in CI. See `examples/agents/README.md` for the pattern and the
+[kernel execution](kernel-execution.md) chapter for production policy and
+principal configuration. One note for agent authors: the adapter result's
+top-level `success` means the tool call executed; branch on
+`result.receipt.error_code` for the commercial outcome.
+
 ## Embedded Toolkit
 
 The embedded toolkit gives your agent direct access to the full registry-generated commerce tool surface:

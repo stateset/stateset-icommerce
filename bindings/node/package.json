@@ -42,7 +42,16 @@
     "embedded",
     "sqlite",
     "rust",
-    "napi"
+    "napi",
+    "ai-agents",
+    "agent-tools",
+    "llm",
+    "vercel-ai",
+    "langchain",
+    "openai",
+    "mcp",
+    "local-first",
+    "agentic-commerce"
   ],
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",

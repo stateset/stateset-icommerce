@@ -49,6 +49,12 @@ npx -y -p @stateset/cli stateset-mcp --db ./store.db --profile core  # focused s
 npx -y -p @stateset/cli stateset-mcp-http                   # Streamable HTTP, protocol 2026-07-28, stateless
 ```
 
+Building the agent yourself? `@stateset/embedded` ships adapters for the
+Vercel AI SDK, LangChain, OpenAI tool calls, and any custom loop — see the
+[guardrails quickstarts](examples/agents/README.md) where an agent tries to
+over-refund and the engine answers with a sealed
+`commerce.refund.exceeds_captured` receipt instead.
+
 On Omarchy, install the native commerce widget, Super-key menu actions, and
 project-local MCP configuration in one command:
 

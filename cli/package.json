@@ -169,7 +169,11 @@
     "stripe",
     "woocommerce",
     "shopify",
-    "webhooks"
+    "webhooks",
+    "mcp-tools",
+    "ai-agents",
+    "agentic-commerce",
+    "model-context-protocol"
   ],
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",
@@ -233,5 +237,6 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "mcpName": "io.github.stateset/icommerce"
 }
