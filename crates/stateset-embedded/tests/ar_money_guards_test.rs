@@ -862,3 +862,97 @@ fn statement_opening_balance_carries_pre_period_activity() {
     assert_eq!(statement.total_invoices, dec!(0.00));
     assert_eq!(statement.closing_balance, dec!(100.00));
 }
+
+// ============================================================================
+// FIX 7: AR recalculation must not discard an operator's own classification
+// ============================================================================
+
+#[test]
+fn applying_a_payment_does_not_clear_a_dispute() {
+    // `recalculate_invoice` derives the invoice status from the money. It used
+    // to overwrite the status unconditionally, so applying a payment to a
+    // DISPUTED invoice silently resolved the dispute — bypassing the guarded
+    // `dispute` transition on the invoices module. A partly paid invoice that
+    // is under dispute is still under dispute.
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+
+    commerce.invoices().send(invoice_id).expect("send");
+    commerce.invoices().dispute(invoice_id).expect("dispute");
+
+    let payment_id = create_payment(&commerce, customer_id, dec!(30.00));
+    commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(30.00) }],
+        })
+        .expect("apply payment");
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(30.00), "the payment must still be recorded");
+    assert_eq!(invoice.balance_due, dec!(70.00));
+    assert_eq!(
+        invoice.status,
+        stateset_embedded::InvoiceStatus::Disputed,
+        "a partial payment must not resolve a dispute"
+    );
+}
+
+#[test]
+fn recalculation_preserves_a_flag_when_nothing_is_applied_but_still_clears_a_write_off() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+
+    // Applying and then unapplying a payment leaves nothing applied. The old
+    // code hard-coded "sent" in that branch — despite a comment claiming to
+    // keep the original status — so the round trip silently cleared the
+    // operator's classification.
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+    commerce.invoices().send(invoice_id).expect("send");
+    commerce.invoices().dispute(invoice_id).expect("dispute");
+
+    let payment_id = create_payment(&commerce, customer_id, dec!(40.00));
+    let applications = commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(40.00) }],
+        })
+        .expect("apply payment");
+    commerce.accounts_receivable().unapply_payment(applications[0].id).expect("unapply payment");
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(0.00));
+    assert_eq!(invoice.balance_due, dec!(100.00));
+    assert_eq!(
+        invoice.status,
+        stateset_embedded::InvoiceStatus::Disputed,
+        "an apply/unapply round trip must not clear the dispute"
+    );
+
+    // A terminal status IS still reset by recalculation — reversing a
+    // write-off depends on it to bring the invoice back to a live state.
+    let other_id = create_invoice(&commerce, customer_id, dec!(50.00));
+    commerce.invoices().send(other_id).expect("send");
+    let write_off = commerce
+        .accounts_receivable()
+        .create_write_off(CreateWriteOff {
+            invoice_id: other_id,
+            amount: dec!(50.00),
+            reason: WriteOffReason::Uncollectible,
+            notes: None,
+            approved_by: None,
+        })
+        .expect("write off");
+    commerce.accounts_receivable().reverse_write_off(write_off.id).expect("reverse write off");
+
+    let other = commerce.invoices().get(other_id).expect("get").expect("invoice");
+    assert_ne!(
+        other.status,
+        stateset_embedded::InvoiceStatus::WrittenOff,
+        "reversing a write-off must return the invoice to a live status"
+    );
+    assert_eq!(other.balance_due, dec!(50.00), "the balance must be restored");
+}

@@ -359,7 +359,11 @@ impl PgWarehouseRepository {
         let address_json =
             input.address.as_ref().map(|address| serde_json::to_value(address).unwrap_or_default());
 
-        sqlx::query(
+        // `RETURNING *` reports the row this statement wrote. A separate
+        // read-back could observe a LATER concurrent update instead, so the
+        // caller was told a value it had not written (SQLite returns the merged
+        // row it wrote, from inside its transaction).
+        let row = sqlx::query_as::<_, WarehouseRow>(
             r#"
             UPDATE warehouses SET
                 name = COALESCE($1, name),
@@ -369,6 +373,7 @@ impl PgWarehouseRepository {
                 is_active = COALESCE($5, is_active),
                 updated_at = $6
             WHERE id = $7
+            RETURNING *
             "#,
         )
         .bind(input.name)
@@ -378,11 +383,12 @@ impl PgWarehouseRepository {
         .bind(input.is_active)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
 
-        self.get_warehouse_async(id).await?.ok_or(CommerceError::NotFound)
+        Self::row_to_warehouse(row)
     }
 
     pub async fn list_warehouses_async(&self, filter: WarehouseFilter) -> Result<Vec<Warehouse>> {
@@ -412,10 +418,15 @@ impl PgWarehouseRepository {
     }
 
     pub async fn delete_warehouse_async(&self, id: i32) -> Result<()> {
+        // Check-then-delete: the guard and the DELETE share one transaction, so
+        // a location created between them cannot be orphaned by a delete that
+        // had already read a count of zero.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         let count: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM locations WHERE warehouse_id = $1")
                 .bind(id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -427,9 +438,11 @@ impl PgWarehouseRepository {
 
         sqlx::query("DELETE FROM warehouses WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
     }
@@ -503,24 +516,28 @@ impl PgWarehouseRepository {
     }
 
     pub async fn update_zone_async(&self, id: i32, input: UpdateZone) -> Result<Zone> {
-        sqlx::query(
+        // `RETURNING *` reports the row this statement wrote (see
+        // `update_warehouse_async`).
+        let row = sqlx::query_as::<_, ZoneRow>(
             r#"
             UPDATE warehouse_zones SET
                 name = COALESCE($1, name),
                 description = COALESCE($2, description),
                 is_active = COALESCE($3, is_active)
             WHERE id = $4
+            RETURNING *
             "#,
         )
         .bind(input.name)
         .bind(input.description)
         .bind(input.is_active)
         .bind(id)
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
 
-        self.get_zone_async(id).await?.ok_or(CommerceError::NotFound)
+        Ok(Self::row_to_zone(row))
     }
 
     pub async fn delete_zone_async(&self, id: i32) -> Result<()> {
@@ -618,7 +635,9 @@ impl PgWarehouseRepository {
     pub async fn update_location_async(&self, id: i32, input: UpdateLocation) -> Result<Location> {
         let now = Utc::now();
 
-        sqlx::query(
+        // `RETURNING *` reports the row this statement wrote (see
+        // `update_warehouse_async`).
+        let row = sqlx::query_as::<_, LocationRow>(
             r#"
             UPDATE locations SET
                 location_type = COALESCE($1, location_type),
@@ -634,6 +653,7 @@ impl PgWarehouseRepository {
                 is_active = COALESCE($11, is_active),
                 updated_at = $12
             WHERE id = $13
+            RETURNING *
             "#,
         )
         .bind(input.location_type.map(|t| t.to_string()))
@@ -649,11 +669,12 @@ impl PgWarehouseRepository {
         .bind(input.is_active)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
 
-        self.get_location_async(id).await?.ok_or(CommerceError::NotFound)
+        Self::row_to_location(row)
     }
 
     pub async fn list_locations_async(&self, filter: LocationFilter) -> Result<Vec<Location>> {
@@ -698,11 +719,16 @@ impl PgWarehouseRepository {
     }
 
     pub async fn delete_location_async(&self, id: i32) -> Result<()> {
+        // Check-then-delete: the stock guard and the DELETE share one
+        // transaction, so an adjustment landing between them cannot have its
+        // stock silently cascaded away by a delete that read zero on-hand.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         let count: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM location_inventory WHERE location_id = $1 AND quantity_on_hand > 0",
         )
         .bind(id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -714,9 +740,11 @@ impl PgWarehouseRepository {
 
         sqlx::query("DELETE FROM locations WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
     }
@@ -840,13 +868,23 @@ impl PgWarehouseRepository {
         let now = Utc::now();
         let lot_key = Self::lot_key(input.lot_id);
 
+        // An adjustment is a read-modify-write plus a movement insert. Run all
+        // of it in ONE transaction and lock the inventory row with
+        // `FOR UPDATE` before the arithmetic: on a pooled connection with no
+        // transaction two concurrent `+5`s both read on-hand 10 and both wrote
+        // 15, silently losing one adjustment (worse here than on SQLite, which
+        // at least serialises writers), and a rejected adjustment could still
+        // leave a movement row behind. SQLite gets the same guarantee from an
+        // IMMEDIATE write transaction.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         let existing = sqlx::query_as::<_, (Decimal, Decimal)>(
-            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3",
+            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
         )
         .bind(input.location_id)
         .bind(&input.sku)
         .bind(lot_key)
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -866,7 +904,7 @@ impl PgWarehouseRepository {
             .bind(input.location_id)
             .bind(&input.sku)
             .bind(lot_key)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -878,20 +916,30 @@ impl PgWarehouseRepository {
                 ));
             }
 
-            sqlx::query(
-                "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-                 VALUES ($1,$2,$3,$4,0,$5)",
+            // `FOR UPDATE` cannot lock a row that does not exist yet, so two
+            // transactions can both reach this branch for the same key. The
+            // upsert makes that convergent instead of a primary-key violation:
+            // the loser blocks on the unique index, then adds its (necessarily
+            // non-negative) quantity to the winner's row. `RETURNING` reports
+            // the authoritative post-write values.
+            sqlx::query_as::<_, (Decimal, Decimal)>(
+                r#"
+                INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+                VALUES ($1,$2,$3,$4,0,$5)
+                ON CONFLICT (location_id, sku, lot_id) DO UPDATE SET
+                    quantity_on_hand = location_inventory.quantity_on_hand + EXCLUDED.quantity_on_hand,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING quantity_on_hand, quantity_reserved
+                "#,
             )
             .bind(input.location_id)
             .bind(&input.sku)
             .bind(lot_key)
             .bind(input.quantity)
             .bind(now)
-            .execute(&self.pool)
+            .fetch_one(tx.as_mut())
             .await
-            .map_err(map_db_error)?;
-
-            (input.quantity, Decimal::ZERO)
+            .map_err(map_db_error)?
         };
 
         let movement_id = Uuid::new_v4();
@@ -914,9 +962,11 @@ impl PgWarehouseRepository {
         .bind(input.reason)
         .bind(input.performed_by)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(LocationInventory {
             location_id: input.location_id,
@@ -1201,13 +1251,15 @@ impl PgWarehouseRepository {
     // Cycle counts
     // ========================================================================
 
+    /// Parse a stored `cycle_counts.status` value.
+    fn parse_cycle_count_status(raw: &str) -> Result<CycleCountStatus> {
+        raw.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid cycle_count.status '{raw}': {e}"))
+        })
+    }
+
     fn row_to_cycle_count(row: CycleCountRow) -> Result<CycleCount> {
-        let status: CycleCountStatus = row.status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid cycle_count.status '{}': {}",
-                row.status, e
-            ))
-        })?;
+        let status = Self::parse_cycle_count_status(&row.status)?;
         Ok(CycleCount {
             id: row.id,
             warehouse_id: row.warehouse_id,
@@ -1351,25 +1403,51 @@ impl PgWarehouseRepository {
         Ok(counts)
     }
 
+    /// Update a cycle count's status after verifying the transition is legal.
+    ///
+    /// The status read locks the header row (`FOR UPDATE`) inside the same
+    /// transaction as the write, and the `UPDATE` re-asserts the observed
+    /// status: without both, two concurrent `start_cycle_count` calls (or a
+    /// `cancel` racing a `complete`) each read `draft`, each passed
+    /// `can_transition_to` and each wrote a status. SQLite gets the same
+    /// guarantee from an IMMEDIATE write transaction.
     async fn transition_cycle_count_async(
         &self,
         id: Uuid,
         next: CycleCountStatus,
     ) -> Result<CycleCount> {
-        let current = self.get_cycle_count_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if !current.status.can_transition_to(next) {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current_status: String =
+            sqlx::query_scalar("SELECT status FROM cycle_counts WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let current = Self::parse_cycle_count_status(&current_status)?;
+        if !current.can_transition_to(next) {
             return Err(CommerceError::ValidationError(format!(
-                "cannot transition cycle count from {} to {next}",
-                current.status
+                "cannot transition cycle count from {current} to {next}"
             )));
         }
-        sqlx::query("UPDATE cycle_counts SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(next.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let changed = sqlx::query(
+            "UPDATE cycle_counts SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(next.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .bind(current_status)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "cycle count {id} is no longer in status {current}"
+            )));
+        }
+        tx.commit().await.map_err(map_db_error)?;
+
         self.get_cycle_count_async(id).await?.ok_or_else(|| {
             CommerceError::DatabaseError("Failed to retrieve updated cycle count".into())
         })
@@ -1393,18 +1471,30 @@ impl PgWarehouseRepository {
         for count in &counts {
             count.validate()?;
         }
-        let existing = self.get_cycle_count_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if existing.status != CycleCountStatus::InProgress {
+
+        // The status guard is read INSIDE the transaction, under a header row
+        // lock, and the header touch re-asserts `in_progress`: reading the
+        // status on a pooled connection and only then opening the transaction
+        // let a concurrent `complete_cycle_count` land in between, so counts
+        // were recorded onto an already-completed count whose variances had
+        // already been applied to stock.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current_status: String =
+            sqlx::query_scalar("SELECT status FROM cycle_counts WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        if Self::parse_cycle_count_status(&current_status)? != CycleCountStatus::InProgress {
             return Err(CommerceError::ValidationError(format!(
-                "counts can only be recorded on an in_progress cycle count (status: {})",
-                existing.status
+                "counts can only be recorded on an in_progress cycle count (status: {current_status})"
             )));
         }
+        let lines = Self::load_cycle_count_lines(tx.as_mut(), id).await?;
 
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         for count in &counts {
-            let line = existing
-                .lines
+            let line = lines
                 .iter()
                 .find(|l| l.sku == count.sku && l.lot_id == count.lot_id)
                 .ok_or_else(|| {
@@ -1427,12 +1517,21 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
         }
-        sqlx::query("UPDATE cycle_counts SET updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let changed =
+            sqlx::query("UPDATE cycle_counts SET updated_at = $1 WHERE id = $2 AND status = $3")
+                .bind(Utc::now())
+                .bind(id)
+                .bind(CycleCountStatus::InProgress.to_string())
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .rows_affected();
+        if changed == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "cycle count {id} is no longer in status {}",
+                CycleCountStatus::InProgress
+            )));
+        }
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_cycle_count_async(id).await?.ok_or_else(|| {
@@ -1441,16 +1540,39 @@ impl PgWarehouseRepository {
     }
 
     pub async fn complete_cycle_count_async(&self, id: Uuid) -> Result<CycleCount> {
-        let existing = self.get_cycle_count_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if !existing.status.can_transition_to(CycleCountStatus::Completed) {
+        let now = Utc::now();
+
+        // The status guard, the variance adjustments and the status flip all
+        // live in ONE transaction, with the header row locked `FOR UPDATE`
+        // before the guard and the status re-asserted on the final `UPDATE`.
+        // Reading the status outside the transaction let every racing caller
+        // pass `can_transition_to` and each apply the same variance adjustment,
+        // multiplying stock. SQLite already read the status inside its
+        // IMMEDIATE transaction; this brings Postgres to parity.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let current_status: String =
+            sqlx::query_scalar("SELECT status FROM cycle_counts WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let current = Self::parse_cycle_count_status(&current_status)?;
+        if !current.can_transition_to(CycleCountStatus::Completed) {
             return Err(CommerceError::ValidationError(format!(
-                "cannot complete cycle count in status {}",
-                existing.status
+                "cannot complete cycle count in status {current}"
             )));
         }
 
-        let now = Utc::now();
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let header = sqlx::query_as::<_, CycleCountRow>("SELECT * FROM cycle_counts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let mut existing = Self::row_to_cycle_count(header)?;
+        existing.lines = Self::load_cycle_count_lines(tx.as_mut(), id).await?;
 
         for line in &existing.lines {
             let counted = line.counted_quantity.ok_or_else(|| {
@@ -1546,15 +1668,23 @@ impl PgWarehouseRepository {
             .map_err(map_db_error)?;
         }
 
-        sqlx::query(
-            "UPDATE cycle_counts SET status = $1, updated_at = $2, completed_at = $2 WHERE id = $3",
+        let changed = sqlx::query(
+            "UPDATE cycle_counts SET status = $1, updated_at = $2, completed_at = $2
+             WHERE id = $3 AND status = $4",
         )
         .bind(CycleCountStatus::Completed.to_string())
         .bind(now)
         .bind(id)
+        .bind(current_status)
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "cycle count {id} is no longer in status {current}"
+            )));
+        }
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_cycle_count_async(id).await?.ok_or_else(|| {

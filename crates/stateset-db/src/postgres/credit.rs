@@ -279,27 +279,105 @@ impl PgCreditRepository {
         })
     }
 
-    async fn recalculate_available_credit_async(&self, customer_id: Uuid) -> Result<()> {
+    /// Recompute `available = limit - balance - holds` inside the caller's
+    /// transaction, so it commits with whatever moved those numbers.
+    ///
+    /// A separate statement on the pool would leave a crash window in which
+    /// `available_credit` disagreed with the columns it is derived from, and
+    /// `check_credit` approves orders against that column.
+    async fn recalculate_available_credit_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        customer_id: Uuid,
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE credit_accounts SET available_credit = credit_limit - current_balance - hold_amount
              WHERE customer_id = $1",
         )
         .bind(customer_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         Ok(())
     }
 
-    pub async fn create_credit_account_async(
-        &self,
-        input: CreateCreditAccount,
-    ) -> Result<CreditAccount> {
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+    /// Release this order's active reservation (if any) and decrement the
+    /// account hold by its amount, clamped at zero. Returns the hold that
+    /// remains, so callers can enforce the credit line against it.
+    async fn release_reservation_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        customer_id: Uuid,
+        order_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<Decimal> {
+        let reserved: Decimal = sqlx::query_scalar(
+            "UPDATE credit_reservations SET status = 'released', released_at = $1
+             WHERE customer_id = $2 AND order_id = $3 AND status = 'active'
+             RETURNING amount",
+        )
+        .bind(now)
+        .bind(customer_id)
+        .bind(order_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .unwrap_or(Decimal::ZERO);
 
+        let remaining_hold: Decimal = sqlx::query_scalar(
+            "UPDATE credit_accounts SET hold_amount = GREATEST(0, hold_amount - $1)
+             WHERE customer_id = $2
+             RETURNING hold_amount",
+        )
+        .bind(reserved)
+        .bind(customer_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+
+        Ok(remaining_hold)
+    }
+
+    /// Append a ledger row inside the caller's transaction.
+    ///
+    /// `running_balance` is passed in rather than re-derived: callers that have
+    /// just moved the balance in this transaction know the post-transaction
+    /// figure exactly, and re-reading it would double-count a payment.
+    async fn insert_transaction_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        input: &RecordCreditTransaction,
+        running_balance: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO credit_transactions (id, customer_id, transaction_type, amount,
+                running_balance, reference_type, reference_id, notes, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(id)
+        .bind(input.customer_id)
+        .bind(input.transaction_type.to_string())
+        .bind(input.amount)
+        .bind(running_balance)
+        .bind(input.reference_type.clone())
+        .bind(input.reference_id)
+        .bind(input.notes.clone())
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    /// Insert a credit account inside the caller's transaction.
+    async fn create_credit_account_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        input: &CreateCreditAccount,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
         sqlx::query(
             "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
                 hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
@@ -311,16 +389,110 @@ impl PgCreditRepository {
         .bind(input.credit_limit)
         .bind(Decimal::ZERO)
         .bind(Decimal::ZERO)
-        .bind(currency)
+        .bind(input.currency.unwrap_or(CurrencyCode::USD))
         .bind(CreditAccountStatus::Active.to_string())
-        .bind(input.payment_terms)
+        .bind(input.payment_terms.clone())
         .bind(input.risk_rating.map(|r| r.to_string()))
-        .bind(input.notes)
+        .bind(input.notes.clone())
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    /// Move an account's credit limit, append the `limit_change` ledger row and
+    /// recompute available credit — all inside the caller's transaction, so the
+    /// limit and its audit trail can never disagree.
+    async fn adjust_credit_limit_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        customer_id: Uuid,
+        new_limit: Decimal,
+        reason: &str,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let (old_limit, current_balance): (Decimal, Decimal) = sqlx::query_as(
+            "SELECT credit_limit, current_balance FROM credit_accounts WHERE customer_id = $1 FOR UPDATE",
+        )
+        .bind(customer_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+
+        sqlx::query(
+            "UPDATE credit_accounts SET credit_limit = $1, updated_at = $2 WHERE customer_id = $3",
+        )
+        .bind(new_limit)
+        .bind(now)
+        .bind(customer_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        Self::insert_transaction_tx(
+            tx,
+            Uuid::new_v4(),
+            &RecordCreditTransaction {
+                customer_id: customer_id.into(),
+                transaction_type: CreditTransactionType::LimitChange,
+                amount: new_limit - old_limit,
+                reference_type: None,
+                reference_id: None,
+                notes: Some(reason.to_string()),
+            },
+            current_balance,
+            now,
+        )
+        .await?;
+
+        Self::recalculate_available_credit_tx(tx, customer_id).await
+    }
+
+    /// Lock the account row and return its parsed status, or `NotFound`.
+    async fn locked_account_status_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        customer_id: Uuid,
+    ) -> Result<CreditAccountStatus> {
+        let status: Option<String> = sqlx::query_scalar(
+            "SELECT status FROM credit_accounts WHERE customer_id = $1 FOR UPDATE",
+        )
+        .bind(customer_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let status = status.ok_or(CommerceError::NotFound)?;
+        status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid credit_account.status '{status}': {e}"))
+        })
+    }
+
+    /// Is a credit application still open to a decision?
+    ///
+    /// `approved`, `denied` and `withdrawn` are terminal; `pending`,
+    /// `under_review` and `more_info_needed` are the working states. Mirrors
+    /// the SQLite backend.
+    const fn is_reviewable(status: CreditApplicationStatus) -> bool {
+        matches!(
+            status,
+            CreditApplicationStatus::Pending
+                | CreditApplicationStatus::UnderReview
+                | CreditApplicationStatus::MoreInfoNeeded
+        )
+    }
+
+    pub async fn create_credit_account_async(
+        &self,
+        input: CreateCreditAccount,
+    ) -> Result<CreditAccount> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::create_credit_account_tx(&mut tx, id, &input, now).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_credit_account_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -363,10 +535,27 @@ impl PgCreditRepository {
         id: Uuid,
         input: UpdateCreditAccount,
     ) -> Result<CreditAccount> {
+        // The status guard, the write and the available-credit recompute share
+        // one transaction: `credit_limit` feeds `available_credit`, so
+        // committing one without the other leaves `check_credit` approving
+        // orders against a stale line.
         let now = Utc::now();
         let account = self.get_credit_account_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let customer_id = account.customer_id.into_uuid();
 
-        sqlx::query(
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current = Self::locked_account_status_tx(&mut tx, customer_id).await?;
+        // `closed` is terminal: an account may not be reopened by a blind
+        // update, only by opening a new one.
+        if current == CreditAccountStatus::Closed
+            && input.status.is_some_and(|next| next != CreditAccountStatus::Closed)
+        {
+            return Err(CommerceError::Conflict(format!(
+                "Credit account {id} is '{current}' and cannot be reopened"
+            )));
+        }
+
+        let result = sqlx::query(
             "UPDATE credit_accounts SET
                 credit_limit = COALESCE($1, credit_limit),
                 status = COALESCE($2, status),
@@ -374,7 +563,7 @@ impl PgCreditRepository {
                 risk_rating = COALESCE($4, risk_rating),
                 notes = COALESCE($5, notes),
                 updated_at = $6
-             WHERE id = $7",
+             WHERE id = $7 AND status = $8",
         )
         .bind(input.credit_limit)
         .bind(input.status.map(|s| s.to_string()))
@@ -383,11 +572,19 @@ impl PgCreditRepository {
         .bind(input.notes)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "Credit account {id} changed concurrently; expected status '{current}'"
+            )));
+        }
 
-        self.recalculate_available_credit_async(account.customer_id.into_uuid()).await?;
+        Self::recalculate_available_credit_tx(&mut tx, customer_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+
         self.get_credit_account_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -437,35 +634,14 @@ impl PgCreditRepository {
         new_limit: Decimal,
         reason: &str,
     ) -> Result<CreditAccount> {
+        // The limit write, its `limit_change` ledger row and the available-credit
+        // recompute are ONE transaction: a limit that moved without an audit row
+        // (or vice versa) is unreconcilable.
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::adjust_credit_limit_tx(&mut tx, customer_id, new_limit, reason, now).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
-        let account = self
-            .get_credit_account_by_customer_async(customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
-        let old_limit = account.credit_limit;
-
-        sqlx::query(
-            "UPDATE credit_accounts SET credit_limit = $1, updated_at = $2 WHERE customer_id = $3",
-        )
-        .bind(new_limit)
-        .bind(now)
-        .bind(customer_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        self.record_transaction_async(RecordCreditTransaction {
-            customer_id: customer_id.into(),
-            transaction_type: CreditTransactionType::LimitChange,
-            amount: new_limit - old_limit,
-            reference_type: None,
-            reference_id: None,
-            notes: Some(reason.to_string()),
-        })
-        .await?;
-
-        self.recalculate_available_credit_async(customer_id).await?;
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -474,20 +650,39 @@ impl PgCreditRepository {
         customer_id: Uuid,
         reason: &str,
     ) -> Result<CreditAccount> {
+        // `closed` is terminal — suspending a closed account would resurrect a
+        // line nobody re-underwrote. The locked status read and the guarded
+        // write share one transaction, so a concurrent close cannot slip
+        // between them; a zero-row UPDATE means exactly that race.
         let now = Utc::now();
-        let note = format!("\nSuspended: {}", reason);
+        let note = format!("\nSuspended: {reason}");
 
-        sqlx::query(
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current = Self::locked_account_status_tx(&mut tx, customer_id).await?;
+        if current == CreditAccountStatus::Closed {
+            return Err(CommerceError::Conflict(format!(
+                "Credit account for customer {customer_id} is '{current}' and cannot be suspended"
+            )));
+        }
+
+        let result = sqlx::query(
             "UPDATE credit_accounts SET status = $1, notes = COALESCE(notes, '') || $2, updated_at = $3
-             WHERE customer_id = $4",
+             WHERE customer_id = $4 AND status = $5",
         )
         .bind(CreditAccountStatus::Suspended.to_string())
         .bind(note)
         .bind(now)
         .bind(customer_id)
-        .execute(&self.pool)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "Credit account for customer {customer_id} changed concurrently; expected status '{current}'"
+            )));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
@@ -496,17 +691,35 @@ impl PgCreditRepository {
         &self,
         customer_id: Uuid,
     ) -> Result<CreditAccount> {
+        // Mirror of `suspend_credit_account_async`: `closed` is terminal, so a
+        // closed account cannot be flipped back to active.
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE credit_accounts SET status = $1, updated_at = $2 WHERE customer_id = $3",
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current = Self::locked_account_status_tx(&mut tx, customer_id).await?;
+        if current == CreditAccountStatus::Closed {
+            return Err(CommerceError::Conflict(format!(
+                "Credit account for customer {customer_id} is '{current}' and cannot be reactivated"
+            )));
+        }
+
+        let result = sqlx::query(
+            "UPDATE credit_accounts SET status = $1, updated_at = $2
+             WHERE customer_id = $3 AND status = $4",
         )
         .bind(CreditAccountStatus::Active.to_string())
         .bind(now)
         .bind(customer_id)
-        .execute(&self.pool)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "Credit account for customer {customer_id} changed concurrently; expected status '{current}'"
+            )));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
@@ -622,9 +835,11 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
+        // Recompute inside the same transaction: a hold must never commit
+        // without the `available_credit` it invalidates.
+        Self::recalculate_available_credit_tx(&mut tx, customer_id).await?;
         tx.commit().await.map_err(map_db_error)?;
 
-        self.recalculate_available_credit_async(customer_id).await?;
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -633,40 +848,17 @@ impl PgCreditRepository {
         customer_id: Uuid,
         order_id: Uuid,
     ) -> Result<CreditAccount> {
+        // Read, release, hold decrement and available-credit recompute are ONE
+        // transaction. Run as four separate statements on the pool, a
+        // concurrent release could read the same reservation and decrement the
+        // hold twice, and a crash could release a reservation whose hold was
+        // never given back.
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::release_reservation_tx(&mut tx, customer_id, order_id, now).await?;
+        Self::recalculate_available_credit_tx(&mut tx, customer_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
-        let amount: Decimal = sqlx::query_scalar(
-            "SELECT amount FROM credit_reservations
-             WHERE customer_id = $1 AND order_id = $2 AND status = 'active'",
-        )
-        .bind(customer_id)
-        .bind(order_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?
-        .unwrap_or(Decimal::ZERO);
-
-        sqlx::query(
-            "UPDATE credit_reservations SET status = 'released', released_at = $1
-             WHERE customer_id = $2 AND order_id = $3 AND status = 'active'",
-        )
-        .bind(now)
-        .bind(customer_id)
-        .bind(order_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        sqlx::query(
-            "UPDATE credit_accounts SET hold_amount = GREATEST(0, hold_amount - $1) WHERE customer_id = $2",
-        )
-        .bind(amount)
-        .bind(customer_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        self.recalculate_available_credit_async(customer_id).await?;
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -682,14 +874,24 @@ impl PgCreditRepository {
             ));
         }
 
-        // The limit check and the balance write must be atomic and serialized:
-        // otherwise concurrent charges each read the same balance, both pass the
-        // limit check, and both commit — together exceeding the credit limit.
-        // Lock the account row FOR UPDATE for the duration of the transaction so
-        // concurrent charges serialize on it. A rejected charge (limit exceeded)
-        // returns before the transaction commits, so it changes nothing and the
-        // reservation hold is preserved; the release, ledger entry, and
-        // available-credit recompute run after commit.
+        // The whole charge is ONE transaction: limit check, balance write,
+        // reservation release and ledger row commit or roll back together.
+        //
+        // Splitting them (balance in one transaction, then the release and the
+        // ledger row on the pool) let a crash in between double-consume the
+        // customer's credit with no reconciliation path, and left the ledger
+        // disagreeing with the balance. Locking the account row FOR UPDATE also
+        // serializes concurrent charges, so two of them cannot both pass the
+        // limit check against the same stale balance.
+        //
+        // Limit rule: `new_balance + remaining_hold <= credit_limit`. Charging
+        // against *this* order's own reservation converts hold into balance, so
+        // the reservation is consumed first and only the holds still
+        // outstanding for OTHER orders bind the charge. Checking the balance
+        // alone (the previous rule) let a charge for one order spend credit
+        // already reserved for another, driving `available_credit` — defined as
+        // `limit - balance - holds` — negative.
+        let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let (credit_limit, current_balance): (Decimal, Decimal) = sqlx::query_as(
             "SELECT credit_limit, current_balance FROM credit_accounts WHERE customer_id = $1 FOR UPDATE",
@@ -699,36 +901,50 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
-        if current_balance + amount > credit_limit {
+        let new_balance = current_balance + amount;
+
+        // Consume this order's reservation before testing the line, so a charge
+        // against your own hold is not counted twice. A rejected charge rolls
+        // the release back with everything else, preserving the reservation.
+        let remaining_hold =
+            Self::release_reservation_tx(&mut tx, customer_id, order_id, now).await?;
+
+        if new_balance + remaining_hold > credit_limit {
             return Err(CommerceError::ValidationError(format!(
-                "Charge would exceed credit limit: new balance {}, limit {credit_limit}",
-                current_balance + amount
+                "Charge would exceed credit limit: new balance {new_balance}, \
+                 holds {remaining_hold}, limit {credit_limit}"
             )));
         }
 
         sqlx::query(
-            "UPDATE credit_accounts SET current_balance = current_balance + $1 WHERE customer_id = $2",
+            "UPDATE credit_accounts SET current_balance = $1, updated_at = $2 WHERE customer_id = $3",
         )
-        .bind(amount)
+        .bind(new_balance)
+        .bind(now)
         .bind(customer_id)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-        tx.commit().await.map_err(map_db_error)?;
 
-        self.release_credit_reservation_async(customer_id, order_id).await?;
-
-        self.record_transaction_async(RecordCreditTransaction {
-            customer_id: customer_id.into(),
-            transaction_type: CreditTransactionType::Charge,
-            amount,
-            reference_type: Some("order".to_string()),
-            reference_id: Some(order_id),
-            notes: None,
-        })
+        Self::insert_transaction_tx(
+            &mut tx,
+            Uuid::new_v4(),
+            &RecordCreditTransaction {
+                customer_id: customer_id.into(),
+                transaction_type: CreditTransactionType::Charge,
+                amount,
+                reference_type: Some("order".to_string()),
+                reference_id: Some(order_id),
+                notes: None,
+            },
+            new_balance,
+            now,
+        )
         .await?;
 
-        self.recalculate_available_credit_async(customer_id).await?;
+        Self::recalculate_available_credit_tx(&mut tx, customer_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -822,20 +1038,50 @@ impl PgCreditRepository {
     }
 
     pub async fn release_hold_async(&self, input: ReleaseCreditHold) -> Result<CreditHold> {
+        // Only an active hold may be released. Previously unguarded: releasing
+        // an already-released (or expired) hold silently succeeded and
+        // overwrote the original `released_by`/`released_at`/`release_notes`,
+        // destroying the audit trail of who actually cleared it.
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query(
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM credit_holds WHERE id = $1 FOR UPDATE")
+                .bind(input.hold_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let status = status.ok_or(CommerceError::NotFound)?;
+        let current: CreditHoldStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid credit_hold.status '{status}': {e}"))
+        })?;
+        if current != CreditHoldStatus::Active {
+            return Err(CommerceError::Conflict(format!(
+                "Credit hold {} is '{current}' and cannot be released",
+                input.hold_id
+            )));
+        }
+
+        let result = sqlx::query(
             "UPDATE credit_holds SET status = $1, released_by = $2, released_at = $3, release_notes = $4
-             WHERE id = $5",
+             WHERE id = $5 AND status = $6",
         )
         .bind(CreditHoldStatus::Released.to_string())
         .bind(input.released_by.clone())
         .bind(now)
         .bind(input.release_notes.clone())
         .bind(input.hold_id)
-        .execute(&self.pool)
+        .bind(CreditHoldStatus::Active.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "Credit hold {} was released concurrently",
+                input.hold_id
+            )));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_hold_async(input.hold_id).await?.ok_or(CommerceError::NotFound)
     }
@@ -954,17 +1200,42 @@ impl PgCreditRepository {
         &self,
         input: ReviewCreditApplication,
     ) -> Result<CreditApplication> {
+        // A decision is once-only: `approved`, `denied` and `withdrawn` are
+        // terminal. Previously unguarded, re-reviewing an approved application
+        // re-ran the account side effects, so a second "approval" at any limit
+        // silently rewrote the customer's credit line (and appended a second
+        // `limit_change` ledger row) with no application-state trail.
+        //
+        // The decision and the account it creates or re-limits share ONE
+        // transaction, so an approved application always has the matching
+        // account.
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let app = self
-            .get_application_async(input.application_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let row: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT customer_id, status FROM credit_applications WHERE id = $1 FOR UPDATE",
+        )
+        .bind(input.application_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let (customer_id, status) = row.ok_or(CommerceError::NotFound)?;
+        let current: CreditApplicationStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid credit_application.status '{status}': {e}"
+            ))
+        })?;
+        if !Self::is_reviewable(current) {
+            return Err(CommerceError::Conflict(format!(
+                "Credit application {} is '{current}' and has already been decided",
+                input.application_id
+            )));
+        }
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE credit_applications SET approved_limit = $1, status = $2, reviewed_by = $3,
                 reviewed_at = $4, decision_notes = $5, updated_at = $6
-             WHERE id = $7",
+             WHERE id = $7 AND status = $8",
         )
         .bind(input.approved_limit)
         .bind(input.status.to_string())
@@ -973,45 +1244,100 @@ impl PgCreditRepository {
         .bind(input.decision_notes.clone())
         .bind(now)
         .bind(input.application_id)
-        .execute(&self.pool)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "Credit application {} was decided concurrently",
+                input.application_id
+            )));
+        }
 
+        // If approved, create or re-limit the credit account in the same
+        // transaction as the decision.
         if input.status == CreditApplicationStatus::Approved {
             if let Some(limit) = input.approved_limit {
-                let existing =
-                    self.get_credit_account_by_customer_async(app.customer_id.into_uuid()).await?;
+                let existing: Option<Uuid> =
+                    sqlx::query_scalar("SELECT id FROM credit_accounts WHERE customer_id = $1")
+                        .bind(customer_id)
+                        .fetch_optional(tx.as_mut())
+                        .await
+                        .map_err(map_db_error)?;
+
                 if existing.is_some() {
-                    self.adjust_credit_limit_async(
-                        app.customer_id.into_uuid(),
+                    Self::adjust_credit_limit_tx(
+                        &mut tx,
+                        customer_id,
                         limit,
                         "Credit application approved",
+                        now,
                     )
                     .await?;
                 } else {
-                    self.create_credit_account_async(CreateCreditAccount {
-                        customer_id: app.customer_id,
-                        credit_limit: limit,
-                        ..Default::default()
-                    })
+                    Self::create_credit_account_tx(
+                        &mut tx,
+                        Uuid::new_v4(),
+                        &CreateCreditAccount {
+                            customer_id: customer_id.into(),
+                            credit_limit: limit,
+                            ..Default::default()
+                        },
+                        now,
+                    )
                     .await?;
                 }
             }
         }
 
+        tx.commit().await.map_err(map_db_error)?;
+
         self.get_application_async(input.application_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn withdraw_application_async(&self, id: Uuid) -> Result<CreditApplication> {
+        // Same terminal-state rule as `review_application_async`: an application
+        // that has already been approved, denied or withdrawn cannot be
+        // withdrawn (which previously erased the recorded decision's status).
         let now = Utc::now();
-        sqlx::query(
-            "UPDATE credit_applications SET status = 'withdrawn', updated_at = $1 WHERE id = $2",
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM credit_applications WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let status = status.ok_or(CommerceError::NotFound)?;
+        let current: CreditApplicationStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid credit_application.status '{status}': {e}"
+            ))
+        })?;
+        if !Self::is_reviewable(current) {
+            return Err(CommerceError::Conflict(format!(
+                "Credit application {id} is '{current}' and cannot be withdrawn"
+            )));
+        }
+
+        let result = sqlx::query(
+            "UPDATE credit_applications SET status = $1, updated_at = $2
+             WHERE id = $3 AND status = $4",
         )
+        .bind(CreditApplicationStatus::Withdrawn.to_string())
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "Credit application {id} was decided concurrently"
+            )));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_application_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1121,27 +1447,47 @@ impl PgCreditRepository {
             ));
         }
 
-        sqlx::query(
-            "UPDATE credit_accounts SET current_balance = GREATEST(0, current_balance - $1)
-             WHERE customer_id = $2",
+        // Balance write, ledger row and available-credit recompute are ONE
+        // transaction (see `charge_credit_async`): a crash can never bank a
+        // payment the ledger does not show.
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let new_balance: Decimal = sqlx::query_scalar(
+            "UPDATE credit_accounts
+             SET current_balance = GREATEST(0, current_balance - $1), updated_at = $2
+             WHERE customer_id = $3
+             RETURNING current_balance",
         )
         .bind(amount)
+        .bind(now)
         .bind(customer_id)
-        .execute(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
 
-        self.record_transaction_async(RecordCreditTransaction {
-            customer_id: customer_id.into(),
-            transaction_type: CreditTransactionType::Payment,
-            amount,
-            reference_type: Some("payment".to_string()),
-            reference_id,
-            notes: None,
-        })
+        // The ledger's running balance is the balance this transaction just
+        // wrote. Re-deriving it (as the standalone `record_transaction_async`
+        // must) would subtract the payment a second time.
+        Self::insert_transaction_tx(
+            &mut tx,
+            Uuid::new_v4(),
+            &RecordCreditTransaction {
+                customer_id: customer_id.into(),
+                transaction_type: CreditTransactionType::Payment,
+                amount,
+                reference_type: Some("payment".to_string()),
+                reference_id,
+                notes: None,
+            },
+            new_balance,
+            now,
+        )
         .await?;
 
-        self.recalculate_available_credit_async(customer_id).await?;
+        Self::recalculate_available_credit_tx(&mut tx, customer_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 

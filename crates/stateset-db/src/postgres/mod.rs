@@ -442,6 +442,12 @@ impl PostgresDatabase {
             "082_gl_source_document_key",
             include_str!("migrations/082_gl_source_document_key.sql"),
         ));
+        // Idempotency ledger so a retried direct invoice payment (a caller
+        // supplying `RecordInvoicePayment.payment_id`) applies exactly once.
+        migrations.push((
+            "083_invoice_payment_idempotency",
+            include_str!("migrations/083_invoice_payment_idempotency.sql"),
+        ));
 
         migrations
     }

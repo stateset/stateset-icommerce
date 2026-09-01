@@ -8,7 +8,7 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -121,6 +121,41 @@ impl SqliteFulfillmentRepository {
         })
     }
 
+    /// Smuggle a domain error through the `rusqlite` closure boundary so
+    /// [`map_db_error`] unwraps it again (and `with_retry` never mistakes it for
+    /// a lock error and retries it).
+    fn smuggle(e: CommerceError) -> rusqlite::Error {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+    }
+
+    /// Error for a status-guarded UPDATE that matched no row: either the row is
+    /// gone (`NotFound`) or its current status forbids the transition
+    /// (`Conflict`, naming the status that blocked it).
+    ///
+    /// `table` and `entity` are always in-crate string literals, never caller
+    /// input, so interpolating `table` into the SQL is safe.
+    fn transition_conflict(
+        tx: &rusqlite::Transaction<'_>,
+        table: &str,
+        entity: &str,
+        id: &str,
+        action: &str,
+    ) -> rusqlite::Error {
+        let current: Option<String> = tx
+            .query_row(&format!("SELECT status FROM {table} WHERE id = ?1"), params![id], |row| {
+                row.get(0)
+            })
+            .ok();
+        current.map_or_else(
+            || Self::smuggle(CommerceError::NotFound),
+            |status| {
+                Self::smuggle(CommerceError::Conflict(format!(
+                    "cannot {action} {entity} {id}: status is {status}"
+                )))
+            },
+        )
+    }
+
     /// Read a single pick task by id from within a transaction (returns
     /// `NotFound` smuggled through `rusqlite::Error` if it does not exist).
     fn read_pick_by_id_tx(
@@ -131,7 +166,126 @@ impl SqliteFulfillmentRepository {
         let mut rows = stmt.query(params![id_str])?;
         match rows.next()? {
             Some(row) => Self::row_to_pick(row),
-            None => Err(rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))),
+            None => Err(Self::smuggle(CommerceError::NotFound)),
+        }
+    }
+
+    /// Read a single wave by id from within a transaction.
+    fn read_wave_by_id_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id_str: &str,
+    ) -> std::result::Result<Wave, rusqlite::Error> {
+        let mut stmt = tx.prepare("SELECT * FROM waves WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id_str])?;
+        match rows.next()? {
+            Some(row) => Self::row_to_wave(row),
+            None => Err(Self::smuggle(CommerceError::NotFound)),
+        }
+    }
+
+    /// Read a single pack task by id from within a transaction.
+    fn read_pack_by_id_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id_str: &str,
+    ) -> std::result::Result<PackTask, rusqlite::Error> {
+        let mut stmt = tx.prepare("SELECT * FROM pack_tasks WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id_str])?;
+        match rows.next()? {
+            Some(row) => Self::row_to_pack(row),
+            None => Err(Self::smuggle(CommerceError::NotFound)),
+        }
+    }
+
+    /// Read a single ship task by id from within a transaction.
+    fn read_ship_by_id_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id_str: &str,
+    ) -> std::result::Result<ShipTask, rusqlite::Error> {
+        let mut stmt = tx.prepare("SELECT * FROM ship_tasks WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id_str])?;
+        match rows.next()? {
+            Some(row) => Self::row_to_ship(row),
+            None => Err(Self::smuggle(CommerceError::NotFound)),
+        }
+    }
+
+    /// Read a single carton by id from within a transaction.
+    fn read_carton_by_id_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id_str: &str,
+    ) -> std::result::Result<Carton, rusqlite::Error> {
+        let mut stmt = tx.prepare("SELECT * FROM cartons WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id_str])?;
+        match rows.next()? {
+            Some(row) => Self::row_to_carton(row),
+            None => Err(Self::smuggle(CommerceError::NotFound)),
+        }
+    }
+
+    /// Insert one pick task inside a transaction and read it back.
+    ///
+    /// Shared by `create_pick` and `create_picks_for_order` so a multi-line
+    /// order's picks are created by the same statement in one transaction.
+    fn insert_pick_tx(
+        tx: &rusqlite::Transaction<'_>,
+        input: &CreatePickTask,
+    ) -> std::result::Result<PickTask, rusqlite::Error> {
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4();
+        let id_str = id.to_string();
+
+        tx.execute(
+            "INSERT INTO pick_tasks (id, wave_id, order_id, order_item_id, warehouse_id, status, sku, product_name,
+             source_location_id, quantity_requested, lot_id, serial_number, priority, notes, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
+            params![
+                id_str,
+                input.wave_id.map(|id| id.to_string()),
+                input.order_id.to_string(),
+                input.order_item_id.to_string(),
+                input.warehouse_id,
+                PickStatus::Pending.to_string(),
+                input.sku,
+                input.product_name,
+                input.source_location_id,
+                input.quantity_requested.to_string(),
+                input.lot_id.map(|id| id.to_string()),
+                input.serial_number,
+                input.priority.unwrap_or(0),
+                input.notes,
+                now,
+            ],
+        )?;
+
+        Self::read_pick_by_id_tx(tx, &id_str)
+    }
+
+    /// Guard that a pack task is still open for carton changes.
+    ///
+    /// Cartons may only be added while the pack task is in one of
+    /// `Pending`/`ReadyToPack`/`Assigned`/`InProgress`; adding one to a
+    /// `Completed` or `Cancelled` pack task inflates `pack_tasks.carton_count`
+    /// for a sealed shipment.
+    fn ensure_pack_open_tx(
+        tx: &rusqlite::Transaction<'_>,
+        pack_task_id: &str,
+        action: &str,
+    ) -> std::result::Result<(), rusqlite::Error> {
+        let status: Option<String> = tx
+            .query_row(
+                "SELECT status FROM pack_tasks WHERE id = ?1",
+                params![pack_task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match status {
+            None => Err(Self::smuggle(CommerceError::NotFound)),
+            Some(status) if matches!(status.as_str(), "completed" | "cancelled") => {
+                Err(Self::smuggle(CommerceError::Conflict(format!(
+                    "cannot {action} pack task {pack_task_id}: status is {status}"
+                ))))
+            }
+            Some(_) => Ok(()),
         }
     }
 
@@ -261,40 +415,42 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     // ========================================================================
 
     fn create_wave(&self, input: CreateWave) -> Result<Wave> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
         let id = FulfillmentId::new();
+        let id_str = id.to_string();
         let wave_number = generate_wave_number();
         let order_count = input.order_ids.len() as i32;
 
-        conn.execute(
-            "INSERT INTO waves (id, wave_number, warehouse_id, status, order_count, priority, notes, created_by, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
-            params![
-                id.to_string(),
-                wave_number,
-                input.warehouse_id,
-                WaveStatus::Draft.to_string(),
-                order_count,
-                input.priority.unwrap_or(0),
-                input.notes,
-                input.created_by,
-                now,
-            ],
-        ).map_err(map_db_error)?;
+        // The wave header and its `wave_orders` rows are one document: writing
+        // them on a bare connection let a mid-loop failure leave a wave whose
+        // `order_count` does not match the orders actually attached to it.
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
+                "INSERT INTO waves (id, wave_number, warehouse_id, status, order_count, priority, notes, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+                params![
+                    id_str,
+                    wave_number,
+                    input.warehouse_id,
+                    WaveStatus::Draft.to_string(),
+                    order_count,
+                    input.priority.unwrap_or(0),
+                    input.notes,
+                    input.created_by,
+                    now,
+                ],
+            )?;
 
-        // Add order associations
-        for order_id in &input.order_ids {
-            conn.execute(
-                "INSERT INTO wave_orders (wave_id, order_id) VALUES (?1, ?2)",
-                params![id.to_string(), order_id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
+            // Add order associations
+            for order_id in &input.order_ids {
+                tx.execute(
+                    "INSERT INTO wave_orders (wave_id, order_id) VALUES (?1, ?2)",
+                    params![id_str, order_id.to_string()],
+                )?;
+            }
 
-        drop(conn);
-        self.get_wave(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create wave".into()))
+            Self::read_wave_by_id_tx(tx, &id_str)
+        })
     }
 
     fn get_wave(&self, id: FulfillmentId) -> Result<Option<Wave>> {
@@ -337,6 +493,16 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params_vec.push(Box::new(status.to_string()));
         }
 
+        if let Some(from_date) = filter.from_date {
+            sql.push_str(" AND created_at >= ?");
+            params_vec.push(Box::new(from_date.to_rfc3339()));
+        }
+
+        if let Some(to_date) = filter.to_date {
+            sql.push_str(" AND created_at <= ?");
+            params_vec.push(Box::new(to_date.to_rfc3339()));
+        }
+
         sql.push_str(" ORDER BY priority DESC, created_at DESC");
 
         if let Some(limit) = filter.limit {
@@ -355,48 +521,70 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(waves)
     }
 
+    /// Release a wave for picking.
+    ///
+    /// Legal only from [`WaveStatus::Draft`]; the guard used to be a silent
+    /// `AND status = 'draft'` that reported success (returning the untouched
+    /// wave) when it matched nothing.
     fn release_wave(&self, id: FulfillmentId) -> Result<Wave> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE waves SET status = ?1, started_at = ?2 WHERE id = ?3 AND status = 'draft'",
-            params![WaveStatus::Released.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_wave(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to release wave".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE waves SET status = ?1, started_at = ?2
+                 WHERE id = ?3 AND status = 'draft'",
+                params![WaveStatus::Released.to_string(), now, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(tx, "waves", "wave", &id_str, "release"));
+            }
+            Self::read_wave_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Complete a wave.
+    ///
+    /// Legal only from [`WaveStatus::Released`] or [`WaveStatus::InProgress`]:
+    /// a `Draft` wave was never on the floor, and a `Cancelled` or already
+    /// `Completed` wave is terminal. Completing a cancelled wave used to
+    /// succeed, resurrecting it with counters that describe nothing.
     fn complete_wave(&self, id: FulfillmentId) -> Result<Wave> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE waves SET status = ?1, completed_at = ?2 WHERE id = ?3",
-            params![WaveStatus::Completed.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_wave(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete wave".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE waves SET status = ?1, completed_at = ?2
+                 WHERE id = ?3 AND status IN ('released', 'in_progress')",
+                params![WaveStatus::Completed.to_string(), now, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(tx, "waves", "wave", &id_str, "complete"));
+            }
+            Self::read_wave_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Cancel a wave.
+    ///
+    /// Legal from [`WaveStatus::Draft`], [`WaveStatus::Released`] or
+    /// [`WaveStatus::InProgress`]; a `Completed` wave's picks are already
+    /// folded into its counters and a `Cancelled` one is terminal.
     fn cancel_wave(&self, id: FulfillmentId) -> Result<Wave> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE waves SET status = ?1 WHERE id = ?2",
-            params![WaveStatus::Cancelled.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_wave(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel wave".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE waves SET status = ?1
+                 WHERE id = ?2 AND status IN ('draft', 'released', 'in_progress')",
+                params![WaveStatus::Cancelled.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(tx, "waves", "wave", &id_str, "cancel"));
+            }
+            Self::read_wave_by_id_tx(tx, &id_str)
+        })
     }
 
     fn get_wave_orders(&self, wave_id: FulfillmentId) -> Result<Vec<OrderId>> {
@@ -415,14 +603,34 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(orders)
     }
 
+    /// Count waves matching `filter`.
+    ///
+    /// Applies exactly the filters `list_waves` applies (and that the Postgres
+    /// backend counts on): a count that ignored `warehouse_id` reported another
+    /// warehouse's waves as the page total.
     fn count_waves(&self, filter: WaveFilter) -> Result<u64> {
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM waves WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+        if let Some(warehouse_id) = filter.warehouse_id {
+            sql.push_str(" AND warehouse_id = ?");
+            params_vec.push(Box::new(warehouse_id));
+        }
+
         if let Some(status) = filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
+        }
+
+        if let Some(from_date) = filter.from_date {
+            sql.push_str(" AND created_at >= ?");
+            params_vec.push(Box::new(from_date.to_rfc3339()));
+        }
+
+        if let Some(to_date) = filter.to_date {
+            sql.push_str(" AND created_at <= ?");
+            params_vec.push(Box::new(to_date.to_rfc3339()));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -437,36 +645,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     // ========================================================================
 
     fn create_pick(&self, input: CreatePickTask) -> Result<PickTask> {
-        let conn = self.conn()?;
-        let now = Utc::now().to_rfc3339();
-        let id = Uuid::new_v4();
-
-        conn.execute(
-            "INSERT INTO pick_tasks (id, wave_id, order_id, order_item_id, warehouse_id, status, sku, product_name,
-             source_location_id, quantity_requested, lot_id, serial_number, priority, notes, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
-            params![
-                id.to_string(),
-                input.wave_id.map(|id| id.to_string()),
-                input.order_id.to_string(),
-                input.order_item_id.to_string(),
-                input.warehouse_id,
-                PickStatus::Pending.to_string(),
-                input.sku,
-                input.product_name,
-                input.source_location_id,
-                input.quantity_requested.to_string(),
-                input.lot_id.map(|id| id.to_string()),
-                input.serial_number,
-                input.priority.unwrap_or(0),
-                input.notes,
-                now,
-            ],
-        ).map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_pick(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create pick".into()))
+        with_immediate_transaction(&self.pool, |tx| Self::insert_pick_tx(tx, &input))
     }
 
     fn get_pick(&self, id: Uuid) -> Result<Option<PickTask>> {
@@ -530,33 +709,61 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(picks)
     }
 
+    /// Assign (or re-assign) a pick task to a worker.
+    ///
+    /// Legal from [`PickStatus::Pending`] or [`PickStatus::Assigned`]. It is
+    /// refused once the pick has started or finished: the UPDATE also writes
+    /// `status = 'assigned'`, so assigning a started pick would rewind it and
+    /// assigning a finished one would resurrect it (and a later completion
+    /// would double-count it into the wave).
     fn assign_pick(&self, id: Uuid, assigned_to: &str) -> Result<PickTask> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE pick_tasks SET assigned_to = ?1, status = ?2 WHERE id = ?3",
-            params![assigned_to, PickStatus::Assigned.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_pick(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to assign pick".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE pick_tasks SET assigned_to = ?1, status = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'assigned')",
+                params![assigned_to, PickStatus::Assigned.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pick_tasks",
+                    "pick task",
+                    &id_str,
+                    "assign",
+                ));
+            }
+            Self::read_pick_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Start a pick task.
+    ///
+    /// Legal from [`PickStatus::Pending`] or [`PickStatus::Assigned`]. Starting
+    /// an already-started pick would reset `started_at` (destroying the pick's
+    /// measured duration); starting a finished or cancelled one is refused.
     fn start_pick(&self, id: Uuid) -> Result<PickTask> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE pick_tasks SET status = ?1, started_at = ?2 WHERE id = ?3",
-            params![PickStatus::InProgress.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_pick(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to start pick".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE pick_tasks SET status = ?1, started_at = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'assigned')",
+                params![PickStatus::InProgress.to_string(), now, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pick_tasks",
+                    "pick task",
+                    &id_str,
+                    "start",
+                ));
+            }
+            Self::read_pick_by_id_tx(tx, &id_str)
+        })
     }
 
     fn complete_pick(&self, input: CompletePick) -> Result<PickTask> {
@@ -633,32 +840,75 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         })
     }
 
+    /// Report a shortage against a pick task, finalizing it as
+    /// [`PickStatus::Short`].
+    ///
+    /// Legal from `Pending`/`Assigned`/`InProgress` only — the terminal states
+    /// (`Completed`/`Short`/`Cancelled`) are refused, so a completed pick can no
+    /// longer be silently rewritten as short.
+    ///
+    /// `Short` is a finalized outcome exactly like `Completed` (both end a pick
+    /// for `is_order_ready_to_pack`), so — like `complete_pick` — the wave's
+    /// `completed_pick_count` is incremented in the same transaction, and only
+    /// when the guarded UPDATE actually transitioned the row.
     fn report_short(&self, id: Uuid, short_qty: Decimal, reason: &str) -> Result<PickTask> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
+        let now = Utc::now().to_rfc3339();
 
-        conn.execute(
-            "UPDATE pick_tasks SET status = ?1, quantity_short = ?2, notes = ?3 WHERE id = ?4",
-            params![PickStatus::Short.to_string(), short_qty.to_string(), reason, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE pick_tasks SET status = ?1, quantity_short = ?2, notes = ?3,
+                 completed_at = ?4
+                 WHERE id = ?5 AND status IN ('pending', 'assigned', 'in_progress')",
+                params![PickStatus::Short.to_string(), short_qty.to_string(), reason, now, id_str,],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pick_tasks",
+                    "pick task",
+                    &id_str,
+                    "report a shortage on",
+                ));
+            }
 
-        drop(conn);
-        self.get_pick(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to report short".into()))
+            let pick = Self::read_pick_by_id_tx(tx, &id_str)?;
+            if let Some(wave_id) = pick.wave_id {
+                tx.execute(
+                    "UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = ?1",
+                    params![wave_id.to_string()],
+                )?;
+            }
+            Ok(pick)
+        })
     }
 
+    /// Cancel a pick task.
+    ///
+    /// Legal from `Pending`/`Assigned`/`InProgress` only. Cancelling a finished
+    /// pick (`Completed`/`Short`) used to succeed while leaving the wave's
+    /// `completed_pick_count` counting a pick that no longer claims to have
+    /// happened, so the wave's counters stopped describing reality.
     fn cancel_pick(&self, id: Uuid) -> Result<PickTask> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE pick_tasks SET status = ?1 WHERE id = ?2",
-            params![PickStatus::Cancelled.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_pick(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel pick".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE pick_tasks SET status = ?1
+                 WHERE id = ?2 AND status IN ('pending', 'assigned', 'in_progress')",
+                params![PickStatus::Cancelled.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pick_tasks",
+                    "pick task",
+                    &id_str,
+                    "cancel",
+                ));
+            }
+            Self::read_pick_by_id_tx(tx, &id_str)
+        })
     }
 
     fn get_picks_for_order(&self, order_id: OrderId) -> Result<Vec<PickTask>> {
@@ -669,14 +919,35 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         self.list_picks(PickTaskFilter { wave_id: Some(wave_id), ..Default::default() })
     }
 
+    /// Count pick tasks matching `filter` (same filters as `list_picks`).
     fn count_picks(&self, filter: PickTaskFilter) -> Result<u64> {
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM pick_tasks WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+        if let Some(warehouse_id) = filter.warehouse_id {
+            sql.push_str(" AND warehouse_id = ?");
+            params_vec.push(Box::new(warehouse_id));
+        }
+
+        if let Some(wave_id) = filter.wave_id {
+            sql.push_str(" AND wave_id = ?");
+            params_vec.push(Box::new(wave_id.to_string()));
+        }
+
+        if let Some(order_id) = filter.order_id {
+            sql.push_str(" AND order_id = ?");
+            params_vec.push(Box::new(order_id.to_string()));
+        }
+
         if let Some(status) = filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
+        }
+
+        if let Some(assigned_to) = filter.assigned_to {
+            sql.push_str(" AND assigned_to = ?");
+            params_vec.push(Box::new(assigned_to));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -741,6 +1012,11 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params_vec.push(Box::new(status.to_string()));
         }
 
+        if let Some(assigned_to) = filter.assigned_to {
+            sql.push_str(" AND assigned_to = ?");
+            params_vec.push(Box::new(assigned_to));
+        }
+
         sql.push_str(" ORDER BY created_at");
 
         if let Some(limit) = filter.limit {
@@ -759,116 +1035,178 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(packs)
     }
 
+    /// Assign (or re-assign) a pack task to a packer.
+    ///
+    /// Legal from `Pending`/`ReadyToPack`/`Assigned`. Also writes
+    /// `status = 'assigned'`, which the Postgres backend already did — SQLite
+    /// silently left the status untouched, so the two backends disagreed about
+    /// what an assigned pack task looks like.
     fn assign_pack(&self, id: Uuid, assigned_to: &str) -> Result<PackTask> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE pack_tasks SET assigned_to = ?1 WHERE id = ?2",
-            params![assigned_to, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_pack(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to assign pack".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE pack_tasks SET assigned_to = ?1, status = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'ready_to_pack', 'assigned')",
+                params![assigned_to, PackStatus::Assigned.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pack_tasks",
+                    "pack task",
+                    &id_str,
+                    "assign",
+                ));
+            }
+            Self::read_pack_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Start a pack task.
+    ///
+    /// Legal from `Pending`/`ReadyToPack`/`Assigned`; re-starting an in-progress
+    /// pack would reset `started_at`, and a completed or cancelled pack task is
+    /// terminal.
     fn start_pack(&self, id: Uuid) -> Result<PackTask> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE pack_tasks SET status = ?1, started_at = ?2 WHERE id = ?3",
-            params![PackStatus::InProgress.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_pack(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to start pack".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE pack_tasks SET status = ?1, started_at = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'ready_to_pack', 'assigned')",
+                params![PackStatus::InProgress.to_string(), now, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pack_tasks",
+                    "pack task",
+                    &id_str,
+                    "start",
+                ));
+            }
+            Self::read_pack_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Complete a pack task.
+    ///
+    /// Legal from any open status (`Pending`/`ReadyToPack`/`Assigned`/
+    /// `InProgress`) — packing need not be explicitly started — but refused for
+    /// the terminal `Completed`/`Cancelled`: re-completing rewrote
+    /// `completed_at`, and completing a cancelled pack task resurrected it and
+    /// made `is_order_ready_to_ship` true for an order nobody packed.
     fn complete_pack(&self, id: Uuid) -> Result<PackTask> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE pack_tasks SET status = ?1, completed_at = ?2 WHERE id = ?3",
-            params![PackStatus::Completed.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_pack(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete pack".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE pack_tasks SET status = ?1, completed_at = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'ready_to_pack', 'assigned', 'in_progress')",
+                params![PackStatus::Completed.to_string(), now, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pack_tasks",
+                    "pack task",
+                    &id_str,
+                    "complete",
+                ));
+            }
+            Self::read_pack_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Add a carton to a pack task.
+    ///
+    /// The carton INSERT and the `pack_tasks.carton_count` increment are one
+    /// transaction: on a bare connection a failure between them left a carton
+    /// the pack task's count did not know about. The pack task must still be
+    /// open — cartons cannot be added to a completed or cancelled one.
     fn add_carton(&self, input: AddCarton) -> Result<Carton> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
+        let id_str = id.to_string();
+        let pack_task_id = input.pack_task_id.to_string();
         let carton_number = generate_carton_number();
 
-        conn.execute(
-            "INSERT INTO cartons (id, pack_task_id, carton_number, package_type, weight_kg, length_cm, width_cm, height_cm, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                id.to_string(),
-                input.pack_task_id.to_string(),
-                carton_number,
-                input.package_type.to_string(),
-                input.weight_kg.map(|d| d.to_string()),
-                input.length_cm.map(|d| d.to_string()),
-                input.width_cm.map(|d| d.to_string()),
-                input.height_cm.map(|d| d.to_string()),
-                now,
-            ],
-        ).map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::ensure_pack_open_tx(tx, &pack_task_id, "add a carton to")?;
 
-        // Update carton count
-        conn.execute(
-            "UPDATE pack_tasks SET carton_count = carton_count + 1 WHERE id = ?1",
-            params![input.pack_task_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            tx.execute(
+                "INSERT INTO cartons (id, pack_task_id, carton_number, package_type, weight_kg, length_cm, width_cm, height_cm, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    id_str,
+                    pack_task_id,
+                    carton_number,
+                    input.package_type.to_string(),
+                    input.weight_kg.map(|d| d.to_string()),
+                    input.length_cm.map(|d| d.to_string()),
+                    input.width_cm.map(|d| d.to_string()),
+                    input.height_cm.map(|d| d.to_string()),
+                    now,
+                ],
+            )?;
 
-        let mut stmt = conn.prepare("SELECT * FROM cartons WHERE id = ?1").map_err(map_db_error)?;
-        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+            // Update carton count
+            tx.execute(
+                "UPDATE pack_tasks SET carton_count = carton_count + 1 WHERE id = ?1",
+                params![pack_task_id],
+            )?;
 
-        if let Some(row) = rows.next().map_err(map_db_error)? {
-            Ok(Self::row_to_carton(row).map_err(map_db_error)?)
-        } else {
-            Err(CommerceError::DatabaseError("Failed to create carton".into()))
-        }
+            Self::read_carton_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Add an item to a carton.
+    ///
+    /// Refused once the owning pack task is completed or cancelled — the
+    /// carton's contents are then a sealed record of what shipped.
     fn add_carton_item(&self, input: AddCartonItem) -> Result<CartonItem> {
-        let conn = self.conn()?;
         let id = Uuid::new_v4();
+        let id_str = id.to_string();
+        let carton_id = input.carton_id.to_string();
 
-        conn.execute(
-            "INSERT INTO carton_items (id, carton_id, sku, quantity, lot_id, serial_number)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                id.to_string(),
-                input.carton_id.to_string(),
-                input.sku,
-                input.quantity.to_string(),
-                input.lot_id.map(|id| id.to_string()),
-                input.serial_number,
-            ],
-        )
-        .map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let pack_task_id: String = tx
+                .query_row(
+                    "SELECT pack_task_id FROM cartons WHERE id = ?1",
+                    params![carton_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
+                    other => other,
+                })?;
+            Self::ensure_pack_open_tx(tx, &pack_task_id, "add carton items to")?;
 
-        let mut stmt =
-            conn.prepare("SELECT * FROM carton_items WHERE id = ?1").map_err(map_db_error)?;
-        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+            tx.execute(
+                "INSERT INTO carton_items (id, carton_id, sku, quantity, lot_id, serial_number)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id_str,
+                    carton_id,
+                    input.sku,
+                    input.quantity.to_string(),
+                    input.lot_id.map(|id| id.to_string()),
+                    input.serial_number,
+                ],
+            )?;
 
-        if let Some(row) = rows.next().map_err(map_db_error)? {
-            Ok(Self::row_to_carton_item(row).map_err(map_db_error)?)
-        } else {
-            Err(CommerceError::DatabaseError("Failed to create carton item".into()))
-        }
+            let mut stmt = tx.prepare("SELECT * FROM carton_items WHERE id = ?1")?;
+            let mut rows = stmt.query(params![id_str])?;
+            match rows.next()? {
+                Some(row) => Self::row_to_carton_item(row),
+                None => Err(Self::smuggle(CommerceError::DatabaseError(
+                    "Failed to create carton item".into(),
+                ))),
+            }
+        })
     }
 
     fn get_cartons(&self, pack_task_id: Uuid) -> Result<Vec<Carton>> {
@@ -899,46 +1237,64 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     }
 
     fn mark_label_printed(&self, carton_id: Uuid) -> Result<Carton> {
-        let conn = self.conn()?;
+        let id_str = carton_id.to_string();
 
-        conn.execute(
-            "UPDATE cartons SET label_printed = 1 WHERE id = ?1",
-            params![carton_id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        let mut stmt = conn.prepare("SELECT * FROM cartons WHERE id = ?1").map_err(map_db_error)?;
-        let mut rows = stmt.query(params![carton_id.to_string()]).map_err(map_db_error)?;
-
-        if let Some(row) = rows.next().map_err(map_db_error)? {
-            Ok(Self::row_to_carton(row).map_err(map_db_error)?)
-        } else {
-            Err(CommerceError::NotFound)
-        }
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed =
+                tx.execute("UPDATE cartons SET label_printed = 1 WHERE id = ?1", params![id_str])?;
+            if changed == 0 {
+                return Err(Self::smuggle(CommerceError::NotFound));
+            }
+            Self::read_carton_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Cancel a pack task.
+    ///
+    /// Legal from any open status; refused for `Completed` (its cartons already
+    /// exist and its order counts as ready to ship) and for an already
+    /// `Cancelled` task.
     fn cancel_pack(&self, id: Uuid) -> Result<PackTask> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE pack_tasks SET status = ?1 WHERE id = ?2",
-            params![PackStatus::Cancelled.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_pack(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel pack".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE pack_tasks SET status = ?1
+                 WHERE id = ?2 AND status IN ('pending', 'ready_to_pack', 'assigned', 'in_progress')",
+                params![PackStatus::Cancelled.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pack_tasks",
+                    "pack task",
+                    &id_str,
+                    "cancel",
+                ));
+            }
+            Self::read_pack_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Count pack tasks matching `filter` (same filters as `list_packs`).
     fn count_packs(&self, filter: PackTaskFilter) -> Result<u64> {
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM pack_tasks WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+        if let Some(order_id) = filter.order_id {
+            sql.push_str(" AND order_id = ?");
+            params_vec.push(Box::new(order_id.to_string()));
+        }
+
         if let Some(status) = filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
+        }
+
+        if let Some(assigned_to) = filter.assigned_to {
+            sql.push_str(" AND assigned_to = ?");
+            params_vec.push(Box::new(assigned_to));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1006,6 +1362,11 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params_vec.push(Box::new(status.to_string()));
         }
 
+        if let Some(carrier) = filter.carrier {
+            sql.push_str(" AND carrier = ?");
+            params_vec.push(Box::new(carrier));
+        }
+
         sql.push_str(" ORDER BY created_at");
 
         if let Some(limit) = filter.limit {
@@ -1024,76 +1385,138 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(ships)
     }
 
+    /// Assign (or re-assign) a ship task.
+    ///
+    /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`; a shipped or
+    /// cancelled task is terminal and cannot change hands.
     fn assign_ship(&self, id: Uuid, assigned_to: &str) -> Result<ShipTask> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE ship_tasks SET assigned_to = ?1 WHERE id = ?2",
-            params![assigned_to, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_ship(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to assign ship".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE ship_tasks SET assigned_to = ?1
+                 WHERE id = ?2 AND status IN ('pending', 'ready_to_ship', 'label_printed')",
+                params![assigned_to, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "ship_tasks",
+                    "ship task",
+                    &id_str,
+                    "assign",
+                ));
+            }
+            Self::read_ship_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Record a printed shipping label.
+    ///
+    /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted` (a re-print carries a
+    /// new `label_url`); refused once the package is shipped or the task is
+    /// cancelled, where a new label would contradict the carrier handoff.
     fn print_label(&self, id: Uuid, label_url: &str) -> Result<ShipTask> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE ship_tasks SET status = ?1, label_url = ?2 WHERE id = ?3",
-            params![ShipStatus::LabelPrinted.to_string(), label_url, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_ship(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to update ship".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE ship_tasks SET status = ?1, label_url = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'ready_to_ship', 'label_printed')",
+                params![ShipStatus::LabelPrinted.to_string(), label_url, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "ship_tasks",
+                    "ship task",
+                    &id_str,
+                    "print a label for",
+                ));
+            }
+            Self::read_ship_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Complete a ship task (carrier handoff).
+    ///
+    /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`. Re-shipping an
+    /// already-shipped task used to overwrite its tracking number, cost and
+    /// `shipped_at`, and a cancelled task could be shipped.
     fn complete_ship(&self, input: CompleteShip) -> Result<ShipTask> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id_str = input.ship_task_id.to_string();
 
-        conn.execute(
-            "UPDATE ship_tasks SET status = ?1, tracking_number = ?2, shipping_cost = ?3, shipped_at = ?4 WHERE id = ?5",
-            params![
-                ShipStatus::Shipped.to_string(),
-                input.tracking_number,
-                input.shipping_cost.map(|d| d.to_string()),
-                now,
-                input.ship_task_id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_ship(input.ship_task_id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete ship".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE ship_tasks SET status = ?1, tracking_number = ?2, shipping_cost = ?3, shipped_at = ?4
+                 WHERE id = ?5 AND status IN ('pending', 'ready_to_ship', 'label_printed')",
+                params![
+                    ShipStatus::Shipped.to_string(),
+                    input.tracking_number,
+                    input.shipping_cost.map(|d| d.to_string()),
+                    now,
+                    id_str,
+                ],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "ship_tasks",
+                    "ship task",
+                    &id_str,
+                    "complete",
+                ));
+            }
+            Self::read_ship_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Cancel a ship task.
+    ///
+    /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`; a package already
+    /// tendered to the carrier cannot be un-shipped by a status flip.
     fn cancel_ship(&self, id: Uuid) -> Result<ShipTask> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE ship_tasks SET status = ?1 WHERE id = ?2",
-            params![ShipStatus::Cancelled.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        drop(conn);
-        self.get_ship(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel ship".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE ship_tasks SET status = ?1
+                 WHERE id = ?2 AND status IN ('pending', 'ready_to_ship', 'label_printed')",
+                params![ShipStatus::Cancelled.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "ship_tasks",
+                    "ship task",
+                    &id_str,
+                    "cancel",
+                ));
+            }
+            Self::read_ship_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Count ship tasks matching `filter` (same filters as `list_ships`).
     fn count_ships(&self, filter: ShipTaskFilter) -> Result<u64> {
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM ship_tasks WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+        if let Some(order_id) = filter.order_id {
+            sql.push_str(" AND order_id = ?");
+            params_vec.push(Box::new(order_id.to_string()));
+        }
+
         if let Some(status) = filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
+        }
+
+        if let Some(carrier) = filter.carrier {
+            sql.push_str(" AND carrier = ?");
+            params_vec.push(Box::new(carrier));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1160,12 +1583,17 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
         drop(conn);
 
-        let mut picks = Vec::with_capacity(inputs.len());
-        for input in inputs {
-            picks.push(self.create_pick(input)?);
-        }
-
-        Ok(picks)
+        // One transaction for the whole order: a failure part-way through used
+        // to leave an order half-picked, with picks for some lines and none for
+        // the rest — and `is_order_ready_to_pack` would then report the order
+        // ready because the missing lines have no pick task to be incomplete.
+        with_immediate_transaction(&self.pool, |tx| {
+            let mut picks = Vec::with_capacity(inputs.len());
+            for input in &inputs {
+                picks.push(Self::insert_pick_tx(tx, input)?);
+            }
+            Ok(picks)
+        })
     }
 
     fn is_order_ready_to_pack(&self, order_id: OrderId) -> Result<bool> {
@@ -1341,10 +1769,57 @@ mod tests {
 
     #[test]
     fn complete_wave_transitions_status() {
+        // NOTE: this test used to complete straight from `Draft`. Completing a
+        // wave that was never released is no longer a legal transition (only
+        // Released/InProgress -> Completed), so the wave is released first;
+        // `complete_wave_rejects_draft_wave` pins the new rule.
         let (repo, wh_id, _) = fresh_setup();
         let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        repo.release_wave(wave.id).expect("release");
         let done = repo.complete_wave(wave.id).expect("complete");
         assert_eq!(done.status, WaveStatus::Completed);
+    }
+
+    #[test]
+    fn complete_wave_rejects_draft_wave() {
+        let (repo, wh_id, _) = fresh_setup();
+        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let err = repo.complete_wave(wave.id).expect_err("a draft wave was never on the floor");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        let after = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(after.status, WaveStatus::Draft, "status must be unchanged");
+    }
+
+    /// The status guards are expressed as SQL string literals; if an enum's
+    /// `Display` ever drifts from those literals the guards would silently stop
+    /// matching (allowing everything, or nothing). Pin the mapping.
+    #[test]
+    fn status_sql_literals_match_enum_display() {
+        assert_eq!(WaveStatus::Draft.to_string(), "draft");
+        assert_eq!(WaveStatus::Released.to_string(), "released");
+        assert_eq!(WaveStatus::InProgress.to_string(), "in_progress");
+        assert_eq!(WaveStatus::Completed.to_string(), "completed");
+        assert_eq!(WaveStatus::Cancelled.to_string(), "cancelled");
+
+        assert_eq!(PickStatus::Pending.to_string(), "pending");
+        assert_eq!(PickStatus::Assigned.to_string(), "assigned");
+        assert_eq!(PickStatus::InProgress.to_string(), "in_progress");
+        assert_eq!(PickStatus::Completed.to_string(), "completed");
+        assert_eq!(PickStatus::Short.to_string(), "short");
+        assert_eq!(PickStatus::Cancelled.to_string(), "cancelled");
+
+        assert_eq!(PackStatus::Pending.to_string(), "pending");
+        assert_eq!(PackStatus::ReadyToPack.to_string(), "ready_to_pack");
+        assert_eq!(PackStatus::Assigned.to_string(), "assigned");
+        assert_eq!(PackStatus::InProgress.to_string(), "in_progress");
+        assert_eq!(PackStatus::Completed.to_string(), "completed");
+        assert_eq!(PackStatus::Cancelled.to_string(), "cancelled");
+
+        assert_eq!(ShipStatus::Pending.to_string(), "pending");
+        assert_eq!(ShipStatus::ReadyToShip.to_string(), "ready_to_ship");
+        assert_eq!(ShipStatus::LabelPrinted.to_string(), "label_printed");
+        assert_eq!(ShipStatus::Shipped.to_string(), "shipped");
+        assert_eq!(ShipStatus::Cancelled.to_string(), "cancelled");
     }
 
     #[test]

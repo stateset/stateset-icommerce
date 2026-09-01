@@ -30,6 +30,29 @@ fn money(amount: Decimal) -> Decimal {
     amount.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
 }
 
+/// Statuses that close a receivable for good.
+///
+/// No money may be recorded against them and no status flip may resurrect
+/// them: an invoice flipped out of one of these reappears in AR aging,
+/// statements and the collection reports with its full balance. This is the
+/// same set the AR module guards its payment and credit-memo applications
+/// with (see `sqlite/accounts_receivable.rs`), including the legacy
+/// `cancelled` value that predates the `InvoiceStatus` enum and can still
+/// exist in older rows.
+const TERMINAL_STATUSES: [&str; 3] = ["voided", "cancelled", "written_off"];
+
+/// SQL fragment listing the statuses an invoice may be voided or written off
+/// from: everything that is neither terminal nor fully paid. Voiding or
+/// writing off a `paid` invoice would erase receivable that has already been
+/// collected and recognized, so `paid` is deliberately excluded — reverse the
+/// payment first.
+const OPEN_STATUS_SQL_LIST: &str =
+    "('draft', 'sent', 'viewed', 'partially_paid', 'overdue', 'disputed')";
+
+fn is_terminal(status: &str) -> bool {
+    TERMINAL_STATUSES.contains(&status)
+}
+
 #[derive(Debug)]
 pub struct SqliteInvoiceRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -43,6 +66,75 @@ impl SqliteInvoiceRepository {
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
+    }
+
+    /// Wrap a `CommerceError` for propagation out of a rusqlite transaction
+    /// closure; `map_db_error` unwraps it again on the way out.
+    fn to_rusqlite(e: CommerceError) -> rusqlite::Error {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+    }
+
+    /// Read an invoice's current status on the caller's own connection.
+    ///
+    /// A missing invoice surfaces as `QueryReturnedNoRows`, which
+    /// `map_db_error` turns into [`CommerceError::NotFound`].
+    fn status_with_conn(conn: &rusqlite::Connection, id: InvoiceId) -> rusqlite::Result<String> {
+        conn.query_row("SELECT status FROM invoices WHERE id = ?", [id.to_string()], |row| {
+            row.get(0)
+        })
+    }
+
+    /// Flip an invoice's status under a guard, inside one IMMEDIATE transaction.
+    ///
+    /// An unguarded status UPDATE is a money bug: it can void a fully paid
+    /// invoice (erasing recognized receivable) or flip a voided/written-off
+    /// invoice back into an open state (resurrecting its balance into AR aging
+    /// and statements). `guard_sql` is the status predicate the transition is
+    /// allowed to start from; the UPDATE repeats it so the check and the write
+    /// cannot be separated by a concurrent writer, and 0 affected rows is
+    /// reported as a [`CommerceError::Conflict`] naming the blocking status —
+    /// the same shape as the AR write-off guard.
+    fn guarded_status_change(
+        &self,
+        id: InvoiceId,
+        new_status: InvoiceStatus,
+        guard_sql: &str,
+        timestamp_column: Option<&str>,
+        action: &str,
+    ) -> Result<Invoice> {
+        let id_str = id.to_string();
+        let now = chrono::Utc::now();
+        let sql = timestamp_column.map_or_else(
+            || {
+                format!(
+                    "UPDATE invoices SET status = ?1, updated_at = ?2
+                     WHERE id = ?3 AND {guard_sql}"
+                )
+            },
+            |column| {
+                format!(
+                    "UPDATE invoices SET status = ?1, {column} = ?2, updated_at = ?2
+                     WHERE id = ?3 AND {guard_sql}"
+                )
+            },
+        );
+
+        with_immediate_transaction(&self.pool, |tx| {
+            // Read the status first so the rejection can name it; the UPDATE
+            // below re-checks it, so this read is for the message only.
+            let current = Self::status_with_conn(tx, id)?;
+            let rows =
+                tx.execute(&sql, params![new_status.to_string(), now.to_rfc3339(), &id_str])?;
+            if rows == 0 {
+                return Err(Self::to_rusqlite(CommerceError::Conflict(format!(
+                    "Cannot {action} invoice {id} with status {current}"
+                ))));
+            }
+
+            Self::get_invoice_with_conn(tx, id)
+                .map_err(Self::to_rusqlite)?
+                .ok_or_else(|| Self::to_rusqlite(CommerceError::NotFound))
+        })
     }
 
     fn row_to_invoice(row: &Row<'_>) -> rusqlite::Result<Invoice> {
@@ -641,21 +733,17 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn send(&self, id: InvoiceId) -> Result<Invoice> {
-        let conn = self.conn()?;
-        let now = chrono::Utc::now();
-
-        conn.execute(
-            "UPDATE invoices SET status = ?, sent_at = ?, updated_at = ? WHERE id = ?",
-            params![
-                InvoiceStatus::Sent.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
+        // `send` was an unguarded status flip too: sending a voided or
+        // written-off invoice pushed it back to `sent`, which puts its full
+        // balance back into AR aging and the collection reports, and sending a
+        // paid invoice discarded the `paid` status while leaving `paid_at` set.
+        self.guarded_status_change(
+            id,
+            InvoiceStatus::Sent,
+            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
+            Some("sent_at"),
+            "send",
         )
-        .map_err(map_db_error)?;
-
-        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn mark_viewed(&self, id: InvoiceId) -> Result<Invoice> {
@@ -695,16 +783,62 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         // an error for a payment that actually landed and tempt the caller to
         // retry and double-pay. (`tx` deref-coerces to `&Connection`.)
         with_immediate_transaction(&self.pool, |tx| {
-            let (total, amount_paid, direct_amount_paid): (String, String, String) = tx.query_row(
-                "SELECT total, amount_paid, direct_amount_paid FROM invoices WHERE id = ?",
-                [&id_str],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
+            // Idempotency: `payment_id` used to be accepted and ignored, so a
+            // retried payment (client timeout, queue redelivery) applied the
+            // amount twice. The check and the ledger write below share this
+            // transaction — exactly how GL auto-posting dedupes source
+            // documents — so a concurrent retry cannot slip between them.
+            // A NULL payment_id records nothing and keeps the old behavior.
+            if let Some(payment_id) = payment.payment_id {
+                let already: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM invoice_direct_payments
+                     WHERE invoice_id = ?1 AND payment_id = ?2",
+                    params![&id_str, payment_id.to_string()],
+                    |row| row.get(0),
+                )?;
+                if already > 0 {
+                    // Return the invoice unchanged: the payment already landed.
+                    return Self::get_invoice_with_conn(tx, id)
+                        .map_err(Self::to_rusqlite)?
+                        .ok_or_else(|| Self::to_rusqlite(CommerceError::NotFound));
+                }
+            }
+
+            let (status, total, amount_paid, direct_amount_paid): (String, String, String, String) =
+                tx.query_row(
+                    "SELECT status, total, amount_paid, direct_amount_paid FROM invoices WHERE id = ?",
+                    [&id_str],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )?;
+
+            // A closed receivable takes no more money: paying a voided,
+            // cancelled or written-off invoice would reopen a balance the
+            // ledger has already disposed of. Same guard (and same terminal
+            // set) as the AR payment/credit-memo applications.
+            if is_terminal(&status) {
+                return Err(Self::to_rusqlite(CommerceError::ValidationError(format!(
+                    "Cannot record a payment on invoice {id} with status {status}"
+                ))));
+            }
 
             let total_dec = parse_decimal_row(&total, "invoice", "total")?;
             let amount_paid_dec = parse_decimal_row(&amount_paid, "invoice", "amount_paid")?;
             let direct_dec =
                 parse_decimal_row(&direct_amount_paid, "invoice", "direct_amount_paid")?;
+
+            // Cap the payment at what is still owed. `balance_due` is derived
+            // (total - amount_paid) by both this path and the AR
+            // recalculation, so deriving it from the columns already read
+            // keeps the bound in step with credit memos and applications.
+            // Without this an overpayment drove `balance_due` negative, which
+            // corrupts AR aging, statements and the recalculation invariant.
+            let remaining = money(total_dec - amount_paid_dec);
+            if payment.amount > remaining {
+                return Err(Self::to_rusqlite(CommerceError::ValidationError(format!(
+                    "Invoice payment amount ({}) exceeds invoice {id} balance due ({remaining})",
+                    payment.amount
+                ))));
+            }
 
             let new_amount_paid = money(amount_paid_dec + payment.amount);
             // A direct payment is not backed by an ar_payment_applications row,
@@ -736,56 +870,67 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 ],
             )?;
 
+            // Record the idempotency key only once the payment has actually
+            // been applied: a rejected payment must not burn the key, so the
+            // caller can retry with a corrected amount.
+            if let Some(payment_id) = payment.payment_id {
+                tx.execute(
+                    "INSERT INTO invoice_direct_payments
+                     (invoice_id, payment_id, amount, recorded_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        &id_str,
+                        payment_id.to_string(),
+                        money(payment.amount).to_string(),
+                        now.to_rfc3339(),
+                    ],
+                )?;
+            }
+
             Self::get_invoice_with_conn(tx, id)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
-                .ok_or_else(|| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
-                })
+                .map_err(Self::to_rusqlite)?
+                .ok_or_else(|| Self::to_rusqlite(CommerceError::NotFound))
         })
     }
 
     fn void(&self, id: InvoiceId) -> Result<Invoice> {
-        let conn = self.conn()?;
-        let now = chrono::Utc::now();
-
-        conn.execute(
-            "UPDATE invoices SET status = ?, voided_at = ?, updated_at = ? WHERE id = ?",
-            params![
-                InvoiceStatus::Voided.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
+        // Voiding a *paid* invoice silently erases recognized receivable, and
+        // re-voiding an already terminal invoice is a no-op that reads as
+        // success; both are rejected.
+        self.guarded_status_change(
+            id,
+            InvoiceStatus::Voided,
+            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
+            Some("voided_at"),
+            "void",
         )
-        .map_err(map_db_error)?;
-
-        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn write_off(&self, id: InvoiceId) -> Result<Invoice> {
-        let conn = self.conn()?;
-        let now = chrono::Utc::now();
-
-        conn.execute(
-            "UPDATE invoices SET status = ?, updated_at = ? WHERE id = ?",
-            params![InvoiceStatus::WrittenOff.to_string(), now.to_rfc3339(), id.to_string()],
+        // Same allowlist as `void`: a collected (paid) invoice is not
+        // uncollectible, and a voided/already-written-off one has already been
+        // disposed of. Mirrors the AR `create_write_off` guard.
+        self.guarded_status_change(
+            id,
+            InvoiceStatus::WrittenOff,
+            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
+            None,
+            "write off",
         )
-        .map_err(map_db_error)?;
-
-        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn dispute(&self, id: InvoiceId) -> Result<Invoice> {
-        let conn = self.conn()?;
-        let now = chrono::Utc::now();
-
-        conn.execute(
-            "UPDATE invoices SET status = ?, updated_at = ? WHERE id = ?",
-            params![InvoiceStatus::Disputed.to_string(), now.to_rfc3339(), id.to_string()],
+        // A paid invoice may legitimately be disputed (chargeback), so only
+        // the terminal set is rejected: flipping a voided or written-off
+        // invoice to `disputed` would resurrect its balance into AR aging,
+        // which excludes only paid/voided/written_off.
+        self.guarded_status_change(
+            id,
+            InvoiceStatus::Disputed,
+            "status NOT IN ('voided', 'cancelled', 'written_off')",
+            None,
+            "dispute",
         )
-        .map_err(map_db_error)?;
-
-        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn add_item(&self, invoice_id: InvoiceId, item: CreateInvoiceItem) -> Result<InvoiceItem> {

@@ -233,12 +233,14 @@ impl PgReceivingRepository {
         })
     }
 
-    async fn update_receipt_totals(&self, receipt_id: Uuid) -> Result<()> {
+    /// Recompute a receipt's header quantities from its lines, on the same
+    /// connection (and so inside the same transaction) that changed them.
+    async fn update_receipt_totals(conn: &mut sqlx::PgConnection, receipt_id: Uuid) -> Result<()> {
         let (expected_total, received_total): (Decimal, Decimal) = sqlx::query_as(
             "SELECT COALESCE(SUM(expected_quantity), 0), COALESCE(SUM(received_quantity), 0) FROM receipt_items WHERE receipt_id = $1",
         )
         .bind(receipt_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await
         .map_err(map_db_error)?;
 
@@ -248,19 +250,66 @@ impl PgReceivingRepository {
         .bind(expected_total)
         .bind(received_total)
         .bind(receipt_id)
-        .execute(&self.pool)
+        .execute(conn)
         .await
         .map_err(map_db_error)?;
 
         Ok(())
     }
 
+    /// Error for a guarded receipt write that matched no row: `NotFound` when
+    /// the receipt is gone, otherwise the `ValidationError` callers already
+    /// expect, built from the status that actually blocked the write.
+    async fn receipt_guard_error(
+        conn: &mut sqlx::PgConnection,
+        id: Uuid,
+        message: impl Fn(&str) -> String,
+    ) -> CommerceError {
+        let current: Option<String> =
+            sqlx::query_scalar("SELECT status FROM receipts WHERE id = $1")
+                .bind(id)
+                .fetch_optional(conn)
+                .await
+                .ok()
+                .flatten();
+        current.map_or(CommerceError::NotFound, |status| {
+            CommerceError::ValidationError(message(&status))
+        })
+    }
+
+    /// Error for a status-guarded put-away UPDATE that matched no row: either
+    /// the row is gone (`NotFound`) or its status forbids the transition
+    /// (`Conflict`, naming the status that blocked it).
+    async fn put_away_conflict(
+        conn: &mut sqlx::PgConnection,
+        id: Uuid,
+        action: &str,
+    ) -> CommerceError {
+        let current: Option<String> =
+            sqlx::query_scalar("SELECT status FROM put_aways WHERE id = $1")
+                .bind(id)
+                .fetch_optional(conn)
+                .await
+                .ok()
+                .flatten();
+        current.map_or(CommerceError::NotFound, |status| {
+            CommerceError::Conflict(format!("cannot {action} put-away {id}: status is {status}"))
+        })
+    }
+
+    /// Create a receipt and its lines.
+    ///
+    /// Header and lines are written in one transaction: run separately on the
+    /// pool, a failure part-way through the line loop left a receipt whose
+    /// `expected_quantity` header total counted lines that were never inserted.
     pub async fn create_receipt_async(&self, input: CreateReceipt) -> Result<Receipt> {
         let now = Utc::now();
         let id = Uuid::new_v4();
         let receipt_number = input.receipt_number.unwrap_or_else(generate_receipt_number);
 
         let expected_total: Decimal = input.items.iter().map(|i| i.expected_quantity).sum();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         sqlx::query(
             r#"
@@ -286,7 +335,7 @@ impl PgReceivingRepository {
         .bind(&input.notes)
         .bind(&input.created_by)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -312,14 +361,21 @@ impl PgReceivingRepository {
             .bind(item.expiration_date)
             .bind(&item.notes)
             .bind(now)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         }
 
-        self.get_receipt_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create receipt".into()))
+        let row = sqlx::query_as::<_, ReceiptRow>("SELECT * FROM receipts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to create receipt".into()))?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        Self::row_to_receipt(row)
     }
 
     pub async fn get_receipt_async(&self, id: Uuid) -> Result<Option<Receipt>> {
@@ -409,67 +465,113 @@ impl PgReceivingRepository {
         rows.into_iter().map(Self::row_to_receipt).collect::<Result<Vec<_>>>()
     }
 
+    /// Delete a receipt that has not started receiving.
+    ///
+    /// The status check and the DELETE are one guarded statement, so a receipt
+    /// that starts receiving concurrently can no longer be deleted between the
+    /// check and the write.
     pub async fn delete_receipt_async(&self, id: Uuid) -> Result<()> {
-        let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        if existing.status != ReceiptStatus::Expected {
-            return Err(CommerceError::ValidationError(
-                "Can only delete receipts in 'expected' status".into(),
-            ));
+        let changed = sqlx::query("DELETE FROM receipts WHERE id = $1 AND status = 'expected'")
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .rows_affected();
+        if changed == 0 {
+            return Err(Self::receipt_guard_error(tx.as_mut(), id, |_| {
+                "Can only delete receipts in 'expected' status".into()
+            })
+            .await);
         }
 
-        sqlx::query("DELETE FROM receipts WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
+    /// Start receiving against a receipt ([`ReceiptStatus::Expected`] only).
     pub async fn start_receiving_async(&self, id: Uuid) -> Result<Receipt> {
-        let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        if existing.status != ReceiptStatus::Expected {
-            return Err(CommerceError::ValidationError(
-                "Can only start receiving for 'expected' receipts".into(),
-            ));
+        let changed = sqlx::query(
+            "UPDATE receipts SET status = $1, received_date = $2
+             WHERE id = $3 AND status = 'expected'",
+        )
+        .bind(ReceiptStatus::InProgress.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(Self::receipt_guard_error(tx.as_mut(), id, |_| {
+                "Can only start receiving for 'expected' receipts".into()
+            })
+            .await);
         }
 
-        let now = Utc::now();
-        sqlx::query("UPDATE receipts SET status = $1, received_date = $2 WHERE id = $3")
-            .bind(ReceiptStatus::InProgress.to_string())
-            .bind(now)
+        let row = sqlx::query_as::<_, ReceiptRow>("SELECT * FROM receipts WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
-        self.get_receipt_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to update receipt".into()))
+        Self::row_to_receipt(row)
     }
 
+    /// Record received quantities against a receipt's lines.
+    ///
+    /// The whole operation — receipt status guard, the `Expected -> InProgress`
+    /// flip, every line update and the header totals — runs in ONE transaction,
+    /// with `SELECT ... FOR UPDATE` on the receipt and on each line being
+    /// received. Previously each statement ran on the pool, so a failure
+    /// part-way through left the receipt half-applied (line quantities updated
+    /// but the header totals stale, or vice versa) and concurrent receipts could
+    /// interleave.
+    ///
+    /// Guards, in order (identical to the SQLite backend):
+    /// 1. the receipt must exist, and be `Expected` or `InProgress` — the
+    ///    statuses in which goods can still arrive;
+    /// 2. each line's quantity must be positive and its rejected quantity
+    ///    non-negative (mirroring the purchase-order `receive` guard);
+    /// 3. the line must belong to *this* receipt;
+    /// 4. re-read under the row lock, the cumulative received quantity may not
+    ///    exceed the line's expected quantity. Without this cap 100 units could
+    ///    be received against a 10-unit line, corrupting inventory and the
+    ///    downstream three-way match.
     pub async fn receive_items_async(&self, input: ReceiveItems) -> Result<Receipt> {
         let now = Utc::now();
+        let receipt_id = input.receipt_id;
 
-        let existing =
-            self.get_receipt_async(input.receipt_id).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        if existing.status != ReceiptStatus::InProgress
-            && existing.status != ReceiptStatus::Expected
-        {
+        let status_str: String =
+            sqlx::query_scalar("SELECT status FROM receipts WHERE id = $1 FOR UPDATE")
+                .bind(receipt_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let status: ReceiptStatus = status_str.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid receipt.status '{status_str}': {e}"))
+        })?;
+
+        if status != ReceiptStatus::InProgress && status != ReceiptStatus::Expected {
             return Err(CommerceError::ValidationError(
                 "Receipt must be 'expected' or 'in_progress' to receive items".into(),
             ));
         }
 
-        if existing.status == ReceiptStatus::Expected {
+        if status == ReceiptStatus::Expected {
             sqlx::query("UPDATE receipts SET status = $1, received_date = $2 WHERE id = $3")
                 .bind(ReceiptStatus::InProgress.to_string())
                 .bind(now)
-                .bind(input.receipt_id)
-                .execute(&self.pool)
+                .bind(receipt_id)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }
@@ -478,51 +580,99 @@ impl PgReceivingRepository {
             let reject_qty = line.quantity_rejected.unwrap_or(Decimal::ZERO);
             let serial_str = line.serial_numbers.as_ref().map(|v| v.join(","));
 
+            if line.quantity_received <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Received quantity must be greater than zero".into(),
+                ));
+            }
+            if reject_qty < Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Rejected quantity cannot be negative".into(),
+                ));
+            }
+
+            // Locked read of the line, scoped by `receipt_id` so a line
+            // belonging to another receipt cannot be received through this one.
+            let (cur_received, cur_rejected, expected, cur_status): (
+                Decimal,
+                Decimal,
+                Decimal,
+                String,
+            ) = sqlx::query_as(
+                "SELECT received_quantity, rejected_quantity, expected_quantity, status
+                 FROM receipt_items WHERE id = $1 AND receipt_id = $2 FOR UPDATE",
+            )
+            .bind(line.receipt_item_id)
+            .bind(receipt_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+
+            let new_received = cur_received + line.quantity_received;
+            let new_rejected = cur_rejected + reject_qty;
+
+            if new_received > expected {
+                return Err(CommerceError::ValidationError(format!(
+                    "Receiving {new_received} would exceed expected quantity {expected} for receipt item {}",
+                    line.receipt_item_id
+                )));
+            }
+
+            let new_status = if new_received >= expected {
+                "received"
+            } else if new_received > Decimal::ZERO {
+                "partially_received"
+            } else {
+                cur_status.as_str()
+            };
+
             sqlx::query(
                 r#"
                 UPDATE receipt_items SET
-                    received_quantity = received_quantity + $1,
-                    rejected_quantity = rejected_quantity + $2,
+                    received_quantity = $1,
+                    rejected_quantity = $2,
                     lot_number = COALESCE($3, lot_number),
                     serial_numbers = COALESCE($4, serial_numbers),
                     expiration_date = COALESCE($5, expiration_date),
                     notes = COALESCE($6, notes),
-                    status = CASE
-                        WHEN received_quantity + $1 >= expected_quantity THEN 'received'
-                        WHEN received_quantity + $1 > 0 THEN 'partially_received'
-                        ELSE status
-                    END
+                    status = $8
                 WHERE id = $7
                 "#,
             )
-            .bind(line.quantity_received)
-            .bind(reject_qty)
+            .bind(new_received)
+            .bind(new_rejected)
             .bind(&line.lot_number)
             .bind(serial_str)
             .bind(line.expiration_date)
             .bind(&line.notes)
             .bind(line.receipt_item_id)
-            .execute(&self.pool)
+            .bind(new_status)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         }
 
-        self.update_receipt_totals(input.receipt_id).await?;
+        Self::update_receipt_totals(tx.as_mut(), receipt_id).await?;
 
-        self.get_receipt_async(input.receipt_id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve receipt".into()))
+        let row = sqlx::query_as::<_, ReceiptRow>("SELECT * FROM receipts WHERE id = $1")
+            .bind(receipt_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve receipt".into()))?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        Self::row_to_receipt(row)
     }
 
+    /// Complete receiving ([`ReceiptStatus::InProgress`] only).
+    ///
+    /// The status guard is now part of the header UPDATE and runs in the same
+    /// transaction as the line sweep, so a receipt cannot be completed twice by
+    /// two callers that both read `in_progress` before either wrote.
     pub async fn complete_receiving_async(&self, id: Uuid) -> Result<Receipt> {
-        let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
-
-        if existing.status != ReceiptStatus::InProgress {
-            return Err(CommerceError::ValidationError(
-                "Can only complete 'in_progress' receipts".into(),
-            ));
-        }
-
         let now = Utc::now();
 
         // Complete the receipt header and mark its non-rejected line items
@@ -531,13 +681,23 @@ impl PgReceivingRepository {
         // the header, leaving items in their prior status).
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query("UPDATE receipts SET status = $1, completed_date = $2 WHERE id = $3")
-            .bind(ReceiptStatus::Received.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let changed = sqlx::query(
+            "UPDATE receipts SET status = $1, completed_date = $2
+             WHERE id = $3 AND status = 'in_progress'",
+        )
+        .bind(ReceiptStatus::Received.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(Self::receipt_guard_error(tx.as_mut(), id, |_| {
+                "Can only complete 'in_progress' receipts".into()
+            })
+            .await);
+        }
 
         sqlx::query(
             "UPDATE receipt_items SET status = 'received' WHERE receipt_id = $1 AND status != 'rejected'",
@@ -547,33 +707,52 @@ impl PgReceivingRepository {
         .await
         .map_err(map_db_error)?;
 
-        tx.commit().await.map_err(map_db_error)?;
-
-        self.get_receipt_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete receipt".into()))
-    }
-
-    pub async fn cancel_receipt_async(&self, id: Uuid) -> Result<Receipt> {
-        let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
-
-        if !existing.status.can_cancel() {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel a receipt in {} status (goods already received)",
-                existing.status
-            )));
-        }
-
-        sqlx::query("UPDATE receipts SET status = $1 WHERE id = $2")
-            .bind(ReceiptStatus::Cancelled.to_string())
+        let row = sqlx::query_as::<_, ReceiptRow>("SELECT * FROM receipts WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        self.get_receipt_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel receipt".into()))
+        tx.commit().await.map_err(map_db_error)?;
+
+        Self::row_to_receipt(row)
+    }
+
+    /// Cancel a receipt.
+    ///
+    /// Legal only while [`ReceiptStatus::can_cancel`] holds (`Expected` or
+    /// `InProgress`); once goods are received the receipt is a record of what
+    /// physically arrived. The check and the write are now one guarded
+    /// statement.
+    pub async fn cancel_receipt_async(&self, id: Uuid) -> Result<Receipt> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let changed = sqlx::query(
+            "UPDATE receipts SET status = $1
+             WHERE id = $2 AND status IN ('expected', 'in_progress')",
+        )
+        .bind(ReceiptStatus::Cancelled.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(Self::receipt_guard_error(tx.as_mut(), id, |status| {
+                format!("Cannot cancel a receipt in {status} status (goods already received)")
+            })
+            .await);
+        }
+
+        let row = sqlx::query_as::<_, ReceiptRow>("SELECT * FROM receipts WHERE id = $1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        Self::row_to_receipt(row)
     }
 
     pub async fn get_receipt_items_async(&self, receipt_id: Uuid) -> Result<Vec<ReceiptItem>> {
@@ -690,85 +869,152 @@ impl PgReceivingRepository {
         rows.into_iter().map(Self::row_to_put_away).collect::<Result<Vec<_>>>()
     }
 
+    /// Assign (or re-assign) a put-away task.
+    ///
+    /// Legal from `Pending`/`Assigned`; the UPDATE also writes
+    /// `status = 'assigned'`, so assigning a started task would rewind it and
+    /// assigning a completed one would resurrect it — dropping its quantity out
+    /// of `receipts.put_away_quantity` on the next recompute.
     pub async fn assign_put_away_async(&self, id: Uuid, assigned_to: &str) -> Result<PutAway> {
-        sqlx::query("UPDATE put_aways SET assigned_to = $1, status = $2 WHERE id = $3")
-            .bind(assigned_to)
-            .bind(PutAwayStatus::Assigned.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_put_away_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to assign put-away".into()))
+        let changed = sqlx::query(
+            "UPDATE put_aways SET assigned_to = $1, status = $2
+             WHERE id = $3 AND status IN ('pending', 'assigned')",
+        )
+        .bind(assigned_to)
+        .bind(PutAwayStatus::Assigned.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(Self::put_away_conflict(tx.as_mut(), id, "assign").await);
+        }
+
+        Self::commit_and_read_put_away(tx, id).await
     }
 
+    /// Start a put-away task (`Pending`/`Assigned` only).
     pub async fn start_put_away_async(&self, id: Uuid) -> Result<PutAway> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query("UPDATE put_aways SET status = $1, started_at = $2 WHERE id = $3")
-            .bind(PutAwayStatus::InProgress.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let changed = sqlx::query(
+            "UPDATE put_aways SET status = $1, started_at = $2
+             WHERE id = $3 AND status IN ('pending', 'assigned')",
+        )
+        .bind(PutAwayStatus::InProgress.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(Self::put_away_conflict(tx.as_mut(), id, "start").await);
+        }
 
-        self.get_put_away_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to start put-away".into()))
+        Self::commit_and_read_put_away(tx, id).await
     }
 
+    /// Complete a put-away task and fold its quantity into the receipt.
+    ///
+    /// Legal from `Pending`/`Assigned`/`InProgress`. Completing a cancelled task
+    /// used to succeed and add its quantity to `receipts.put_away_quantity` for
+    /// stock that was never put away. The status flip and the receipt total are
+    /// one transaction, so the receipt can never quote a total that excludes a
+    /// put-away already marked completed.
     pub async fn complete_put_away_async(&self, input: CompletePutAway) -> Result<PutAway> {
         let now = Utc::now();
+        let id = input.put_away_id;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         let existing =
-            self.get_put_away_async(input.put_away_id).await?.ok_or(CommerceError::NotFound)?;
+            sqlx::query_as::<_, PutAwayRow>("SELECT * FROM put_aways WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let receipt_id = existing.receipt_id;
         let to_location = input.actual_location_id.unwrap_or(existing.to_location_id);
 
-        sqlx::query(
-            "UPDATE put_aways SET status = $1, to_location_id = $2, completed_at = $3, notes = COALESCE($4, notes) WHERE id = $5",
+        let changed = sqlx::query(
+            "UPDATE put_aways SET status = $1, to_location_id = $2, completed_at = $3, notes = COALESCE($4, notes)
+             WHERE id = $5 AND status IN ('pending', 'assigned', 'in_progress')",
         )
         .bind(PutAwayStatus::Completed.to_string())
         .bind(to_location)
         .bind(now)
         .bind(input.notes)
-        .bind(input.put_away_id)
-        .execute(&self.pool)
+        .bind(id)
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(Self::put_away_conflict(tx.as_mut(), id, "complete").await);
+        }
 
         let (put_away_total,): (Decimal,) = sqlx::query_as(
             "SELECT COALESCE(SUM(quantity), 0) FROM put_aways WHERE receipt_id = $1 AND status = 'completed'",
         )
-        .bind(existing.receipt_id)
-        .fetch_one(&self.pool)
+        .bind(receipt_id)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         sqlx::query("UPDATE receipts SET put_away_quantity = $1 WHERE id = $2")
             .bind(put_away_total)
-            .bind(existing.receipt_id)
-            .execute(&self.pool)
+            .bind(receipt_id)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        self.get_put_away_async(input.put_away_id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete put-away".into()))
+        Self::commit_and_read_put_away(tx, id).await
     }
 
+    /// Cancel a put-away task.
+    ///
+    /// Legal from `Pending`/`Assigned`/`InProgress`. A `Completed` task is
+    /// refused: the stock has physically moved, and cancelling it would leave
+    /// `receipts.put_away_quantity` counting a put-away that claims not to have
+    /// happened (cancellation does not recompute that total).
     pub async fn cancel_put_away_async(&self, id: Uuid) -> Result<PutAway> {
-        sqlx::query("UPDATE put_aways SET status = $1 WHERE id = $2")
-            .bind(PutAwayStatus::Cancelled.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_put_away_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel put-away".into()))
+        let changed = sqlx::query(
+            "UPDATE put_aways SET status = $1
+             WHERE id = $2 AND status IN ('pending', 'assigned', 'in_progress')",
+        )
+        .bind(PutAwayStatus::Cancelled.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(Self::put_away_conflict(tx.as_mut(), id, "cancel").await);
+        }
+
+        Self::commit_and_read_put_away(tx, id).await
+    }
+
+    /// Read a put-away back inside its transaction, then commit.
+    async fn commit_and_read_put_away(
+        mut tx: sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<PutAway> {
+        let row = sqlx::query_as::<_, PutAwayRow>("SELECT * FROM put_aways WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Self::row_to_put_away(row)
     }
 
     pub async fn get_pending_put_aways_async(&self, receipt_id: Uuid) -> Result<Vec<PutAway>> {
@@ -780,6 +1026,8 @@ impl PgReceivingRepository {
         .await
     }
 
+    /// Count put-aways matching `filter` (same filters as
+    /// `list_put_aways_async`).
     pub async fn count_put_aways_async(&self, filter: PutAwayFilter) -> Result<u64> {
         let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM put_aways WHERE 1=1");
 
@@ -788,6 +1036,9 @@ impl PgReceivingRepository {
         }
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(assigned_to) = filter.assigned_to {
+            builder.push(" AND assigned_to = ").push_bind(assigned_to);
         }
 
         let row =

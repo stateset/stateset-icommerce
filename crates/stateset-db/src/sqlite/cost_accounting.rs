@@ -20,12 +20,115 @@ use super::{
     with_immediate_transaction,
 };
 
+/// Explain why a cost-adjustment transition was refused: report the status the
+/// row is actually in, or `NotFound` when it does not exist. Used by the
+/// guarded approve/apply/reject transitions.
+fn adjustment_conflict(conn: &rusqlite::Connection, id: Uuid, attempted: &str) -> CommerceError {
+    match conn.query_row(
+        "SELECT status FROM cost_adjustments WHERE id = ?",
+        [id.to_string()],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(status) => CommerceError::Conflict(format!(
+            "Cost adjustment {id} cannot be {attempted}: it is already {status}"
+        )),
+        Err(rusqlite::Error::QueryReturnedNoRows) => CommerceError::NotFound,
+        Err(e) => CommerceError::DatabaseError(e.to_string()),
+    }
+}
+
 #[derive(Debug)]
 pub struct SqliteCostAccountingRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteCostAccountingRepository {
+    /// Insert-or-update an item cost on the caller's connection/transaction.
+    ///
+    /// Shared by `set_item_cost` (which wraps it in an IMMEDIATE transaction)
+    /// and `apply_adjustment` (which needs the cost change to commit together
+    /// with the adjustment's status claim).
+    fn set_item_cost_with_conn(
+        conn: &rusqlite::Connection,
+        input: SetItemCost,
+        now: DateTime<Utc>,
+    ) -> rusqlite::Result<()> {
+        let SetItemCost {
+            sku,
+            cost_method,
+            standard_cost,
+            material_cost,
+            labor_cost,
+            overhead_cost,
+            currency,
+            ..
+        } = input;
+
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM item_costs WHERE sku = ?)",
+            [&sku],
+            |row| row.get(0),
+        )?;
+
+        if exists {
+            // Update existing
+            conn.execute(
+                "UPDATE item_costs SET
+                    cost_method = COALESCE(?, cost_method),
+                    standard_cost = COALESCE(?, standard_cost),
+                    material_cost = COALESCE(?, material_cost),
+                    labor_cost = COALESCE(?, labor_cost),
+                    overhead_cost = COALESCE(?, overhead_cost),
+                    currency = COALESCE(?, currency),
+                    effective_date = ?,
+                    updated_at = ?
+                 WHERE sku = ?",
+                rusqlite::params![
+                    cost_method.as_ref().map(std::string::ToString::to_string),
+                    standard_cost.as_ref().map(std::string::ToString::to_string),
+                    material_cost.as_ref().map(std::string::ToString::to_string),
+                    labor_cost.as_ref().map(std::string::ToString::to_string),
+                    overhead_cost.as_ref().map(std::string::ToString::to_string),
+                    currency,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    &sku,
+                ],
+            )?;
+        } else {
+            // Insert new
+            let id = Uuid::new_v4();
+            let cost_method = cost_method.unwrap_or_default();
+            let standard_cost = standard_cost.unwrap_or_default();
+            let material_cost = material_cost.unwrap_or_default();
+            let labor_cost = labor_cost.unwrap_or_default();
+            let overhead_cost = overhead_cost.unwrap_or_default();
+            let currency = currency.unwrap_or_default();
+
+            conn.execute(
+                "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
+                    material_cost, labor_cost, overhead_cost, currency, effective_date, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    &sku,
+                    cost_method.to_string(),
+                    standard_cost.to_string(),
+                    standard_cost.to_string(), // average_cost starts as standard
+                    standard_cost.to_string(), // last_cost starts as standard
+                    material_cost.to_string(),
+                    labor_cost.to_string(),
+                    overhead_cost.to_string(),
+                    &currency,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -343,84 +446,17 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
     fn set_item_cost(&self, input: SetItemCost) -> Result<ItemCost> {
         let now = Utc::now();
-        let SetItemCost {
-            sku,
-            cost_method,
-            standard_cost,
-            material_cost,
-            labor_cost,
-            overhead_cost,
-            currency,
-            ..
-        } = input;
-
-        // Check if exists
-        let existing = self.get_item_cost(&sku)?;
-
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            if existing.is_some() {
-                // Update existing
-                conn.execute(
-                    "UPDATE item_costs SET
-                        cost_method = COALESCE(?, cost_method),
-                        standard_cost = COALESCE(?, standard_cost),
-                        material_cost = COALESCE(?, material_cost),
-                        labor_cost = COALESCE(?, labor_cost),
-                        overhead_cost = COALESCE(?, overhead_cost),
-                        currency = COALESCE(?, currency),
-                        effective_date = ?,
-                        updated_at = ?
-                     WHERE sku = ?",
-                    rusqlite::params![
-                        cost_method.as_ref().map(std::string::ToString::to_string),
-                        standard_cost.as_ref().map(std::string::ToString::to_string),
-                        material_cost.as_ref().map(std::string::ToString::to_string),
-                        labor_cost.as_ref().map(std::string::ToString::to_string),
-                        overhead_cost.as_ref().map(std::string::ToString::to_string),
-                        currency,
-                        now.to_rfc3339(),
-                        now.to_rfc3339(),
-                        &sku,
-                    ],
-                )
-                .map_err(map_db_error)?;
-            } else {
-                // Insert new
-                let id = Uuid::new_v4();
-                let cost_method = cost_method.unwrap_or_default();
-                let standard_cost = standard_cost.unwrap_or_default();
-                let material_cost = material_cost.unwrap_or_default();
-                let labor_cost = labor_cost.unwrap_or_default();
-                let overhead_cost = overhead_cost.unwrap_or_default();
-                let currency = currency.unwrap_or_default();
-
-                conn.execute(
-                    "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
-                        material_cost, labor_cost, overhead_cost, currency, effective_date, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    rusqlite::params![
-                        id.to_string(),
-                        &sku,
-                        cost_method.to_string(),
-                        standard_cost.to_string(),
-                        standard_cost.to_string(), // average_cost starts as standard
-                        standard_cost.to_string(), // last_cost starts as standard
-                        material_cost.to_string(),
-                        labor_cost.to_string(),
-                        overhead_cost.to_string(),
-                        &currency,
-                        now.to_rfc3339(),
-                        now.to_rfc3339(),
-                        now.to_rfc3339(),
-                    ],
-                ).map_err(map_db_error)?;
-            }
-        }
+        let sku = input.sku.clone();
+        // The existence check and the write share one IMMEDIATE transaction:
+        // as a read-modify-write on a UNIQUE sku, doing them on separate
+        // pooled connections let two concurrent callers both observe "absent"
+        // and race on the INSERT.
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::set_item_cost_with_conn(tx, input.clone(), now)
+        })?;
 
         self.get_item_cost(&sku)?.ok_or(CommerceError::NotFound)
     }
-
     fn list_item_costs(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
@@ -1073,44 +1109,61 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        conn.execute(
-            "UPDATE cost_adjustments SET status = ?, approved_by = ?, approved_at = ? WHERE id = ?",
-            rusqlite::params![
-                CostAdjustmentStatus::Approved.to_string(),
-                approved_by,
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        // Only a pending adjustment may be approved. Unguarded, this
+        // re-approved an already-applied adjustment, which `apply_adjustment`
+        // would then apply to the item cost a second time.
+        let rows = conn
+            .execute(
+                "UPDATE cost_adjustments SET status = ?, approved_by = ?, approved_at = ?
+                 WHERE id = ? AND status = 'pending'",
+                rusqlite::params![
+                    CostAdjustmentStatus::Approved.to_string(),
+                    approved_by,
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(adjustment_conflict(&conn, id, "approved"));
+        }
 
         self.get_adjustment(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn apply_adjustment(&self, id: Uuid) -> Result<CostAdjustment> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let now = Utc::now();
 
-        let adjustment = self.get_adjustment(id)?.ok_or(CommerceError::NotFound)?;
+        // Claim the adjustment and apply the cost change in ONE transaction.
+        // Previously the status check, the item-cost write and the status
+        // write each ran on their own connection: two concurrent callers both
+        // passed the check and both moved the cost, and a crash between the
+        // cost write and the status write left an "approved" adjustment whose
+        // cost had already been applied — re-applying doubled it.
+        with_immediate_transaction(&self.pool, |tx| {
+            let claimed = tx.execute(
+                "UPDATE cost_adjustments SET status = ? WHERE id = ? AND status = 'approved'",
+                [CostAdjustmentStatus::Applied.to_string(), id.to_string()],
+            )?;
+            if claimed == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    adjustment_conflict(tx, id, "applied"),
+                )));
+            }
 
-        if adjustment.status != CostAdjustmentStatus::Approved {
-            return Err(CommerceError::ValidationError(
-                "Adjustment must be approved before applying".into(),
-            ));
-        }
+            let (sku, new_cost): (String, String) = tx.query_row(
+                "SELECT sku, new_cost FROM cost_adjustments WHERE id = ?",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let new_cost = parse_decimal_row(&new_cost, "cost_adjustment", "new_cost")?;
 
-        // Update item cost
-        self.set_item_cost(SetItemCost {
-            sku: adjustment.sku.clone(),
-            standard_cost: Some(adjustment.new_cost),
-            ..Default::default()
+            Self::set_item_cost_with_conn(
+                tx,
+                SetItemCost { sku, standard_cost: Some(new_cost), ..Default::default() },
+                now,
+            )
         })?;
-
-        // Update status
-        conn.execute(
-            "UPDATE cost_adjustments SET status = ? WHERE id = ?",
-            [CostAdjustmentStatus::Applied.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
 
         self.get_adjustment(id)?.ok_or(CommerceError::NotFound)
     }
@@ -1118,11 +1171,18 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     fn reject_adjustment(&self, id: Uuid) -> Result<CostAdjustment> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        conn.execute(
-            "UPDATE cost_adjustments SET status = ? WHERE id = ?",
-            [CostAdjustmentStatus::Rejected.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // An applied adjustment is live in the item cost: recording it as
+        // "rejected" would make the audit trail contradict the cost record.
+        let rows = conn
+            .execute(
+                "UPDATE cost_adjustments SET status = ?
+                 WHERE id = ? AND status IN ('pending', 'approved')",
+                [CostAdjustmentStatus::Rejected.to_string(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(adjustment_conflict(&conn, id, "rejected"));
+        }
 
         self.get_adjustment(id)?.ok_or(CommerceError::NotFound)
     }
@@ -1394,6 +1454,136 @@ mod tests {
 
     fn fresh_repo() -> SqliteCostAccountingRepository {
         SqliteDatabase::in_memory().expect("in-memory").cost_accounting()
+    }
+
+    /// A pending cost adjustment moving `sku` from its current cost to `new_cost`.
+    fn make_adjustment(
+        repo: &SqliteCostAccountingRepository,
+        sku: &str,
+        new_cost: Decimal,
+    ) -> CostAdjustment {
+        repo.create_adjustment(CreateCostAdjustment {
+            sku: sku.into(),
+            adjustment_type: CostAdjustmentType::Revaluation,
+            new_cost,
+            reason: "test".into(),
+            created_by: Some("tester".into()),
+        })
+        .expect("create adjustment")
+    }
+
+    #[test]
+    fn cost_adjustment_lifecycle_transitions_are_guarded() {
+        let repo = fresh_repo();
+        repo.set_item_cost(SetItemCost {
+            sku: "ADJ-SKU".into(),
+            standard_cost: Some(dec!(10)),
+            ..Default::default()
+        })
+        .expect("seed cost");
+
+        let adjustment = make_adjustment(&repo, "ADJ-SKU", dec!(15));
+        repo.approve_adjustment(adjustment.id, "approver").expect("approve");
+
+        // Approving twice would let the cost change be applied a second time.
+        let err = repo
+            .approve_adjustment(adjustment.id, "approver")
+            .expect_err("re-approval must be refused");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+
+        repo.apply_adjustment(adjustment.id).expect("apply");
+        assert_eq!(
+            repo.get_item_cost("ADJ-SKU").expect("get").expect("cost").standard_cost,
+            dec!(15)
+        );
+
+        // Applying twice must not move the cost again, and rejecting an
+        // applied adjustment would make the audit trail contradict the cost.
+        let err = repo.apply_adjustment(adjustment.id).expect_err("re-apply must be refused");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        let err = repo
+            .reject_adjustment(adjustment.id)
+            .expect_err("rejecting an applied adjustment must be refused");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+
+        assert_eq!(
+            repo.get_item_cost("ADJ-SKU").expect("get").expect("cost").standard_cost,
+            dec!(15),
+            "the cost must move exactly once"
+        );
+    }
+
+    #[test]
+    fn applying_an_unapproved_adjustment_is_refused_and_leaves_cost_untouched() {
+        let repo = fresh_repo();
+        repo.set_item_cost(SetItemCost {
+            sku: "ADJ-PENDING".into(),
+            standard_cost: Some(dec!(10)),
+            ..Default::default()
+        })
+        .expect("seed cost");
+
+        let adjustment = make_adjustment(&repo, "ADJ-PENDING", dec!(99));
+        let err = repo.apply_adjustment(adjustment.id).expect_err("pending must not apply");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        assert_eq!(
+            repo.get_item_cost("ADJ-PENDING").expect("get").expect("cost").standard_cost,
+            dec!(10),
+            "a refused apply must not move the cost"
+        );
+
+        // A rejected adjustment can never be applied either.
+        repo.reject_adjustment(adjustment.id).expect("reject");
+        let err = repo.apply_adjustment(adjustment.id).expect_err("rejected must not apply");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn concurrent_apply_moves_the_cost_exactly_once() {
+        use std::sync::{Arc, Barrier};
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let repo = db.cost_accounting();
+        repo.set_item_cost(SetItemCost {
+            sku: "ADJ-RACE".into(),
+            standard_cost: Some(dec!(10)),
+            ..Default::default()
+        })
+        .expect("seed cost");
+        let adjustment = make_adjustment(&repo, "ADJ-RACE", dec!(25));
+        repo.approve_adjustment(adjustment.id, "approver").expect("approve");
+
+        // Two threads apply the same approved adjustment simultaneously. The
+        // claim and the cost write share one transaction, so exactly one wins.
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let db = Arc::clone(&db);
+                let barrier = Arc::clone(&barrier);
+                let id = adjustment.id;
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    db.cost_accounting().apply_adjustment(id)
+                })
+            })
+            .collect();
+        let results: Vec<_> =
+            handles.into_iter().map(|h| h.join().expect("thread panicked")).collect();
+
+        assert_eq!(
+            results.iter().filter(|r| r.is_ok()).count(),
+            1,
+            "exactly one apply may succeed: {results:?}"
+        );
+        assert_eq!(
+            db.cost_accounting()
+                .get_item_cost("ADJ-RACE")
+                .expect("get")
+                .expect("cost")
+                .standard_cost,
+            dec!(25),
+            "the cost must land on the adjustment value exactly once"
+        );
     }
 
     fn make_layer(

@@ -325,6 +325,48 @@ impl SqliteWarehouseRepository {
         Ok(map)
     }
 
+    /// Wrap a domain error so it survives the `rusqlite::Error` channel used by
+    /// [`with_immediate_transaction`] closures. `is_retryable_error` never
+    /// matches `ToSqlConversionFailure`, so smuggled errors abort the
+    /// transaction instead of being retried, and `map_db_error` downcasts them
+    /// back to the original [`CommerceError`] unchanged.
+    fn smuggle(e: CommerceError) -> rusqlite::Error {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+    }
+
+    /// Fetch a warehouse on the caller's connection (or transaction).
+    fn get_warehouse_on(conn: &rusqlite::Connection, id: i32) -> Result<Option<Warehouse>> {
+        let mut stmt =
+            conn.prepare("SELECT * FROM warehouses WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id]).map_err(map_db_error)?;
+        rows.next()
+            .map_err(map_db_error)?
+            .map(|row| Self::row_to_warehouse(row).map_err(map_db_error))
+            .transpose()
+    }
+
+    /// Fetch a location on the caller's connection (or transaction).
+    fn get_location_on(conn: &rusqlite::Connection, id: i32) -> Result<Option<Location>> {
+        let mut stmt =
+            conn.prepare("SELECT * FROM locations WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id]).map_err(map_db_error)?;
+        rows.next()
+            .map_err(map_db_error)?
+            .map(|row| Self::row_to_location(row).map_err(map_db_error))
+            .transpose()
+    }
+
+    /// Fetch a zone on the caller's connection (or transaction).
+    fn get_zone_on(conn: &rusqlite::Connection, id: i32) -> Result<Option<Zone>> {
+        let mut stmt =
+            conn.prepare("SELECT * FROM warehouse_zones WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id]).map_err(map_db_error)?;
+        rows.next()
+            .map_err(map_db_error)?
+            .map(|row| Self::row_to_zone(row).map_err(map_db_error))
+            .transpose()
+    }
+
     fn get_cycle_count_on(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<CycleCount>> {
         let mut stmt =
             conn.prepare("SELECT * FROM cycle_counts WHERE id = ?1").map_err(map_db_error)?;
@@ -340,30 +382,53 @@ impl SqliteWarehouseRepository {
     }
 
     /// Update a cycle count's status after verifying the transition is legal.
+    ///
+    /// The status read and the status write share one IMMEDIATE transaction,
+    /// and the `UPDATE` re-asserts the observed status in its `WHERE` clause:
+    /// without both, two concurrent `start_cycle_count` calls (or a `cancel`
+    /// racing a `complete`) each read `draft`, each passed `can_transition_to`
+    /// and each wrote a status, so the count could be started twice or move
+    /// backwards out of a terminal state.
     fn transition_cycle_count(
         &self,
         id: Uuid,
         next: CycleCountStatus,
         set_completed_at: bool,
     ) -> Result<CycleCount> {
-        let conn = self.conn()?;
-        let current = Self::get_cycle_count_on(&conn, id)?.ok_or(CommerceError::NotFound)?;
-        if !current.status.can_transition_to(next) {
-            return Err(CommerceError::ValidationError(format!(
-                "cannot transition cycle count from {} to {next}",
-                current.status
-            )));
-        }
-        let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "UPDATE cycle_counts SET status = ?1, updated_at = ?2,
-                 completed_at = CASE WHEN ?3 THEN ?2 ELSE completed_at END
-             WHERE id = ?4",
-            params![next.to_string(), now, set_completed_at, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        Self::get_cycle_count_on(&conn, id)?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to retrieve updated cycle count".into())
+        with_immediate_transaction(&self.pool, |tx| {
+            let current = Self::get_cycle_count_on(tx, id)
+                .map_err(Self::smuggle)?
+                .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
+            if !current.status.can_transition_to(next) {
+                return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                    "cannot transition cycle count from {} to {next}",
+                    current.status
+                ))));
+            }
+            let now = Utc::now().to_rfc3339();
+            let changed = tx.execute(
+                "UPDATE cycle_counts SET status = ?1, updated_at = ?2,
+                     completed_at = CASE WHEN ?3 THEN ?2 ELSE completed_at END
+                 WHERE id = ?4 AND status = ?5",
+                params![
+                    next.to_string(),
+                    now,
+                    set_completed_at,
+                    id.to_string(),
+                    current.status.to_string(),
+                ],
+            )?;
+            if changed == 0 {
+                return Err(Self::smuggle(CommerceError::Conflict(format!(
+                    "cycle count {id} is no longer in status {}",
+                    current.status
+                ))));
+            }
+            Self::get_cycle_count_on(tx, id).map_err(Self::smuggle)?.ok_or_else(|| {
+                Self::smuggle(CommerceError::DatabaseError(
+                    "Failed to retrieve updated cycle count".into(),
+                ))
+            })
         })
     }
 
@@ -459,54 +524,52 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn update_warehouse(&self, id: i32, input: UpdateWarehouse) -> Result<Warehouse> {
-        let conn = self.conn()?;
+        // A partial update merges the caller's `Option` fields over the stored
+        // row, so it is a read-modify-write: reading and writing on a pooled
+        // connection outside a transaction let two concurrent partial updates
+        // each write back the fields they had read, and the later write
+        // reverted the earlier one's field. One IMMEDIATE transaction makes the
+        // merge atomic. Postgres reaches the same outcome with a single
+        // `COALESCE` UPDATE and never reads first.
+        with_immediate_transaction(&self.pool, |tx| {
+            let existing = Self::get_warehouse_on(tx, id)
+                .map_err(Self::smuggle)?
+                .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
 
-        // Get existing warehouse using the same connection
-        let mut stmt =
-            conn.prepare("SELECT * FROM warehouses WHERE id = ?1").map_err(map_db_error)?;
-        let mut rows = stmt.query(params![id]).map_err(map_db_error)?;
-        let existing = if let Some(row) = rows.next().map_err(map_db_error)? {
-            Self::row_to_warehouse(row).map_err(map_db_error)?
-        } else {
-            return Err(CommerceError::NotFound);
-        };
-        drop(rows);
-        drop(stmt);
+            let code = existing.code;
+            let name = input.name.clone().unwrap_or(existing.name);
+            let warehouse_type = input.warehouse_type.unwrap_or(existing.warehouse_type);
+            let address = input.address.clone().unwrap_or(existing.address);
+            let timezone = input.timezone.clone().or(existing.timezone);
+            let is_active = input.is_active.unwrap_or(existing.is_active);
+            let address_json = serde_json::to_string(&address).unwrap_or_else(|_| "{}".to_string());
+            let now = Utc::now();
 
-        let code = existing.code;
-        let name = input.name.unwrap_or(existing.name);
-        let warehouse_type = input.warehouse_type.unwrap_or(existing.warehouse_type);
-        let address = input.address.unwrap_or(existing.address);
-        let timezone = input.timezone.or(existing.timezone);
-        let is_active = input.is_active.unwrap_or(existing.is_active);
-        let address_json = serde_json::to_string(&address).unwrap_or_else(|_| "{}".to_string());
-        let now = Utc::now();
+            tx.execute(
+                "UPDATE warehouses SET name = ?1, warehouse_type = ?2, address_json = ?3, timezone = ?4, is_active = ?5, updated_at = ?6 WHERE id = ?7",
+                params![
+                    name,
+                    warehouse_type.to_string(),
+                    address_json,
+                    timezone,
+                    i32::from(is_active),
+                    now.to_rfc3339(),
+                    id,
+                ],
+            )?;
 
-        conn.execute(
-            "UPDATE warehouses SET name = ?1, warehouse_type = ?2, address_json = ?3, timezone = ?4, is_active = ?5, updated_at = ?6 WHERE id = ?7",
-            params![
-                name,
-                warehouse_type.to_string(),
-                address_json,
-                timezone,
-                i32::from(is_active),
-                now.to_rfc3339(),
+            // Construct result directly to avoid a second read.
+            Ok(Warehouse {
                 id,
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        // Construct result directly to avoid nested conn() call
-        Ok(Warehouse {
-            id,
-            code,
-            name,
-            warehouse_type,
-            address,
-            timezone,
-            is_active,
-            created_at: existing.created_at,
-            updated_at: now,
+                code,
+                name,
+                warehouse_type,
+                address,
+                timezone,
+                is_active,
+                created_at: existing.created_at,
+                updated_at: now,
+            })
         })
     }
 
@@ -544,26 +607,26 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn delete_warehouse(&self, id: i32) -> Result<()> {
-        let conn = self.conn()?;
-
-        // Check if warehouse has locations
-        let loc_count: i32 = conn
-            .query_row(
+        // Check-then-delete: the guard and the DELETE share one IMMEDIATE
+        // transaction, so a location created between them cannot be orphaned
+        // by a delete that had already read a count of zero.
+        with_immediate_transaction(&self.pool, |tx| {
+            let loc_count: i32 = tx.query_row(
                 "SELECT COUNT(*) FROM locations WHERE warehouse_id = ?1",
                 params![id],
                 |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-        if loc_count > 0 {
-            return Err(CommerceError::ValidationError(
-                "Cannot delete warehouse with existing locations".into(),
-            ));
-        }
+            if loc_count > 0 {
+                return Err(Self::smuggle(CommerceError::ValidationError(
+                    "Cannot delete warehouse with existing locations".into(),
+                )));
+            }
 
-        conn.execute("DELETE FROM warehouses WHERE id = ?1", params![id]).map_err(map_db_error)?;
+            tx.execute("DELETE FROM warehouses WHERE id = ?1", params![id])?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn count_warehouses(&self, filter: WarehouseFilter) -> Result<u64> {
@@ -596,9 +659,12 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn create_zone(&self, input: CreateZone) -> Result<Zone> {
         let now = Utc::now().to_rfc3339();
-        let id = {
-            let conn = self.conn()?;
-            conn.execute(
+        // Insert and read back on one connection inside one transaction: the
+        // previous shape took a second pooled connection for the read-back,
+        // which both doubled pool pressure and exposed the row to another
+        // writer between the insert and the read.
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
                 "INSERT INTO warehouse_zones (warehouse_id, code, name, description, is_active, created_at)
                  VALUES (?1, ?2, ?3, ?4, 1, ?5)",
                 params![
@@ -608,13 +674,15 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                     input.description,
                     now,
                 ],
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-            conn.last_insert_rowid() as i32
-        };
-        self.get_zone(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve created zone".into()))
+            let id = tx.last_insert_rowid() as i32;
+            Self::get_zone_on(tx, id).map_err(Self::smuggle)?.ok_or_else(|| {
+                Self::smuggle(CommerceError::DatabaseError(
+                    "Failed to retrieve created zone".into(),
+                ))
+            })
+        })
     }
 
     fn get_zone(&self, id: i32) -> Result<Option<Zone>> {
@@ -648,23 +716,30 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn update_zone(&self, id: i32, input: UpdateZone) -> Result<Zone> {
-        let existing = self.get_zone(id)?.ok_or(CommerceError::NotFound)?;
+        // Same read-modify-write merge as `update_warehouse`; previously it
+        // also checked out three separate pooled connections (read, write,
+        // read-back), so concurrent partial updates clobbered each other's
+        // fields and could exhaust a small pool.
+        with_immediate_transaction(&self.pool, |tx| {
+            let existing = Self::get_zone_on(tx, id)
+                .map_err(Self::smuggle)?
+                .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
 
-        let name = input.name.unwrap_or(existing.name);
-        let description = input.description.or(existing.description);
-        let is_active = input.is_active.unwrap_or(existing.is_active);
+            let name = input.name.clone().unwrap_or(existing.name);
+            let description = input.description.clone().or(existing.description);
+            let is_active = input.is_active.unwrap_or(existing.is_active);
 
-        {
-            let conn = self.conn()?;
-            conn.execute(
+            tx.execute(
                 "UPDATE warehouse_zones SET name = ?1, description = ?2, is_active = ?3 WHERE id = ?4",
                 params![name, description, i32::from(is_active), id],
-            )
-            .map_err(map_db_error)?;
-        }
+            )?;
 
-        self.get_zone(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve updated zone".into()))
+            Self::get_zone_on(tx, id).map_err(Self::smuggle)?.ok_or_else(|| {
+                Self::smuggle(CommerceError::DatabaseError(
+                    "Failed to retrieve updated zone".into(),
+                ))
+            })
+        })
     }
 
     fn delete_zone(&self, id: i32) -> Result<()> {
@@ -679,36 +754,39 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     // ========================================================================
 
     fn create_location(&self, input: CreateLocation) -> Result<Location> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
         let code = input.code.clone().unwrap_or_else(|| Self::generate_location_code(&input));
 
-        conn.execute(
-            "INSERT INTO locations (warehouse_id, code, location_type, zone, aisle, rack, level, bin,
-                max_weight_kg, max_volume_m3, is_pickable, is_receivable, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?13)",
-            params![
-                input.warehouse_id,
-                code,
-                input.location_type.to_string(),
-                input.zone,
-                input.aisle,
-                input.rack,
-                input.level,
-                input.bin,
-                input.max_weight_kg.map(|d| d.to_string()),
-                input.max_volume_m3.map(|d| d.to_string()),
-                i32::from(input.is_pickable.unwrap_or(true)),
-                i32::from(input.is_receivable.unwrap_or(true)),
-                now,
-            ],
-        )
-        .map_err(map_db_error)?;
+        // Insert and read back on one connection inside one transaction (see
+        // `create_zone`).
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
+                "INSERT INTO locations (warehouse_id, code, location_type, zone, aisle, rack, level, bin,
+                    max_weight_kg, max_volume_m3, is_pickable, is_receivable, is_active, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?13)",
+                params![
+                    input.warehouse_id,
+                    code,
+                    input.location_type.to_string(),
+                    input.zone,
+                    input.aisle,
+                    input.rack,
+                    input.level,
+                    input.bin,
+                    input.max_weight_kg.map(|d| d.to_string()),
+                    input.max_volume_m3.map(|d| d.to_string()),
+                    i32::from(input.is_pickable.unwrap_or(true)),
+                    i32::from(input.is_receivable.unwrap_or(true)),
+                    now,
+                ],
+            )?;
 
-        let id = conn.last_insert_rowid() as i32;
-        drop(conn);
-        self.get_location(id)?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to retrieve created location".into())
+            let id = tx.last_insert_rowid() as i32;
+            Self::get_location_on(tx, id).map_err(Self::smuggle)?.ok_or_else(|| {
+                Self::smuggle(CommerceError::DatabaseError(
+                    "Failed to retrieve created location".into(),
+                ))
+            })
         })
     }
 
@@ -742,44 +820,53 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn update_location(&self, id: i32, input: UpdateLocation) -> Result<Location> {
-        let conn = self.conn()?;
-        let existing = self.get_location(id)?.ok_or(CommerceError::NotFound)?;
+        // Same read-modify-write merge as `update_warehouse`. This one also
+        // held a pooled connection while `self.get_location` checked out a
+        // second one (and a third for the read-back), which on the default
+        // 5-connection pool could stall under concurrency; the transaction
+        // does every step on one connection.
+        with_immediate_transaction(&self.pool, |tx| {
+            let existing = Self::get_location_on(tx, id)
+                .map_err(Self::smuggle)?
+                .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
 
-        let location_type = input.location_type.unwrap_or(existing.location_type);
-        let zone = input.zone.or(existing.zone);
-        let aisle = input.aisle.or(existing.aisle);
-        let rack = input.rack.or(existing.rack);
-        let level = input.level.or(existing.level);
-        let bin = input.bin.or(existing.bin);
-        let max_weight = input.max_weight_kg.or(existing.max_weight_kg);
-        let max_volume = input.max_volume_m3.or(existing.max_volume_m3);
-        let is_pickable = input.is_pickable.unwrap_or(existing.is_pickable);
-        let is_receivable = input.is_receivable.unwrap_or(existing.is_receivable);
-        let is_active = input.is_active.unwrap_or(existing.is_active);
+            let location_type = input.location_type.unwrap_or(existing.location_type);
+            let zone = input.zone.clone().or(existing.zone);
+            let aisle = input.aisle.clone().or(existing.aisle);
+            let rack = input.rack.clone().or(existing.rack);
+            let level = input.level.clone().or(existing.level);
+            let bin = input.bin.clone().or(existing.bin);
+            let max_weight = input.max_weight_kg.or(existing.max_weight_kg);
+            let max_volume = input.max_volume_m3.or(existing.max_volume_m3);
+            let is_pickable = input.is_pickable.unwrap_or(existing.is_pickable);
+            let is_receivable = input.is_receivable.unwrap_or(existing.is_receivable);
+            let is_active = input.is_active.unwrap_or(existing.is_active);
 
-        conn.execute(
-            "UPDATE locations SET location_type = ?1, zone = ?2, aisle = ?3, rack = ?4, level = ?5,
-             bin = ?6, max_weight_kg = ?7, max_volume_m3 = ?8, is_pickable = ?9, is_receivable = ?10,
-             is_active = ?11 WHERE id = ?12",
-            params![
-                location_type.to_string(),
-                zone,
-                aisle,
-                rack,
-                level,
-                bin,
-                max_weight.map(|d| d.to_string()),
-                max_volume.map(|d| d.to_string()),
-                i32::from(is_pickable),
-                i32::from(is_receivable),
-                i32::from(is_active),
-                id,
-            ],
-        )
-        .map_err(map_db_error)?;
+            tx.execute(
+                "UPDATE locations SET location_type = ?1, zone = ?2, aisle = ?3, rack = ?4, level = ?5,
+                 bin = ?6, max_weight_kg = ?7, max_volume_m3 = ?8, is_pickable = ?9, is_receivable = ?10,
+                 is_active = ?11 WHERE id = ?12",
+                params![
+                    location_type.to_string(),
+                    zone,
+                    aisle,
+                    rack,
+                    level,
+                    bin,
+                    max_weight.map(|d| d.to_string()),
+                    max_volume.map(|d| d.to_string()),
+                    i32::from(is_pickable),
+                    i32::from(is_receivable),
+                    i32::from(is_active),
+                    id,
+                ],
+            )?;
 
-        self.get_location(id)?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to retrieve updated location".into())
+            Self::get_location_on(tx, id).map_err(Self::smuggle)?.ok_or_else(|| {
+                Self::smuggle(CommerceError::DatabaseError(
+                    "Failed to retrieve updated location".into(),
+                ))
+            })
         })
     }
 
@@ -842,30 +929,35 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn delete_location(&self, id: i32) -> Result<()> {
-        let conn = self.conn()?;
-
-        // Check if location has inventory. `quantity_on_hand` is a TEXT
-        // decimal, so compare the exact parsed `Decimal`s in Rust instead of a
-        // float-coercing CAST(... AS REAL) in SQL.
-        let quantities: Vec<String> = {
-            let mut stmt = conn
-                .prepare("SELECT quantity_on_hand FROM location_inventory WHERE location_id = ?1")
-                .map_err(map_db_error)?;
-            let rows = stmt.query_map(params![id], |row| row.get(0)).map_err(map_db_error)?;
-            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)?
-        };
-        for qty in &quantities {
-            if parse_decimal_strict(qty, "location_inventory", "quantity_on_hand")? > Decimal::ZERO
-            {
-                return Err(CommerceError::ValidationError(
-                    "Cannot delete location with inventory".into(),
-                ));
+        // Check-then-delete: the stock guard and the DELETE share one IMMEDIATE
+        // transaction, so an adjustment landing between them cannot have its
+        // stock silently cascaded away by a delete that read zero on-hand.
+        with_immediate_transaction(&self.pool, |tx| {
+            // `quantity_on_hand` is a TEXT decimal, so compare the exact parsed
+            // `Decimal`s in Rust instead of a float-coercing CAST(... AS REAL)
+            // in SQL.
+            let quantities: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT quantity_on_hand FROM location_inventory WHERE location_id = ?1",
+                )?;
+                let rows = stmt.query_map(params![id], |row| row.get(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for qty in &quantities {
+                if parse_decimal_strict(qty, "location_inventory", "quantity_on_hand")
+                    .map_err(Self::smuggle)?
+                    > Decimal::ZERO
+                {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Cannot delete location with inventory".into(),
+                    )));
+                }
             }
-        }
 
-        conn.execute("DELETE FROM locations WHERE id = ?1", params![id]).map_err(map_db_error)?;
+            tx.execute("DELETE FROM locations WHERE id = ?1", params![id])?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn count_locations(&self, filter: LocationFilter) -> Result<u64> {
@@ -1031,95 +1123,109 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn adjust_inventory(&self, input: AdjustLocationInventory) -> Result<LocationInventory> {
-        let conn = self.conn()?;
         let now = Utc::now();
         let now_str = now.to_rfc3339();
         let lot_id_str = input.lot_id.map(|id| id.to_string());
-        let lot_key = lot_id_str.unwrap_or_default();
+        let lot_key = lot_id_str.clone().unwrap_or_default();
+        let movement_id = Uuid::new_v4();
+        let reference_id_str = input.reference_id.map(|id| id.to_string());
 
-        // Try to get existing inventory
-        let existing: Option<(String, String)> = conn
-            .query_row(
+        // An adjustment is a read-modify-write of `location_inventory` (or an
+        // insert when the SKU is not stocked at the location yet) plus a
+        // movement insert. Run all of it inside one IMMEDIATE (retrying)
+        // transaction so the read holds the write lock: on a pooled connection
+        // with no transaction two concurrent `+5`s both read on-hand 10 and
+        // both wrote 15, silently losing one adjustment, and a rejected
+        // adjustment could still leave a movement row behind. This is the same
+        // model `move_inventory` and `complete_cycle_count` use; the Postgres
+        // backend gets there with `SELECT ... FOR UPDATE` + a guarded upsert.
+        // Domain errors are carried out via `ToSqlConversionFailure` so they
+        // are not retried.
+        with_immediate_transaction(&self.pool, |tx| {
+            let existing: Option<(String, String)> = match tx.query_row(
                 "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
                  WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
                 params![input.location_id, input.sku, lot_key],
                 |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
+            ) {
+                Ok(row) => Some(row),
+                Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                Err(e) => return Err(e),
+            };
 
-        let (new_on_hand, reserved) = if let Some((oh_str, res_str)) = existing {
-            let on_hand = parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")?;
-            let reserved =
-                parse_decimal_strict(&res_str, "location_inventory", "quantity_reserved")?;
-            let new_qty = on_hand + input.quantity;
+            let (new_on_hand, reserved) = if let Some((oh_str, res_str)) = existing {
+                let on_hand =
+                    parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")
+                        .map_err(Self::smuggle)?;
+                let reserved =
+                    parse_decimal_strict(&res_str, "location_inventory", "quantity_reserved")
+                        .map_err(Self::smuggle)?;
+                let new_qty = on_hand + input.quantity;
 
-            if new_qty < Decimal::ZERO {
-                return Err(CommerceError::ValidationError(
-                    "Adjustment would result in negative inventory".into(),
-                ));
-            }
+                if new_qty < Decimal::ZERO {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Adjustment would result in negative inventory".into(),
+                    )));
+                }
 
-            conn.execute(
-                "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
-                 WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-                params![new_qty.to_string(), now_str, input.location_id, input.sku, lot_key],
-            )
-            .map_err(map_db_error)?;
+                tx.execute(
+                    "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
+                     WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
+                    params![new_qty.to_string(), now_str, input.location_id, input.sku, lot_key],
+                )?;
 
-            (new_qty, reserved)
-        } else {
-            if input.quantity < Decimal::ZERO {
-                return Err(CommerceError::ValidationError(
-                    "Cannot create negative inventory".into(),
-                ));
-            }
+                (new_qty, reserved)
+            } else {
+                if input.quantity < Decimal::ZERO {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Cannot create negative inventory".into(),
+                    )));
+                }
 
-            conn.execute(
-                "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, '0', ?5)",
+                tx.execute(
+                    "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, '0', ?5)",
+                    params![
+                        input.location_id,
+                        input.sku,
+                        lot_key,
+                        input.quantity.to_string(),
+                        now_str,
+                    ],
+                )?;
+
+                (input.quantity, Decimal::ZERO)
+            };
+
+            // Record the movement in the same transaction, so a rejected or
+            // rolled-back adjustment leaves no orphan audit row.
+            tx.execute(
+                "INSERT INTO inventory_movements (id, movement_type, to_location_id, sku, lot_id, quantity, reference_type, reference_id, reason, performed_by, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
+                    movement_id.to_string(),
+                    MovementType::Adjustment.to_string(),
                     input.location_id,
                     input.sku,
-                    lot_key,
+                    lot_id_str,
                     input.quantity.to_string(),
+                    input.reference_type,
+                    reference_id_str,
+                    input.reason,
+                    input.performed_by,
                     now_str,
                 ],
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-            (input.quantity, Decimal::ZERO)
-        };
-
-        // Record the movement
-        let movement_id = Uuid::new_v4();
-
-        conn.execute(
-            "INSERT INTO inventory_movements (id, movement_type, to_location_id, sku, lot_id, quantity, reference_type, reference_id, reason, performed_by, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                movement_id.to_string(),
-                MovementType::Adjustment.to_string(),
-                input.location_id,
-                input.sku,
-                input.lot_id.map(|id| id.to_string()),
-                input.quantity.to_string(),
-                input.reference_type,
-                input.reference_id.map(|id| id.to_string()),
-                input.reason,
-                input.performed_by,
-                now_str,
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        Ok(LocationInventory {
-            location_id: input.location_id,
-            sku: input.sku,
-            lot_id: input.lot_id,
-            quantity_on_hand: new_on_hand,
-            quantity_reserved: reserved,
-            quantity_available: new_on_hand - reserved,
-            updated_at: now,
+            Ok(LocationInventory {
+                location_id: input.location_id,
+                sku: input.sku.clone(),
+                lot_id: input.lot_id,
+                quantity_on_hand: new_on_hand,
+                quantity_reserved: reserved,
+                quantity_available: new_on_hand - reserved,
+                updated_at: now,
+            })
         })
     }
 
@@ -1136,7 +1242,6 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         // at the source with nothing credited to the destination — the Postgres
         // backend already wraps the move in a transaction. Domain errors are
         // carried out via `ToSqlConversionFailure` so they are not retried.
-        let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
 
         with_immediate_transaction(&self.pool, |tx| {
             // Get source inventory
@@ -1148,21 +1253,21 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             ) {
                 Ok(v) => v,
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    return Err(smuggle(CommerceError::NotFound));
+                    return Err(Self::smuggle(CommerceError::NotFound));
                 }
                 Err(e) => return Err(e),
             };
 
             let on_hand =
                 parse_decimal_strict(&source_on_hand, "location_inventory", "quantity_on_hand")
-                    .map_err(smuggle)?;
+                    .map_err(Self::smuggle)?;
             let reserved =
                 parse_decimal_strict(&source_reserved, "location_inventory", "quantity_reserved")
-                    .map_err(smuggle)?;
+                    .map_err(Self::smuggle)?;
             let available = on_hand - reserved;
 
             if input.quantity > available {
-                return Err(smuggle(CommerceError::ValidationError(format!(
+                return Err(Self::smuggle(CommerceError::ValidationError(format!(
                     "Insufficient available quantity. Requested: {}, Available: {}",
                     input.quantity, available
                 ))));
@@ -1206,7 +1311,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 )?;
                 let new_dest_qty =
                     parse_decimal_strict(&dest_on_hand, "location_inventory", "quantity_on_hand")
-                        .map_err(smuggle)?
+                        .map_err(Self::smuggle)?
                         + input.quantity;
                 tx.execute(
                     "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
@@ -1449,6 +1554,11 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     // ========================================================================
 
     fn create_locations_batch(&self, inputs: Vec<CreateLocation>) -> Result<BatchResult<Location>> {
+        // Postgres already capped the batch here; SQLite accepted an unbounded
+        // vector, so the same call was rejected on one backend and accepted on
+        // the other.
+        stateset_core::validate_batch_size(&inputs)?;
+
         let mut result = BatchResult::new();
 
         for (index, input) in inputs.into_iter().enumerate() {
@@ -1462,9 +1572,16 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn get_locations_batch(&self, ids: Vec<i32>) -> Result<Vec<Location>> {
-        let mut locations = Vec::new();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // One pooled connection for the whole batch: the previous per-id
+        // `self.get_location` loop checked out (and returned) a connection for
+        // every id, matching Postgres' single batched read only in result.
+        let conn = self.conn()?;
+        let mut locations = Vec::with_capacity(ids.len());
         for id in ids {
-            if let Some(location) = self.get_location(id)? {
+            if let Some(location) = Self::get_location_on(&conn, id)? {
                 locations.push(location);
             }
         }
@@ -1477,42 +1594,48 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn create_cycle_count(&self, input: CreateCycleCount) -> Result<CycleCount> {
         input.validate()?;
-        let conn = self.conn()?;
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
 
-        conn.execute(
-            "INSERT INTO cycle_counts (id, warehouse_id, location_id, status, scheduled_date, counted_by, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-            params![
-                id.to_string(),
-                input.warehouse_id,
-                input.location_id,
-                CycleCountStatus::Draft.to_string(),
-                input.scheduled_date.map(|d| d.to_rfc3339()),
-                input.counted_by,
-                now,
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        for line in &input.lines {
-            conn.execute(
-                "INSERT INTO cycle_count_lines (id, cycle_count_id, sku, lot_id, expected_quantity)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+        // The header and every line commit together: a line insert that failed
+        // (bad SKU length, disk error) previously left a persisted header with
+        // a partial set of lines, which `complete_cycle_count` would then
+        // happily apply as if it were the whole count. Postgres already wrapped
+        // this in a transaction.
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
+                "INSERT INTO cycle_counts (id, warehouse_id, location_id, status, scheduled_date, counted_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
                 params![
-                    Uuid::new_v4().to_string(),
                     id.to_string(),
-                    line.sku,
-                    line.lot_id.map(|l| l.to_string()).unwrap_or_default(),
-                    line.expected_quantity.to_string(),
+                    input.warehouse_id,
+                    input.location_id,
+                    CycleCountStatus::Draft.to_string(),
+                    input.scheduled_date.map(|d| d.to_rfc3339()),
+                    input.counted_by,
+                    now,
                 ],
-            )
-            .map_err(map_db_error)?;
-        }
+            )?;
 
-        Self::get_cycle_count_on(&conn, id)?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to retrieve created cycle count".into())
+            for line in &input.lines {
+                tx.execute(
+                    "INSERT INTO cycle_count_lines (id, cycle_count_id, sku, lot_id, expected_quantity)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        id.to_string(),
+                        line.sku,
+                        line.lot_id.map(|l| l.to_string()).unwrap_or_default(),
+                        line.expected_quantity.to_string(),
+                    ],
+                )?;
+            }
+
+            Self::get_cycle_count_on(tx, id).map_err(Self::smuggle)?.ok_or_else(|| {
+                Self::smuggle(CommerceError::DatabaseError(
+                    "Failed to retrieve created cycle count".into(),
+                ))
+            })
         })
     }
 
@@ -1584,64 +1707,79 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         for count in &counts {
             count.validate()?;
         }
-        let conn = self.conn()?;
-        let existing = Self::get_cycle_count_on(&conn, id)?.ok_or(CommerceError::NotFound)?;
-        if existing.status != CycleCountStatus::InProgress {
-            return Err(CommerceError::ValidationError(format!(
-                "counts can only be recorded on an in_progress cycle count (status: {})",
-                existing.status
-            )));
-        }
 
-        let now = Utc::now().to_rfc3339();
-        for count in &counts {
-            let lot_key = count.lot_id.map(|l| l.to_string()).unwrap_or_default();
-            let line = existing
-                .lines
-                .iter()
-                .find(|l| l.sku == count.sku && l.lot_id == count.lot_id)
-                .ok_or_else(|| {
-                    CommerceError::ValidationError(format!(
-                        "cycle count has no line for sku {} (lot: {lot_key:?})",
-                        count.sku
-                    ))
-                })?;
-            let variance = count.counted_quantity - line.expected_quantity;
-            conn.execute(
-                "UPDATE cycle_count_lines SET counted_quantity = ?1, variance = ?2
-                 WHERE cycle_count_id = ?3 AND sku = ?4 AND lot_id = ?5",
-                params![
-                    count.counted_quantity.to_string(),
-                    variance.to_string(),
-                    id.to_string(),
-                    count.sku,
-                    lot_key,
-                ],
-            )
-            .map_err(map_db_error)?;
-        }
-        conn.execute(
-            "UPDATE cycle_counts SET updated_at = ?1 WHERE id = ?2",
-            params![now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // The status guard, the per-line writes and the header touch all share
+        // one IMMEDIATE transaction, and the header `UPDATE` re-asserts
+        // `in_progress`: reading the status on a pooled connection and then
+        // writing let a concurrent `complete_cycle_count` land in between, so
+        // counts were recorded onto an already-completed count (whose variances
+        // had already been applied to stock) and half the lines could be
+        // written before an error aborted the rest.
+        with_immediate_transaction(&self.pool, |tx| {
+            let existing = Self::get_cycle_count_on(tx, id)
+                .map_err(Self::smuggle)?
+                .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
+            if existing.status != CycleCountStatus::InProgress {
+                return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                    "counts can only be recorded on an in_progress cycle count (status: {})",
+                    existing.status
+                ))));
+            }
 
-        Self::get_cycle_count_on(&conn, id)?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to retrieve updated cycle count".into())
+            let now = Utc::now().to_rfc3339();
+            for count in &counts {
+                let lot_key = count.lot_id.map(|l| l.to_string()).unwrap_or_default();
+                let line = existing
+                    .lines
+                    .iter()
+                    .find(|l| l.sku == count.sku && l.lot_id == count.lot_id)
+                    .ok_or_else(|| {
+                        Self::smuggle(CommerceError::ValidationError(format!(
+                            "cycle count has no line for sku {} (lot: {lot_key:?})",
+                            count.sku
+                        )))
+                    })?;
+                let variance = count.counted_quantity - line.expected_quantity;
+                tx.execute(
+                    "UPDATE cycle_count_lines SET counted_quantity = ?1, variance = ?2
+                     WHERE cycle_count_id = ?3 AND sku = ?4 AND lot_id = ?5",
+                    params![
+                        count.counted_quantity.to_string(),
+                        variance.to_string(),
+                        id.to_string(),
+                        count.sku,
+                        lot_key,
+                    ],
+                )?;
+            }
+            let changed = tx.execute(
+                "UPDATE cycle_counts SET updated_at = ?1 WHERE id = ?2 AND status = ?3",
+                params![now, id.to_string(), CycleCountStatus::InProgress.to_string()],
+            )?;
+            if changed == 0 {
+                return Err(Self::smuggle(CommerceError::Conflict(format!(
+                    "cycle count {id} is no longer in status {}",
+                    CycleCountStatus::InProgress
+                ))));
+            }
+
+            Self::get_cycle_count_on(tx, id).map_err(Self::smuggle)?.ok_or_else(|| {
+                Self::smuggle(CommerceError::DatabaseError(
+                    "Failed to retrieve updated cycle count".into(),
+                ))
+            })
         })
     }
 
     fn complete_cycle_count(&self, id: Uuid) -> Result<CycleCount> {
-        let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
-
         // Completion applies every non-zero variance as an inventory adjustment
         // plus a `cycle_count` movement, then flips the status — all atomically.
         with_immediate_transaction(&self.pool, |tx| {
             let existing = Self::get_cycle_count_on(tx, id)
-                .map_err(smuggle)?
-                .ok_or_else(|| smuggle(CommerceError::NotFound))?;
+                .map_err(Self::smuggle)?
+                .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
             if !existing.status.can_transition_to(CycleCountStatus::Completed) {
-                return Err(smuggle(CommerceError::ValidationError(format!(
+                return Err(Self::smuggle(CommerceError::ValidationError(format!(
                     "cannot complete cycle count in status {}",
                     existing.status
                 ))));
@@ -1652,7 +1790,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
             for line in &existing.lines {
                 let counted = line.counted_quantity.ok_or_else(|| {
-                    smuggle(CommerceError::ValidationError(format!(
+                    Self::smuggle(CommerceError::ValidationError(format!(
                         "cycle count line for sku {} has no recorded count",
                         line.sku
                     )))
@@ -1667,7 +1805,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                     continue;
                 }
                 let location_id = existing.location_id.ok_or_else(|| {
-                    smuggle(CommerceError::ValidationError(
+                    Self::smuggle(CommerceError::ValidationError(
                         "cycle count has no location_id; cannot apply variance adjustments".into(),
                     ))
                 })?;
@@ -1685,10 +1823,10 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 if let Some(oh_str) = current {
                     let on_hand =
                         parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")
-                            .map_err(smuggle)?;
+                            .map_err(Self::smuggle)?;
                     let new_qty = on_hand + variance;
                     if new_qty < Decimal::ZERO {
-                        return Err(smuggle(CommerceError::ValidationError(format!(
+                        return Err(Self::smuggle(CommerceError::ValidationError(format!(
                             "cycle count adjustment for sku {} would result in negative inventory",
                             line.sku
                         ))));
@@ -1700,7 +1838,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                     )?;
                 } else {
                     if variance < Decimal::ZERO {
-                        return Err(smuggle(CommerceError::ValidationError(format!(
+                        return Err(Self::smuggle(CommerceError::ValidationError(format!(
                             "cycle count adjustment for sku {} would result in negative inventory",
                             line.sku
                         ))));
@@ -1732,13 +1870,28 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 )?;
             }
 
-            tx.execute(
-                "UPDATE cycle_counts SET status = ?1, updated_at = ?2, completed_at = ?2 WHERE id = ?3",
-                params![CycleCountStatus::Completed.to_string(), now_str, id.to_string()],
+            // Re-assert the status observed at the top of the transaction, so
+            // the completion invariant is local to this statement rather than
+            // relying only on the enclosing write lock.
+            let changed = tx.execute(
+                "UPDATE cycle_counts SET status = ?1, updated_at = ?2, completed_at = ?2
+                 WHERE id = ?3 AND status = ?4",
+                params![
+                    CycleCountStatus::Completed.to_string(),
+                    now_str,
+                    id.to_string(),
+                    existing.status.to_string(),
+                ],
             )?;
+            if changed == 0 {
+                return Err(Self::smuggle(CommerceError::Conflict(format!(
+                    "cycle count {id} is no longer in status {}",
+                    existing.status
+                ))));
+            }
 
-            Self::get_cycle_count_on(tx, id).map_err(smuggle)?.ok_or_else(|| {
-                smuggle(CommerceError::DatabaseError(
+            Self::get_cycle_count_on(tx, id).map_err(Self::smuggle)?.ok_or_else(|| {
+                Self::smuggle(CommerceError::DatabaseError(
                     "Failed to retrieve completed cycle count".into(),
                 ))
             })

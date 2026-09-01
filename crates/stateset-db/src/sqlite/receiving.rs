@@ -5,7 +5,7 @@
 use crate::sqlite::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt,
     parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid_opt,
-    parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
+    parse_uuid_opt_row, parse_uuid_row, sum_decimal_query, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -215,55 +215,135 @@ impl SqliteReceivingRepository {
         })
     }
 
-    fn update_receipt_totals(&self, receipt_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
+    /// Smuggle a domain error through the `rusqlite` closure boundary so
+    /// [`map_db_error`] unwraps it again (and `with_retry` never mistakes it for
+    /// a lock error and retries it).
+    fn smuggle(e: CommerceError) -> rusqlite::Error {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+    }
 
-        // Calculate totals from items
-        let receipt_id_param = receipt_id.to_string();
-        let mut stmt = conn
-            .prepare(
-                "SELECT expected_quantity, received_quantity FROM receipt_items WHERE receipt_id = ?1",
-            )
-            .map_err(map_db_error)?;
-        let mut rows = stmt.query(params![&receipt_id_param]).map_err(map_db_error)?;
+    /// Error for a guarded receipt write that matched no row: `NotFound` when
+    /// the receipt is gone, otherwise the `ValidationError` the callers (and
+    /// the Postgres backend) already produce, built from the status that
+    /// actually blocked the write.
+    fn receipt_guard_error(
+        tx: &rusqlite::Transaction<'_>,
+        id: &str,
+        message: impl Fn(&str) -> String,
+    ) -> rusqlite::Error {
+        let current: Option<String> = tx
+            .query_row("SELECT status FROM receipts WHERE id = ?1", params![id], |row| row.get(0))
+            .ok();
+        current.map_or_else(
+            || Self::smuggle(CommerceError::NotFound),
+            |status| Self::smuggle(CommerceError::ValidationError(message(&status))),
+        )
+    }
+
+    /// Error for a status-guarded put-away UPDATE that matched no row: either
+    /// the row is gone (`NotFound`) or its status forbids the transition
+    /// (`Conflict`, naming the status that blocked it).
+    fn put_away_conflict(
+        tx: &rusqlite::Transaction<'_>,
+        id: &str,
+        action: &str,
+    ) -> rusqlite::Error {
+        let current: Option<String> = tx
+            .query_row("SELECT status FROM put_aways WHERE id = ?1", params![id], |row| row.get(0))
+            .ok();
+        current.map_or_else(
+            || Self::smuggle(CommerceError::NotFound),
+            |status| {
+                Self::smuggle(CommerceError::Conflict(format!(
+                    "cannot {action} put-away {id}: status is {status}"
+                )))
+            },
+        )
+    }
+
+    /// Read a single receipt by id from within a transaction.
+    fn read_receipt_by_id_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id_str: &str,
+    ) -> std::result::Result<Receipt, rusqlite::Error> {
+        let mut stmt = tx.prepare("SELECT * FROM receipts WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id_str])?;
+        match rows.next()? {
+            Some(row) => Self::row_to_receipt(row),
+            None => Err(Self::smuggle(CommerceError::NotFound)),
+        }
+    }
+
+    /// Read a single put-away by id from within a transaction.
+    fn read_put_away_by_id_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id_str: &str,
+    ) -> std::result::Result<PutAway, rusqlite::Error> {
+        let mut stmt = tx.prepare("SELECT * FROM put_aways WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id_str])?;
+        match rows.next()? {
+            Some(row) => Self::row_to_put_away(row),
+            None => Err(Self::smuggle(CommerceError::NotFound)),
+        }
+    }
+
+    /// Recompute a receipt's header quantities from its lines, inside the same
+    /// transaction that changed those lines.
+    ///
+    /// The quantity columns are TEXT (migration 017), so the sums are taken with
+    /// `rust_decimal::Decimal` rather than SQL `SUM`, which would coerce them to
+    /// IEEE-754 floats.
+    fn update_receipt_totals_tx(
+        tx: &rusqlite::Transaction<'_>,
+        receipt_id: &str,
+    ) -> std::result::Result<(), rusqlite::Error> {
         let mut exp_total = Decimal::ZERO;
         let mut rcv_total = Decimal::ZERO;
-
-        while let Some(row) = rows.next().map_err(map_db_error)? {
-            let expected_str: String = row.get(0).map_err(map_db_error)?;
-            let received_str: String = row.get(1).map_err(map_db_error)?;
-            exp_total += parse_decimal_strict(&expected_str, "receipt_item", "expected_quantity")?;
-            rcv_total += parse_decimal_strict(&received_str, "receipt_item", "received_quantity")?;
+        {
+            let mut stmt = tx.prepare(
+                "SELECT expected_quantity, received_quantity FROM receipt_items WHERE receipt_id = ?1",
+            )?;
+            let mut rows = stmt.query(params![receipt_id])?;
+            while let Some(row) = rows.next()? {
+                let expected_str: String = row.get(0)?;
+                let received_str: String = row.get(1)?;
+                exp_total += parse_decimal_row(&expected_str, "receipt_item", "expected_quantity")?;
+                rcv_total += parse_decimal_row(&received_str, "receipt_item", "received_quantity")?;
+            }
         }
 
-        conn.execute(
+        tx.execute(
             "UPDATE receipts SET expected_quantity = ?1, received_quantity = ?2 WHERE id = ?3",
-            params![exp_total.to_string(), rcv_total.to_string(), receipt_id_param],
-        )
-        .map_err(map_db_error)?;
+            params![exp_total.to_string(), rcv_total.to_string(), receipt_id],
+        )?;
 
         Ok(())
     }
 }
 
 impl ReceivingRepository for SqliteReceivingRepository {
+    /// Create a receipt and its lines.
+    ///
+    /// Header and lines are written in one transaction: on a bare connection a
+    /// failure part-way through the line loop left a receipt whose
+    /// `expected_quantity` header total counted lines that were never inserted.
     fn create_receipt(&self, input: CreateReceipt) -> Result<Receipt> {
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
+        let id_str = id.to_string();
         let receipt_number = input.receipt_number.unwrap_or_else(generate_receipt_number);
 
         // Calculate expected quantity from items
         let expected_total: Decimal = input.items.iter().map(|i| i.expected_quantity).sum();
 
-        {
-            let conn = self.conn()?;
-            conn.execute(
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
                 "INSERT INTO receipts (id, receipt_number, receipt_type, status, reference_type, reference_id,
                  supplier_id, warehouse_id, carrier, tracking_number, expected_date, expected_quantity,
                  notes, created_by, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
                 params![
-                    id.to_string(),
+                    id_str,
                     receipt_number,
                     input.receipt_type.to_string(),
                     ReceiptStatus::Expected.to_string(),
@@ -279,19 +359,18 @@ impl ReceivingRepository for SqliteReceivingRepository {
                     input.created_by,
                     now,
                 ],
-            )
-            .map_err(map_db_error)?;
+            )?;
 
             // Create receipt items
             for (idx, item) in input.items.iter().enumerate() {
                 let item_id = Uuid::new_v4();
-                conn.execute(
+                tx.execute(
                     "INSERT INTO receipt_items (id, receipt_id, line_number, sku, description, po_line_id,
                      expected_quantity, unit_cost, lot_number, expiration_date, notes, created_at, updated_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
                     params![
                         item_id.to_string(),
-                        id.to_string(),
+                        id_str,
                         (idx + 1) as i32,
                         item.sku,
                         item.description,
@@ -303,13 +382,10 @@ impl ReceivingRepository for SqliteReceivingRepository {
                         item.notes,
                         now,
                     ],
-                )
-                .map_err(map_db_error)?;
+                )?;
             }
-        }
 
-        self.get_receipt(id)?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to retrieve created receipt".into())
+            Self::read_receipt_by_id_tx(tx, &id_str)
         })
     }
 
@@ -426,188 +502,252 @@ impl ReceivingRepository for SqliteReceivingRepository {
         Ok(receipts)
     }
 
+    /// Delete a receipt that has not started receiving.
+    ///
+    /// The status check and the DELETE are one guarded statement, so a receipt
+    /// that starts receiving concurrently can no longer be deleted between the
+    /// check and the write.
     fn delete_receipt(&self, id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        let existing = self.get_receipt(id)?.ok_or(CommerceError::NotFound)?;
+        let id_str = id.to_string();
 
-        if existing.status != ReceiptStatus::Expected {
-            return Err(CommerceError::ValidationError(
-                "Can only delete receipts in 'expected' status".into(),
-            ));
-        }
-
-        conn.execute("DELETE FROM receipts WHERE id = ?1", params![id.to_string()])
-            .map_err(map_db_error)?;
-
-        Ok(())
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "DELETE FROM receipts WHERE id = ?1 AND status = 'expected'",
+                params![id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::receipt_guard_error(tx, &id_str, |_| {
+                    "Can only delete receipts in 'expected' status".into()
+                }));
+            }
+            Ok(())
+        })
     }
 
+    /// Start receiving against a receipt ([`ReceiptStatus::Expected`] only).
     fn start_receiving(&self, id: Uuid) -> Result<Receipt> {
-        let conn = self.conn()?;
-        let existing = self.get_receipt(id)?.ok_or(CommerceError::NotFound)?;
-
-        if existing.status != ReceiptStatus::Expected {
-            return Err(CommerceError::ValidationError(
-                "Can only start receiving for 'expected' receipts".into(),
-            ));
-        }
-
         let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "UPDATE receipts SET status = ?1, received_date = ?2 WHERE id = ?3",
-            params![ReceiptStatus::InProgress.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        let id_str = id.to_string();
 
-        self.get_receipt(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to update receipt".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE receipts SET status = ?1, received_date = ?2
+                 WHERE id = ?3 AND status = 'expected'",
+                params![ReceiptStatus::InProgress.to_string(), now, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::receipt_guard_error(tx, &id_str, |_| {
+                    "Can only start receiving for 'expected' receipts".into()
+                }));
+            }
+            Self::read_receipt_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Record received quantities against a receipt's lines.
+    ///
+    /// The whole operation — receipt status guard, the `Expected -> InProgress`
+    /// flip, every line update and the header totals — runs in ONE `IMMEDIATE`
+    /// transaction. Previously each statement ran on a bare connection, so a
+    /// failure part-way through left the receipt half-applied (line quantities
+    /// updated but the header totals stale, or vice versa) and concurrent
+    /// receipts could interleave and lose each other's quantities.
+    ///
+    /// Guards, in order:
+    /// 1. the receipt must exist, and be `Expected` or `InProgress` — the
+    ///    statuses in which goods can still arrive;
+    /// 2. each line's quantity must be positive and its rejected quantity
+    ///    non-negative (mirroring the purchase-order `receive` guard);
+    /// 3. the line must belong to *this* receipt;
+    /// 4. re-read under the write lock, the cumulative received quantity may not
+    ///    exceed the line's expected quantity. Without this cap 100 units could
+    ///    be received against a 10-unit line, corrupting inventory and the
+    ///    downstream three-way match.
     fn receive_items(&self, input: ReceiveItems) -> Result<Receipt> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let receipt_id = input.receipt_id.to_string();
 
-        // Verify receipt exists and is in correct status
-        let existing = self.get_receipt(input.receipt_id)?.ok_or(CommerceError::NotFound)?;
-
-        if existing.status != ReceiptStatus::InProgress
-            && existing.status != ReceiptStatus::Expected
-        {
-            return Err(CommerceError::ValidationError(
-                "Receipt must be 'expected' or 'in_progress' to receive items".into(),
-            ));
-        }
-
-        // Update receipt to in_progress if expected
-        if existing.status == ReceiptStatus::Expected {
-            conn.execute(
-                "UPDATE receipts SET status = ?1, received_date = ?2 WHERE id = ?3",
-                params![ReceiptStatus::InProgress.to_string(), now, input.receipt_id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        // Process each item
-        for line in &input.items {
-            let reject_qty = line.quantity_rejected.unwrap_or(Decimal::ZERO);
-            let serial_str = line.serial_numbers.as_ref().map(|v| v.join(","));
-
-            // received_quantity, rejected_quantity and expected_quantity are TEXT
-            // columns (migration 017), so accumulating in SQL via
-            // 'CAST(received_quantity AS REAL) + ?1' would coerce both operands to
-            // IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004) — corrupting
-            // the stored quantity and misclassifying the status at the
-            // received/expected boundary. Read the current row, add with
-            // `rust_decimal::Decimal`, and write exact precomputed strings back.
-            let (cur_received, cur_rejected, expected, cur_status): (
-                String,
-                String,
-                String,
-                String,
-            ) = conn
+        with_immediate_transaction(&self.pool, |tx| {
+            // Verify receipt exists and is in correct status
+            let status_str: String = tx
                 .query_row(
-                    "SELECT received_quantity, rejected_quantity, expected_quantity, status
-                     FROM receipt_items WHERE id = ?1",
-                    params![line.receipt_item_id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    "SELECT status FROM receipts WHERE id = ?1",
+                    params![receipt_id],
+                    |row| row.get(0),
                 )
-                .map_err(map_db_error)?;
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
+                    other => other,
+                })?;
+            let status: ReceiptStatus = parse_enum_row(&status_str, "receipt", "status")?;
 
-            let new_received =
-                parse_decimal_strict(&cur_received, "receipt_item", "received_quantity")?
-                    + line.quantity_received;
-            let new_rejected =
-                parse_decimal_strict(&cur_rejected, "receipt_item", "rejected_quantity")?
-                    + reject_qty;
-            let expected = parse_decimal_strict(&expected, "receipt_item", "expected_quantity")?;
+            if status != ReceiptStatus::InProgress && status != ReceiptStatus::Expected {
+                return Err(Self::smuggle(CommerceError::ValidationError(
+                    "Receipt must be 'expected' or 'in_progress' to receive items".into(),
+                )));
+            }
 
-            let new_status = if new_received >= expected {
-                "received"
-            } else if new_received > Decimal::ZERO {
-                "partially_received"
-            } else {
-                cur_status.as_str()
-            };
+            // Update receipt to in_progress if expected
+            if status == ReceiptStatus::Expected {
+                tx.execute(
+                    "UPDATE receipts SET status = ?1, received_date = ?2 WHERE id = ?3",
+                    params![ReceiptStatus::InProgress.to_string(), now, receipt_id],
+                )?;
+            }
 
-            // Update receipt item
-            conn.execute(
-                "UPDATE receipt_items SET
-                 received_quantity = ?1,
-                 rejected_quantity = ?2,
-                 lot_number = COALESCE(?3, lot_number),
-                 serial_numbers = COALESCE(?4, serial_numbers),
-                 expiration_date = COALESCE(?5, expiration_date),
-                 notes = COALESCE(?6, notes),
-                 status = ?8
-                 WHERE id = ?7",
-                params![
-                    new_received.to_string(),
-                    new_rejected.to_string(),
-                    line.lot_number,
-                    serial_str,
-                    line.expiration_date.map(|d| d.to_rfc3339()),
-                    line.notes,
-                    line.receipt_item_id.to_string(),
-                    new_status,
-                ],
-            )
-            .map_err(map_db_error)?;
-        }
+            // Process each item
+            for line in &input.items {
+                let reject_qty = line.quantity_rejected.unwrap_or(Decimal::ZERO);
+                let serial_str = line.serial_numbers.as_ref().map(|v| v.join(","));
+                let line_id = line.receipt_item_id.to_string();
 
-        // Update receipt totals
-        self.update_receipt_totals(input.receipt_id)?;
+                if line.quantity_received <= Decimal::ZERO {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Received quantity must be greater than zero".into(),
+                    )));
+                }
+                if reject_qty < Decimal::ZERO {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Rejected quantity cannot be negative".into(),
+                    )));
+                }
 
-        self.get_receipt(input.receipt_id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve receipt".into()))
+                // received_quantity, rejected_quantity and expected_quantity are TEXT
+                // columns (migration 017), so accumulating in SQL via
+                // 'CAST(received_quantity AS REAL) + ?1' would coerce both operands to
+                // IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004) — corrupting
+                // the stored quantity and misclassifying the status at the
+                // received/expected boundary. Read the current row, add with
+                // `rust_decimal::Decimal`, and write exact precomputed strings back.
+                //
+                // The read is scoped by `receipt_id` too: a line id belonging to
+                // another receipt must not be receivable through this one.
+                let (cur_received, cur_rejected, expected, cur_status): (
+                    String,
+                    String,
+                    String,
+                    String,
+                ) = tx
+                    .query_row(
+                        "SELECT received_quantity, rejected_quantity, expected_quantity, status
+                         FROM receipt_items WHERE id = ?1 AND receipt_id = ?2",
+                        params![line_id, receipt_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .map_err(|e| match e {
+                        rusqlite::Error::QueryReturnedNoRows => {
+                            Self::smuggle(CommerceError::NotFound)
+                        }
+                        other => other,
+                    })?;
+
+                let new_received =
+                    parse_decimal_row(&cur_received, "receipt_item", "received_quantity")?
+                        + line.quantity_received;
+                let new_rejected =
+                    parse_decimal_row(&cur_rejected, "receipt_item", "rejected_quantity")?
+                        + reject_qty;
+                let expected = parse_decimal_row(&expected, "receipt_item", "expected_quantity")?;
+
+                if new_received > expected {
+                    return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                        "Receiving {new_received} would exceed expected quantity {expected} for receipt item {line_id}"
+                    ))));
+                }
+
+                let new_status = if new_received >= expected {
+                    "received"
+                } else if new_received > Decimal::ZERO {
+                    "partially_received"
+                } else {
+                    cur_status.as_str()
+                };
+
+                // Update receipt item
+                tx.execute(
+                    "UPDATE receipt_items SET
+                     received_quantity = ?1,
+                     rejected_quantity = ?2,
+                     lot_number = COALESCE(?3, lot_number),
+                     serial_numbers = COALESCE(?4, serial_numbers),
+                     expiration_date = COALESCE(?5, expiration_date),
+                     notes = COALESCE(?6, notes),
+                     status = ?8
+                     WHERE id = ?7",
+                    params![
+                        new_received.to_string(),
+                        new_rejected.to_string(),
+                        line.lot_number,
+                        serial_str,
+                        line.expiration_date.map(|d| d.to_rfc3339()),
+                        line.notes,
+                        line_id,
+                        new_status,
+                    ],
+                )?;
+            }
+
+            // Update receipt totals
+            Self::update_receipt_totals_tx(tx, &receipt_id)?;
+
+            Self::read_receipt_by_id_tx(tx, &receipt_id)
+        })
     }
 
+    /// Complete receiving ([`ReceiptStatus::InProgress`] only).
+    ///
+    /// The header flip and the line-status sweep are one transaction: on a bare
+    /// connection a failure between them left a `Received` receipt whose lines
+    /// still claimed to be pending (or vice versa).
     fn complete_receiving(&self, id: Uuid) -> Result<Receipt> {
-        let conn = self.conn()?;
-        let existing = self.get_receipt(id)?.ok_or(CommerceError::NotFound)?;
-
-        if existing.status != ReceiptStatus::InProgress {
-            return Err(CommerceError::ValidationError(
-                "Can only complete 'in_progress' receipts".into(),
-            ));
-        }
-
         let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "UPDATE receipts SET status = ?1, completed_date = ?2 WHERE id = ?3",
-            params![ReceiptStatus::Received.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        let id_str = id.to_string();
 
-        // Mark all items as received
-        conn.execute(
-            "UPDATE receipt_items SET status = 'received' WHERE receipt_id = ?1 AND status != 'rejected'",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE receipts SET status = ?1, completed_date = ?2
+                 WHERE id = ?3 AND status = 'in_progress'",
+                params![ReceiptStatus::Received.to_string(), now, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::receipt_guard_error(tx, &id_str, |_| {
+                    "Can only complete 'in_progress' receipts".into()
+                }));
+            }
 
-        self.get_receipt(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to update receipt".into()))
+            // Mark all items as received
+            tx.execute(
+                "UPDATE receipt_items SET status = 'received' WHERE receipt_id = ?1 AND status != 'rejected'",
+                params![id_str],
+            )?;
+
+            Self::read_receipt_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Cancel a receipt.
+    ///
+    /// Legal only while [`ReceiptStatus::can_cancel`] holds (`Expected` or
+    /// `InProgress`); once goods are received the receipt is a record of what
+    /// physically arrived. The check and the write are now one guarded
+    /// statement, so a receipt cannot be cancelled by a caller that read its
+    /// status just before another thread completed it.
     fn cancel_receipt(&self, id: Uuid) -> Result<Receipt> {
-        let conn = self.conn()?;
-        let existing = self.get_receipt(id)?.ok_or(CommerceError::NotFound)?;
+        let id_str = id.to_string();
 
-        if !existing.status.can_cancel() {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel a receipt in {} status (goods already received)",
-                existing.status
-            )));
-        }
-
-        conn.execute(
-            "UPDATE receipts SET status = ?1 WHERE id = ?2",
-            params![ReceiptStatus::Cancelled.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_receipt(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to update receipt".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE receipts SET status = ?1
+                 WHERE id = ?2 AND status IN ('expected', 'in_progress')",
+                params![ReceiptStatus::Cancelled.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::receipt_guard_error(tx, &id_str, |status| {
+                    format!("Cannot cancel a receipt in {status} status (goods already received)")
+                }));
+            }
+            Self::read_receipt_by_id_tx(tx, &id_str)
+        })
     }
 
     fn get_receipt_items(&self, receipt_id: Uuid) -> Result<Vec<ReceiptItem>> {
@@ -626,6 +766,12 @@ impl ReceivingRepository for SqliteReceivingRepository {
         Ok(items)
     }
 
+    /// Count receipts matching `filter`.
+    ///
+    /// Applies exactly the filters `list_receipts` applies (and that the
+    /// Postgres backend counts on); a count that ignored `receipt_type`,
+    /// `supplier_id`, `reference_id` or the date window reported a page total
+    /// for a different result set than the page itself.
     fn count_receipts(&self, filter: ReceiptFilter) -> Result<u64> {
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM receipts WHERE 1=1".to_string();
@@ -636,9 +782,34 @@ impl ReceivingRepository for SqliteReceivingRepository {
             params_vec.push(Box::new(warehouse_id));
         }
 
+        if let Some(receipt_type) = filter.receipt_type {
+            sql.push_str(" AND receipt_type = ?");
+            params_vec.push(Box::new(receipt_type.to_string()));
+        }
+
         if let Some(status) = filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
+        }
+
+        if let Some(supplier_id) = filter.supplier_id {
+            sql.push_str(" AND supplier_id = ?");
+            params_vec.push(Box::new(supplier_id.to_string()));
+        }
+
+        if let Some(reference_id) = filter.reference_id {
+            sql.push_str(" AND reference_id = ?");
+            params_vec.push(Box::new(reference_id.to_string()));
+        }
+
+        if let Some(from_date) = filter.from_date {
+            sql.push_str(" AND created_at >= ?");
+            params_vec.push(Box::new(from_date.to_rfc3339()));
+        }
+
+        if let Some(to_date) = filter.to_date {
+            sql.push_str(" AND created_at <= ?");
+            params_vec.push(Box::new(to_date.to_rfc3339()));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -734,86 +905,117 @@ impl ReceivingRepository for SqliteReceivingRepository {
         Ok(put_aways)
     }
 
+    /// Assign (or re-assign) a put-away task.
+    ///
+    /// Legal from `Pending`/`Assigned`; the UPDATE also writes
+    /// `status = 'assigned'`, so assigning a started task would rewind it and
+    /// assigning a completed one would resurrect it — dropping its quantity out
+    /// of `receipts.put_away_quantity` on the next recompute.
     fn assign_put_away(&self, id: Uuid, assigned_to: &str) -> Result<PutAway> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE put_aways SET assigned_to = ?1, status = ?2 WHERE id = ?3",
-            params![assigned_to, PutAwayStatus::Assigned.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_put_away(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to assign put-away".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE put_aways SET assigned_to = ?1, status = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'assigned')",
+                params![assigned_to, PutAwayStatus::Assigned.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::put_away_conflict(tx, &id_str, "assign"));
+            }
+            Self::read_put_away_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Start a put-away task (`Pending`/`Assigned` only).
     fn start_put_away(&self, id: Uuid) -> Result<PutAway> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE put_aways SET status = ?1, started_at = ?2 WHERE id = ?3",
-            params![PutAwayStatus::InProgress.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_put_away(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to start put-away".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE put_aways SET status = ?1, started_at = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'assigned')",
+                params![PutAwayStatus::InProgress.to_string(), now, id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::put_away_conflict(tx, &id_str, "start"));
+            }
+            Self::read_put_away_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Complete a put-away task and fold its quantity into the receipt.
+    ///
+    /// Legal from `Pending`/`Assigned`/`InProgress`. Completing a cancelled task
+    /// used to succeed and add its quantity to `receipts.put_away_quantity` for
+    /// stock that was never put away. The status flip and the receipt total are
+    /// one transaction, so the receipt can never quote a total that excludes a
+    /// put-away already marked completed.
     fn complete_put_away(&self, input: CompletePutAway) -> Result<PutAway> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id_str = input.put_away_id.to_string();
 
-        let existing = self.get_put_away(input.put_away_id)?.ok_or(CommerceError::NotFound)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let existing = Self::read_put_away_by_id_tx(tx, &id_str)?;
+            let to_location = input.actual_location_id.unwrap_or(existing.to_location_id);
 
-        let to_location = input.actual_location_id.unwrap_or(existing.to_location_id);
+            let changed = tx.execute(
+                "UPDATE put_aways SET status = ?1, to_location_id = ?2, completed_at = ?3, notes = COALESCE(?4, notes)
+                 WHERE id = ?5 AND status IN ('pending', 'assigned', 'in_progress')",
+                params![
+                    PutAwayStatus::Completed.to_string(),
+                    to_location,
+                    now,
+                    input.notes,
+                    id_str,
+                ],
+            )?;
+            if changed == 0 {
+                return Err(Self::put_away_conflict(tx, &id_str, "complete"));
+            }
 
-        conn.execute(
-            "UPDATE put_aways SET status = ?1, to_location_id = ?2, completed_at = ?3, notes = COALESCE(?4, notes) WHERE id = ?5",
-            params![
-                PutAwayStatus::Completed.to_string(),
-                to_location,
-                now,
-                input.notes,
-                input.put_away_id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+            // Update receipt put_away_quantity
+            let receipt_id_param = existing.receipt_id.to_string();
+            let put_away_params: [&dyn rusqlite::ToSql; 1] = [&receipt_id_param];
+            let put_away_total = sum_decimal_query(
+                tx,
+                "SELECT quantity FROM put_aways WHERE receipt_id = ?1 AND status = 'completed'",
+                &put_away_params,
+                "put_aways",
+                "quantity",
+            )
+            .map_err(Self::smuggle)?;
 
-        // Update receipt put_away_quantity
-        let receipt_id = existing.receipt_id;
-        let receipt_id_param = receipt_id.to_string();
-        let put_away_params: [&dyn rusqlite::ToSql; 1] = [&receipt_id_param];
-        let put_away_total = sum_decimal_query(
-            &conn,
-            "SELECT quantity FROM put_aways WHERE receipt_id = ?1 AND status = 'completed'",
-            &put_away_params,
-            "put_aways",
-            "quantity",
-        )?;
+            tx.execute(
+                "UPDATE receipts SET put_away_quantity = ?1 WHERE id = ?2",
+                params![put_away_total.to_string(), receipt_id_param],
+            )?;
 
-        conn.execute(
-            "UPDATE receipts SET put_away_quantity = ?1 WHERE id = ?2",
-            params![put_away_total.to_string(), receipt_id_param],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_put_away(input.put_away_id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete put-away".into()))
+            Self::read_put_away_by_id_tx(tx, &id_str)
+        })
     }
 
+    /// Cancel a put-away task.
+    ///
+    /// Legal from `Pending`/`Assigned`/`InProgress`. A `Completed` task is
+    /// refused: the stock has physically moved, and cancelling it would leave
+    /// `receipts.put_away_quantity` counting a put-away that claims not to have
+    /// happened (cancellation does not recompute that total).
     fn cancel_put_away(&self, id: Uuid) -> Result<PutAway> {
-        let conn = self.conn()?;
+        let id_str = id.to_string();
 
-        conn.execute(
-            "UPDATE put_aways SET status = ?1 WHERE id = ?2",
-            params![PutAwayStatus::Cancelled.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_put_away(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel put-away".into()))
+        with_immediate_transaction(&self.pool, |tx| {
+            let changed = tx.execute(
+                "UPDATE put_aways SET status = ?1
+                 WHERE id = ?2 AND status IN ('pending', 'assigned', 'in_progress')",
+                params![PutAwayStatus::Cancelled.to_string(), id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::put_away_conflict(tx, &id_str, "cancel"));
+            }
+            Self::read_put_away_by_id_tx(tx, &id_str)
+        })
     }
 
     fn get_pending_put_aways(&self, receipt_id: Uuid) -> Result<Vec<PutAway>> {
@@ -824,6 +1026,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
         })
     }
 
+    /// Count put-aways matching `filter` (same filters as `list_put_aways`).
     fn count_put_aways(&self, filter: PutAwayFilter) -> Result<u64> {
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM put_aways WHERE 1=1".to_string();
@@ -837,6 +1040,11 @@ impl ReceivingRepository for SqliteReceivingRepository {
         if let Some(status) = filter.status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(status.to_string()));
+        }
+
+        if let Some(assigned_to) = filter.assigned_to {
+            sql.push_str(" AND assigned_to = ?");
+            params_vec.push(Box::new(assigned_to));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1015,6 +1223,27 @@ mod tests {
             .find(|i| i.id == item_id)
             .expect("item present")
             .received_quantity
+    }
+
+    /// The status guards are expressed as SQL string literals; if an enum's
+    /// `Display` ever drifts from those literals the guards would silently stop
+    /// matching (allowing everything, or nothing). Pin the mapping.
+    #[test]
+    fn status_sql_literals_match_enum_display() {
+        assert_eq!(ReceiptStatus::Expected.to_string(), "expected");
+        assert_eq!(ReceiptStatus::InProgress.to_string(), "in_progress");
+        assert_eq!(ReceiptStatus::Received.to_string(), "received");
+        assert_eq!(ReceiptStatus::Cancelled.to_string(), "cancelled");
+
+        assert_eq!(ReceiptItemStatus::Received.to_string(), "received");
+        assert_eq!(ReceiptItemStatus::PartiallyReceived.to_string(), "partially_received");
+        assert_eq!(ReceiptItemStatus::Rejected.to_string(), "rejected");
+
+        assert_eq!(PutAwayStatus::Pending.to_string(), "pending");
+        assert_eq!(PutAwayStatus::Assigned.to_string(), "assigned");
+        assert_eq!(PutAwayStatus::InProgress.to_string(), "in_progress");
+        assert_eq!(PutAwayStatus::Completed.to_string(), "completed");
+        assert_eq!(PutAwayStatus::Cancelled.to_string(), "cancelled");
     }
 
     #[test]

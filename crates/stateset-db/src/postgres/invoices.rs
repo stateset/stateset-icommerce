@@ -12,6 +12,28 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Statuses that close a receivable for good.
+///
+/// No money may be recorded against them and no status flip may resurrect
+/// them: an invoice flipped out of one of these reappears in AR aging,
+/// statements and the collection reports with its full balance. This is the
+/// same set the AR module guards its payment and credit-memo applications
+/// with (see `postgres/accounts_receivable.rs`), including the legacy
+/// `cancelled` value that predates the `InvoiceStatus` enum.
+const TERMINAL_STATUSES: [&str; 3] = ["voided", "cancelled", "written_off"];
+
+/// SQL fragment listing the statuses an invoice may be voided, written off or
+/// (re)sent from: everything that is neither terminal nor fully paid. Voiding
+/// or writing off a `paid` invoice would erase receivable that has already
+/// been collected and recognized, so `paid` is deliberately excluded —
+/// reverse the payment first.
+const OPEN_STATUS_SQL_LIST: &str =
+    "('draft', 'sent', 'viewed', 'partially_paid', 'overdue', 'disputed')";
+
+fn is_terminal(status: &str) -> bool {
+    TERMINAL_STATUSES.contains(&status)
+}
+
 #[derive(Debug, FromRow)]
 struct InvoiceRow {
     id: Uuid,
@@ -206,6 +228,85 @@ impl PgInvoiceRepository {
             }
             None => Ok(None),
         }
+    }
+
+    /// Read an invoice and its items on a connection that is already inside a
+    /// transaction, so callers see their own uncommitted writes.
+    async fn fetch_invoice_in_tx(conn: &mut sqlx::PgConnection, id: Uuid) -> Result<Invoice> {
+        let invoice_row: InvoiceRow = sqlx::query_as("SELECT * FROM invoices WHERE id = $1")
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+        let item_rows: Vec<InvoiceItemRow> =
+            sqlx::query_as("SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order")
+                .bind(id)
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        invoice_row.into_invoice(item_rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Flip an invoice's status under a guard, inside one transaction.
+    ///
+    /// An unguarded status UPDATE is a money bug: it can void a fully paid
+    /// invoice (erasing recognized receivable) or flip a voided/written-off
+    /// invoice back into an open state (resurrecting its balance into AR aging
+    /// and statements). The row is taken `FOR UPDATE` and the UPDATE repeats
+    /// `guard_sql`, so the check and the write cannot be separated by a
+    /// concurrent writer; 0 affected rows is reported as a
+    /// [`CommerceError::Conflict`] naming the blocking status.
+    async fn guarded_status_change_async(
+        &self,
+        id: Uuid,
+        new_status: InvoiceStatus,
+        guard_sql: &str,
+        timestamp_column: Option<&str>,
+        action: &str,
+    ) -> Result<Invoice> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let current: String =
+            sqlx::query_scalar("SELECT status FROM invoices WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+
+        let sql = timestamp_column.map_or_else(
+            || {
+                format!(
+                    "UPDATE invoices SET status = $1, updated_at = $2
+                     WHERE id = $3 AND {guard_sql}"
+                )
+            },
+            |column| {
+                format!(
+                    "UPDATE invoices SET status = $1, {column} = $2, updated_at = $2
+                     WHERE id = $3 AND {guard_sql}"
+                )
+            },
+        );
+
+        let rows = sqlx::query(&sql)
+            .bind(new_status.to_string())
+            .bind(now)
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot {action} invoice {id} with status {current}"
+            )));
+        }
+
+        let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(invoice)
     }
 
     async fn recalculate_async(&self, id: Uuid) -> Result<()> {
@@ -607,18 +708,18 @@ impl PgInvoiceRepository {
     }
 
     pub async fn send_async(&self, id: Uuid) -> Result<Invoice> {
-        let now = Utc::now();
-
-        sqlx::query("UPDATE invoices SET status = $1, sent_at = $2, updated_at = $3 WHERE id = $4")
-            .bind(InvoiceStatus::Sent.to_string())
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
+        // `send` was an unguarded status flip too: sending a voided or
+        // written-off invoice pushed it back to `sent`, which puts its full
+        // balance back into AR aging and the collection reports, and sending a
+        // paid invoice discarded the `paid` status while leaving `paid_at` set.
+        self.guarded_status_change_async(
+            id,
+            InvoiceStatus::Sent,
+            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
+            Some("sent_at"),
+            "send",
+        )
+        .await
     }
 
     pub async fn mark_viewed_async(&self, id: Uuid) -> Result<Invoice> {
@@ -659,13 +760,63 @@ impl PgInvoiceRepository {
         // payments on the same invoice serialize (each reads the prior payment's
         // committed total) rather than racing on a stale read and losing a
         // payment — matching the refund path's `FOR UPDATE` hardening.
-        let (total, amount_paid, direct_amount_paid): (Decimal, Decimal, Decimal) = sqlx::query_as(
-            "SELECT total, amount_paid, direct_amount_paid FROM invoices WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let (status, total, amount_paid, direct_amount_paid): (String, Decimal, Decimal, Decimal) =
+            sqlx::query_as(
+                "SELECT status, total, amount_paid, direct_amount_paid
+                 FROM invoices WHERE id = $1 FOR UPDATE",
+            )
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        // Idempotency: `payment_id` used to be accepted and ignored, so a
+        // retried payment (client timeout, queue redelivery) applied the amount
+        // twice. The check and the ledger write below share this transaction —
+        // and the invoice row is already held `FOR UPDATE` — so a concurrent
+        // retry cannot slip between them. A NULL payment_id records nothing and
+        // keeps the old behavior.
+        if let Some(payment_id) = payment.payment_id {
+            let already: Option<Uuid> = sqlx::query_scalar(
+                "SELECT payment_id FROM invoice_direct_payments
+                 WHERE invoice_id = $1 AND payment_id = $2",
+            )
+            .bind(id)
+            .bind(payment_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if already.is_some() {
+                // Return the invoice unchanged: the payment already landed.
+                let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
+                tx.commit().await.map_err(map_db_error)?;
+                return Ok(invoice);
+            }
+        }
+
+        // A closed receivable takes no more money: paying a voided, cancelled
+        // or written-off invoice would reopen a balance the ledger has already
+        // disposed of. Same guard (and same terminal set) as the AR
+        // payment/credit-memo applications.
+        if is_terminal(&status) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot record a payment on invoice {id} with status {status}"
+            )));
+        }
+
+        // Cap the payment at what is still owed. `balance_due` is derived
+        // (total - amount_paid) by both this path and the AR recalculation, so
+        // deriving it from the columns already read keeps the bound in step
+        // with credit memos and applications. Without this an overpayment drove
+        // `balance_due` negative, which corrupts AR aging, statements and the
+        // recalculation invariant.
+        let remaining = total - amount_paid;
+        if payment.amount > remaining {
+            return Err(CommerceError::ValidationError(format!(
+                "Invoice payment amount ({}) exceeds invoice {id} balance due ({remaining})",
+                payment.amount
+            )));
+        }
 
         let new_amount_paid = amount_paid + payment.amount;
         // A direct payment is not backed by an ar_payment_applications row, so
@@ -700,72 +851,75 @@ impl PgInvoiceRepository {
         .await
         .map_err(map_db_error)?;
 
+        // Record the idempotency key only once the payment has actually been
+        // applied: a rejected payment must not burn the key, so the caller can
+        // retry with a corrected amount.
+        if let Some(payment_id) = payment.payment_id {
+            sqlx::query(
+                "INSERT INTO invoice_direct_payments (invoice_id, payment_id, amount, recorded_at)
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(id)
+            .bind(payment_id)
+            .bind(payment.amount)
+            .bind(now)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+
         // Read the updated invoice back INSIDE the transaction (it sees the
         // uncommitted UPDATE) and return it, so there is no separate post-commit
         // read that could fail after the payment already committed — which would
         // surface an error for a payment that actually landed and tempt the
         // caller to retry and double-pay.
-        let invoice_row: InvoiceRow = sqlx::query_as("SELECT * FROM invoices WHERE id = $1")
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-        let item_rows: Vec<InvoiceItemRow> =
-            sqlx::query_as("SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order")
-                .bind(id)
-                .fetch_all(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let items = item_rows.into_iter().map(Into::into).collect();
-        let invoice = invoice_row.into_invoice(items)?;
+        let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
 
         tx.commit().await.map_err(map_db_error)?;
         Ok(invoice)
     }
 
     pub async fn void_async(&self, id: Uuid) -> Result<Invoice> {
-        let now = Utc::now();
-
-        sqlx::query(
-            "UPDATE invoices SET status = $1, voided_at = $2, updated_at = $3 WHERE id = $4",
+        // Voiding a *paid* invoice silently erases recognized receivable, and
+        // re-voiding an already terminal invoice is a no-op that reads as
+        // success; both are rejected.
+        self.guarded_status_change_async(
+            id,
+            InvoiceStatus::Voided,
+            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
+            Some("voided_at"),
+            "void",
         )
-        .bind(InvoiceStatus::Voided.to_string())
-        .bind(now)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
         .await
-        .map_err(map_db_error)?;
-
-        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn write_off_async(&self, id: Uuid) -> Result<Invoice> {
-        let now = Utc::now();
-
-        sqlx::query("UPDATE invoices SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(InvoiceStatus::WrittenOff.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
+        // Same allowlist as `void`: a collected (paid) invoice is not
+        // uncollectible, and a voided/already-written-off one has already been
+        // disposed of. Mirrors the AR `create_write_off` guard.
+        self.guarded_status_change_async(
+            id,
+            InvoiceStatus::WrittenOff,
+            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
+            None,
+            "write off",
+        )
+        .await
     }
 
     pub async fn dispute_async(&self, id: Uuid) -> Result<Invoice> {
-        let now = Utc::now();
-
-        sqlx::query("UPDATE invoices SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(InvoiceStatus::Disputed.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
+        // A paid invoice may legitimately be disputed (chargeback), so only the
+        // terminal set is rejected: flipping a voided or written-off invoice to
+        // `disputed` would resurrect its balance into AR aging, which excludes
+        // only paid/voided/written_off.
+        self.guarded_status_change_async(
+            id,
+            InvoiceStatus::Disputed,
+            "status NOT IN ('voided', 'cancelled', 'written_off')",
+            None,
+            "dispute",
+        )
+        .await
     }
 
     pub async fn add_item_async(

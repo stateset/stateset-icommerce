@@ -412,9 +412,22 @@ impl PgCostAccountingRepository {
         row.map(Self::row_to_item_cost).transpose()
     }
 
-    pub async fn set_item_cost_async(&self, input: SetItemCost) -> Result<ItemCost> {
-        let now = Utc::now();
-        let existing = self.get_item_cost_async(&input.sku).await?;
+    /// Insert-or-update an item cost on the caller's transaction, locking the
+    /// row so the existence check and the write cannot interleave.
+    ///
+    /// Shared by `set_item_cost_async` and `apply_adjustment_async`, which
+    /// needs the cost change to commit together with its status claim.
+    async fn set_item_cost_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        input: SetItemCost,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let existing: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM item_costs WHERE sku = $1 FOR UPDATE")
+                .bind(&input.sku)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
         if existing.is_some() {
             sqlx::query(
@@ -438,7 +451,7 @@ impl PgCostAccountingRepository {
             .bind(to_date(now))
             .bind(now)
             .bind(&input.sku)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         } else {
@@ -468,12 +481,24 @@ impl PgCostAccountingRepository {
             .bind(to_date(now))
             .bind(now)
             .bind(now)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         }
+        Ok(())
+    }
 
-        self.get_item_cost_async(&input.sku).await?.ok_or(CommerceError::NotFound)
+    pub async fn set_item_cost_async(&self, input: SetItemCost) -> Result<ItemCost> {
+        let now = Utc::now();
+        let sku = input.sku.clone();
+        // The existence check and the write share one transaction (the row is
+        // locked FOR UPDATE): on separate pool acquisitions two concurrent
+        // callers both observed "absent" and raced on the UNIQUE sku INSERT.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::set_item_cost_tx(&mut tx, input, now).await?;
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_item_cost_async(&sku).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_item_costs_async(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>> {
@@ -1110,8 +1135,12 @@ impl PgCostAccountingRepository {
     ) -> Result<CostAdjustment> {
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE cost_adjustments SET status = $1, approved_by = $2, approved_at = $3 WHERE id = $4",
+        // Only a pending adjustment may be approved. Unguarded, this
+        // re-approved an already-applied adjustment, which `apply_adjustment`
+        // would then apply to the item cost a second time.
+        let rows = sqlx::query(
+            "UPDATE cost_adjustments SET status = $1, approved_by = $2, approved_at = $3
+             WHERE id = $4 AND status = 'pending'",
         )
         .bind(CostAdjustmentStatus::Approved.to_string())
         .bind(approved_by)
@@ -1119,46 +1148,91 @@ impl PgCostAccountingRepository {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(self.adjustment_conflict_async(id, "approved").await);
+        }
 
         self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn apply_adjustment_async(&self, id: Uuid) -> Result<CostAdjustment> {
-        let adjustment = self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let now = Utc::now();
 
-        if adjustment.status != CostAdjustmentStatus::Approved {
-            return Err(CommerceError::ValidationError(
-                "Adjustment must be approved before applying".into(),
-            ));
+        // Claim the adjustment and apply the cost change in ONE transaction.
+        // Previously the status check, the item-cost write and the status
+        // write each ran on their own pool acquisition: two concurrent callers
+        // both passed the check and both moved the cost, and a crash between
+        // the cost write and the status write left an "approved" adjustment
+        // whose cost had already been applied — re-applying doubled it.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let claimed = sqlx::query(
+            "UPDATE cost_adjustments SET status = $1 WHERE id = $2 AND status = 'approved'",
+        )
+        .bind(CostAdjustmentStatus::Applied.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if claimed == 0 {
+            drop(tx);
+            return Err(self.adjustment_conflict_async(id, "applied").await);
         }
 
-        self.set_item_cost_async(SetItemCost {
-            sku: adjustment.sku.clone(),
-            standard_cost: Some(adjustment.new_cost),
-            ..Default::default()
-        })
-        .await?;
+        let (sku, new_cost): (String, Decimal) =
+            sqlx::query_as("SELECT sku, new_cost FROM cost_adjustments WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
-        sqlx::query("UPDATE cost_adjustments SET status = $1 WHERE id = $2")
-            .bind(CostAdjustmentStatus::Applied.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        Self::set_item_cost_tx(
+            &mut tx,
+            SetItemCost { sku, standard_cost: Some(new_cost), ..Default::default() },
+            now,
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn reject_adjustment_async(&self, id: Uuid) -> Result<CostAdjustment> {
-        sqlx::query("UPDATE cost_adjustments SET status = $1 WHERE id = $2")
-            .bind(CostAdjustmentStatus::Rejected.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // An applied adjustment is live in the item cost: recording it as
+        // "rejected" would make the audit trail contradict the cost record.
+        let rows = sqlx::query(
+            "UPDATE cost_adjustments SET status = $1
+             WHERE id = $2 AND status IN ('pending', 'approved')",
+        )
+        .bind(CostAdjustmentStatus::Rejected.to_string())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(self.adjustment_conflict_async(id, "rejected").await);
+        }
 
         self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Explain why a cost-adjustment transition was refused: report the status
+    /// the row is actually in, or `NotFound` when it does not exist.
+    async fn adjustment_conflict_async(&self, id: Uuid, attempted: &str) -> CommerceError {
+        match sqlx::query_scalar::<_, String>("SELECT status FROM cost_adjustments WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+        {
+            Ok(Some(status)) => CommerceError::Conflict(format!(
+                "Cost adjustment {id} cannot be {attempted}: it is already {status}"
+            )),
+            Ok(None) => CommerceError::NotFound,
+            Err(e) => map_db_error(e),
+        }
     }
 
     pub async fn calculate_rollup_async(
