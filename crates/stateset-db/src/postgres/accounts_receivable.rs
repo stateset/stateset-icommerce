@@ -18,7 +18,11 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// One statement-visible event: (date, type, reference, description, amount).
+type PgStatementActivityRow = (DateTime<Utc>, StatementTransactionType, String, String, Decimal);
+
 #[derive(Debug, Clone)]
+
 pub struct PgAccountsReceivableRepository {
     pool: PgPool,
 }
@@ -1509,74 +1513,158 @@ impl PgAccountsReceivableRepository {
             .await?
             .ok_or(CommerceError::NotFound)?;
 
+        // Gather statement-visible activity — invoices (debits), payment and
+        // credit-memo applications and non-reversed write-offs (credits) — as
+        // (date, type, ref, description, amount) rows for one window.
+        // Mirrors the SQLite backend.
+        async fn collect_activity(
+            pool: &sqlx::PgPool,
+            customer_id: Uuid,
+            from: DateTime<Utc>,
+            to: DateTime<Utc>,
+        ) -> Result<Vec<PgStatementActivityRow>> {
+            let mut rows: Vec<PgStatementActivityRow> = Vec::new();
+
+            let invoices: Vec<(DateTime<Utc>, String, Decimal)> = sqlx::query_as(
+                "SELECT created_at, invoice_number, total FROM invoices
+                 WHERE customer_id = $1 AND created_at >= $2 AND created_at <= $3",
+            )
+            .bind(customer_id)
+            .bind(from)
+            .bind(to)
+            .fetch_all(pool)
+            .await
+            .map_err(map_db_error)?;
+            for (date, number, total) in invoices {
+                rows.push((
+                    date,
+                    StatementTransactionType::Invoice,
+                    number,
+                    "Invoice".into(),
+                    total,
+                ));
+            }
+
+            let payments: Vec<(DateTime<Utc>, Uuid, Decimal)> = sqlx::query_as(
+                "SELECT pa.applied_date, p.id, pa.applied_amount
+                 FROM ar_payment_applications pa
+                 JOIN payments p ON pa.payment_id = p.id
+                 JOIN invoices i ON pa.invoice_id = i.id
+                 WHERE i.customer_id = $1 AND pa.applied_date >= $2 AND pa.applied_date <= $3",
+            )
+            .bind(customer_id)
+            .bind(from)
+            .bind(to)
+            .fetch_all(pool)
+            .await
+            .map_err(map_db_error)?;
+            for (date, id, amount) in payments {
+                rows.push((
+                    date,
+                    StatementTransactionType::Payment,
+                    id.to_string()[..8].to_string(),
+                    "Payment".into(),
+                    amount,
+                ));
+            }
+
+            let credits: Vec<(DateTime<Utc>, String, Decimal)> = sqlx::query_as(
+                "SELECT ca.applied_date, cm.credit_memo_number, ca.applied_amount
+                 FROM ar_credit_memo_applications ca
+                 JOIN ar_credit_memos cm ON ca.credit_memo_id = cm.id
+                 JOIN invoices i ON ca.invoice_id = i.id
+                 WHERE i.customer_id = $1 AND ca.applied_date >= $2 AND ca.applied_date <= $3",
+            )
+            .bind(customer_id)
+            .bind(from)
+            .bind(to)
+            .fetch_all(pool)
+            .await
+            .map_err(map_db_error)?;
+            for (date, number, amount) in credits {
+                rows.push((
+                    date,
+                    StatementTransactionType::CreditMemo,
+                    number,
+                    "Credit Memo".into(),
+                    amount,
+                ));
+            }
+
+            let write_offs: Vec<(DateTime<Utc>, String, Decimal)> = sqlx::query_as(
+                "SELECT write_off_date, write_off_number, amount FROM ar_write_offs
+                 WHERE customer_id = $1 AND reversed_at IS NULL
+                   AND write_off_date >= $2 AND write_off_date <= $3",
+            )
+            .bind(customer_id)
+            .bind(from)
+            .bind(to)
+            .fetch_all(pool)
+            .await
+            .map_err(map_db_error)?;
+            for (date, number, amount) in write_offs {
+                rows.push((
+                    date,
+                    StatementTransactionType::WriteOff,
+                    number,
+                    "Write-off".into(),
+                    amount,
+                ));
+            }
+
+            rows.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok(rows)
+        }
+
+        // Opening balance: everything statement-visible before the period.
+        let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap_or(period_start);
+        let opening_balance =
+            collect_activity(&self.pool, request.customer_id, epoch, period_start)
+                .await?
+                .into_iter()
+                // Pre-period rows exactly at period_start belong to the period.
+                .filter(|(date, ..)| *date < period_start)
+                .map(|(_, kind, _, _, amount)| match kind {
+                    StatementTransactionType::Invoice => amount,
+                    _ => -amount,
+                })
+                .sum::<Decimal>();
+
+        let activity =
+            collect_activity(&self.pool, request.customer_id, period_start, period_end).await?;
+
         let mut line_items: Vec<StatementLineItem> = Vec::new();
-        let mut running_balance = Decimal::ZERO;
-
-        let invoices: Vec<(DateTime<Utc>, String, Decimal)> = sqlx::query_as(
-            "SELECT created_at, invoice_number, total FROM invoices
-             WHERE customer_id = $1 AND created_at >= $2 AND created_at <= $3
-             ORDER BY created_at",
-        )
-        .bind(request.customer_id)
-        .bind(period_start)
-        .bind(period_end)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        for (date, number, total) in invoices {
-            running_balance += total;
+        let mut running_balance = opening_balance;
+        let mut total_invoices = Decimal::ZERO;
+        let mut total_payments = Decimal::ZERO;
+        let mut total_credits = Decimal::ZERO;
+        for (date, kind, reference_number, description, amount) in activity {
+            let (debit, credit) = match kind {
+                StatementTransactionType::Invoice => {
+                    running_balance += amount;
+                    total_invoices += amount;
+                    (Some(amount), None)
+                }
+                other => {
+                    running_balance -= amount;
+                    match other {
+                        StatementTransactionType::Payment => total_payments += amount,
+                        StatementTransactionType::CreditMemo => total_credits += amount,
+                        _ => {}
+                    }
+                    (None, Some(amount))
+                }
+            };
             line_items.push(StatementLineItem {
                 date,
-                transaction_type: StatementTransactionType::Invoice,
-                reference_number: number,
-                description: "Invoice".into(),
-                debit: Some(total),
-                credit: None,
+                transaction_type: kind,
+                reference_number,
+                description,
+                debit,
+                credit,
                 balance: running_balance,
             });
         }
-
-        let payments: Vec<(DateTime<Utc>, Uuid, Decimal)> = sqlx::query_as(
-            "SELECT pa.applied_date, p.id, pa.applied_amount
-             FROM ar_payment_applications pa
-             JOIN payments p ON pa.payment_id = p.id
-             JOIN invoices i ON pa.invoice_id = i.id
-             WHERE i.customer_id = $1 AND pa.applied_date >= $2 AND pa.applied_date <= $3
-             ORDER BY pa.applied_date",
-        )
-        .bind(request.customer_id)
-        .bind(period_start)
-        .bind(period_end)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        for (date, id, amount) in payments {
-            running_balance -= amount;
-            line_items.push(StatementLineItem {
-                date,
-                transaction_type: StatementTransactionType::Payment,
-                reference_number: id.to_string()[..8].to_string(),
-                description: "Payment".into(),
-                debit: None,
-                credit: Some(amount),
-                balance: running_balance,
-            });
-        }
-
-        line_items.sort_by(|a, b| a.date.cmp(&b.date));
-
-        let total_invoices: Decimal = line_items
-            .iter()
-            .filter(|l| matches!(l.transaction_type, StatementTransactionType::Invoice))
-            .filter_map(|l| l.debit)
-            .sum();
-        let total_payments: Decimal = line_items
-            .iter()
-            .filter(|l| matches!(l.transaction_type, StatementTransactionType::Payment))
-            .filter_map(|l| l.credit)
-            .sum();
 
         Ok(CustomerStatement {
             customer_id: request.customer_id,
@@ -1586,10 +1674,12 @@ impl PgAccountsReceivableRepository {
             statement_date: now,
             period_start,
             period_end,
-            opening_balance: Decimal::ZERO,
+            opening_balance,
             total_invoices,
             total_payments,
-            total_credits: Decimal::ZERO,
+            total_credits,
+            // The live aging total; matches the running balance when every
+            // balance-affecting event is statement-visible for the window.
             closing_balance: aging.total_outstanding,
             aging,
             line_items,

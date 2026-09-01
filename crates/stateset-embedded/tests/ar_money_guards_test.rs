@@ -11,7 +11,8 @@ use rust_decimal_macros::dec;
 use stateset_embedded::{
     ApplyCreditMemo, ApplyPaymentToInvoices, Commerce, CreateCreditMemo, CreateCustomer,
     CreateInvoice, CreateInvoiceItem, CreatePayment, CreateWriteOff, CreditMemoReason,
-    PaymentApplicationLine, RecordInvoicePayment, WriteOffReason,
+    GenerateStatementRequest, PaymentApplicationLine, RecordInvoicePayment,
+    StatementTransactionType, WriteOffReason,
 };
 use uuid::Uuid;
 
@@ -682,4 +683,101 @@ fn credit_memo_with_nonpositive_amount_is_rejected() {
             "expected ValidationError for amount {amount}, got: {err:?}"
         );
     }
+}
+
+// ============================================================================
+// FIX 6: customer statements include credit memos and a real opening balance
+// ============================================================================
+
+#[test]
+fn statement_includes_credit_memos_and_balances() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+
+    // Apply a $30 payment and a $10 credit memo.
+    let payment_id = create_payment(&commerce, customer_id, dec!(30.00));
+    commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(30.00) }],
+        })
+        .expect("apply payment");
+    let memo = commerce
+        .accounts_receivable()
+        .create_credit_memo(CreateCreditMemo {
+            customer_id: customer_id.into(),
+            amount: dec!(10.00),
+            reason: CreditMemoReason::ServiceCredit,
+            original_invoice_id: None,
+            notes: None,
+        })
+        .expect("create credit memo");
+    commerce
+        .accounts_receivable()
+        .apply_credit_memo(ApplyCreditMemo {
+            credit_memo_id: memo.id,
+            invoice_id,
+            amount: dec!(10.00),
+        })
+        .expect("apply credit memo");
+
+    let statement = commerce
+        .accounts_receivable()
+        .generate_statement(GenerateStatementRequest {
+            customer_id: customer_id.into(),
+            period_start: None, // default: last 30 days, covers everything
+            period_end: None,
+            include_paid_invoices: None,
+        })
+        .expect("generate statement");
+
+    // The credit memo appears as a line item and in total_credits.
+    let credit_lines: Vec<_> = statement
+        .line_items
+        .iter()
+        .filter(|l| matches!(l.transaction_type, StatementTransactionType::CreditMemo))
+        .collect();
+    assert_eq!(credit_lines.len(), 1, "credit memo must appear on the statement");
+    assert_eq!(credit_lines[0].credit, Some(dec!(10.00)));
+    assert_eq!(statement.total_credits, dec!(10.00));
+    assert_eq!(statement.total_invoices, dec!(100.00));
+    assert_eq!(statement.total_payments, dec!(30.00));
+
+    // The running balance foots to the closing balance.
+    assert_eq!(statement.opening_balance, dec!(0.00));
+    let last_balance = statement.line_items.last().expect("line items").balance;
+    assert_eq!(last_balance, dec!(60.00), "running balance must reflect all three entries");
+    assert_eq!(statement.closing_balance, dec!(60.00));
+}
+
+#[test]
+fn statement_opening_balance_carries_pre_period_activity() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    // Activity happens "now"; the statement period is entirely in the future,
+    // so everything lands in the opening balance and no line items appear.
+    create_invoice(&commerce, customer_id, dec!(100.00));
+
+    let start = chrono::Utc::now() + chrono::Duration::days(10);
+    let end = start + chrono::Duration::days(30);
+    let statement = commerce
+        .accounts_receivable()
+        .generate_statement(GenerateStatementRequest {
+            customer_id: customer_id.into(),
+            period_start: Some(start),
+            period_end: Some(end),
+            include_paid_invoices: None,
+        })
+        .expect("generate statement");
+
+    assert!(statement.line_items.is_empty(), "no activity inside the period");
+    assert_eq!(
+        statement.opening_balance,
+        dec!(100.00),
+        "pre-period invoice must carry into the opening balance"
+    );
+    assert_eq!(statement.total_invoices, dec!(0.00));
+    assert_eq!(statement.closing_balance, dec!(100.00));
 }
