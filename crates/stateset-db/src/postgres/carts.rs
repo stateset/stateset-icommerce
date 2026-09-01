@@ -1454,6 +1454,9 @@ impl PgCartRepository {
             notes: cart.notes,
             payment_method: cart.payment_method,
             shipping_method: cart.shipping_method,
+            tax_amount: Some(cart.tax_amount),
+            shipping_amount: Some(cart.shipping_amount),
+            discount_amount: Some(cart.discount_amount),
             stock_policy: stateset_core::StockPolicy::default(),
         };
         PgOrderRepository::validate_create_order_in_tx(tx, &input).await
@@ -1544,6 +1547,10 @@ impl PgCartRepository {
                     notes: cart.notes.clone(),
                     payment_method: cart.payment_method.clone(),
                     shipping_method: cart.shipping_method.clone(),
+                    // Carry the cart's own money onto the order — see the SQLite twin.
+                    tax_amount: Some(cart.tax_amount),
+                    shipping_amount: Some(cart.shipping_amount),
+                    discount_amount: Some(cart.discount_amount),
                     stock_policy: stateset_core::StockPolicy::default(),
                 },
             )

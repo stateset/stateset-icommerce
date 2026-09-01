@@ -1225,6 +1225,9 @@ async fn nonexistent_top_level_route_returns_404() {
 #[test]
 fn create_order_request_serialization_roundtrip() {
     let req = CreateOrderRequest {
+        tax_amount: None,
+        shipping_amount: None,
+        discount_amount: None,
         customer_id: CustomerId::new(),
         items: vec![CreateOrderItemRequest {
             product_id: ProductId::new(),
@@ -2519,6 +2522,9 @@ async fn create_shipment_returns_201() {
         .commerce()
         .orders()
         .create(stateset_core::CreateOrder {
+            tax_amount: None,
+            shipping_amount: None,
+            discount_amount: None,
             customer_id: customer.id,
             items: vec![stateset_core::CreateOrderItem {
                 product_id: ProductId::new(),

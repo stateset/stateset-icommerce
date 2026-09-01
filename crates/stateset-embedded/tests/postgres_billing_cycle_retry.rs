@@ -62,14 +62,17 @@ async fn postgres_failed_cycle_increments_retry_and_stamps_billed_at() {
         .await
         .expect("create subscription");
 
-    let now = chrono::Utc::now();
+    // Creating the subscription already seeds cycle 1, so the next cycle is
+    // number 2. (Re-creating cycle 1 is refused by the unique index from
+    // migration 084_billing_cycle_uniqueness.)
+    let period_start = sub.current_period_end;
     let cycle = commerce
         .subscriptions()
         .create_billing_cycle(CreateBillingCycle {
             subscription_id: sub.id,
-            cycle_number: 1,
-            period_start: now,
-            period_end: now + chrono::Duration::days(30),
+            cycle_number: 2,
+            period_start,
+            period_end: period_start + chrono::Duration::days(30),
         })
         .await
         .expect("create billing cycle");

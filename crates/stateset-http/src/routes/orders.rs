@@ -70,6 +70,9 @@ pub(crate) async fn create_order(
         notes: req.notes,
         payment_method: req.payment_method,
         shipping_method: req.shipping_method,
+        tax_amount: req.tax_amount,
+        shipping_amount: req.shipping_amount,
+        discount_amount: req.discount_amount,
         stock_policy: req.stock_policy,
     };
     let order = state

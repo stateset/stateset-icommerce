@@ -6,13 +6,12 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
-    AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CommerceError,
-    ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode,
-    CreatePromotion, CreatePromotionCondition, CurrencyCode, CustomerId, DiscountTier, OrderId,
-    Promotion, PromotionCondition, PromotionFilter, PromotionId, PromotionRepository,
-    PromotionStatus, PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage,
-    RejectedPromotion, RejectionReason, Result, StackingBehavior, UpdatePromotion,
-    generate_promotion_code,
+    AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CouponCode,
+    CouponFilter, CouponStatus, CreateCouponCode, CreatePromotion, CreatePromotionCondition,
+    CurrencyCode, CustomerId, DiscountTier, OrderId, Promotion, PromotionCondition,
+    PromotionFilter, PromotionId, PromotionRepository, PromotionStatus, PromotionTarget,
+    PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result,
+    StackingBehavior, UpdatePromotion, generate_promotion_code,
 };
 use uuid::Uuid;
 
@@ -666,9 +665,18 @@ impl SqlitePromotionRepository {
             }
         }
 
-        // Combine and sort by priority
-        let mut all_promotions: Vec<(Promotion, Option<String>)> =
-            auto_promotions.into_iter().map(|p| (p, None)).chain(coupon_promotions).collect();
+        // Combine and sort by priority. A promotion is considered at most
+        // once per cart: a `Both`-trigger promotion is reachable both
+        // automatically and by coupon, and the same coupon code can be passed
+        // twice — either way its discount used to be granted more than once.
+        // Coupon-carrying entries come first so a redemption keeps its coupon
+        // attribution.
+        let mut seen: std::collections::HashSet<PromotionId> = std::collections::HashSet::new();
+        let mut all_promotions: Vec<(Promotion, Option<String>)> = coupon_promotions
+            .into_iter()
+            .chain(auto_promotions.into_iter().map(|p| (p, None)))
+            .filter(|(promo, _)| seen.insert(promo.id))
+            .collect();
 
         all_promotions.sort_by_key(|(p, _)| p.priority);
 
@@ -706,6 +714,23 @@ impl SqlitePromotionRepository {
                 continue;
             }
 
+            // Customer-group targeting cannot be resolved from a cart pricing
+            // request, so a group-restricted promotion fails CLOSED rather
+            // than applying to everyone. An explicitly listed eligible
+            // customer is verifiable and still gets through.
+            if !promo.eligible_customer_groups.is_empty()
+                && !request.customer_id.is_some_and(|c| promo.eligible_customer_ids.contains(&c))
+            {
+                result.rejected_promotions.push(RejectedPromotion {
+                    promotion_id: Some(promo.id),
+                    coupon_code: coupon_code.clone(),
+                    reason: "Promotion is limited to customer groups that cannot be verified here"
+                        .into(),
+                    reason_code: RejectionReason::CustomerNotEligible,
+                });
+                continue;
+            }
+
             // Check if already applied exclusive promotion
             if has_exclusive && promo.stacking == StackingBehavior::Exclusive {
                 result.rejected_promotions.push(RejectedPromotion {
@@ -717,12 +742,16 @@ impl SqlitePromotionRepository {
                 continue;
             }
 
-            // Check conditions
-            if !self.check_conditions(&promo, &request)? {
+            // Check conditions. Evaluation lives in `stateset-core` so both
+            // backends agree by construction, and it fails CLOSED: a condition
+            // that cannot be proven from the request (e.g. one needing
+            // customer-group data) refuses the promotion instead of applying
+            // it by default.
+            if let Some(reason) = promo.check_conditions(&request)? {
                 result.rejected_promotions.push(RejectedPromotion {
                     promotion_id: Some(promo.id),
                     coupon_code: coupon_code.clone(),
-                    reason: "Promotion conditions not met".into(),
+                    reason: format!("Promotion conditions not met: {reason}"),
                     reason_code: RejectionReason::MinimumNotMet,
                 });
                 continue;
@@ -801,142 +830,6 @@ impl SqlitePromotionRepository {
         result.grand_total = result.discounted_subtotal + result.final_shipping;
 
         Ok(result)
-    }
-
-    fn check_conditions(
-        &self,
-        promo: &Promotion,
-        request: &ApplyPromotionsRequest,
-    ) -> Result<bool> {
-        if promo.conditions.is_empty() {
-            return Ok(true);
-        }
-
-        let required_conditions: Vec<_> =
-            promo.conditions.iter().filter(|c| c.is_required).collect();
-        let optional_conditions: Vec<_> =
-            promo.conditions.iter().filter(|c| !c.is_required).collect();
-
-        // All required conditions must be met
-        for cond in &required_conditions {
-            if !self.evaluate_condition(cond, request)? {
-                return Ok(false);
-            }
-        }
-
-        // At least one optional condition must be met (if any exist)
-        if !optional_conditions.is_empty() {
-            let mut any_met = false;
-            for cond in &optional_conditions {
-                if self.evaluate_condition(cond, request)? {
-                    any_met = true;
-                    break;
-                }
-            }
-            if !any_met {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
-    }
-
-    fn evaluate_condition(
-        &self,
-        cond: &PromotionCondition,
-        request: &ApplyPromotionsRequest,
-    ) -> Result<bool> {
-        match cond.condition_type {
-            ConditionType::MinimumSubtotal => {
-                let min = self.parse_condition_decimal(cond)?;
-                Ok(self.compare_decimal(request.subtotal, cond.operator, min))
-            }
-            ConditionType::MinimumQuantity => {
-                let min = self.parse_condition_i32(cond)?;
-                let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
-                Ok(self.compare_i32(total_qty, cond.operator, min))
-            }
-            ConditionType::FirstOrder => Ok(request.is_first_order),
-            ConditionType::ShippingCountry => {
-                if let Some(country) = &request.shipping_country {
-                    Ok(self.compare_string(country, cond.operator, &cond.value))
-                } else {
-                    Ok(false)
-                }
-            }
-            ConditionType::ShippingState => {
-                if let Some(state) = &request.shipping_state {
-                    Ok(self.compare_string(state, cond.operator, &cond.value))
-                } else {
-                    Ok(false)
-                }
-            }
-            ConditionType::CartItemCount => {
-                let required = self.parse_condition_i32(cond)?;
-                let count = request.line_items.len() as i32;
-                Ok(self.compare_i32(count, cond.operator, required))
-            }
-            _ => Ok(true), // Default to true for unhandled conditions
-        }
-    }
-
-    fn parse_condition_decimal(&self, cond: &PromotionCondition) -> Result<Decimal> {
-        cond.value.parse::<Decimal>().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid promotion condition value for {:?}: '{}' - {}",
-                cond.condition_type, cond.value, e
-            ))
-        })
-    }
-
-    fn parse_condition_i32(&self, cond: &PromotionCondition) -> Result<i32> {
-        cond.value.parse::<i32>().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid promotion condition value for {:?}: '{}' - {}",
-                cond.condition_type, cond.value, e
-            ))
-        })
-    }
-
-    fn compare_decimal(&self, actual: Decimal, op: ConditionOperator, expected: Decimal) -> bool {
-        match op {
-            ConditionOperator::Equals => actual == expected,
-            ConditionOperator::NotEquals => actual != expected,
-            ConditionOperator::GreaterThan => actual > expected,
-            ConditionOperator::GreaterThanOrEqual => actual >= expected,
-            ConditionOperator::LessThan => actual < expected,
-            ConditionOperator::LessThanOrEqual => actual <= expected,
-            _ => false,
-        }
-    }
-
-    const fn compare_i32(&self, actual: i32, op: ConditionOperator, expected: i32) -> bool {
-        match op {
-            ConditionOperator::Equals => actual == expected,
-            ConditionOperator::NotEquals => actual != expected,
-            ConditionOperator::GreaterThan => actual > expected,
-            ConditionOperator::GreaterThanOrEqual => actual >= expected,
-            ConditionOperator::LessThan => actual < expected,
-            ConditionOperator::LessThanOrEqual => actual <= expected,
-            _ => false,
-        }
-    }
-
-    fn compare_string(&self, actual: &str, op: ConditionOperator, expected: &str) -> bool {
-        let actual_lower = actual.to_lowercase();
-        let expected_lower = expected.to_lowercase();
-
-        match op {
-            ConditionOperator::Equals => actual_lower == expected_lower,
-            ConditionOperator::NotEquals => actual_lower != expected_lower,
-            ConditionOperator::Contains => actual_lower.contains(&expected_lower),
-            ConditionOperator::NotContains => !actual_lower.contains(&expected_lower),
-            ConditionOperator::In => expected_lower.split(',').any(|v| v.trim() == actual_lower),
-            ConditionOperator::NotIn => {
-                !expected_lower.split(',').any(|v| v.trim() == actual_lower)
-            }
-            _ => false,
-        }
     }
 
     fn calculate_discount(
@@ -1472,8 +1365,9 @@ mod tests {
     use crate::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        CouponFilter, CreateCouponCode, CreatePromotion, PromotionFilter, PromotionStatus,
-        PromotionTarget, PromotionTrigger, PromotionType, StackingBehavior,
+        CommerceError, ConditionOperator, ConditionType, CouponFilter, CreateCouponCode,
+        CreatePromotion, PromotionFilter, PromotionStatus, PromotionTarget, PromotionTrigger,
+        PromotionType, StackingBehavior,
     };
 
     fn fresh_repo() -> SqlitePromotionRepository {

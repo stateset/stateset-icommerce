@@ -76,6 +76,9 @@ fn snapshot_payment_status_variants() {
 #[test]
 fn snapshot_create_order_input() {
     let input = CreateOrder {
+        tax_amount: None,
+        shipping_amount: None,
+        discount_amount: None,
         customer_id: CUSTOMER_ID,
         items: vec![CreateOrderItem {
             product_id: PRODUCT_ID,
@@ -109,6 +112,9 @@ fn snapshot_create_order_input() {
 fn snapshot_order() {
     let ts = fixed_timestamp();
     let order = Order {
+        tax_amount: dec!(0),
+        shipping_amount: dec!(0),
+        discount_amount: dec!(0),
         id: ORDER_ID,
         order_number: "ORD-2025-001".into(),
         customer_id: CUSTOMER_ID,

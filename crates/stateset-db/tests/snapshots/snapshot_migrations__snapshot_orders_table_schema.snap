@@ -190,5 +190,35 @@ Ok(
             None,
             0,
         ),
+        (
+            21,
+            "tax_amount",
+            "TEXT",
+            1,
+            Some(
+                "'0'",
+            ),
+            0,
+        ),
+        (
+            22,
+            "shipping_amount",
+            "TEXT",
+            1,
+            Some(
+                "'0'",
+            ),
+            0,
+        ),
+        (
+            23,
+            "discount_amount",
+            "TEXT",
+            1,
+            Some(
+                "'0'",
+            ),
+            0,
+        ),
     ],
 )

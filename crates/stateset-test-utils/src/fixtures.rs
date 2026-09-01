@@ -147,6 +147,9 @@ pub fn create_order_input(customer_id: CustomerId) -> CreateOrder {
         notes: None,
         payment_method: None,
         shipping_method: None,
+        tax_amount: None,
+        shipping_amount: None,
+        discount_amount: None,
         stock_policy: stateset_core::StockPolicy::default(),
     }
 }
@@ -165,6 +168,9 @@ pub fn create_order_with_items(
         notes: None,
         payment_method: None,
         shipping_method: None,
+        tax_amount: None,
+        shipping_amount: None,
+        discount_amount: None,
         stock_policy: stateset_core::StockPolicy::default(),
     }
 }

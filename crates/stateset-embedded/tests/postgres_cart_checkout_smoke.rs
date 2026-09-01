@@ -282,6 +282,9 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
         .create_from_cart_async(
             cart.id.into_uuid(),
             CreateOrder {
+                tax_amount: None,
+                shipping_amount: None,
+                discount_amount: None,
                 customer_id: customer.id,
                 items: vec![CreateOrderItem {
                     product_id: product.id,

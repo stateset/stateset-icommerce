@@ -18,7 +18,18 @@ pub struct Order {
     pub customer_id: CustomerId,
     pub status: OrderStatus,
     pub order_date: DateTime<Utc>,
+    /// What the customer is charged in total:
+    /// `line amounts + tax_amount + shipping_amount - discount_amount`.
     pub total_amount: Decimal,
+    /// Order-level tax. Line-level tax is carried on [`OrderItem`].
+    #[serde(default)]
+    pub tax_amount: Decimal,
+    /// Order-level shipping charge.
+    #[serde(default)]
+    pub shipping_amount: Decimal,
+    /// Order-level discount, already subtracted from `total_amount`.
+    #[serde(default)]
+    pub discount_amount: Decimal,
     pub currency: CurrencyCode,
     pub payment_status: PaymentStatus,
     pub fulfillment_status: FulfillmentStatus,
@@ -202,6 +213,15 @@ pub struct CreateOrder {
     pub notes: Option<String>,
     pub payment_method: Option<String>,
     pub shipping_method: Option<String>,
+    /// Order-level tax to add to the line amounts. `None` means zero.
+    #[serde(default)]
+    pub tax_amount: Option<Decimal>,
+    /// Order-level shipping charge to add to the line amounts.
+    #[serde(default)]
+    pub shipping_amount: Option<Decimal>,
+    /// Order-level discount to subtract from the line amounts.
+    #[serde(default)]
+    pub discount_amount: Option<Decimal>,
     /// How to handle lines that cannot be fully reserved from stock.
     /// Defaults to [`StockPolicy::AllowBackorder`].
     #[serde(default)]
@@ -219,6 +239,9 @@ impl Default for CreateOrder {
             notes: None,
             payment_method: None,
             shipping_method: None,
+            tax_amount: None,
+            shipping_amount: None,
+            discount_amount: None,
             stock_policy: StockPolicy::AllowBackorder,
         }
     }
@@ -516,6 +539,9 @@ mod tests {
         let total: Decimal = items.iter().map(|i| i.total).sum();
 
         Order {
+            tax_amount: Decimal::ZERO,
+            shipping_amount: Decimal::ZERO,
+            discount_amount: Decimal::ZERO,
             id: OrderId::new(),
             order_number: "ORD-2024-001".to_string(),
             customer_id: CustomerId::new(),

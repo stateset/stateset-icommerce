@@ -872,17 +872,20 @@ fn test_create_billing_cycle() {
         })
         .expect("Failed to create subscription");
 
-    let now = chrono::Utc::now();
-    let period_end = now + chrono::Duration::days(30);
+    // `subscribe` already seeds cycle 1, so the next cycle is number 2.
+    // (Re-creating cycle 1 is now refused by the unique index from migration
+    // 077_billing_cycle_uniqueness.)
+    let period_start = subscription.current_period_end;
+    let period_end = period_start + chrono::Duration::days(30);
 
     let cycle = commerce
         .subscriptions()
-        .create_billing_cycle(subscription.id, 1, now, period_end)
+        .create_billing_cycle(subscription.id, 2, period_start, period_end)
         .expect("Failed to create billing cycle");
 
     assert!(!cycle.id.is_nil());
     assert_eq!(cycle.subscription_id, subscription.id);
-    assert_eq!(cycle.cycle_number, 1);
+    assert_eq!(cycle.cycle_number, 2);
 }
 
 #[test]
@@ -941,10 +944,16 @@ fn test_mark_billing_cycle_paid() {
         })
         .expect("Failed to create subscription");
 
-    let now = chrono::Utc::now();
+    // `subscribe` already seeds cycle 1; bill the next period.
+    let period_start = subscription.current_period_end;
     let cycle = commerce
         .subscriptions()
-        .create_billing_cycle(subscription.id, 1, now, now + chrono::Duration::days(30))
+        .create_billing_cycle(
+            subscription.id,
+            2,
+            period_start,
+            period_start + chrono::Duration::days(30),
+        )
         .expect("Failed to create billing cycle");
 
     let paid =
@@ -972,10 +981,16 @@ fn test_mark_billing_cycle_failed() {
         })
         .expect("Failed to create subscription");
 
-    let now = chrono::Utc::now();
+    // `subscribe` already seeds cycle 1; bill the next period.
+    let period_start = subscription.current_period_end;
     let cycle = commerce
         .subscriptions()
-        .create_billing_cycle(subscription.id, 1, now, now + chrono::Duration::days(30))
+        .create_billing_cycle(
+            subscription.id,
+            2,
+            period_start,
+            period_start + chrono::Duration::days(30),
+        )
         .expect("Failed to create billing cycle");
 
     let failed =
@@ -1181,10 +1196,11 @@ fn test_failed_billing_cycle_increments_retry_and_stamps_billed_at() {
         .subscribe(CreateSubscription { customer_id, plan_id, ..Default::default() })
         .expect("subscribe");
 
-    let now = chrono::Utc::now();
+    // `subscribe` already seeds cycle 1; bill the next period.
+    let period_start = sub.current_period_end;
     let cycle = commerce
         .subscriptions()
-        .create_billing_cycle(sub.id, 1, now, now + chrono::Duration::days(30))
+        .create_billing_cycle(sub.id, 2, period_start, period_start + chrono::Duration::days(30))
         .expect("create billing cycle");
     assert_eq!(cycle.retry_count, 0);
     assert!(cycle.billed_at.is_none());

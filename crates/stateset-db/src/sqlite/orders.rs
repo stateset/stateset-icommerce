@@ -104,6 +104,21 @@ impl SqliteOrderRepository {
                 "order",
                 "total_amount",
             )?,
+            tax_amount: parse_decimal_row(
+                &row.get::<_, String>("tax_amount")?,
+                "order",
+                "tax_amount",
+            )?,
+            shipping_amount: parse_decimal_row(
+                &row.get::<_, String>("shipping_amount")?,
+                "order",
+                "shipping_amount",
+            )?,
+            discount_amount: parse_decimal_row(
+                &row.get::<_, String>("discount_amount")?,
+                "order",
+                "discount_amount",
+            )?,
             currency: row.get("currency")?,
             payment_status: parse_enum_row(
                 &row.get::<_, String>("payment_status")?,
@@ -406,7 +421,7 @@ impl SqliteOrderRepository {
         // (the same helper used to store `order_items.total`), so the order
         // total foots exactly to its line items and matches `update_order_total`
         // and the Postgres backend.
-        let total: Decimal = input
+        let line_total: Decimal = input
             .items
             .iter()
             .map(|item| {
@@ -418,7 +433,18 @@ impl SqliteOrderRepository {
                 )
             })
             .sum();
+        // Order-level money sits alongside the line sum, so the order records
+        // what the customer is actually charged. Checkout carries the cart's
+        // tax, shipping and discount here; a plain `create` leaves them zero
+        // and the total is the line sum exactly as before.
+        let tax_amount = input.tax_amount.unwrap_or_default();
+        let shipping_amount = input.shipping_amount.unwrap_or_default();
+        let discount_amount = input.discount_amount.unwrap_or_default();
+        let total = line_total + tax_amount + shipping_amount - discount_amount;
         let total_str = total.to_string();
+        let tax_str = tax_amount.to_string();
+        let shipping_str = shipping_amount.to_string();
+        let discount_str = discount_amount.to_string();
 
         let shipping_address_json = input
             .shipping_address
@@ -467,10 +493,11 @@ impl SqliteOrderRepository {
             })?;
             let rows_affected = tx.execute(
                 "INSERT OR IGNORE INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                 tax_amount, shipping_amount, discount_amount,
                                  currency, payment_status, fulfillment_status, payment_method,
                                  shipping_method, notes, shipping_address, billing_address,
                                  cart_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     &id_str,
                     &order_number,
@@ -478,6 +505,9 @@ impl SqliteOrderRepository {
                     "pending",
                     &now_str,
                     &total_str,
+                    &tax_str,
+                    &shipping_str,
+                    &discount_str,
                     &currency,
                     "pending",
                     "unfulfilled",
@@ -496,10 +526,11 @@ impl SqliteOrderRepository {
         } else {
             tx.prepare_cached(
                 "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                 tax_amount, shipping_amount, discount_amount,
                                  currency, payment_status, fulfillment_status, payment_method,
                                  shipping_method, notes, shipping_address, billing_address,
                                  created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )?.execute(
                 rusqlite::params![
                     &id_str,
@@ -508,6 +539,9 @@ impl SqliteOrderRepository {
                     "pending",
                     &now_str,
                     &total_str,
+                    &tax_str,
+                    &shipping_str,
+                    &discount_str,
                     &currency,
                     "pending",
                     "unfulfilled",
@@ -679,6 +713,9 @@ impl SqliteOrderRepository {
             status: OrderStatus::Pending,
             order_date: now,
             total_amount: total,
+            tax_amount,
+            shipping_amount,
+            discount_amount,
             currency,
             payment_status: PaymentStatus::Pending,
             fulfillment_status: FulfillmentStatus::Unfulfilled,
@@ -1466,141 +1503,18 @@ impl OrderRepository for SqliteOrderRepository {
         for input in inputs {
             Self::validate_order_input(&input)?;
 
-            let id = OrderId::new();
-            let order_number = Self::generate_order_number();
-            let now = Utc::now();
-            let currency = input.currency.unwrap_or_default();
-
-            let total: Decimal = input
-                .items
-                .iter()
-                .map(|item| {
-                    OrderItem::calculate_total(
-                        item.quantity,
-                        item.unit_price,
-                        item.discount.unwrap_or_default(),
-                        item.tax_amount.unwrap_or_default(),
-                    )
-                })
-                .sum();
-
-            let shipping_address_json = input
-                .shipping_address
-                .as_ref()
-                .map(|a| {
-                    serde_json::to_string(a).map_err(|e| {
-                        CommerceError::DatabaseError(format!(
-                            "Failed to serialize order.shipping_address: {e}"
-                        ))
-                    })
-                })
-                .transpose()?;
-            let billing_address_json = input
-                .billing_address
-                .as_ref()
-                .map(|a| {
-                    serde_json::to_string(a).map_err(|e| {
-                        CommerceError::DatabaseError(format!(
-                            "Failed to serialize order.billing_address: {e}"
-                        ))
-                    })
-                })
-                .transpose()?;
-
-            tx.execute(
-                "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
-                                     currency, payment_status, fulfillment_status, payment_method,
-                                     shipping_method, notes, shipping_address, billing_address,
-                                     created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    &order_number,
-                    input.customer_id.to_string(),
-                    "pending",
-                    now.to_rfc3339(),
-                    total.to_string(),
-                    &currency,
-                    "pending",
-                    "unfulfilled",
-                    &input.payment_method,
-                    &input.shipping_method,
-                    &input.notes,
-                    &shipping_address_json,
-                    &billing_address_json,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            )
-            .map_err(map_db_error)?;
-
-            let mut items = Vec::with_capacity(input.items.len());
-            for item in &input.items {
-                let item_id = OrderItemId::new();
-                let item_total = OrderItem::calculate_total(
-                    item.quantity,
-                    item.unit_price,
-                    item.discount.unwrap_or_default(),
-                    item.tax_amount.unwrap_or_default(),
-                );
-
-                tx.execute(
-                    "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
-                                              quantity, unit_price, discount, tax_amount, total)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    rusqlite::params![
-                        item_id.to_string(),
-                        id.to_string(),
-                        item.product_id.to_string(),
-                        item.variant_id.map(|v| v.to_string()),
-                        &item.sku,
-                        &item.name,
-                        item.quantity,
-                        item.unit_price.to_string(),
-                        item.discount.unwrap_or_default().to_string(),
-                        item.tax_amount.unwrap_or_default().to_string(),
-                        item_total.to_string(),
-                    ],
-                )
-                .map_err(map_db_error)?;
-
-                items.push(OrderItem {
-                    id: item_id,
-                    order_id: id,
-                    product_id: item.product_id,
-                    variant_id: item.variant_id,
-                    sku: item.sku.clone(),
-                    name: item.name.clone(),
-                    quantity: item.quantity,
-                    shipped_quantity: 0,
-                    unit_price: item.unit_price,
-                    discount: item.discount.unwrap_or_default(),
-                    tax_amount: item.tax_amount.unwrap_or_default(),
-                    total: item_total,
-                });
-            }
-
-            results.push(Order {
-                id,
-                order_number,
-                customer_id: input.customer_id,
-                status: OrderStatus::Pending,
-                order_date: now,
-                total_amount: total,
-                currency,
-                payment_status: PaymentStatus::Pending,
-                fulfillment_status: FulfillmentStatus::Unfulfilled,
-                payment_method: input.payment_method,
-                shipping_method: input.shipping_method,
-                tracking_number: None,
-                notes: input.notes,
-                shipping_address: input.shipping_address,
-                billing_address: input.billing_address,
-                items,
-                version: 1,
-                created_at: now,
-                updated_at: now,
-            });
+            // Route batch creation through the SAME guarded path as a single
+            // create. The batch loop previously inserted orders and items
+            // directly, performing no stock check, no reservation and no
+            // backorder: batch-creating 100 units against 5 in stock succeeded,
+            // and shipping later found zero reservations, so inventory was
+            // never decremented. `create_internal_in_tx` enforces the stock
+            // policy, reserves what is available, backorders the remainder, and
+            // carries the order-level money — all on this transaction, so one
+            // rejected line still rolls the whole batch back.
+            let order =
+                Self::create_internal_in_tx(&tx, None, false, &input).map_err(map_db_error)?;
+            results.push(order);
         }
 
         tx.commit().map_err(map_db_error)?;
