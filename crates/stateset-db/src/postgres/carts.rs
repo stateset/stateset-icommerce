@@ -1309,7 +1309,9 @@ impl PgCartRepository {
             "UPDATE carts SET coupon_code = $1, discount_amount = $2, discount_description = $3,
              updated_at = $4 WHERE id = $5",
         )
-        .bind(coupon_code)
+        // Persist the canonical (uppercased) code: checkout consumes the coupon
+        // by this value and codes are stored uppercased.
+        .bind(coupon_code.to_uppercase())
         .bind(discount_amount)
         .bind(&discount_description)
         .bind(Utc::now())

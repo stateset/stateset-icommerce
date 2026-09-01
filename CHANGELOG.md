@@ -19,7 +19,8 @@ class found alongside them.
   Such coupons are now refused with a message naming the reason, checkout
   increments usage inside the order transaction and rejects the order if
   the coupon was exhausted after it was applied, and percentage discounts
-  are rounded to the currency's minor unit.
+  are rounded to the currency's minor unit. A coupon entered in lowercase
+  is consumed too: the cart now stores the canonical uppercased code.
 - **Lot merge and split only accept Active lots.** Merging a quarantined,
   on-hold, expired, recalled or scrapped lot with an active one produced a
   new Active lot containing the blocked units. Sources that are not

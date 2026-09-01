@@ -1172,7 +1172,9 @@ impl CartRepository for SqliteCartRepository {
             conn.execute(
                 "UPDATE carts SET coupon_code = ?, discount_amount = ?, discount_description = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![
-                    coupon_code,
+                    // Persist the canonical (uppercased) code: checkout consumes
+                    // the coupon by this value and codes are stored uppercased.
+                    coupon_code.to_uppercase(),
                     discount_amount.to_string(),
                     discount_description,
                     Utc::now().to_rfc3339(),
@@ -2872,6 +2874,36 @@ mod tests {
         }
 
         /// Checkout must consume the coupon: usage counters move and a usage
+        /// A coupon typed in lowercase is honoured by `apply_discount` (codes
+        /// are stored uppercased and looked up uppercased), so checkout must
+        /// consume it too. Previously the cart kept the raw string and the
+        /// consume lookup missed, leaving a single-use coupon reusable forever.
+        #[test]
+        fn checkout_consumes_coupon_applied_in_lowercase() {
+            let f = fixture();
+            let (_promo, coupon) = active_promo_with_coupon(
+                &f,
+                "CASE10",
+                CreateCouponCode { usage_limit: Some(1), ..coupon_input() },
+            );
+            let cart = checkoutable_cart(&f.carts);
+            let applied = f.carts.apply_discount(cart.id, "case10").expect("applies");
+            assert_eq!(
+                applied.coupon_code.as_deref(),
+                Some("CASE10"),
+                "cart stores canonical code"
+            );
+            f.carts.complete(cart.id).expect("checkout");
+
+            let coupon_after = f.promos.get_coupon(coupon.id).expect("ok").expect("coupon");
+            assert_eq!(
+                coupon_after.usage_count, 1,
+                "lowercase entry must still consume the coupon"
+            );
+            let other = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(other.id, "case10"), "usage limit");
+        }
+
         /// ledger row is written referencing the minted order.
         #[test]
         fn checkout_records_coupon_usage() {

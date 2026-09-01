@@ -1124,6 +1124,9 @@ impl SqlitePromotionRepository {
         let Some(code) = cart.coupon_code.as_deref() else {
             return Ok(());
         };
+        // Coupon codes are stored uppercased; look the cart's code up the same
+        // way so a coupon typed in lowercase is consumed, not just honoured.
+        let code = code.to_uppercase();
         let coupon: Option<(String, String)> = tx
             .query_row("SELECT id, promotion_id FROM coupon_codes WHERE code = ?1", [code], |row| {
                 Ok((row.get(0)?, row.get(1)?))

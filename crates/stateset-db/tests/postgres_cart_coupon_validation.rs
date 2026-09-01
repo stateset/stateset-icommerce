@@ -409,6 +409,31 @@ async fn checkoutable_cart(carts: &PgCartRepository) -> Cart {
 }
 
 #[tokio::test]
+async fn postgres_checkout_consumes_coupon_applied_in_lowercase() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let (carts, promos) = (db.carts(), db.promotions());
+    let code = unique("CASE10");
+    let (_promo, coupon) = active_promo_with_coupon(&promos, &code, |c| CreateCouponCode {
+        usage_limit: Some(1),
+        ..c
+    })
+    .await;
+    let cart = checkoutable_cart(&carts).await;
+    let applied = carts
+        .apply_discount_async(cart.id.into_uuid(), &code.to_lowercase())
+        .await
+        .expect("applies");
+    assert_eq!(applied.coupon_code.as_deref(), Some(code.as_str()), "cart stores canonical code");
+    carts.complete_async(cart.id.into_uuid()).await.expect("checkout");
+
+    let coupon_after = promos.get_coupon_async(coupon.id).await.expect("ok").expect("coupon");
+    assert_eq!(coupon_after.usage_count, 1, "lowercase entry must still consume the coupon");
+}
+
+#[tokio::test]
 async fn postgres_checkout_records_coupon_usage_once() {
     let Some(db) = connect().await else {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");

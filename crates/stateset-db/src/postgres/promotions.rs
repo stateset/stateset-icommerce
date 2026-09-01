@@ -1238,6 +1238,9 @@ impl PgPromotionRepository {
         let Some(code) = cart.coupon_code.as_deref() else {
             return Ok(());
         };
+        // Coupon codes are stored uppercased; look the cart's code up the same
+        // way so a coupon typed in lowercase is consumed, not just honoured.
+        let code = code.to_uppercase();
         let coupon: Option<(Uuid, Uuid)> =
             sqlx::query_as("SELECT id, promotion_id FROM coupon_codes WHERE code = $1")
                 .bind(code)
