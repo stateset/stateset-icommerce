@@ -448,6 +448,17 @@ impl PostgresDatabase {
             "083_invoice_payment_idempotency",
             include_str!("migrations/083_invoice_payment_idempotency.sql"),
         ));
+        // Legacy-safe uniqueness for subscription billing cycles.
+        migrations.push((
+            "084_billing_cycle_uniqueness",
+            include_str!("migrations/084_billing_cycle_uniqueness.sql"),
+        ));
+        // Order-level tax/shipping/discount so checkout can carry what the
+        // customer is actually charged.
+        migrations.push((
+            "085_order_money_breakdown",
+            include_str!("migrations/085_order_money_breakdown.sql"),
+        ));
 
         migrations
     }

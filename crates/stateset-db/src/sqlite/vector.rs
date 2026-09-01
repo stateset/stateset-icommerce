@@ -229,6 +229,21 @@ impl SqliteVectorRepository {
                 "order",
                 "total_amount",
             )?,
+            tax_amount: parse_decimal_row(
+                &row.get::<_, String>("tax_amount")?,
+                "order",
+                "tax_amount",
+            )?,
+            shipping_amount: parse_decimal_row(
+                &row.get::<_, String>("shipping_amount")?,
+                "order",
+                "shipping_amount",
+            )?,
+            discount_amount: parse_decimal_row(
+                &row.get::<_, String>("discount_amount")?,
+                "order",
+                "discount_amount",
+            )?,
             currency: row.get("currency")?,
             payment_status: parse_enum_row(
                 &row.get::<_, String>("payment_status")?,

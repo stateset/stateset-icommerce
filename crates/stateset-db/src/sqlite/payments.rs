@@ -36,6 +36,73 @@ fn capturing_statuses() -> String {
     .join(", ")
 }
 
+/// Every payment status, so the transition guards below can be derived from the
+/// domain state machine instead of from hand-written status lists that drift
+/// away from it. `PaymentTransactionStatus` is `#[non_exhaustive]` and does not
+/// derive `EnumIter`, so the variants are enumerated once, here.
+const ALL_PAYMENT_STATUSES: [PaymentTransactionStatus; 9] = [
+    PaymentTransactionStatus::Pending,
+    PaymentTransactionStatus::Processing,
+    PaymentTransactionStatus::RequiresAction,
+    PaymentTransactionStatus::Completed,
+    PaymentTransactionStatus::Failed,
+    PaymentTransactionStatus::Cancelled,
+    PaymentTransactionStatus::Refunded,
+    PaymentTransactionStatus::PartiallyRefunded,
+    PaymentTransactionStatus::Disputed,
+];
+
+/// Whether a persisted status write from `from` to `to` is legal.
+///
+/// The rules live in the domain state machine
+/// ([`PaymentTransactionStatus::can_transition_to`]); this wrapper adds exactly
+/// ONE documented edge that the persistence layer needs and the enum does not
+/// model: `Pending -> Completed`, the single-shot capture used by processors
+/// that settle without an intermediate `Processing` step (the shipped
+/// `mark_completed` contract, exercised by the invariant harness and by
+/// `payments_test`). Every other answer — in particular every edge OUT of a
+/// settled payment (`Completed`/`PartiallyRefunded`/`Refunded` ->
+/// `Cancelled`/`Failed`, which would release the slice of the order total that
+/// settled money is consuming and let the order be captured twice) — is the
+/// enum's own.
+pub(crate) fn payment_transition_allowed(
+    from: PaymentTransactionStatus,
+    to: PaymentTransactionStatus,
+) -> bool {
+    if from == PaymentTransactionStatus::Pending && to == PaymentTransactionStatus::Completed {
+        return true;
+    }
+    from.can_transition_to(to)
+}
+
+/// SQL fragment listing every status a payment may currently be in for a write
+/// that sets its status to `target`, for a `status IN (...)` predicate. Keeping
+/// the check inside the UPDATE means a concurrent writer cannot slip between the
+/// check and the write.
+fn statuses_allowing_transition_to(target: PaymentTransactionStatus) -> String {
+    ALL_PAYMENT_STATUSES
+        .iter()
+        .filter(|from| payment_transition_allowed(**from, target))
+        .map(|status| format!("'{status}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Conflict error for a refused status write, naming the status the payment is
+/// actually in. Worded identically in the Postgres backend.
+fn transition_conflict(
+    current: PaymentTransactionStatus,
+    target: PaymentTransactionStatus,
+) -> CommerceError {
+    CommerceError::Conflict(format!("Payment is {current} and cannot transition to {target}"))
+}
+
+/// Wrap a domain error for propagation out of a `rusqlite` transaction closure;
+/// `map_db_error` unwraps it back to its original variant.
+fn domain_err(error: CommerceError) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
 /// Over-capture guard: reject when Σ(in-flight + completed captures for the
 /// order, excluding `exclude_payment_id`) + `amount` would exceed
 /// `orders.total_amount`. Must run inside the caller's IMMEDIATE transaction
@@ -420,27 +487,58 @@ impl PaymentRepository for SqlitePaymentRepository {
         }
     }
 
+    /// Update a payment.
+    ///
+    /// The read, the transition check and the write share ONE `IMMEDIATE`
+    /// transaction, and the status check is a `status IN (...)` predicate on the
+    /// UPDATE itself, so a concurrent writer cannot slip between them.
+    /// (Previously the status was written unconditionally on a lock-free
+    /// connection, which let `cancel`/`mark_failed` — both of which funnel
+    /// through here — flip a `Completed` payment into a status that releases its
+    /// slice of the order total, so the same order could be captured twice.)
+    ///
+    /// A request that does not change the status (`input.status == None`, or the
+    /// status it already has) is always a legal self-transition and never
+    /// conflicts.
     fn update(&self, id: PaymentId, input: UpdatePayment) -> Result<Payment> {
-        let payment = self.get(id)?.ok_or(CommerceError::NotFound)?;
         let now = chrono::Utc::now();
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        with_immediate_transaction(&self.pool, |tx| {
+            let payment = tx
+                .query_row(
+                    "SELECT * FROM payments WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_payment,
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
+                    other => other,
+                })?;
+            let current = payment.status;
+            let target = input.status.unwrap_or(current);
+
+            let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
-                 failure_code = ?, metadata = ?, updated_at = ? WHERE id = ?",
+                 failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",
+                statuses_allowing_transition_to(target)
+            );
+            let rows = tx.execute(
+                &sql,
                 params![
-                    input.status.unwrap_or(payment.status).to_string(),
-                    input.external_id.or(payment.external_id),
-                    input.failure_reason.or(payment.failure_reason),
-                    input.failure_code.or(payment.failure_code),
-                    input.metadata.or(payment.metadata),
+                    target.to_string(),
+                    input.external_id.clone().or(payment.external_id),
+                    input.failure_reason.clone().or(payment.failure_reason),
+                    input.failure_code.clone().or(payment.failure_code),
+                    input.metadata.clone().or(payment.metadata),
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            )
-            .map_err(map_db_error)?;
-        }
+            )?;
+            if rows == 0 {
+                return Err(domain_err(transition_conflict(current, target)));
+            }
+            Ok(())
+        })?;
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -506,55 +604,99 @@ impl PaymentRepository for SqlitePaymentRepository {
     fn mark_completed(&self, id: PaymentId) -> Result<Payment> {
         let now = chrono::Utc::now();
 
+        let target = PaymentTransactionStatus::Completed;
+
         with_immediate_transaction(&self.pool, |tx| {
-            // Re-check the order's capacity at completion time: a payment that
-            // was failed/cancelled (and so released its slice of the total) must
-            // not be completed on top of captures made since.
-            let (order_id, raw_amount): (Option<String>, String) = tx
+            // Two guards, in this order:
+            //   1. the state machine — only a payment that may legally reach
+            //      `Completed` may be completed (never a cancelled/failed/
+            //      refunded one);
+            //   2. the order's capacity, re-checked at completion time: a
+            //      payment that was failed/cancelled while still in flight (and
+            //      so released its slice of the total) must not be completed on
+            //      top of captures made since.
+            let (raw_status, order_id, raw_amount): (String, Option<String>, String) = tx
                 .query_row(
-                    "SELECT order_id, amount FROM payments WHERE id = ?",
+                    "SELECT status, order_id, amount FROM payments WHERE id = ?",
                     [id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => {
-                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
-                    }
+                    rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
                     other => other,
                 })?;
+            let current: PaymentTransactionStatus =
+                parse_enum_row(&raw_status, "payment", "status")?;
+            if !payment_transition_allowed(current, target) {
+                return Err(domain_err(transition_conflict(current, target)));
+            }
+
             if let Some(order_id) = order_id {
                 let amount = parse_decimal_row(&raw_amount, "payment", "amount")?;
                 check_order_capture_capacity_tx(tx, &order_id, Some(&id.to_string()), amount)?;
             }
-            tx.execute(
-                "UPDATE payments SET status = ?, paid_at = ?, updated_at = ? WHERE id = ?",
-                params![
-                    PaymentTransactionStatus::Completed.to_string(),
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                    id.to_string()
-                ],
+
+            let sql = format!(
+                "UPDATE payments SET status = ?, paid_at = ?, updated_at = ?
+                 WHERE id = ? AND status IN ({})",
+                statuses_allowing_transition_to(target)
+            );
+            let rows = tx.execute(
+                &sql,
+                params![target.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
             )?;
+            if rows == 0 {
+                return Err(domain_err(transition_conflict(current, target)));
+            }
             Ok(())
         })?;
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
+    /// Mark a payment failed.
+    ///
+    /// Status-guarded, for the same reason as [`Self::update`]: a `Completed`
+    /// payment is settled money whose refund ledger points at it, and `failed`
+    /// is not a capturing status — flipping it would release the order-total
+    /// slice the capture is consuming and let the order be captured again.
     fn mark_failed(&self, id: PaymentId, reason: &str, code: Option<&str>) -> Result<Payment> {
         let now = chrono::Utc::now();
+        let target = PaymentTransactionStatus::Failed;
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
-                "UPDATE payments SET status = ?, failure_reason = ?, failure_code = ?, updated_at = ? WHERE id = ?",
-                params![PaymentTransactionStatus::Failed.to_string(), reason, code, now.to_rfc3339(), id.to_string()],
-            ).map_err(map_db_error)?;
-        }
+        with_immediate_transaction(&self.pool, |tx| {
+            let raw_status: String = tx
+                .query_row("SELECT status FROM payments WHERE id = ?", [id.to_string()], |row| {
+                    row.get(0)
+                })
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
+                    other => other,
+                })?;
+            let current: PaymentTransactionStatus =
+                parse_enum_row(&raw_status, "payment", "status")?;
+
+            let sql = format!(
+                "UPDATE payments SET status = ?, failure_reason = ?, failure_code = ?,
+                 updated_at = ? WHERE id = ? AND status IN ({})",
+                statuses_allowing_transition_to(target)
+            );
+            let rows = tx.execute(
+                &sql,
+                params![target.to_string(), reason, code, now.to_rfc3339(), id.to_string()],
+            )?;
+            if rows == 0 {
+                return Err(domain_err(transition_conflict(current, target)));
+            }
+            Ok(())
+        })?;
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
+    /// Cancel a payment. Routes through [`Self::update`], so the state machine
+    /// guard applies: a `Completed`/`PartiallyRefunded`/`Refunded` payment
+    /// cannot be cancelled.
     fn cancel(&self, id: PaymentId) -> Result<Payment> {
         self.update(
             id,
@@ -763,11 +905,14 @@ impl PaymentRepository for SqlitePaymentRepository {
             // read the current values, compute the new balance and status with
             // `rust_decimal::Decimal` in Rust, and write the precomputed TEXT
             // values back as bound parameters.
-            let (current_refunded, payment_amount): (String, String) = tx.query_row(
-                "SELECT amount_refunded, amount FROM payments WHERE id = ?",
-                params![refund.payment_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
+            let (raw_payment_status, current_refunded, payment_amount): (String, String, String) =
+                tx.query_row(
+                    "SELECT status, amount_refunded, amount FROM payments WHERE id = ?",
+                    params![refund.payment_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+            let payment_status: PaymentTransactionStatus =
+                parse_enum_row(&raw_payment_status, "payment", "status")?;
             let current_refunded =
                 parse_decimal_row(&current_refunded, "payment", "amount_refunded")?;
             let payment_amount = parse_decimal_row(&payment_amount, "payment", "amount")?;
@@ -779,8 +924,16 @@ impl PaymentRepository for SqlitePaymentRepository {
                 PaymentTransactionStatus::PartiallyRefunded
             };
 
-            tx.execute(
-                "UPDATE payments SET amount_refunded = ?, status = ?, updated_at = ? WHERE id = ?",
+            // The payment's status write goes through the same state-machine
+            // guard as every other one: a refund may only fold itself into a
+            // payment that can legally reach `Refunded`/`PartiallyRefunded`.
+            let sql = format!(
+                "UPDATE payments SET amount_refunded = ?, status = ?, updated_at = ?
+                 WHERE id = ? AND status IN ({})",
+                statuses_allowing_transition_to(new_status)
+            );
+            let rows = tx.execute(
+                &sql,
                 params![
                     new_refunded.to_string(),
                     new_status.to_string(),
@@ -788,6 +941,9 @@ impl PaymentRepository for SqlitePaymentRepository {
                     refund.payment_id.to_string()
                 ],
             )?;
+            if rows == 0 {
+                return Err(domain_err(transition_conflict(payment_status, new_status)));
+            }
 
             Ok(())
         })?;
@@ -1118,20 +1274,33 @@ impl PaymentRepository for SqlitePaymentRepository {
                     e => map_db_error(e),
                 })?;
 
-            tx.execute(
+            // Same state-machine guard as the single-row `update`, inside the
+            // batch's own transaction: one illegal status write aborts the whole
+            // atomic batch rather than silently landing.
+            let current = payment.status;
+            let target = input.status.unwrap_or(current);
+            let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
-                 failure_code = ?, metadata = ?, updated_at = ? WHERE id = ?",
-                params![
-                    input.status.unwrap_or(payment.status).to_string(),
-                    input.external_id.or(payment.external_id),
-                    input.failure_reason.or(payment.failure_reason),
-                    input.failure_code.or(payment.failure_code),
-                    input.metadata.or(payment.metadata),
-                    now.to_rfc3339(),
-                    id.to_string(),
-                ],
-            )
-            .map_err(map_db_error)?;
+                 failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",
+                statuses_allowing_transition_to(target)
+            );
+            let rows = tx
+                .execute(
+                    &sql,
+                    params![
+                        target.to_string(),
+                        input.external_id.or(payment.external_id),
+                        input.failure_reason.or(payment.failure_reason),
+                        input.failure_code.or(payment.failure_code),
+                        input.metadata.or(payment.metadata),
+                        now.to_rfc3339(),
+                        id.to_string(),
+                    ],
+                )
+                .map_err(map_db_error)?;
+            if rows == 0 {
+                return Err(transition_conflict(current, target));
+            }
 
             // Fetch the updated payment
             let updated_payment = tx

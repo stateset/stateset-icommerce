@@ -1514,21 +1514,40 @@ fn regression_engine_rejects_capture_beyond_order_total() {
     payments.mark_completed(first.id).expect("complete first");
     payments.mark_completed(second.id).expect("complete second");
 
-    // A failed payment releases its slice; re-completing it later must re-check.
+    // The order is fully captured: not even a cent more fits.
     let third = payments
         .create(capture(dec!(0.01)))
         .expect_err("order fully captured; even a cent is over");
     assert_eq!(third.invariant_code(), Some("commerce.capture.exceeds_order_total"), "{third:?}");
-    payments.mark_failed(first.id, "declined", None).expect("fail first");
-    let refill = payments.create(capture(dec!(6.00))).expect("released slice is reusable");
-    payments.mark_completed(refill.id).expect("complete refill");
+
+    // Settled money cannot be un-settled to free capture capacity. Failing or
+    // cancelling a COMPLETED payment is refused by the payment state machine
+    // (`Completed` has no edge to `Failed`/`Cancelled`), so the slice it holds
+    // can never be recycled into a second capture of the same money. This
+    // block previously did exactly that — it failed a completed payment and
+    // re-captured the released slice — which was the double-capture defect
+    // written as a fixture.
     let err = payments
-        .mark_completed(first.id)
-        .expect_err("re-completing the failed one would over-capture");
+        .mark_failed(first.id, "declined", None)
+        .expect_err("failing a completed payment must be refused");
+    assert!(
+        matches!(err, stateset_core::CommerceError::Conflict(_)),
+        "expected a state-machine Conflict, got {err:?}"
+    );
+    let err =
+        payments.cancel(first.id).expect_err("cancelling a completed payment must be refused");
+    assert!(
+        matches!(err, stateset_core::CommerceError::Conflict(_)),
+        "expected a state-machine Conflict, got {err:?}"
+    );
+    // The capacity is still fully consumed by the two completed payments.
+    let err = payments
+        .create(capture(dec!(0.01)))
+        .expect_err("no capacity was released by the refused transitions");
     assert_eq!(err.invariant_code(), Some("commerce.capture.exceeds_order_total"), "{err:?}");
 
     h.model.orders[0].captured = dec!(10.00);
-    for p in [second, refill] {
+    for p in [first, second] {
         h.model.payments.push(MPayment {
             id: p.id,
             amount: p.amount,
@@ -1536,8 +1555,6 @@ fn regression_engine_rejects_capture_beyond_order_total() {
             in_flight: Decimal::ZERO,
         });
     }
-    // `first` is Failed; it is excluded from captured but still a row.
-    h.model.invoice_payments += 1;
     h.check_invariants().unwrap_or_else(|e| panic!("{e}"));
 
     // The random generator's over-capture op is rejected too.

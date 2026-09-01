@@ -1926,6 +1926,11 @@ impl SqliteCartRepository {
             notes: cart.notes,
             payment_method: cart.payment_method,
             shipping_method: cart.shipping_method,
+            // Same as the transactional checkout path: the order must record
+            // what the customer is charged, not just the line sum.
+            tax_amount: Some(cart.tax_amount),
+            shipping_amount: Some(cart.shipping_amount),
+            discount_amount: Some(cart.discount_amount),
             stock_policy: stateset_core::StockPolicy::default(),
         };
         SqliteOrderRepository::validate_create_order_in_tx(tx, &input)
@@ -2027,6 +2032,14 @@ impl SqliteCartRepository {
                 notes: cart.notes.clone(),
                 payment_method: cart.payment_method.clone(),
                 shipping_method: cart.shipping_method.clone(),
+                // Carry the cart's own money onto the order. Without these the
+                // order's total was only the sum of its line amounts while the
+                // customer was charged `grand_total` (subtotal + tax +
+                // shipping - discount), so recording that capture was rejected
+                // by the over-capture guard as exceeding the order total.
+                tax_amount: Some(cart.tax_amount),
+                shipping_amount: Some(cart.shipping_amount),
+                discount_amount: Some(cart.discount_amount),
                 stock_policy: stateset_core::StockPolicy::default(),
             },
         )?;

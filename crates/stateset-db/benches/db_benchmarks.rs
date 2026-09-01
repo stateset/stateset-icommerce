@@ -96,6 +96,9 @@ fn create_test_order_item(idx: usize) -> CreateOrderItem {
 
 fn create_test_order(customer_id: CustomerId, item_count: usize) -> CreateOrder {
     CreateOrder {
+        tax_amount: None,
+        shipping_amount: None,
+        discount_amount: None,
         customer_id,
         currency: Some(CurrencyCode::USD),
         shipping_address: None,

@@ -14,6 +14,8 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::{CartId, CurrencyCode, CustomerId, OrderId, ProductId, PromotionId};
+
+use crate::errors::{CommerceError, Result};
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -392,7 +394,8 @@ impl std::fmt::Display for CouponStatus {
 impl std::str::FromStr for CouponStatus {
     type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    // Fully qualified: this module imports the crate's `Result<T>` alias.
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
             "active" => Ok(Self::Active),
             "disabled" => Ok(Self::Disabled),
@@ -810,6 +813,338 @@ impl Promotion {
             }
             PromotionType::GiftWithPurchase => "Gift with purchase".to_string(),
         }
+    }
+}
+
+// ============================================================================
+// Condition Evaluation
+// ============================================================================
+
+/// Why a condition could not be evaluated from an [`ApplyPromotionsRequest`].
+const NO_CUSTOMER_GROUP: &str =
+    "customer group membership is not carried on a cart pricing request";
+const NO_CUSTOMER_EMAIL: &str = "the customer's email is not carried on a cart pricing request";
+const NO_PAYMENT_METHOD: &str = "the payment method is not known when the cart is priced";
+const NO_SHIPPING_DESTINATION: &str = "the cart has no shipping destination yet";
+const ANONYMOUS_CART: &str = "the shopper is not identified";
+const UNSUPPORTED_OPERATOR: &str = "the operator does not apply to this condition type";
+
+/// Outcome of evaluating a single [`PromotionCondition`].
+///
+/// Evaluation fails **closed**: only [`Self::Met`] lets a promotion apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionOutcome {
+    /// The condition was evaluated and is satisfied.
+    Met,
+    /// The condition was evaluated and is not satisfied.
+    NotMet,
+    /// The condition could not be evaluated from the data on the request, so
+    /// it cannot be proven satisfied. The promotion does not apply.
+    Unevaluatable(&'static str),
+}
+
+impl ConditionOutcome {
+    /// Whether the condition is satisfied.
+    #[must_use]
+    pub const fn is_met(self) -> bool {
+        matches!(self, Self::Met)
+    }
+
+    /// Lift a comparison result. `None` means the operator does not apply to
+    /// the condition type, which is refused rather than guessed at.
+    const fn from_comparison(comparison: Option<bool>) -> Self {
+        match comparison {
+            Some(true) => Self::Met,
+            Some(false) => Self::NotMet,
+            None => Self::Unevaluatable(UNSUPPORTED_OPERATOR),
+        }
+    }
+
+    /// Human-readable reason, used to explain a rejected promotion.
+    fn describe(self, condition_type: ConditionType) -> String {
+        match self {
+            Self::Met => format!("condition '{condition_type}' is met"),
+            Self::NotMet => format!("condition '{condition_type}' is not met"),
+            Self::Unevaluatable(why) => {
+                format!("condition '{condition_type}' cannot be evaluated: {why}")
+            }
+        }
+    }
+}
+
+/// Numeric comparison; `None` when the operator does not apply to numbers.
+fn compare_decimal(actual: Decimal, op: ConditionOperator, expected: Decimal) -> Option<bool> {
+    match op {
+        ConditionOperator::Equals => Some(actual == expected),
+        ConditionOperator::NotEquals => Some(actual != expected),
+        ConditionOperator::GreaterThan => Some(actual > expected),
+        ConditionOperator::GreaterThanOrEqual => Some(actual >= expected),
+        ConditionOperator::LessThan => Some(actual < expected),
+        ConditionOperator::LessThanOrEqual => Some(actual <= expected),
+        _ => None,
+    }
+}
+
+/// Integer comparison; `None` when the operator does not apply to numbers.
+const fn compare_i32(actual: i32, op: ConditionOperator, expected: i32) -> Option<bool> {
+    match op {
+        ConditionOperator::Equals => Some(actual == expected),
+        ConditionOperator::NotEquals => Some(actual != expected),
+        ConditionOperator::GreaterThan => Some(actual > expected),
+        ConditionOperator::GreaterThanOrEqual => Some(actual >= expected),
+        ConditionOperator::LessThan => Some(actual < expected),
+        ConditionOperator::LessThanOrEqual => Some(actual <= expected),
+        _ => None,
+    }
+}
+
+/// Case-insensitive string comparison; `None` when the operator does not apply
+/// to strings.
+fn compare_string(actual: &str, op: ConditionOperator, expected: &str) -> Option<bool> {
+    let actual_lower = actual.to_lowercase();
+    let expected_lower = expected.to_lowercase();
+
+    match op {
+        ConditionOperator::Equals => Some(actual_lower == expected_lower),
+        ConditionOperator::NotEquals => Some(actual_lower != expected_lower),
+        ConditionOperator::Contains => Some(actual_lower.contains(&expected_lower)),
+        ConditionOperator::NotContains => Some(!actual_lower.contains(&expected_lower)),
+        ConditionOperator::In => Some(expected_lower.split(',').any(|v| v.trim() == actual_lower)),
+        ConditionOperator::NotIn => {
+            Some(!expected_lower.split(',').any(|v| v.trim() == actual_lower))
+        }
+        _ => None,
+    }
+}
+
+/// Boolean comparison; `None` when the operator does not apply to a flag.
+const fn compare_bool(actual: bool, op: ConditionOperator, expected: bool) -> Option<bool> {
+    match op {
+        ConditionOperator::Equals => Some(actual == expected),
+        ConditionOperator::NotEquals => Some(actual != expected),
+        _ => None,
+    }
+}
+
+/// Membership ("is this in the cart?") comparison. Only presence/absence
+/// operators mean anything here; `None` for the rest.
+const fn compare_membership(present: bool, op: ConditionOperator) -> Option<bool> {
+    match op {
+        ConditionOperator::Equals | ConditionOperator::In | ConditionOperator::Contains => {
+            Some(present)
+        }
+        ConditionOperator::NotEquals
+        | ConditionOperator::NotIn
+        | ConditionOperator::NotContains => Some(!present),
+        _ => None,
+    }
+}
+
+impl PromotionCondition {
+    /// Comma-separated condition values, trimmed, with empties dropped.
+    fn value_tokens(&self) -> impl Iterator<Item = &str> {
+        self.value.split(',').map(str::trim).filter(|v| !v.is_empty())
+    }
+
+    fn invalid_value(&self, detail: &dyn std::fmt::Display) -> CommerceError {
+        CommerceError::DatabaseError(format!(
+            "Invalid promotion condition value for {:?}: '{}' - {}",
+            self.condition_type, self.value, detail
+        ))
+    }
+
+    fn parse_decimal(&self) -> Result<Decimal> {
+        self.value.trim().parse::<Decimal>().map_err(|e| self.invalid_value(&e))
+    }
+
+    fn parse_i32(&self) -> Result<i32> {
+        self.value.trim().parse::<i32>().map_err(|e| self.invalid_value(&e))
+    }
+
+    /// Parse the value as a list of ids. A token that is not a UUID is a
+    /// misconfigured promotion and is reported, not silently dropped —
+    /// dropping it would widen a negated condition into "matches everyone".
+    fn parse_uuid_list(&self) -> Result<Vec<Uuid>> {
+        self.value_tokens()
+            .map(|token| Uuid::parse_str(token).map_err(|e| self.invalid_value(&e)))
+            .collect()
+    }
+
+    /// Parse the value as a flag. An empty value means `true` ("the flag must
+    /// be set"), which is how these conditions were written back when the
+    /// value was ignored entirely.
+    fn parse_bool(&self) -> Result<bool> {
+        match self.value.trim().to_ascii_lowercase().as_str() {
+            "" | "true" | "t" | "yes" | "y" | "1" => Ok(true),
+            "false" | "f" | "no" | "n" | "0" => Ok(false),
+            _ => Err(self.invalid_value(&"not a boolean")),
+        }
+    }
+
+    /// Evaluate this condition against a cart pricing request.
+    ///
+    /// # Fail-closed contract
+    ///
+    /// A condition is [`ConditionOutcome::Met`] only when it has actually been
+    /// proven against the request. Condition types whose inputs an
+    /// [`ApplyPromotionsRequest`] does not carry return
+    /// [`ConditionOutcome::Unevaluatable`], which refuses the promotion.
+    /// Treating them as met leaks discounts to shoppers who never qualified.
+    ///
+    /// The match below is deliberately **exhaustive with no wildcard arm**:
+    /// [`ConditionType`] is `#[non_exhaustive]`, so a variant added later must
+    /// fail to compile here rather than quietly fall through to a default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the condition's stored `value` cannot be parsed
+    /// for its condition type (a misconfigured promotion).
+    pub fn evaluate(&self, request: &ApplyPromotionsRequest) -> Result<ConditionOutcome> {
+        let outcome =
+            match self.condition_type {
+                // ---- Evaluated from cart totals --------------------------------
+                ConditionType::MinimumSubtotal => ConditionOutcome::from_comparison(
+                    compare_decimal(request.subtotal, self.operator, self.parse_decimal()?),
+                ),
+                ConditionType::MinimumQuantity => {
+                    let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
+                    ConditionOutcome::from_comparison(compare_i32(
+                        total_qty,
+                        self.operator,
+                        self.parse_i32()?,
+                    ))
+                }
+                ConditionType::CartItemCount => {
+                    let count = i32::try_from(request.line_items.len()).unwrap_or(i32::MAX);
+                    ConditionOutcome::from_comparison(compare_i32(
+                        count,
+                        self.operator,
+                        self.parse_i32()?,
+                    ))
+                }
+
+                // ---- Evaluated from cart contents ------------------------------
+                ConditionType::ProductInCart => {
+                    let wanted = self.parse_uuid_list()?;
+                    let present = request.line_items.iter().any(|item| {
+                        item.product_id.is_some_and(|p| wanted.contains(&p.into_uuid()))
+                    });
+                    ConditionOutcome::from_comparison(compare_membership(present, self.operator))
+                }
+                ConditionType::CategoryInCart => {
+                    let wanted = self.parse_uuid_list()?;
+                    let present = request
+                        .line_items
+                        .iter()
+                        .any(|item| item.category_ids.iter().any(|c| wanted.contains(c)));
+                    ConditionOutcome::from_comparison(compare_membership(present, self.operator))
+                }
+                ConditionType::SkuInCart => {
+                    let wanted: Vec<String> = self.value_tokens().map(str::to_lowercase).collect();
+                    let present = request.line_items.iter().any(|item| {
+                        item.sku.as_deref().is_some_and(|sku| wanted.contains(&sku.to_lowercase()))
+                    });
+                    ConditionOutcome::from_comparison(compare_membership(present, self.operator))
+                }
+
+                // ---- Evaluated from customer context ---------------------------
+                ConditionType::CustomerId => match request.customer_id {
+                    Some(customer_id) => {
+                        let wanted = self.parse_uuid_list()?;
+                        ConditionOutcome::from_comparison(compare_membership(
+                            wanted.contains(&customer_id.into_uuid()),
+                            self.operator,
+                        ))
+                    }
+                    // An anonymous cart can be neither proven nor disproven to be
+                    // the targeted customer.
+                    None => ConditionOutcome::Unevaluatable(ANONYMOUS_CART),
+                },
+                ConditionType::FirstOrder => ConditionOutcome::from_comparison(compare_bool(
+                    request.is_first_order,
+                    self.operator,
+                    self.parse_bool()?,
+                )),
+
+                // ---- Evaluated from the shipping destination -------------------
+                ConditionType::ShippingCountry => match &request.shipping_country {
+                    Some(country) => ConditionOutcome::from_comparison(compare_string(
+                        country,
+                        self.operator,
+                        &self.value,
+                    )),
+                    None => ConditionOutcome::Unevaluatable(NO_SHIPPING_DESTINATION),
+                },
+                ConditionType::ShippingState => match &request.shipping_state {
+                    Some(state) => ConditionOutcome::from_comparison(compare_string(
+                        state,
+                        self.operator,
+                        &self.value,
+                    )),
+                    None => ConditionOutcome::Unevaluatable(NO_SHIPPING_DESTINATION),
+                },
+
+                // ---- Not evaluatable from a cart: fail CLOSED ------------------
+                // These need customer/checkout context the pricing request does not
+                // carry. Until it does, the promotion is refused rather than given
+                // away. Note the promotion-level `eligible_customer_ids` /
+                // `eligible_customer_groups` targeting is enforced separately by
+                // the repositories.
+                ConditionType::CustomerGroup => ConditionOutcome::Unevaluatable(NO_CUSTOMER_GROUP),
+                ConditionType::CustomerEmailDomain => {
+                    ConditionOutcome::Unevaluatable(NO_CUSTOMER_EMAIL)
+                }
+                ConditionType::PaymentMethod => ConditionOutcome::Unevaluatable(NO_PAYMENT_METHOD),
+            };
+
+        Ok(outcome)
+    }
+}
+
+impl Promotion {
+    /// Evaluate every condition attached to this promotion against a cart.
+    ///
+    /// Returns `Ok(None)` when the promotion may apply, or `Ok(Some(reason))`
+    /// naming the condition that refused it. Every required condition must be
+    /// met; when optional conditions are present, at least one must be met.
+    ///
+    /// Both storage backends call this, so they agree by construction on which
+    /// promotions are eligible. Evaluation fails **closed** — see
+    /// [`PromotionCondition::evaluate`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates a misconfigured condition value.
+    pub fn check_conditions(&self, request: &ApplyPromotionsRequest) -> Result<Option<String>> {
+        if self.conditions.is_empty() {
+            return Ok(None);
+        }
+
+        let (required, optional): (Vec<&PromotionCondition>, Vec<&PromotionCondition>) =
+            self.conditions.iter().partition(|c| c.is_required);
+
+        // Every required condition must be met.
+        for cond in &required {
+            let outcome = cond.evaluate(request)?;
+            if !outcome.is_met() {
+                return Ok(Some(outcome.describe(cond.condition_type)));
+            }
+        }
+
+        // At least one optional condition must be met, when any exist.
+        if !optional.is_empty() {
+            let mut reasons = Vec::with_capacity(optional.len());
+            for cond in &optional {
+                let outcome = cond.evaluate(request)?;
+                if outcome.is_met() {
+                    return Ok(None);
+                }
+                reasons.push(outcome.describe(cond.condition_type));
+            }
+            return Ok(Some(format!("no optional condition was met ({})", reasons.join("; "))));
+        }
+
+        Ok(None)
     }
 }
 

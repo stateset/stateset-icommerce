@@ -17,8 +17,9 @@ use stateset_core::{
 use uuid::Uuid;
 
 use super::{
-    parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
-    parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
+    with_immediate_transaction,
 };
 
 #[derive(Debug)]
@@ -32,6 +33,32 @@ impl SqliteSubscriptionRepository {
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
+    }
+
+    /// Carry a domain error out of a `rusqlite` closure; `map_db_error`
+    /// unwraps it again on the way out of the transaction.
+    fn tx_err(err: stateset_core::CommerceError) -> rusqlite::Error {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(err))
+    }
+
+    /// Read a subscription's status inside the write transaction, so a
+    /// lifecycle guard cannot be raced by a concurrent writer (the old code
+    /// read on one pooled connection and wrote on another).
+    fn locked_subscription_status(
+        tx: &rusqlite::Transaction<'_>,
+        id: SubscriptionId,
+    ) -> Result<SubscriptionStatus> {
+        let raw: Option<String> = tx
+            .query_row(
+                "SELECT status FROM subscriptions WHERE id = ?1",
+                rusqlite::params![id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+
+        let raw = raw.ok_or(stateset_core::CommerceError::NotFound)?;
+        parse_enum_row(&raw, "subscription", "status").map_err(map_db_error)
     }
 
     fn is_subscription_number_unique_violation(err: &rusqlite::Error) -> bool {
@@ -56,13 +83,12 @@ impl SqliteSubscriptionRepository {
         let now = Utc::now();
         let items = input.items.clone();
 
-        // Insert plan - connection is scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
-
-            conn.execute(
+        // Insert the plan and its items in ONE transaction. They used to run on
+        // separate pooled connections, so a failing item insert left a live
+        // plan with a partial item set — silently mispriced for every
+        // subscriber.
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
                 "INSERT INTO subscription_plans (
                     id, code, name, description, status,
                     billing_interval, custom_interval_days, price, setup_fee, currency,
@@ -99,18 +125,16 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}"))
-            })?;
-        } // Connection is dropped here
+            )?;
 
-        // Create plan items (each gets its own connection)
-        if let Some(items) = items {
-            for item in items {
-                self.create_plan_item(id, item)?;
+            if let Some(items) = items.clone() {
+                for item in items {
+                    Self::create_plan_item_with_conn(tx, id, item).map_err(Self::tx_err)?;
+                }
             }
-        }
+
+            Ok(())
+        })?;
 
         self.get_plan(id)?.ok_or_else(|| {
             stateset_core::CommerceError::DatabaseError("Failed to retrieve created plan".into())
@@ -228,15 +252,30 @@ impl SqliteSubscriptionRepository {
 
     pub fn update_plan(&self, id: Uuid, input: UpdateSubscriptionPlan) -> Result<SubscriptionPlan> {
         stateset_core::Validate::validate(&input)?;
-        // Update plan - connection scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        with_immediate_transaction(&self.pool, |tx| {
+            // `status = COALESCE(?, status)` let any caller un-archive a plan,
+            // putting a retired price back in front of new subscribers.
+            if let Some(next) = input.status {
+                let raw: Option<String> = tx
+                    .query_row(
+                        "SELECT status FROM subscription_plans WHERE id = ?1",
+                        rusqlite::params![id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let raw =
+                    raw.ok_or_else(|| Self::tx_err(stateset_core::CommerceError::NotFound))?;
+                let current: PlanStatus = parse_enum_row(&raw, "subscription_plan", "status")?;
+                if !current.can_transition_to(next) {
+                    return Err(Self::tx_err(stateset_core::CommerceError::ValidationError(
+                        format!("Cannot transition subscription plan from {current} to {next}"),
+                    )));
+                }
+            }
 
             let now = Utc::now();
 
-            conn.execute(
+            tx.execute(
                 "UPDATE subscription_plans SET
                     name = COALESCE(?1, name),
                     description = COALESCE(?2, description),
@@ -268,11 +307,10 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        } // Connection dropped here
+            )?;
+
+            Ok(())
+        })?;
 
         self.get_plan(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
@@ -291,15 +329,11 @@ impl SqliteSubscriptionRepository {
         )
     }
 
-    fn create_plan_item(
-        &self,
+    fn create_plan_item_with_conn(
+        conn: &rusqlite::Connection,
         plan_id: Uuid,
         input: CreateSubscriptionPlanItem,
     ) -> Result<SubscriptionPlanItem> {
-        let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-        })?;
-
         let id = Uuid::new_v4();
 
         conn.execute(
@@ -749,15 +783,24 @@ impl SqliteSubscriptionRepository {
         input: UpdateSubscription,
     ) -> Result<Subscription> {
         stateset_core::Validate::validate(&input)?;
-        // Update subscription - connection scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        with_immediate_transaction(&self.pool, |tx| {
+            // A bare `status = COALESCE(?, status)` let any caller move a
+            // subscription to any status — including reviving a cancelled one
+            // straight back into the billing queue. Check the transition
+            // against the same allowlist the lifecycle methods use, under the
+            // write lock.
+            if let Some(next) = input.status {
+                let current = Self::locked_subscription_status(tx, id).map_err(Self::tx_err)?;
+                if !current.can_transition_to(next) {
+                    return Err(Self::tx_err(stateset_core::CommerceError::ValidationError(
+                        format!("Cannot transition subscription from {current} to {next}"),
+                    )));
+                }
+            }
 
             let now = Utc::now();
 
-            conn.execute(
+            tx.execute(
                 "UPDATE subscriptions SET
                     status = COALESCE(?1, status),
                     price = COALESCE(?2, price),
@@ -791,11 +834,10 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        } // Connection dropped here
+            )?;
+
+            Ok(())
+        })?;
 
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
@@ -809,29 +851,25 @@ impl SqliteSubscriptionRepository {
         id: SubscriptionId,
         input: PauseSubscription,
     ) -> Result<Subscription> {
-        let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
-        if !sub.can_pause() {
-            return Err(stateset_core::CommerceError::ValidationError(format!(
-                "Cannot pause subscription in {} status",
-                sub.status
-            )));
-        }
-
         let description = match input.reason.clone() {
             Some(reason) => format!("Paused: {reason}"),
             None => "Paused by customer".to_string(),
         };
 
-        // Update subscription - connection scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        // Guard, write and audit in ONE transaction: the guard used to read on
+        // one pooled connection and write on another, so a concurrent
+        // cancel/pause could interleave between the two.
+        with_immediate_transaction(&self.pool, |tx| {
+            let status = Self::locked_subscription_status(tx, id).map_err(Self::tx_err)?;
+            if !matches!(status, SubscriptionStatus::Active | SubscriptionStatus::Trial) {
+                return Err(Self::tx_err(stateset_core::CommerceError::ValidationError(format!(
+                    "Cannot pause subscription in {status} status"
+                ))));
+            }
 
             let now = Utc::now();
 
-            conn.execute(
+            tx.execute(
                 "UPDATE subscriptions SET
                     status = 'paused',
                     paused_at = ?1,
@@ -845,13 +883,20 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        } // Connection dropped here
+            )?;
 
-        self.record_event(id, SubscriptionEventType::Paused, &description, None, None)?;
+            self.record_event_with_conn(
+                tx,
+                id,
+                SubscriptionEventType::Paused,
+                &description,
+                None,
+                None,
+            )
+            .map_err(Self::tx_err)?;
+
+            Ok(())
+        })?;
 
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
@@ -859,18 +904,14 @@ impl SqliteSubscriptionRepository {
     pub fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription> {
         let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
-        if !sub.can_resume() {
-            return Err(stateset_core::CommerceError::ValidationError(format!(
-                "Cannot resume subscription in {} status",
-                sub.status
-            )));
-        }
-
-        // Update subscription - connection scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        // Guard, write and audit in ONE transaction (see `pause_subscription`).
+        with_immediate_transaction(&self.pool, |tx| {
+            let status = Self::locked_subscription_status(tx, id).map_err(Self::tx_err)?;
+            if status != SubscriptionStatus::Paused {
+                return Err(Self::tx_err(stateset_core::CommerceError::ValidationError(format!(
+                    "Cannot resume subscription in {status} status"
+                ))));
+            }
 
             let now = Utc::now();
 
@@ -883,7 +924,7 @@ impl SqliteSubscriptionRepository {
 
             let new_period_end = now + Duration::days(interval_days);
 
-            conn.execute(
+            tx.execute(
                 "UPDATE subscriptions SET
                     status = 'active',
                     paused_at = NULL,
@@ -900,13 +941,20 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        } // Connection dropped here
+            )?;
 
-        self.record_event(id, SubscriptionEventType::Resumed, "Subscription resumed", None, None)?;
+            self.record_event_with_conn(
+                tx,
+                id,
+                SubscriptionEventType::Resumed,
+                "Subscription resumed",
+                None,
+                None,
+            )
+            .map_err(Self::tx_err)?;
+
+            Ok(())
+        })?;
 
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
@@ -918,21 +966,17 @@ impl SqliteSubscriptionRepository {
     ) -> Result<Subscription> {
         let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
-        if !sub.can_cancel() {
-            return Err(stateset_core::CommerceError::ValidationError(format!(
-                "Cannot cancel subscription in {} status",
-                sub.status
-            )));
-        }
-
         let reason = input.reason.clone().unwrap_or_else(|| "Cancelled by customer".to_string());
         let data = input.feedback.clone().map(|f| serde_json::json!({"feedback": f}));
 
-        // Update subscription - connection scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        // Guard, write and audit in ONE transaction (see `pause_subscription`).
+        with_immediate_transaction(&self.pool, |tx| {
+            let status = Self::locked_subscription_status(tx, id).map_err(Self::tx_err)?;
+            if status.is_terminal() {
+                return Err(Self::tx_err(stateset_core::CommerceError::ValidationError(format!(
+                    "Cannot cancel subscription in {status} status"
+                ))));
+            }
 
             let now = Utc::now();
             let immediate = input.immediate.unwrap_or(false);
@@ -940,7 +984,7 @@ impl SqliteSubscriptionRepository {
             let (new_status, ends_at) =
                 if immediate { ("expired", now) } else { ("cancelled", sub.current_period_end) };
 
-            conn.execute(
+            tx.execute(
                 "UPDATE subscriptions SET
                     status = ?1,
                     cancelled_at = ?2,
@@ -955,13 +999,20 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        } // Connection dropped here
+            )?;
 
-        self.record_event(id, SubscriptionEventType::Cancelled, &reason, data, None)?;
+            self.record_event_with_conn(
+                tx,
+                id,
+                SubscriptionEventType::Cancelled,
+                &reason,
+                data.clone(),
+                None,
+            )
+            .map_err(Self::tx_err)?;
+
+            Ok(())
+        })?;
 
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
@@ -972,12 +1023,6 @@ impl SqliteSubscriptionRepository {
         input: SkipBillingCycle,
     ) -> Result<Subscription> {
         let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
-        if sub.status != SubscriptionStatus::Active {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Can only skip billing for active subscriptions".into(),
-            ));
-        }
 
         let reason = input.reason.unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
@@ -990,32 +1035,55 @@ impl SqliteSubscriptionRepository {
         let new_billing_date =
             sub.next_billing_date.unwrap_or(sub.current_period_end) + Duration::days(interval_days);
 
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        // Guard, write and audit in ONE transaction: two concurrent skips used
+        // to read the same `next_billing_date` and each push it out by a full
+        // interval, silently skipping two periods for one customer request.
+        with_immediate_transaction(&self.pool, |tx| {
+            let status = Self::locked_subscription_status(tx, id).map_err(Self::tx_err)?;
+            if status != SubscriptionStatus::Active {
+                return Err(Self::tx_err(stateset_core::CommerceError::ValidationError(
+                    "Can only skip billing for active subscriptions".into(),
+                )));
+            }
 
             let now = Utc::now();
 
-            conn.execute(
+            // `WHERE ... AND next_billing_date IS ?` pins the read the new date
+            // was derived from, so a racing skip that already moved the date
+            // cannot be applied twice.
+            let updated = tx.execute(
                 "UPDATE subscriptions SET
                     next_billing_date = ?1,
                     current_period_end = ?2,
                     updated_at = ?3
-                 WHERE id = ?4",
+                 WHERE id = ?4 AND next_billing_date IS ?5",
                 rusqlite::params![
                     new_billing_date.to_rfc3339(),
                     new_billing_date.to_rfc3339(),
                     now.to_rfc3339(),
                     id.to_string(),
+                    sub.next_billing_date.as_ref().map(chrono::DateTime::to_rfc3339),
                 ],
-            )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        } // Connection dropped here
+            )?;
 
-        self.record_event(id, SubscriptionEventType::Skipped, &reason, None, None)?;
+            if updated == 0 {
+                return Err(Self::tx_err(stateset_core::CommerceError::Conflict(
+                    "Subscription billing schedule changed concurrently; retry the skip".into(),
+                )));
+            }
+
+            self.record_event_with_conn(
+                tx,
+                id,
+                SubscriptionEventType::Skipped,
+                &reason,
+                None,
+                None,
+            )
+            .map_err(Self::tx_err)?;
+
+            Ok(())
+        })?;
 
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
@@ -1186,12 +1254,12 @@ impl SqliteSubscriptionRepository {
                     id, subscription_id, cycle_number, status,
                     period_start, period_end,
                     subtotal, discount, tax, total, currency,
-                    created_at, updated_at
+                    cycle_key, created_at, updated_at
                 ) VALUES (
                     ?1, ?2, ?3, 'scheduled',
                     ?4, ?5,
                     ?6, ?7, '0', ?8, ?9,
-                    ?10, ?11
+                    ?10, ?11, ?12
                 )",
                 rusqlite::params![
                     id.to_string(),
@@ -1203,13 +1271,16 @@ impl SqliteSubscriptionRepository {
                     discount.to_string(),
                     total.to_string(),
                     currency,
+                    Self::cycle_key(subscription_id, cycle_number),
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
             )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}"))
-            })?;
+            // A duplicate `(subscription_id, cycle_number)` trips the unique
+            // index on `cycle_key` and maps to `Conflict` — the backstop that
+            // stops a billing worker creating a second cycle for a period it
+            // has already billed.
+            .map_err(map_db_error)?;
         } // Connection dropped here
 
         self.get_billing_cycle(id)?.ok_or_else(|| {
@@ -1282,6 +1353,30 @@ impl SqliteSubscriptionRepository {
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
     }
 
+    /// Database-level uniqueness key for a billing cycle.
+    ///
+    /// Backs the unique index added by migration `077_billing_cycle_uniqueness`
+    /// so a second cycle can never be created for a period that already has
+    /// one. Voiding a cycle clears the key and frees the slot.
+    fn cycle_key(subscription_id: SubscriptionId, cycle_number: i32) -> String {
+        format!("{subscription_id}:{cycle_number}")
+    }
+
+    /// Update a billing cycle's status, guarding the transition and advancing
+    /// the subscription when the cycle settles.
+    ///
+    /// Everything happens in ONE `IMMEDIATE` transaction: the cycle is read
+    /// under the write lock (SQLite's equivalent of `SELECT ... FOR UPDATE`),
+    /// the transition is checked against
+    /// [`BillingCycleStatus::can_transition_to`], the cycle row is written,
+    /// and — when the cycle is marked paid — `billing_cycle_count` is
+    /// incremented and `next_billing_date` moved forward by exactly one
+    /// interval **from the paid cycle's `period_end`**, not from "now".
+    ///
+    /// Before this, marking a cycle paid left `next_billing_date` untouched,
+    /// so a worker that polled `get_due_for_billing`, billed, marked the cycle
+    /// paid and polled again found the SAME subscription still due and billed
+    /// the customer a second time.
     pub fn update_billing_cycle_status(
         &self,
         id: Uuid,
@@ -1289,44 +1384,195 @@ impl SqliteSubscriptionRepository {
         payment_id: Option<String>,
         failure_reason: Option<String>,
     ) -> Result<BillingCycle> {
-        // Update billing cycle - connection scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
+        with_immediate_transaction(&self.pool, |tx| {
+            self.apply_billing_cycle_status_with_tx(
+                tx,
+                id,
+                status,
+                payment_id.as_deref(),
+                failure_reason.as_deref(),
+            )
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+        })
+    }
 
-            let now = Utc::now();
-            let billed_at =
-                if status == BillingCycleStatus::Paid || status == BillingCycleStatus::Failed {
-                    Some(now)
-                } else {
-                    None
-                };
+    /// Transactional body of [`Self::update_billing_cycle_status`].
+    fn apply_billing_cycle_status_with_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        id: Uuid,
+        status: BillingCycleStatus,
+        payment_id: Option<&str>,
+        failure_reason: Option<&str>,
+    ) -> Result<BillingCycle> {
+        let now = Utc::now();
 
-            conn.execute(
-                "UPDATE billing_cycles SET
-                    status = ?1,
-                    payment_id = COALESCE(?2, payment_id),
-                    billed_at = COALESCE(?3, billed_at),
-                    failure_reason = ?4,
-                    retry_count = CASE WHEN ?1 = 'failed' THEN retry_count + 1 ELSE retry_count END,
-                    updated_at = ?5
-                 WHERE id = ?6",
+        // Read the cycle under the write lock so the guard below cannot race
+        // a concurrent worker.
+        let current: Option<(String, String, i32, String)> = tx
+            .query_row(
+                "SELECT status, subscription_id, cycle_number, period_end
+                 FROM billing_cycles WHERE id = ?1",
+                rusqlite::params![id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+
+        let (current_status_raw, subscription_id_raw, cycle_number, period_end_raw) =
+            current.ok_or(stateset_core::CommerceError::NotFound)?;
+
+        let current_status: BillingCycleStatus =
+            parse_enum_row(&current_status_raw, "billing_cycle", "status").map_err(map_db_error)?;
+
+        if !current_status.can_transition_to(status) {
+            return Err(stateset_core::CommerceError::ValidationError(format!(
+                "Cannot transition billing cycle {id} from {current_status} to {status}"
+            )));
+        }
+
+        let billed_at = if matches!(status, BillingCycleStatus::Paid | BillingCycleStatus::Failed) {
+            Some(now)
+        } else {
+            None
+        };
+
+        tx.execute(
+            "UPDATE billing_cycles SET
+                status = ?1,
+                payment_id = COALESCE(?2, payment_id),
+                billed_at = COALESCE(?3, billed_at),
+                failure_reason = ?4,
+                retry_count = CASE WHEN ?5 THEN retry_count + 1 ELSE retry_count END,
+                cycle_key = CASE WHEN ?6 THEN NULL ELSE cycle_key END,
+                updated_at = ?7
+             WHERE id = ?8",
+            rusqlite::params![
+                status.to_string(),
+                payment_id,
+                billed_at.map(|d| d.to_rfc3339()),
+                failure_reason,
+                status == BillingCycleStatus::Failed,
+                // Voiding frees the (subscription, cycle_number) slot so a
+                // corrected cycle can be created for the same period.
+                status == BillingCycleStatus::Voided,
+                now.to_rfc3339(),
+                id.to_string(),
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        if status.advances_subscription() {
+            let subscription_id = SubscriptionId::from(
+                parse_uuid_row(&subscription_id_raw, "billing_cycle", "subscription_id")
+                    .map_err(map_db_error)?,
+            );
+            let period_end = parse_datetime_row(&period_end_raw, "billing_cycle", "period_end")
+                .map_err(map_db_error)?;
+
+            self.advance_subscription_after_paid_cycle_with_tx(
+                tx,
+                subscription_id,
+                cycle_number,
+                period_end,
+                now,
+            )?;
+        }
+
+        tx.query_row(
+            "SELECT * FROM billing_cycles WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+            |row| self.row_to_billing_cycle(row),
+        )
+        .map_err(map_db_error)
+    }
+
+    /// Move a subscription's billing clock on by exactly one interval after a
+    /// cycle settles.
+    ///
+    /// The new `next_billing_date` is derived from the PAID CYCLE's
+    /// `period_end`, never from `Utc::now()` — anchoring on "now" would drift
+    /// with worker latency and could silently skip a period. The clock is only
+    /// ever moved forward: a late payment for an older cycle must not rewind
+    /// the schedule, and a subscription whose schedule has been cleared
+    /// (paused/cancelled leave `next_billing_date` NULL) is never resurrected
+    /// into billing. `billing_cycle_count` increments in every case, since the
+    /// cycle really did settle.
+    fn advance_subscription_after_paid_cycle_with_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        subscription_id: SubscriptionId,
+        cycle_number: i32,
+        period_end: chrono::DateTime<Utc>,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let row: Option<(String, Option<i32>, Option<String>)> = tx
+            .query_row(
+                "SELECT billing_interval, custom_interval_days, next_billing_date
+                 FROM subscriptions WHERE id = ?1",
+                rusqlite::params![subscription_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+
+        let (interval_raw, custom_interval_days, next_billing_raw) =
+            row.ok_or(stateset_core::CommerceError::NotFound)?;
+
+        let interval: BillingInterval =
+            parse_enum_row(&interval_raw, "subscription", "billing_interval")
+                .map_err(map_db_error)?;
+        let current_next =
+            parse_datetime_opt_row(next_billing_raw, "subscription", "next_billing_date")
+                .map_err(map_db_error)?;
+
+        let candidate = interval.advance(period_end, custom_interval_days);
+
+        let advanced = matches!(current_next, Some(current) if candidate > current);
+
+        if advanced {
+            tx.execute(
+                "UPDATE subscriptions SET
+                    billing_cycle_count = billing_cycle_count + 1,
+                    failed_payment_attempts = 0,
+                    current_period_start = ?1,
+                    current_period_end = ?2,
+                    next_billing_date = ?2,
+                    updated_at = ?3
+                 WHERE id = ?4",
                 rusqlite::params![
-                    status.to_string(),
-                    payment_id,
-                    billed_at.map(|d| d.to_rfc3339()),
-                    failure_reason,
+                    period_end.to_rfc3339(),
+                    candidate.to_rfc3339(),
                     now.to_rfc3339(),
-                    id.to_string(),
+                    subscription_id.to_string(),
                 ],
             )
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
-            })?;
-        } // Connection dropped here
+            .map_err(map_db_error)?;
+        } else {
+            tx.execute(
+                "UPDATE subscriptions SET
+                    billing_cycle_count = billing_cycle_count + 1,
+                    failed_payment_attempts = 0,
+                    updated_at = ?1
+                 WHERE id = ?2",
+                rusqlite::params![now.to_rfc3339(), subscription_id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get_billing_cycle(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.record_event_with_conn(
+            tx,
+            subscription_id,
+            SubscriptionEventType::Renewed,
+            &format!("Billing cycle {cycle_number} paid"),
+            Some(serde_json::json!({
+                "cycle_number": cycle_number,
+                "next_billing_date": advanced.then(|| candidate.to_rfc3339()),
+            })),
+            Some("system"),
+        )?;
+
+        Ok(())
     }
 
     // ========================================================================

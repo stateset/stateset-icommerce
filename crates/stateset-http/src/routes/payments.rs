@@ -439,6 +439,9 @@ mod tests {
             .commerce()
             .orders()
             .create(stateset_core::CreateOrder {
+                tax_amount: None,
+                shipping_amount: None,
+                discount_amount: None,
                 customer_id: customer.id,
                 items: vec![stateset_core::CreateOrderItem {
                     product_id: stateset_core::ProductId::new(),

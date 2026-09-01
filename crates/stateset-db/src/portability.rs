@@ -867,6 +867,12 @@ fn import_order(
         notes: opt_str(record, "notes"),
         payment_method: opt_str(record, "payment_method"),
         shipping_method: opt_str(record, "shipping_method"),
+        // Carry an exported order's money breakdown so a round trip preserves
+        // the total; absent fields (older exports) default to zero, which
+        // leaves the total as the line sum exactly as before.
+        tax_amount: field_as(record, "tax_amount")?,
+        shipping_amount: field_as(record, "shipping_amount")?,
+        discount_amount: field_as(record, "discount_amount")?,
         // Imports replay historical orders; never reject them on current stock.
         stock_policy: stateset_core::StockPolicy::AllowBackorder,
     };

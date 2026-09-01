@@ -8,7 +8,7 @@
 //! - Trial periods and promotional pricing
 //! - Product swapping and quantity changes
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Months, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::{CurrencyCode, CustomerId, OrderId, ProductId, SubscriptionId};
@@ -65,6 +65,34 @@ impl BillingInterval {
             Self::Semiannual => 180,
             Self::Annual => 365,
             Self::Custom => 30, // Default, should use custom_interval_days
+        }
+    }
+
+    /// Advance `from` by exactly one billing interval.
+    ///
+    /// Unlike [`Self::days`] — which reports a nominal length and models a
+    /// month as a flat 30 days — this uses real calendar arithmetic for the
+    /// month-based intervals, so a monthly subscription billed on the 15th
+    /// stays on the 15th instead of drifting ~5 days backwards over a year.
+    /// End-of-month dates clamp the way `chrono` clamps them (Jan 31 + 1
+    /// month = Feb 28/29).
+    ///
+    /// `custom_interval_days` is only consulted for
+    /// [`BillingInterval::Custom`] and defaults to 30 days when absent,
+    /// matching [`Self::days`].
+    #[must_use]
+    pub fn advance(self, from: DateTime<Utc>, custom_interval_days: Option<i32>) -> DateTime<Utc> {
+        match self {
+            Self::Weekly => from + chrono::Duration::days(7),
+            Self::Biweekly => from + chrono::Duration::days(14),
+            Self::Monthly => from + Months::new(1),
+            Self::Bimonthly => from + Months::new(2),
+            Self::Quarterly => from + Months::new(3),
+            Self::Semiannual => from + Months::new(6),
+            Self::Annual => from + Months::new(12),
+            Self::Custom => {
+                from + chrono::Duration::days(i64::from(custom_interval_days.unwrap_or(30)))
+            }
         }
     }
 }
@@ -139,6 +167,33 @@ pub enum PlanStatus {
     Archived,
 }
 
+impl PlanStatus {
+    /// Check if a plan status transition is allowed.
+    ///
+    /// A plan moves forward only: `Draft -> Active -> Archived`. Archiving is
+    /// terminal — un-archiving would put a retired price back in front of new
+    /// subscribers, so a replacement plan must be created instead. Repeating
+    /// the current status is a no-op and allowed, so `activate_plan` /
+    /// `archive_plan` stay idempotent.
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+        match self {
+            Self::Draft => matches!(next, Self::Active | Self::Archived),
+            Self::Active => matches!(next, Self::Archived),
+            Self::Archived => false,
+        }
+    }
+
+    /// Returns true if this status is a terminal state.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Archived)
+    }
+}
+
 /// Status of a billing cycle
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
@@ -162,6 +217,61 @@ pub enum BillingCycleStatus {
     Refunded,
     /// Voided/cancelled
     Voided,
+}
+
+impl BillingCycleStatus {
+    /// Check if a billing-cycle status transition is allowed.
+    ///
+    /// The allowlist exists so a worker cannot re-apply an outcome that has
+    /// already moved money or already advanced the subscription:
+    ///
+    /// * `Paid` may only be refunded or voided. Re-marking a paid cycle paid
+    ///   would double-advance `next_billing_date`/`billing_cycle_count` and
+    ///   double-bill the customer, so it is refused rather than ignored.
+    /// * `Refunded`/`Voided` are terminal (see [`Self::is_terminal`]).
+    /// * `Failed -> Failed` is the ONE permitted self-transition: each call
+    ///   models a genuine subsequent collection attempt and legitimately
+    ///   increments `retry_count`. Every other self-transition is refused, so
+    ///   a retry loop cannot inflate `retry_count` on a settled cycle.
+    /// * `Processing -> Scheduled` returns an accepted charge that never
+    ///   reached the processor to the billing queue.
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        match self {
+            Self::Scheduled => matches!(
+                next,
+                Self::Processing | Self::Paid | Self::Failed | Self::Skipped | Self::Voided
+            ),
+            Self::Processing => {
+                matches!(next, Self::Scheduled | Self::Paid | Self::Failed | Self::Voided)
+            }
+            Self::Paid => matches!(next, Self::Refunded | Self::Voided),
+            Self::Failed => matches!(
+                next,
+                Self::Scheduled
+                    | Self::Processing
+                    | Self::Paid
+                    | Self::Failed
+                    | Self::Skipped
+                    | Self::Voided
+            ),
+            Self::Skipped => matches!(next, Self::Voided),
+            Self::Refunded | Self::Voided => false,
+        }
+    }
+
+    /// Returns true if this status is a terminal state for a billing cycle.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Refunded | Self::Voided)
+    }
+
+    /// Returns true if reaching this status means the cycle has settled and
+    /// the subscription's billing clock must move on by one interval.
+    #[must_use]
+    pub const fn advances_subscription(self) -> bool {
+        matches!(self, Self::Paid)
+    }
 }
 
 /// Type of subscription event
@@ -676,6 +786,7 @@ pub struct SubscriptionFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use std::collections::HashSet;
     use std::str::FromStr;
 
@@ -771,6 +882,101 @@ mod tests {
         assert!(!Paused.can_transition_to(Trial));
         assert!(!Cancelled.can_transition_to(Active));
         assert!(!Expired.can_transition_to(Active));
+    }
+
+    #[test]
+    fn billing_cycle_status_allowlist() {
+        use BillingCycleStatus::*;
+        // Happy paths.
+        assert!(Scheduled.can_transition_to(Processing));
+        assert!(Scheduled.can_transition_to(Paid));
+        assert!(Processing.can_transition_to(Paid));
+        assert!(Failed.can_transition_to(Paid));
+        assert!(Paid.can_transition_to(Refunded));
+        // A settled cycle cannot be re-applied or reopened.
+        assert!(!Paid.can_transition_to(Paid));
+        assert!(!Paid.can_transition_to(Failed));
+        assert!(!Paid.can_transition_to(Scheduled));
+        assert!(!Skipped.can_transition_to(Paid));
+        assert!(!Refunded.can_transition_to(Paid));
+        assert!(!Voided.can_transition_to(Failed));
+        // `Failed -> Failed` is the one permitted self transition.
+        assert!(Failed.can_transition_to(Failed));
+        assert!(!Scheduled.can_transition_to(Scheduled));
+        assert!(!Processing.can_transition_to(Processing));
+    }
+
+    #[test]
+    fn billing_cycle_status_terminal_and_advancing() {
+        use BillingCycleStatus::*;
+        assert!(Refunded.is_terminal());
+        assert!(Voided.is_terminal());
+        assert!(!Paid.is_terminal());
+        assert!(Paid.advances_subscription());
+        assert!(!Failed.advances_subscription());
+        assert!(!Skipped.advances_subscription());
+    }
+
+    #[test]
+    fn plan_status_transitions() {
+        use PlanStatus::*;
+        assert!(Draft.can_transition_to(Active));
+        assert!(Draft.can_transition_to(Archived));
+        assert!(Active.can_transition_to(Archived));
+        assert!(Active.can_transition_to(Active), "re-activating is idempotent");
+        assert!(!Archived.can_transition_to(Active));
+        assert!(!Archived.can_transition_to(Draft));
+        assert!(!Active.can_transition_to(Draft));
+        assert!(Archived.is_terminal());
+    }
+
+    #[test]
+    fn billing_interval_advance_uses_calendar_months() {
+        let jan_31 = Utc.with_ymd_and_hms(2026, 1, 31, 12, 0, 0).unwrap();
+        // A calendar month, clamped to the end of a short month.
+        assert_eq!(
+            BillingInterval::Monthly.advance(jan_31, None),
+            Utc.with_ymd_and_hms(2026, 2, 28, 12, 0, 0).unwrap()
+        );
+        // Not the legacy flat 30 days.
+        assert_ne!(
+            BillingInterval::Monthly.advance(jan_31, None),
+            jan_31 + chrono::Duration::days(30)
+        );
+        // The day of month is preserved over a full year, where 12 x 30 days
+        // would have drifted back by five days.
+        let mut cursor = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+        for _ in 0..12 {
+            cursor = BillingInterval::Monthly.advance(cursor, None);
+        }
+        assert_eq!(cursor, Utc.with_ymd_and_hms(2027, 1, 15, 12, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn billing_interval_advance_day_based_variants() {
+        let anchor = Utc.with_ymd_and_hms(2026, 3, 10, 0, 0, 0).unwrap();
+        assert_eq!(
+            BillingInterval::Weekly.advance(anchor, None),
+            anchor + chrono::Duration::days(7)
+        );
+        assert_eq!(
+            BillingInterval::Biweekly.advance(anchor, None),
+            anchor + chrono::Duration::days(14)
+        );
+        assert_eq!(
+            BillingInterval::Custom.advance(anchor, Some(45)),
+            anchor + chrono::Duration::days(45)
+        );
+        // Custom without an explicit length falls back to 30 days, matching
+        // `BillingInterval::days`.
+        assert_eq!(
+            BillingInterval::Custom.advance(anchor, None),
+            anchor + chrono::Duration::days(30)
+        );
+        assert_eq!(
+            BillingInterval::Annual.advance(anchor, None),
+            Utc.with_ymd_and_hms(2027, 3, 10, 0, 0, 0).unwrap()
+        );
     }
 
     #[test]

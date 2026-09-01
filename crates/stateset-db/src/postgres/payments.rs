@@ -31,6 +31,65 @@ fn capturing_statuses() -> Vec<String> {
     .collect()
 }
 
+/// Every payment status, so the transition guards below can be derived from the
+/// domain state machine instead of from hand-written status lists that drift
+/// away from it. `PaymentTransactionStatus` is `#[non_exhaustive]` and does not
+/// derive `EnumIter`, so the variants are enumerated once, here.
+const ALL_PAYMENT_STATUSES: [PaymentTransactionStatus; 9] = [
+    PaymentTransactionStatus::Pending,
+    PaymentTransactionStatus::Processing,
+    PaymentTransactionStatus::RequiresAction,
+    PaymentTransactionStatus::Completed,
+    PaymentTransactionStatus::Failed,
+    PaymentTransactionStatus::Cancelled,
+    PaymentTransactionStatus::Refunded,
+    PaymentTransactionStatus::PartiallyRefunded,
+    PaymentTransactionStatus::Disputed,
+];
+
+/// Whether a persisted status write from `from` to `to` is legal.
+///
+/// The rules live in the domain state machine
+/// ([`PaymentTransactionStatus::can_transition_to`]); this wrapper adds exactly
+/// ONE documented edge that the persistence layer needs and the enum does not
+/// model: `Pending -> Completed`, the single-shot capture used by processors
+/// that settle without an intermediate `Processing` step. Every other answer —
+/// in particular every edge OUT of a settled payment
+/// (`Completed`/`PartiallyRefunded`/`Refunded` -> `Cancelled`/`Failed`, which
+/// would release the slice of the order total that settled money is consuming
+/// and let the order be captured twice) — is the enum's own. Mirrors the SQLite
+/// backend exactly.
+pub(crate) fn payment_transition_allowed(
+    from: PaymentTransactionStatus,
+    to: PaymentTransactionStatus,
+) -> bool {
+    if from == PaymentTransactionStatus::Pending && to == PaymentTransactionStatus::Completed {
+        return true;
+    }
+    from.can_transition_to(to)
+}
+
+/// Every status a payment may currently be in for a write that sets its status
+/// to `target`, to bind to a `status = ANY($n)` predicate. Keeping the check
+/// inside the UPDATE means a concurrent writer cannot slip between the check and
+/// the write.
+fn statuses_allowing_transition_to(target: PaymentTransactionStatus) -> Vec<String> {
+    ALL_PAYMENT_STATUSES
+        .iter()
+        .filter(|from| payment_transition_allowed(**from, target))
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Conflict error for a refused status write, naming the status the payment is
+/// actually in. Worded identically in the SQLite backend.
+fn transition_conflict(
+    current: PaymentTransactionStatus,
+    target: PaymentTransactionStatus,
+) -> CommerceError {
+    CommerceError::Conflict(format!("Payment is {current} and cannot transition to {target}"))
+}
+
 /// Over-capture guard: reject when Σ(in-flight + completed captures for the
 /// order, excluding `exclude_payment_id`) + `amount` would exceed
 /// `orders.total_amount`. Locks the order row with `FOR UPDATE` so concurrent
@@ -483,24 +542,60 @@ impl PgPaymentRepository {
     }
 
     /// Update payment (async)
+    ///
+    /// The read, the transition check and the write share ONE transaction with
+    /// `SELECT ... FOR UPDATE` on the payment row, and the status check is a
+    /// `status = ANY(...)` predicate on the UPDATE itself, so a concurrent
+    /// writer cannot slip between them. (Previously the status was written
+    /// unconditionally on a lock-free pool connection, which let
+    /// `cancel`/`mark_failed` — both of which funnel through here — flip a
+    /// `Completed` payment into a status that releases its slice of the order
+    /// total, so the same order could be captured twice.)
+    ///
+    /// A request that does not change the status (`input.status == None`, or the
+    /// status it already has) is always a legal self-transition and never
+    /// conflicts.
     pub async fn update_async(&self, id: Uuid, input: UpdatePayment) -> Result<Payment> {
-        let payment = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
-             failure_code = $4, metadata = $5, updated_at = $6 WHERE id = $7",
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, PaymentRow>(
+            "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
+             description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
+             FROM payments WHERE id = $1 FOR UPDATE"
         )
-        .bind(input.status.unwrap_or(payment.status).to_string())
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let payment = Self::row_to_payment(row)?;
+        let current = payment.status;
+        let target = input.status.unwrap_or(current);
+
+        let rows = sqlx::query(
+            "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
+             failure_code = $4, metadata = $5, updated_at = $6
+             WHERE id = $7 AND status = ANY($8)",
+        )
+        .bind(target.to_string())
         .bind(input.external_id.or(payment.external_id))
         .bind(input.failure_reason.or(payment.failure_reason))
         .bind(input.failure_code.or(payment.failure_code))
         .bind(input.metadata.or(payment.metadata))
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(statuses_allowing_transition_to(target))
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(transition_conflict(current, target));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -596,36 +691,64 @@ impl PgPaymentRepository {
     /// Mark payment as completed (async)
     pub async fn mark_completed_async(&self, id: Uuid) -> Result<Payment> {
         let now = Utc::now();
+        let target = PaymentTransactionStatus::Completed;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        // Re-check the order's capacity at completion time (a failed/cancelled
-        // payment released its slice of the total and must not re-take it on
-        // top of captures made since).
-        let (order_id, amount): (Option<Uuid>, Decimal) =
-            sqlx::query_as("SELECT order_id, amount FROM payments WHERE id = $1 FOR UPDATE")
-                .bind(id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or(CommerceError::NotFound)?;
+        // Two guards, in this order (same as SQLite):
+        //   1. the state machine — only a payment that may legally reach
+        //      `Completed` may be completed (never a cancelled/failed/refunded
+        //      one);
+        //   2. the order's capacity, re-checked at completion time: a payment
+        //      that was failed/cancelled while still in flight (and so released
+        //      its slice of the total) must not be completed on top of captures
+        //      made since.
+        let (raw_status, order_id, amount): (String, Option<Uuid>, Decimal) = sqlx::query_as(
+            "SELECT status, order_id, amount FROM payments WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let current: PaymentTransactionStatus = raw_status.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid payment status '{raw_status}'"))
+        })?;
+        if !payment_transition_allowed(current, target) {
+            return Err(transition_conflict(current, target));
+        }
+
         if let Some(order_id) = order_id {
             check_order_capture_capacity_pg(tx.as_mut(), order_id, Some(id), amount).await?;
         }
 
-        sqlx::query("UPDATE payments SET status = $1, paid_at = $2, updated_at = $3 WHERE id = $4")
-            .bind(PaymentTransactionStatus::Completed.to_string())
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let rows = sqlx::query(
+            "UPDATE payments SET status = $1, paid_at = $2, updated_at = $3
+             WHERE id = $4 AND status = ANY($5)",
+        )
+        .bind(target.to_string())
+        .bind(now)
+        .bind(now)
+        .bind(id)
+        .bind(statuses_allowing_transition_to(target))
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(transition_conflict(current, target));
+        }
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Mark payment as failed (async)
+    ///
+    /// Status-guarded, for the same reason as [`Self::update_async`]: a
+    /// `Completed` payment is settled money whose refund ledger points at it,
+    /// and `failed` is not a capturing status — flipping it would release the
+    /// order-total slice the capture is consuming and let the order be captured
+    /// again.
     pub async fn mark_failed_async(
         &self,
         id: Uuid,
@@ -633,21 +756,47 @@ impl PgPaymentRepository {
         code: Option<&str>,
     ) -> Result<Payment> {
         let now = Utc::now();
+        let target = PaymentTransactionStatus::Failed;
 
-        sqlx::query("UPDATE payments SET status = $1, failure_reason = $2, failure_code = $3, updated_at = $4 WHERE id = $5")
-            .bind(PaymentTransactionStatus::Failed.to_string())
-            .bind(reason)
-            .bind(code)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let (raw_status,): (String,) =
+            sqlx::query_as("SELECT status FROM payments WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let current: PaymentTransactionStatus = raw_status.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid payment status '{raw_status}'"))
+        })?;
+
+        let rows = sqlx::query(
+            "UPDATE payments SET status = $1, failure_reason = $2, failure_code = $3,
+             updated_at = $4 WHERE id = $5 AND status = ANY($6)",
+        )
+        .bind(target.to_string())
+        .bind(reason)
+        .bind(code)
+        .bind(now)
+        .bind(id)
+        .bind(statuses_allowing_transition_to(target))
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(transition_conflict(current, target));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Cancel payment (async)
+    ///
+    /// Routes through [`Self::update_async`], so the state machine guard
+    /// applies: a `Completed`/`PartiallyRefunded`/`Refunded` payment cannot be
+    /// cancelled.
     pub async fn cancel_async(&self, id: Uuid) -> Result<Payment> {
         self.update_async(
             id,
@@ -871,19 +1020,53 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        // Update payment amount_refunded
-        sqlx::query(
-            "UPDATE payments SET amount_refunded = amount_refunded + $1, status = CASE
-             WHEN amount_refunded + $2 >= amount THEN 'refunded' ELSE 'partially_refunded' END,
-             updated_at = $3 WHERE id = $4",
+        // Update payment amount_refunded.
+        //
+        // The payment row is locked and its new status computed in Rust (rather
+        // than with an inline SQL `CASE`) so that the write can carry the same
+        // state-machine guard as every other status write, and so that the shape
+        // matches the SQLite backend: a refund may only fold itself into a
+        // payment that can legally reach `Refunded`/`PartiallyRefunded`.
+        let payment_id = refund.payment_id.into_uuid();
+        let (raw_payment_status, current_refunded, payment_amount): (String, Decimal, Decimal) =
+            sqlx::query_as(
+                "SELECT status, amount_refunded, amount FROM payments WHERE id = $1 FOR UPDATE",
+            )
+            .bind(payment_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let payment_status: PaymentTransactionStatus =
+            raw_payment_status.parse().map_err(|_| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid payment status '{raw_payment_status}'"
+                ))
+            })?;
+
+        let new_refunded = current_refunded + refund.amount;
+        let new_status = if new_refunded >= payment_amount {
+            PaymentTransactionStatus::Refunded
+        } else {
+            PaymentTransactionStatus::PartiallyRefunded
+        };
+
+        let rows = sqlx::query(
+            "UPDATE payments SET amount_refunded = $1, status = $2, updated_at = $3
+             WHERE id = $4 AND status = ANY($5)",
         )
-        .bind(refund.amount)
-        .bind(refund.amount)
+        .bind(new_refunded)
+        .bind(new_status.to_string())
         .bind(now)
-        .bind(refund.payment_id.into_uuid())
+        .bind(payment_id)
+        .bind(statuses_allowing_transition_to(new_status))
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(transition_conflict(payment_status, new_status));
+        }
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -927,11 +1110,17 @@ impl PgPaymentRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        // Clearing the old default and inserting the new one share ONE
+        // transaction (as they already do in SQLite): a failure between the two
+        // statements would otherwise leave the customer with no default payment
+        // method at all.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         // If setting as default, clear existing default
         if input.is_default.unwrap_or(false) {
             sqlx::query("UPDATE payment_methods SET is_default = false WHERE customer_id = $1")
                 .bind(input.customer_id.into_uuid())
-                .execute(&self.pool)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }
@@ -957,9 +1146,11 @@ impl PgPaymentRepository {
         .bind(&input.billing_address)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         let row = sqlx::query_as::<_, PaymentMethodRow>(
             "SELECT id, customer_id, method_type, is_default, card_brand, card_last4, card_exp_month,
@@ -1011,9 +1202,13 @@ impl PgPaymentRepository {
         customer_id: Uuid,
         method_id: Uuid,
     ) -> Result<()> {
+        // Both statements share ONE transaction (as they already do in SQLite):
+        // a failure between them would leave the customer with no default.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         sqlx::query("UPDATE payment_methods SET is_default = false WHERE customer_id = $1")
             .bind(customer_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1022,10 +1217,11 @@ impl PgPaymentRepository {
         )
         .bind(method_id)
         .bind(customer_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1071,19 +1267,25 @@ impl PgPaymentRepository {
 
     /// Delete payment (async) - hard delete
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
+        // Both deletes share ONE transaction (as they already do in
+        // `delete_batch_atomic_async` and in SQLite): a failure between them
+        // would orphan the refund rows from their payment.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         // Delete associated refunds first
         sqlx::query("DELETE FROM refunds WHERE payment_id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM payments WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1269,7 +1471,7 @@ impl PgPaymentRepository {
                  amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
                  card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
                  description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
-                 FROM payments WHERE id = $1"
+                 FROM payments WHERE id = $1 FOR UPDATE"
             )
             .bind(raw_id)
             .fetch_optional(tx.as_mut())
@@ -1281,20 +1483,31 @@ impl PgPaymentRepository {
 
             let now = Utc::now();
 
-            sqlx::query(
+            // Same state-machine guard as the single-row `update_async`, inside
+            // the batch's own transaction: one illegal status write aborts the
+            // whole atomic batch rather than silently landing.
+            let current = payment.status;
+            let target = input.status.unwrap_or(current);
+            let rows = sqlx::query(
                 "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
-                 failure_code = $4, metadata = $5, updated_at = $6 WHERE id = $7",
+                 failure_code = $4, metadata = $5, updated_at = $6
+                 WHERE id = $7 AND status = ANY($8)",
             )
-            .bind(input.status.unwrap_or(payment.status).to_string())
+            .bind(target.to_string())
             .bind(input.external_id.or(payment.external_id))
             .bind(input.failure_reason.or(payment.failure_reason))
             .bind(input.failure_code.or(payment.failure_code))
             .bind(input.metadata.or(payment.metadata))
             .bind(now)
             .bind(raw_id)
+            .bind(statuses_allowing_transition_to(target))
             .execute(tx.as_mut())
             .await
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+            .rows_affected();
+            if rows == 0 {
+                return Err(transition_conflict(current, target));
+            }
 
             // Fetch the updated payment
             let updated_row = sqlx::query_as::<_, PaymentRow>(

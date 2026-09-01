@@ -54,6 +54,9 @@ pub(crate) struct OrderRow {
     status: String,
     order_date: DateTime<Utc>,
     total_amount: Decimal,
+    tax_amount: Decimal,
+    shipping_amount: Decimal,
+    discount_amount: Decimal,
     currency: CurrencyCode,
     payment_status: String,
     fulfillment_status: String,
@@ -256,6 +259,9 @@ impl PgOrderRepository {
             status,
             order_date: row.order_date,
             total_amount: row.total_amount,
+            tax_amount: row.tax_amount,
+            shipping_amount: row.shipping_amount,
+            discount_amount: row.discount_amount,
             currency: row.currency,
             payment_status,
             fulfillment_status,
@@ -400,7 +406,7 @@ impl PgOrderRepository {
         // the currency minor unit by `OrderItem::calculate_total` (the same
         // helper that stores `order_items.total`), so the order foots to its
         // line items and matches the SQLite backend and `update_order_total`.
-        let total: Decimal = input
+        let line_total: Decimal = input
             .items
             .iter()
             .map(|i| {
@@ -412,6 +418,12 @@ impl PgOrderRepository {
                 )
             })
             .sum();
+        // Order-level money alongside the line sum, so the order records what
+        // the customer is actually charged (mirrors the SQLite backend).
+        let tax_amount = input.tax_amount.unwrap_or(Decimal::ZERO);
+        let shipping_amount = input.shipping_amount.unwrap_or(Decimal::ZERO);
+        let discount_amount = input.discount_amount.unwrap_or(Decimal::ZERO);
+        let total = line_total + tax_amount + shipping_amount - discount_amount;
 
         let shipping_address_json = input
             .shipping_address
@@ -448,10 +460,11 @@ impl PgOrderRepository {
             sqlx::query_as(
                 r#"
                 INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                   tax_amount, shipping_amount, discount_amount,
                                    currency, payment_status, fulfillment_status, payment_method,
                                    shipping_method, notes, shipping_address, billing_address,
                                    cart_id, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 ON CONFLICT (cart_id) WHERE cart_id IS NOT NULL
                 DO UPDATE SET cart_id = EXCLUDED.cart_id
                 RETURNING id, order_number, (xmax = 0) AS inserted
@@ -463,6 +476,9 @@ impl PgOrderRepository {
             .bind("pending")
             .bind(now)
             .bind(total)
+            .bind(tax_amount)
+            .bind(shipping_amount)
+            .bind(discount_amount)
             .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
             .bind("pending")
             .bind("unfulfilled")
@@ -481,10 +497,11 @@ impl PgOrderRepository {
             sqlx::query(
                 r#"
                 INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                   tax_amount, shipping_amount, discount_amount,
                                    currency, payment_status, fulfillment_status, payment_method,
                                    shipping_method, notes, shipping_address, billing_address,
                                    created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                 "#,
             )
             .bind(id)
@@ -493,6 +510,9 @@ impl PgOrderRepository {
             .bind("pending")
             .bind(now)
             .bind(total)
+            .bind(tax_amount)
+            .bind(shipping_amount)
+            .bind(discount_amount)
             .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
             .bind("pending")
             .bind("unfulfilled")
@@ -674,6 +694,9 @@ impl PgOrderRepository {
             status: OrderStatus::Pending,
             order_date: now,
             total_amount: total,
+            tax_amount,
+            shipping_amount,
+            discount_amount,
             currency: input.currency.unwrap_or(CurrencyCode::USD),
             payment_status: PaymentStatus::Pending,
             fulfillment_status: FulfillmentStatus::Unfulfilled,
@@ -1387,160 +1410,16 @@ impl PgOrderRepository {
         for input in inputs {
             Self::validate_order_input(&input)?;
 
-            let id = Uuid::new_v4();
-            let now = Utc::now();
-
-            // Get next order number
-            let order_number: (i64,) = sqlx::query_as("SELECT nextval('order_number_seq')")
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-
-            let order_number = format!("ORD-{}", order_number.0);
-
-            // Order total = sum of per-line money totals, each rounded to the
-            // currency minor unit by `OrderItem::calculate_total` (so it foots
-            // to the line items and matches the single-create path).
-            let total: Decimal = input
-                .items
-                .iter()
-                .map(|i| {
-                    OrderItem::calculate_total(
-                        i.quantity,
-                        i.unit_price,
-                        i.discount.unwrap_or(Decimal::ZERO),
-                        i.tax_amount.unwrap_or(Decimal::ZERO),
-                    )
-                })
-                .sum();
-
-            let shipping_address_json = input
-                .shipping_address
-                .as_ref()
-                .map(|a| {
-                    serde_json::to_value(a).map_err(|e| {
-                        CommerceError::DatabaseError(format!(
-                            "Failed to serialize order.shipping_address: {}",
-                            e
-                        ))
-                    })
-                })
-                .transpose()?;
-            let billing_address_json = input
-                .billing_address
-                .as_ref()
-                .map(|a| {
-                    serde_json::to_value(a).map_err(|e| {
-                        CommerceError::DatabaseError(format!(
-                            "Failed to serialize order.billing_address: {}",
-                            e
-                        ))
-                    })
-                })
-                .transpose()?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
-                                   currency, payment_status, fulfillment_status, payment_method,
-                                   shipping_method, notes, shipping_address, billing_address,
-                                   created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                "#,
-            )
-            .bind(id)
-            .bind(&order_number)
-            .bind(input.customer_id.into_uuid())
-            .bind("pending")
-            .bind(now)
-            .bind(total)
-            .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
-            .bind("pending")
-            .bind("unfulfilled")
-            .bind(&input.payment_method)
-            .bind(&input.shipping_method)
-            .bind(&input.notes)
-            .bind(&shipping_address_json)
-            .bind(&billing_address_json)
-            .bind(now)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            // Insert order items
-            let mut items = Vec::new();
-            for item_input in &input.items {
-                let item_id = Uuid::new_v4();
-                let discount = item_input.discount.unwrap_or(Decimal::ZERO);
-                let tax = item_input.tax_amount.unwrap_or(Decimal::ZERO);
-                let item_total = OrderItem::calculate_total(
-                    item_input.quantity,
-                    item_input.unit_price,
-                    discount,
-                    tax,
-                );
-
-                sqlx::query(
-                    r#"
-                    INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
-                                             quantity, unit_price, discount, tax_amount, total, created_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    "#,
-                )
-                .bind(item_id)
-                .bind(id)
-                .bind(item_input.product_id.into_uuid())
-                .bind(item_input.variant_id)
-                .bind(&item_input.sku)
-                .bind(&item_input.name)
-                .bind(item_input.quantity)
-                .bind(item_input.unit_price)
-                .bind(discount)
-                .bind(tax)
-                .bind(item_total)
-                .bind(now)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-
-                items.push(OrderItem {
-                    id: OrderItemId::from(item_id),
-                    order_id: OrderId::from(id),
-                    product_id: item_input.product_id,
-                    variant_id: item_input.variant_id,
-                    sku: item_input.sku.clone(),
-                    name: item_input.name.clone(),
-                    quantity: item_input.quantity,
-                    shipped_quantity: 0,
-                    unit_price: item_input.unit_price,
-                    discount,
-                    tax_amount: tax,
-                    total: item_total,
-                });
-            }
-
-            orders.push(Order {
-                id: OrderId::from(id),
-                order_number,
-                customer_id: input.customer_id,
-                status: OrderStatus::Pending,
-                order_date: now,
-                total_amount: total,
-                currency: input.currency.unwrap_or(CurrencyCode::USD),
-                payment_status: PaymentStatus::Pending,
-                fulfillment_status: FulfillmentStatus::Unfulfilled,
-                payment_method: input.payment_method,
-                shipping_method: input.shipping_method,
-                tracking_number: None,
-                notes: input.notes,
-                shipping_address: input.shipping_address,
-                billing_address: input.billing_address,
-                items,
-                version: 1,
-                created_at: now,
-                updated_at: now,
-            });
+            // Route batch creation through the SAME guarded path as a single
+            // create. The batch loop previously inserted orders and items
+            // directly with no stock check, reservation or backorder, so
+            // batch-creating 100 units against 5 in stock succeeded and
+            // shipping later found zero reservations. `create_in_tx` enforces
+            // the stock policy, reserves what is available, backorders the
+            // remainder and carries the order-level money — on this
+            // transaction, so one rejected line rolls the whole batch back.
+            let order = self.create_in_tx(&mut tx, None, false, input).await?;
+            orders.push(order);
         }
 
         tx.commit().await.map_err(map_db_error)?;

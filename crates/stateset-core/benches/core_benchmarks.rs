@@ -38,6 +38,9 @@ fn create_test_order(item_count: usize) -> Order {
     let total: Decimal = items.iter().map(|i| i.total).sum();
 
     Order {
+        tax_amount: Decimal::ZERO,
+        shipping_amount: Decimal::ZERO,
+        discount_amount: Decimal::ZERO,
         id: OrderId::from(Uuid::new_v4()),
         order_number: "ORD-2024-001".to_string(),
         customer_id: CustomerId::from(Uuid::new_v4()),

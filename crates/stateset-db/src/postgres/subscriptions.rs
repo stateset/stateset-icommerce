@@ -148,6 +148,27 @@ impl PgSubscriptionRepository {
         Self { pool }
     }
 
+    /// Read a subscription's status inside the write transaction, taking the
+    /// row `FOR UPDATE`, so a lifecycle guard cannot be raced by a concurrent
+    /// writer (the old code read on one connection and wrote on another).
+    /// Mirrors `SqliteSubscriptionRepository::locked_subscription_status`.
+    async fn locked_subscription_status(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: SubscriptionId,
+    ) -> Result<SubscriptionStatus> {
+        let raw: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM subscriptions WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+
+        let raw = raw.ok_or(CommerceError::NotFound)?.0;
+        raw.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("invalid subscription.status: {raw}"))
+        })
+    }
+
     fn is_subscription_number_unique_violation(err: &sqlx::Error) -> bool {
         let sqlx::Error::Database(db_err) = err else {
             return false;
@@ -614,6 +635,12 @@ impl PgSubscriptionRepository {
         let now = Utc::now();
         let items = input.items.clone();
 
+        // Insert the plan and its items in ONE transaction. They used to run
+        // as separate statements on the pool, so a failing item insert left a
+        // live plan with a partial item set — silently mispriced for every
+        // subscriber. (Mirrors the SQLite backend.)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         sqlx::query(
             r#"
             INSERT INTO subscription_plans (
@@ -652,7 +679,7 @@ impl PgSubscriptionRepository {
         .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -674,11 +701,13 @@ impl PgSubscriptionRepository {
                 .bind(item.max_quantity)
                 .bind(item.is_required)
                 .bind(item.unit_price)
-                .execute(&self.pool)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
             }
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_plan_async(id)
             .await?
@@ -795,6 +824,29 @@ impl PgSubscriptionRepository {
         stateset_core::Validate::validate(&input)?;
         let now = Utc::now();
 
+        // `status = COALESCE($3, status)` let any caller un-archive a plan,
+        // putting a retired price back in front of new subscribers.
+        // (Mirrors the SQLite backend.)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        if let Some(next) = input.status {
+            let raw: Option<(String,)> =
+                sqlx::query_as("SELECT status FROM subscription_plans WHERE id = $1 FOR UPDATE")
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            let raw = raw.ok_or(CommerceError::NotFound)?.0;
+            let current: PlanStatus = raw.parse().map_err(|_| {
+                CommerceError::DatabaseError(format!("invalid subscription_plan.status: {raw}"))
+            })?;
+            if !current.can_transition_to(next) {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot transition subscription plan from {current} to {next}"
+                )));
+            }
+        }
+
         sqlx::query(
             r#"
             UPDATE subscription_plans SET
@@ -828,9 +880,11 @@ impl PgSubscriptionRepository {
         .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_plan_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1202,6 +1256,20 @@ impl PgSubscriptionRepository {
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // A bare `status = COALESCE($1, status)` let any caller move a
+        // subscription to any status — including reviving a cancelled one
+        // straight back into the billing queue. (Mirrors the SQLite backend.)
+        if let Some(next) = input.status {
+            let current = Self::locked_subscription_status(&mut tx, id).await?;
+            if !current.can_transition_to(next) {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot transition subscription from {current} to {next}"
+                )));
+            }
+        }
+
         sqlx::query(
             r#"
             UPDATE subscriptions SET
@@ -1231,9 +1299,11 @@ impl PgSubscriptionRepository {
         .bind(input.metadata.map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
         .bind(id.into_uuid())
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1245,15 +1315,21 @@ impl PgSubscriptionRepository {
     ) -> Result<Subscription> {
         let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
 
-        if !sub.can_cancel() {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel subscription in {} status",
-                sub.status
-            )));
-        }
-
         let reason = input.reason.clone().unwrap_or_else(|| "Cancelled by customer".to_string());
         let data = input.feedback.clone().map(|f| serde_json::json!({"feedback": f}));
+
+        // Guard, write and audit in ONE transaction with the subscription row
+        // held `FOR UPDATE` (mirrors the SQLite backend): the guard used to
+        // read on one connection and write on another, so a concurrent
+        // pause/cancel could interleave between the two.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let status = Self::locked_subscription_status(&mut tx, id).await?;
+        if status.is_terminal() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot cancel subscription in {status} status"
+            )));
+        }
 
         let now = Utc::now();
         let immediate = input.immediate.unwrap_or(false);
@@ -1268,11 +1344,14 @@ impl PgSubscriptionRepository {
         .bind(ends_at)
         .bind(now)
         .bind(id.into_uuid())
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.record_event_async(id, SubscriptionEventType::Cancelled, &reason, data, None).await?;
+        self.record_event_tx(&mut tx, id, SubscriptionEventType::Cancelled, &reason, data, None)
+            .await?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1282,12 +1361,14 @@ impl PgSubscriptionRepository {
         id: SubscriptionId,
         input: PauseSubscription,
     ) -> Result<Subscription> {
-        let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
+        // Guard, write and audit in ONE transaction (see
+        // `cancel_subscription_async`). Mirrors the SQLite backend.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        if !sub.can_pause() {
+        let status = Self::locked_subscription_status(&mut tx, id).await?;
+        if !matches!(status, SubscriptionStatus::Active | SubscriptionStatus::Trial) {
             return Err(CommerceError::ValidationError(format!(
-                "Cannot pause subscription in {} status",
-                sub.status
+                "Cannot pause subscription in {status} status"
             )));
         }
 
@@ -1299,12 +1380,15 @@ impl PgSubscriptionRepository {
         .bind(input.resume_at)
         .bind(now)
         .bind(id.into_uuid())
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         let reason = input.reason.unwrap_or_else(|| "Subscription paused".to_string());
-        self.record_event_async(id, SubscriptionEventType::Paused, &reason, None, None).await?;
+        self.record_event_tx(&mut tx, id, SubscriptionEventType::Paused, &reason, None, None)
+            .await?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1312,16 +1396,20 @@ impl PgSubscriptionRepository {
     pub async fn resume_subscription_async(&self, id: SubscriptionId) -> Result<Subscription> {
         let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
 
-        if !sub.can_resume() {
+        // Guard, write and audit in ONE transaction (see
+        // `cancel_subscription_async`). Mirrors the SQLite backend.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let status = Self::locked_subscription_status(&mut tx, id).await?;
+        if status != SubscriptionStatus::Paused {
             return Err(CommerceError::ValidationError(format!(
-                "Cannot resume subscription in {} status",
-                sub.status
+                "Cannot resume subscription in {status} status"
             )));
         }
 
         let now = Utc::now();
         let interval_days = if sub.billing_interval == BillingInterval::Custom {
-            sub.custom_interval_days.unwrap_or(30) as i64
+            i64::from(sub.custom_interval_days.unwrap_or(30))
         } else {
             sub.billing_interval.days()
         };
@@ -1335,11 +1423,12 @@ impl PgSubscriptionRepository {
         .bind(new_period_end)
         .bind(now)
         .bind(id.into_uuid())
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.record_event_async(
+        self.record_event_tx(
+            &mut tx,
             id,
             SubscriptionEventType::Resumed,
             "Subscription resumed",
@@ -1347,6 +1436,8 @@ impl PgSubscriptionRepository {
             None,
         )
         .await?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1358,18 +1449,25 @@ impl PgSubscriptionRepository {
     ) -> Result<Subscription> {
         let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
 
-        if sub.status != SubscriptionStatus::Active {
+        let reason =
+            input.reason.clone().unwrap_or_else(|| "Customer skipped billing cycle".to_string());
+
+        // Guard, write and audit in ONE transaction: two concurrent skips used
+        // to read the same `next_billing_date` and each push it out by a full
+        // interval, silently skipping two periods for one customer request.
+        // Mirrors the SQLite backend.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let status = Self::locked_subscription_status(&mut tx, id).await?;
+        if status != SubscriptionStatus::Active {
             return Err(CommerceError::ValidationError(
                 "Can only skip billing for active subscriptions".into(),
             ));
         }
 
-        let reason =
-            input.reason.clone().unwrap_or_else(|| "Customer skipped billing cycle".to_string());
-
         let now = Utc::now();
         let interval_days = if sub.billing_interval == BillingInterval::Custom {
-            sub.custom_interval_days.unwrap_or(30) as i64
+            i64::from(sub.custom_interval_days.unwrap_or(30))
         } else {
             sub.billing_interval.days()
         };
@@ -1377,18 +1475,32 @@ impl PgSubscriptionRepository {
         let new_billing_date =
             sub.next_billing_date.unwrap_or(sub.current_period_end) + Duration::days(interval_days);
 
-        sqlx::query(
-            "UPDATE subscriptions SET next_billing_date = $1, current_period_end = $2, updated_at = $3 WHERE id = $4",
+        // `AND next_billing_date IS NOT DISTINCT FROM $5` pins the read the new
+        // date was derived from, so a racing skip that already moved the date
+        // cannot be applied twice.
+        let updated = sqlx::query(
+            "UPDATE subscriptions SET next_billing_date = $1, current_period_end = $2, updated_at = $3
+             WHERE id = $4 AND next_billing_date IS NOT DISTINCT FROM $5",
         )
         .bind(new_billing_date)
         .bind(new_billing_date)
         .bind(now)
         .bind(id.into_uuid())
-        .execute(&self.pool)
+        .bind(sub.next_billing_date)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.record_event_async(id, SubscriptionEventType::Skipped, &reason, None, None).await?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Subscription billing schedule changed concurrently; retry the skip".into(),
+            ));
+        }
+
+        self.record_event_tx(&mut tx, id, SubscriptionEventType::Skipped, &reason, None, None)
+            .await?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1414,8 +1526,8 @@ impl PgSubscriptionRepository {
 
         sqlx::query(
             "INSERT INTO billing_cycles (id, subscription_id, cycle_number, status, period_start, period_end,
-                subtotal, discount, tax, total, currency, created_at, updated_at)
-             VALUES ($1,$2,$3,'scheduled',$4,$5,$6,$7,0,$8,$9,$10,$11)",
+                subtotal, discount, tax, total, currency, cycle_key, created_at, updated_at)
+             VALUES ($1,$2,$3,'scheduled',$4,$5,$6,$7,0,$8,$9,$10,$11,$12)",
         )
         .bind(id)
         .bind(subscription_id.into_uuid())
@@ -1426,10 +1538,15 @@ impl PgSubscriptionRepository {
         .bind(discount)
         .bind(total)
         .bind(currency.as_str())
+        .bind(Self::cycle_key(subscription_id, cycle_number))
         .bind(Utc::now())
         .bind(Utc::now())
         .execute(&self.pool)
         .await
+        // A duplicate `(subscription_id, cycle_number)` trips the unique index
+        // on `cycle_key` and maps to `Conflict` — the backstop that stops a
+        // billing worker creating a second cycle for a period it already
+        // billed. (Mirrors the SQLite backend.)
         .map_err(map_db_error)?;
 
         self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
@@ -1508,13 +1625,74 @@ impl PgSubscriptionRepository {
         Ok(cycles)
     }
 
+    /// Database-level uniqueness key for a billing cycle (mirrors the SQLite
+    /// backend; backs the unique index from migration
+    /// `084_billing_cycle_uniqueness`).
+    fn cycle_key(subscription_id: SubscriptionId, cycle_number: i32) -> String {
+        format!("{subscription_id}:{cycle_number}")
+    }
+
     pub async fn update_billing_cycle_status_async(
         &self,
         id: Uuid,
         status: BillingCycleStatus,
     ) -> Result<BillingCycle> {
+        self.update_billing_cycle_status_detailed_async(id, status, None, None).await
+    }
+
+    /// Update a billing cycle's status, guarding the transition and advancing
+    /// the subscription when the cycle settles.
+    ///
+    /// Everything happens in ONE transaction: the cycle row is taken `FOR
+    /// UPDATE`, the transition is checked against
+    /// [`BillingCycleStatus::can_transition_to`], the cycle is written, and —
+    /// when the cycle is marked paid — the subscription row is taken `FOR
+    /// UPDATE`, `billing_cycle_count` is incremented and `next_billing_date`
+    /// moved forward by exactly one interval **from the paid cycle's
+    /// `period_end`**, not from "now".
+    ///
+    /// Before this, marking a cycle paid left `next_billing_date` untouched,
+    /// so a worker that polled for due subscriptions, billed, marked the cycle
+    /// paid and polled again found the SAME subscription still due and billed
+    /// the customer a second time. Mirrors the SQLite backend exactly.
+    pub async fn update_billing_cycle_status_detailed_async(
+        &self,
+        id: Uuid,
+        status: BillingCycleStatus,
+        payment_id: Option<Uuid>,
+        failure_reason: Option<String>,
+    ) -> Result<BillingCycle> {
         let now = Utc::now();
-        // Stamp `billed_at` when the cycle reaches a terminal billing outcome
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Read the cycle under a row lock so the guard below cannot race a
+        // concurrent worker (the SQLite backend serializes via its IMMEDIATE
+        // transaction).
+        let current: Option<(String, Uuid, i32, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT status, subscription_id, cycle_number, period_end
+             FROM billing_cycles WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let (current_status_raw, subscription_id, cycle_number, period_end) =
+            current.ok_or(CommerceError::NotFound)?;
+
+        let current_status: BillingCycleStatus = current_status_raw.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!(
+                "invalid billing_cycle.status: {current_status_raw}"
+            ))
+        })?;
+
+        if !current_status.can_transition_to(status) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot transition billing cycle {id} from {current_status} to {status}"
+            )));
+        }
+
+        // Stamp `billed_at` when the cycle reaches a billing outcome
         // (Paid/Failed) and advance the dunning `retry_count` on failure —
         // matching the SQLite backend, so retry-cap logic behaves identically.
         let billed_at: Option<DateTime<Utc>> =
@@ -1524,46 +1702,156 @@ impl PgSubscriptionRepository {
                 None
             };
         let increment_retry = status == BillingCycleStatus::Failed;
+        // Voiding frees the (subscription, cycle_number) slot so a corrected
+        // cycle can be created for the same period.
+        let clear_key = status == BillingCycleStatus::Voided;
 
         sqlx::query(
             "UPDATE billing_cycles SET
                 status = $1,
-                billed_at = COALESCE($2, billed_at),
-                retry_count = CASE WHEN $3 THEN retry_count + 1 ELSE retry_count END,
-                updated_at = $4
-             WHERE id = $5",
+                payment_id = COALESCE($2, payment_id),
+                billed_at = COALESCE($3, billed_at),
+                failure_reason = $4,
+                retry_count = CASE WHEN $5 THEN retry_count + 1 ELSE retry_count END,
+                cycle_key = CASE WHEN $6 THEN NULL ELSE cycle_key END,
+                updated_at = $7
+             WHERE id = $8",
         )
         .bind(billing_cycle_status_str(status))
+        .bind(payment_id)
         .bind(billed_at)
+        .bind(failure_reason)
         .bind(increment_retry)
+        .bind(clear_key)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        if status.advances_subscription() {
+            self.advance_subscription_after_paid_cycle_tx(
+                &mut tx,
+                SubscriptionId::from(subscription_id),
+                cycle_number,
+                period_end,
+                now,
+            )
+            .await?;
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Move a subscription's billing clock on by exactly one interval after a
+    /// cycle settles.
+    ///
+    /// The new `next_billing_date` is derived from the PAID CYCLE's
+    /// `period_end`, never from `Utc::now()` — anchoring on "now" would drift
+    /// with worker latency and could silently skip a period. The clock is only
+    /// ever moved forward: a late payment for an older cycle must not rewind
+    /// the schedule, and a subscription whose schedule has been cleared
+    /// (paused/cancelled leave `next_billing_date` NULL) is never resurrected
+    /// into billing. `billing_cycle_count` increments in every case, since the
+    /// cycle really did settle. Mirrors the SQLite backend.
+    async fn advance_subscription_after_paid_cycle_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subscription_id: SubscriptionId,
+        cycle_number: i32,
+        period_end: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let row: Option<(String, Option<i32>, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "SELECT billing_interval, custom_interval_days, next_billing_date
+             FROM subscriptions WHERE id = $1 FOR UPDATE",
+        )
+        .bind(subscription_id.into_uuid())
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let (interval_raw, custom_interval_days, current_next) =
+            row.ok_or(CommerceError::NotFound)?;
+
+        let interval: BillingInterval = interval_raw.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!(
+                "invalid subscription.billing_interval: {interval_raw}"
+            ))
+        })?;
+
+        let candidate = interval.advance(period_end, custom_interval_days);
+        let advanced = matches!(current_next, Some(current) if candidate > current);
+
+        if advanced {
+            sqlx::query(
+                "UPDATE subscriptions SET
+                    billing_cycle_count = billing_cycle_count + 1,
+                    failed_payment_attempts = 0,
+                    current_period_start = $1,
+                    current_period_end = $2,
+                    next_billing_date = $2,
+                    updated_at = $3
+                 WHERE id = $4",
+            )
+            .bind(period_end)
+            .bind(candidate)
+            .bind(now)
+            .bind(subscription_id.into_uuid())
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        } else {
+            sqlx::query(
+                "UPDATE subscriptions SET
+                    billing_cycle_count = billing_cycle_count + 1,
+                    failed_payment_attempts = 0,
+                    updated_at = $1
+                 WHERE id = $2",
+            )
+            .bind(now)
+            .bind(subscription_id.into_uuid())
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+
+        self.record_event_tx(
+            tx,
+            subscription_id,
+            SubscriptionEventType::Renewed,
+            &format!("Billing cycle {cycle_number} paid"),
+            Some(serde_json::json!({
+                "cycle_number": cycle_number,
+                "next_billing_date": advanced.then(|| candidate.to_rfc3339()),
+            })),
+            Some("system".to_string()),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Mark a single billing cycle as skipped.
+    ///
+    /// Routed through the guarded status path so a paid/refunded/voided cycle
+    /// cannot be retroactively "skipped" (which would have hidden a real
+    /// charge from the customer's cycle history).
     pub async fn skip_billing_cycle_record_async(
         &self,
         id: Uuid,
         input: SkipBillingCycle,
     ) -> Result<BillingCycle> {
-        let now = Utc::now();
         let reason = input.reason.unwrap_or_else(|| "Skipped".into());
-
-        sqlx::query(
-            "UPDATE billing_cycles SET status = 'skipped', failure_reason = $1, updated_at = $2 WHERE id = $3",
+        self.update_billing_cycle_status_detailed_async(
+            id,
+            BillingCycleStatus::Skipped,
+            None,
+            Some(reason),
         )
-        .bind(reason)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
         .await
-        .map_err(map_db_error)?;
-
-        self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_subscription_events_async(

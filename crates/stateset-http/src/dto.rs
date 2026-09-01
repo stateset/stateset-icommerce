@@ -262,6 +262,18 @@ pub struct CreateOrderRequest {
     pub payment_method: Option<String>,
     /// Shipping method identifier.
     pub shipping_method: Option<String>,
+    /// Order-level tax added to the line amounts. Omitted means zero.
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub tax_amount: Option<Decimal>,
+    /// Order-level shipping charge added to the line amounts.
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub shipping_amount: Option<Decimal>,
+    /// Order-level discount subtracted from the line amounts.
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub discount_amount: Option<Decimal>,
     /// What to do when a line cannot be fully reserved from stock.
     ///
     /// `allow_backorder` (default) reserves what is available and backorders
@@ -1286,6 +1298,9 @@ mod tests {
     #[test]
     fn create_order_request_roundtrip() {
         let req = CreateOrderRequest {
+            tax_amount: None,
+            shipping_amount: None,
+            discount_amount: None,
             customer_id: CustomerId::new(),
             items: vec![CreateOrderItemRequest {
                 product_id: ProductId::new(),

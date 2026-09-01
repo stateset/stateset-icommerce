@@ -142,6 +142,9 @@ mod tests {
         };
 
         Order {
+            tax_amount: rust_decimal::Decimal::ZERO,
+            shipping_amount: rust_decimal::Decimal::ZERO,
+            discount_amount: rust_decimal::Decimal::ZERO,
             id: OrderId::new(),
             order_number: "ORD-001".to_string(),
             customer_id: CustomerId::new(),

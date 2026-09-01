@@ -379,6 +379,16 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "076_invoice_payment_idempotency",
             include_str!("../migrations/076_invoice_payment_idempotency.sql"),
         ),
+        // Legacy-safe uniqueness for subscription billing cycles: a nullable
+        // `cycle_key` column (subscription_id:cycle_number) + unique index, so a
+        // duplicate cycle cannot be created and pre-guard duplicates stay NULL.
+        (
+            "077_billing_cycle_uniqueness",
+            include_str!("../migrations/077_billing_cycle_uniqueness.sql"),
+        ),
+        // Order-level tax/shipping/discount so checkout can carry what the
+        // customer is actually charged (see the migration for the failure).
+        ("078_order_money_breakdown", include_str!("../migrations/078_order_money_breakdown.sql")),
     ]
 }
 

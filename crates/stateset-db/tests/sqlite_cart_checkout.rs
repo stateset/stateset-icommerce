@@ -100,6 +100,9 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
         .create_from_cart(
             cart.id.into(),
             CreateOrder {
+                tax_amount: None,
+                shipping_amount: None,
+                discount_amount: None,
                 customer_id: customer.id,
                 items: order_items,
                 currency: Some(cart_for_order.currency),

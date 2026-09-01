@@ -66,6 +66,9 @@ pub fn create_test_orders(n: usize) -> Vec<CreateOrder> {
             notes: None,
             payment_method: None,
             shipping_method: None,
+            tax_amount: None,
+            shipping_amount: None,
+            discount_amount: None,
             stock_policy: stateset_core::StockPolicy::default(),
         })
         .collect()
