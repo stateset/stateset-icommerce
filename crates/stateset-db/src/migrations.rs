@@ -367,6 +367,12 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "074_invoice_direct_amount_paid",
             include_str!("../migrations/074_invoice_direct_amount_paid.sql"),
         ),
+        // Database-enforced auto-post idempotency: unique key per source
+        // document for the single-entry journal families.
+        (
+            "075_gl_source_document_key",
+            include_str!("../migrations/075_gl_source_document_key.sql"),
+        ),
     ]
 }
 

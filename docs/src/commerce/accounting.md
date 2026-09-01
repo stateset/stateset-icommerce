@@ -111,6 +111,10 @@ The finance modules enforce these invariants on both storage backends
   `auto_post_payment_received`, `auto_post_bill`, `auto_post_bill_payment`,
   `auto_post_inventory_cost`, or `auto_post_write_off` for the same source
   document returns the existing journal entry instead of posting twice.
+  A unique index on the journal's source-document key backs this at the
+  database level, so even writers that bypass the application layer cannot
+  double-post a single-entry document (voiding frees the key for a
+  corrected re-post).
 - Posting or voiding an entry requires its accounting period to be open —
   including through the governed kernel `ledger.post` command, which
   rejects durably with `commerce.ledger.period_not_open`.

@@ -436,6 +436,12 @@ impl PostgresDatabase {
             "081_invoice_direct_amount_paid",
             include_str!("migrations/081_invoice_direct_amount_paid.sql"),
         ));
+        // Database-enforced auto-post idempotency: unique key per source
+        // document for the single-entry journal families.
+        migrations.push((
+            "082_gl_source_document_key",
+            include_str!("migrations/082_gl_source_document_key.sql"),
+        ));
 
         migrations
     }

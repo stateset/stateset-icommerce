@@ -20,6 +20,32 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Families where one journal entry per source document is an invariant.
+/// Recognition and depreciation post many entries per document and are
+/// deliberately excluded. The returned key feeds the unique
+/// `gl_journal_entries.source_document_key` backstop index.
+fn source_document_key(
+    source_document_type: Option<&str>,
+    source_document_id: Option<Uuid>,
+) -> Option<String> {
+    const SINGLE_ENTRY_TYPES: [&str; 8] = [
+        "invoice",
+        "payment",
+        "bill",
+        "bill_payment",
+        "cost_transaction",
+        "write_off",
+        "period_close",
+        "reversal",
+    ];
+    match (source_document_type, source_document_id) {
+        (Some(kind), Some(id)) if SINGLE_ENTRY_TYPES.contains(&kind) => {
+            Some(format!("{kind}:{id}"))
+        }
+        _ => None,
+    }
+}
+
 /// Reduce a stored RFC3339 timestamp to its calendar date, erroring in
 /// `rusqlite` terms for use inside transaction closures.
 fn parse_rfc3339_date_with_conn(raw: &str, field: &str) -> rusqlite::Result<NaiveDate> {
@@ -379,10 +405,11 @@ impl SqliteGeneralLedgerRepository {
 
         conn.execute(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id,
-             entry_type, source, source_document_type, source_document_id, description,
+             entry_type, source, source_document_type, source_document_id,
+             source_document_key, description,
              total_debits, total_credits, is_balanced, status, posted_at, posted_by,
              created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 'posted', ?12, ?13, ?14, ?14)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, 'posted', ?13, ?14, ?15, ?15)",
             params![
                 id.to_string(),
                 entry_number,
@@ -392,6 +419,10 @@ impl SqliteGeneralLedgerRepository {
                 JournalEntrySource::Manual.to_string(),
                 input.source_document_type,
                 input.source_document_id.map(|id| id.to_string()),
+                source_document_key(
+                    input.source_document_type.as_deref(),
+                    input.source_document_id,
+                ),
                 input.description,
                 total_debits.to_string(),
                 total_credits.to_string(),
@@ -1021,9 +1052,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         tx.execute(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id,
-             entry_type, source, source_document_type, source_document_id, description,
+             entry_type, source, source_document_type, source_document_id,
+             source_document_key, description,
              total_debits, total_credits, is_balanced, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 id.to_string(),
                 entry_number,
@@ -1033,6 +1065,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 JournalEntrySource::Manual.to_string(),
                 input.source_document_type,
                 input.source_document_id.map(|id| id.to_string()),
+                source_document_key(
+                    input.source_document_type.as_deref(),
+                    input.source_document_id,
+                ),
                 input.description,
                 total_debits.to_string(),
                 total_credits.to_string(),
@@ -1324,7 +1360,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             // Guard on status so the balance reversal above can only commit
             // together with exactly one posted -> voided transition.
             let rows_affected = tx.execute(
-                "UPDATE gl_journal_entries SET status = 'voided' WHERE id = ?1 AND status = 'posted'",
+                "UPDATE gl_journal_entries SET status = 'voided', source_document_key = NULL
+                 WHERE id = ?1 AND status = 'posted'",
                 params![id.to_string()],
             )?;
             if rows_affected == 0 {
@@ -2884,6 +2921,58 @@ mod tests {
             auto_post: Some(false),
         })
         .expect("create entry")
+    }
+
+    /// A balanced entry tied to a source document, for the unique-key tests.
+    fn make_sourced_entry(
+        repo: &SqliteGeneralLedgerRepository,
+        debit_account: &GlAccount,
+        credit_account: &GlAccount,
+        doc_type: &str,
+        doc_id: Uuid,
+        auto_post: bool,
+    ) -> stateset_core::Result<JournalEntry> {
+        repo.create_journal_entry(CreateJournalEntry {
+            entry_date: NaiveDate::from_ymd_opt(2026, 1, 10).expect("date"),
+            entry_type: None,
+            description: format!("{doc_type} {doc_id}"),
+            lines: vec![
+                CreateJournalEntryLine::debit(debit_account.id, dec!(40), None),
+                CreateJournalEntryLine::credit(credit_account.id, dec!(40), None),
+            ],
+            source_document_type: Some(doc_type.to_string()),
+            source_document_id: Some(doc_id),
+            auto_post: Some(auto_post),
+        })
+    }
+
+    #[test]
+    fn source_document_key_backstop_rejects_duplicates_at_the_database() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let doc = Uuid::new_v4();
+
+        // First entry for a single-entry-family document succeeds; a second
+        // one is rejected by the unique index even though this path has no
+        // application-level idempotency check — the database is the backstop.
+        let first =
+            make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, true).expect("first");
+        let dup = make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, false);
+        assert!(dup.is_err(), "duplicate source document must be rejected: {dup:?}");
+
+        // Voiding frees the document for a corrected re-post.
+        repo.void_journal_entry(first.id).expect("void");
+        make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, false)
+            .expect("re-post after void");
+
+        // Multi-entry families (recognition, depreciation) are exempt.
+        let ob = Uuid::new_v4();
+        make_sourced_entry(&repo, &cash, &revenue, "revenue_recognition", ob, false)
+            .expect("first recognition");
+        make_sourced_entry(&repo, &cash, &revenue, "revenue_recognition", ob, false)
+            .expect("second recognition for the same obligation");
     }
 
     fn account_balance(repo: &SqliteGeneralLedgerRepository, id: Uuid) -> rust_decimal::Decimal {

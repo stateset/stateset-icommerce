@@ -19,6 +19,31 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Families where one journal entry per source document is an invariant —
+/// mirrors the SQLite backend; feeds the unique
+/// `gl_journal_entries.source_document_key` backstop index.
+fn source_document_key(
+    source_document_type: Option<&str>,
+    source_document_id: Option<Uuid>,
+) -> Option<String> {
+    const SINGLE_ENTRY_TYPES: [&str; 8] = [
+        "invoice",
+        "payment",
+        "bill",
+        "bill_payment",
+        "cost_transaction",
+        "write_off",
+        "period_close",
+        "reversal",
+    ];
+    match (source_document_type, source_document_id) {
+        (Some(kind), Some(id)) if SINGLE_ENTRY_TYPES.contains(&kind) => {
+            Some(format!("{kind}:{id}"))
+        }
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PgGeneralLedgerRepository {
     pool: PgPool,
@@ -743,9 +768,10 @@ impl PgGeneralLedgerRepository {
 
         sqlx::query(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id, entry_type,
-                source, source_document_type, source_document_id, description, total_debits,
+                source, source_document_type, source_document_id, source_document_key,
+                description, total_debits,
                 total_credits, is_balanced, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(id)
         .bind(&entry_number)
@@ -755,6 +781,7 @@ impl PgGeneralLedgerRepository {
         .bind(JournalEntrySource::Manual.to_string())
         .bind(input.source_document_type.clone())
         .bind(input.source_document_id)
+        .bind(source_document_key(input.source_document_type.as_deref(), input.source_document_id))
         .bind(&input.description)
         .bind(total_debits)
         .bind(total_credits)
@@ -1096,9 +1123,10 @@ impl PgGeneralLedgerRepository {
 
         sqlx::query(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id, entry_type,
-                source, source_document_type, source_document_id, description, total_debits,
+                source, source_document_type, source_document_id, source_document_key,
+                description, total_debits,
                 total_credits, is_balanced, status, posted_at, posted_by, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, 'posted', $12, $13, $14, $14)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, TRUE, 'posted', $13, $14, $15, $15)",
         )
         .bind(id)
         .bind(&entry_number)
@@ -1108,6 +1136,7 @@ impl PgGeneralLedgerRepository {
         .bind(JournalEntrySource::Manual.to_string())
         .bind(input.source_document_type.clone())
         .bind(input.source_document_id)
+        .bind(source_document_key(input.source_document_type.as_deref(), input.source_document_id))
         .bind(&input.description)
         .bind(total_debits)
         .bind(total_credits)
@@ -1291,7 +1320,8 @@ impl PgGeneralLedgerRepository {
         // it and then matches zero rows, so the balance reversal below can
         // only commit together with exactly one posted -> voided transition.
         let updated = sqlx::query(
-            "UPDATE gl_journal_entries SET status = 'voided' WHERE id = $1 AND status = 'posted'",
+            "UPDATE gl_journal_entries SET status = 'voided', source_document_key = NULL
+             WHERE id = $1 AND status = 'posted'",
         )
         .bind(id)
         .execute(tx.as_mut())
