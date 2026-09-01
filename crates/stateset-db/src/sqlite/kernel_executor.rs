@@ -4002,6 +4002,25 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            // Same guard as `post_journal_entry`: the entry's period must be
+            // open, or posting would mutate a closed/locked period's balances.
+            let period_status: String = tx.query_row(
+                "SELECT status FROM gl_periods WHERE id = ?1",
+                params![entry.period_id.to_string()],
+                |row| row.get(0),
+            )?;
+            if period_status != "open" {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    "commerce.ledger.period_not_open",
+                    &format!("cannot post journal entry: its period is {period_status}, not open"),
+                    RetryDisposition::Never,
+                    "journal_entry",
+                );
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             if command.mode == ExecutionMode::Preview {
                 entry.status = JournalEntryStatus::Posted;
                 entry.posted_at = Some(started_at);

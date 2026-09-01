@@ -4091,6 +4091,26 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        // Same guard as `post_journal_entry_async`: the entry's period must be
+        // open, or posting would mutate a closed/locked period's balances.
+        let period_status: String =
+            sqlx::query_scalar("SELECT status FROM gl_periods WHERE id = $1")
+                .bind(entry.period_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        if period_status != "open" {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy.clone()),
+                "commerce.ledger.period_not_open",
+                &format!("cannot post journal entry: its period is {period_status}, not open"),
+                "journal_entry",
+            );
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
         if command.mode == ExecutionMode::Preview {
             entry.status = JournalEntryStatus::Posted;
             entry.posted_at = Some(started_at);

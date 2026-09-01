@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "stateset-icommerce",
   "display_name": "StateSet iCommerce",
-  "version": "1.28.1",
+  "version": "1.28.2",
   "description": "Embedded commerce engine for AI agents: orders, inventory, payments, returns, subscriptions, finance. Local SQLite, no API keys, exact-decimal money with enforced invariants.",
   "long_description": "Gives your agent a complete local commerce backend: orders, inventory, customers, products, carts and checkout, payments and refunds, returns/RMA, subscriptions, analytics, and a full finance suite. Everything runs in-process against a local SQLite file — no accounts, no API keys, no rate limits. Money is exact-decimal and guarded by enforced invariants (an agent cannot over-refund, over-capture, or oversell), and writes are preview-only until you pass --apply.",
   "author": {

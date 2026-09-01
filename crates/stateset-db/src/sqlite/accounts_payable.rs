@@ -277,12 +277,11 @@ impl SqliteAccountsPayableRepository {
     }
 
     /// Returns all `ap_bills` matching `filter` (`supplier_id`, `status`,
-    /// `purchase_order_id`, `overdue_only`, and the Rust-side min/max amount
-    /// thresholds), ordered by `due_date`, WITHOUT pagination. Shared by `list_bills`
+    /// `purchase_order_id`, `overdue_only`, the `from_date`/`to_date` range, and
+    /// the Rust-side min/max amount thresholds), ordered by `due_date`, WITHOUT
+    /// pagination. Shared by `list_bills`
     /// (which then paginates) and `count_bills` (which counts the result) so a
     /// filtered count always matches the filtered list, both agreeing with Postgres.
-    /// `from_date`/`to_date` are deferred (entangled with the AP date-storage
-    /// divergence, as with the other AP list filters).
     fn matched_bills(&self, filter: &BillFilter) -> Result<Vec<Bill>> {
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM ap_bills WHERE 1=1".to_string();
@@ -363,10 +362,9 @@ fn ap_date_rfc3339(dt: DateTime<Utc>) -> String {
 }
 
 /// Appends the shared `ap_payments` filter predicates (`supplier_id`, `status`,
-/// `payment_method`) used by both `list_payments` and `count_payments`, so a
-/// filtered count always matches the filtered list and both agree with Postgres.
-/// `from_date`/`to_date` are intentionally omitted (deferred — entangled with the AP
-/// date-storage divergence, as with `list_bills`).
+/// `payment_method`, `from_date`/`to_date`) used by both `list_payments` and
+/// `count_payments`, so a filtered count always matches the filtered list and
+/// both agree with Postgres.
 fn push_payment_filters(
     sql: &mut String,
     params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
@@ -383,6 +381,16 @@ fn push_payment_filters(
     if let Some(method) = filter.payment_method {
         sql.push_str(" AND payment_method = ?");
         params_vec.push(Box::new(method.to_string()));
+    }
+    // `payment_date` is stored/bound at midnight UTC (like Postgres's `DATE`), so
+    // the RFC3339 comparison is a date comparison — matching Postgres.
+    if let Some(from_date) = filter.from_date {
+        sql.push_str(" AND payment_date >= ?");
+        params_vec.push(Box::new(ap_date_rfc3339(from_date)));
+    }
+    if let Some(to_date) = filter.to_date {
+        sql.push_str(" AND payment_date <= ?");
+        params_vec.push(Box::new(ap_date_rfc3339(to_date)));
     }
 }
 
@@ -520,11 +528,20 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn approve_bill(&self, id: Uuid) -> Result<Bill> {
         let conn = self.conn()?;
-        conn.execute(
-            "UPDATE ap_bills SET status = ?1 WHERE id = ?2 AND status IN ('draft', 'pending')",
-            params![BillStatus::Approved.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // Status-guarded UPDATE: only a draft/pending bill can be approved, and
+        // 0 matched rows is an error (previously a silent success that returned
+        // the bill unchanged).
+        let rows = conn
+            .execute(
+                "UPDATE ap_bills SET status = ?1 WHERE id = ?2 AND status IN ('draft', 'pending')",
+                params![BillStatus::Approved.to_string(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(CommerceError::Conflict(
+                "Bill not found or not in an approvable status".into(),
+            ));
+        }
 
         self.get_bill(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to approve bill".into()))
@@ -532,11 +549,20 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn cancel_bill(&self, id: Uuid) -> Result<Bill> {
         let conn = self.conn()?;
-        conn.execute(
-            "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
-            params![BillStatus::Cancelled.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // A bill with payments applied (paid/partially paid) or already
+        // cancelled cannot be cancelled; void the payments first.
+        let rows = conn
+            .execute(
+                "UPDATE ap_bills SET status = ?1 WHERE id = ?2
+                 AND status IN ('draft', 'pending', 'approved', 'overdue', 'disputed')",
+                params![BillStatus::Cancelled.to_string(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(CommerceError::Conflict(
+                "Bill not found or not in a cancellable status".into(),
+            ));
+        }
 
         self.get_bill(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel bill".into()))
@@ -544,11 +570,20 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn dispute_bill(&self, id: Uuid) -> Result<Bill> {
         let conn = self.conn()?;
-        conn.execute(
-            "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
-            params![BillStatus::Disputed.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // Only an open (unpaid or partially paid) bill can be disputed — never a
+        // cancelled or fully paid one.
+        let rows = conn
+            .execute(
+                "UPDATE ap_bills SET status = ?1 WHERE id = ?2
+                 AND status IN ('draft', 'pending', 'approved', 'partially_paid', 'overdue')",
+                params![BillStatus::Disputed.to_string(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(CommerceError::Conflict(
+                "Bill not found or not in a disputable status".into(),
+            ));
+        }
 
         self.get_bill(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to dispute bill".into()))
@@ -836,16 +871,6 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         push_payment_filters(&mut sql, &mut params_vec, &filter);
-        // `payment_date` is stored/bound at midnight UTC (like Postgres's `DATE`), so
-        // the RFC3339 comparison is a date comparison — matching Postgres.
-        if let Some(from_date) = filter.from_date {
-            sql.push_str(" AND payment_date >= ?");
-            params_vec.push(Box::new(ap_date_rfc3339(from_date)));
-        }
-        if let Some(to_date) = filter.to_date {
-            sql.push_str(" AND payment_date <= ?");
-            params_vec.push(Box::new(ap_date_rfc3339(to_date)));
-        }
 
         sql.push_str(" ORDER BY payment_date DESC");
 
@@ -964,11 +989,20 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn clear_payment(&self, id: Uuid) -> Result<BillPayment> {
         let conn = self.conn()?;
-        conn.execute(
-            "UPDATE ap_payments SET status = ?1 WHERE id = ?2",
-            params![PaymentStatusAP::Cleared.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // Status-guarded UPDATE (same pattern as `void_payment`): only a payment
+        // still in flight (pending/processed) can clear the bank — a voided,
+        // failed, or already-cleared payment cannot.
+        let rows = conn
+            .execute(
+                "UPDATE ap_payments SET status = ?1 WHERE id = ?2 AND status IN ('pending', 'processed')",
+                params![PaymentStatusAP::Cleared.to_string(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(CommerceError::Conflict(
+                "Payment not found or not in a clearable status".into(),
+            ));
+        }
 
         self.get_payment(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to clear payment".into()))

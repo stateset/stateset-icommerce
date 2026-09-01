@@ -1790,6 +1790,34 @@ fn kernel_journal_post_previews_applies_and_replays_exactly_once() {
 }
 
 #[test]
+fn kernel_journal_post_rejects_closed_period_durably() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let (entry, cash_id, revenue_id) = create_kernel_journal(&db, "kernel-closed");
+    db.general_ledger().close_period(entry.period_id, "tester").expect("close period");
+
+    let mut command = post_journal_command("ledger-post-closed", entry.id);
+    command.mode = ExecutionMode::Apply;
+    let receipt = db
+        .kernel_executor(payment_policy())
+        .execute_post_journal_entry(&command)
+        .expect("execute against closed period");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected);
+    assert_eq!(receipt.error_code.as_deref(), Some("commerce.ledger.period_not_open"));
+
+    let gl = db.general_ledger();
+    assert_eq!(
+        gl.get_journal_entry(entry.id).expect("entry").expect("entry").status,
+        JournalEntryStatus::Draft,
+        "rejected post must leave the entry a draft"
+    );
+    assert_eq!(gl.get_account(cash_id).expect("cash").expect("cash").current_balance, dec!(0));
+    assert_eq!(
+        gl.get_account(revenue_id).expect("revenue").expect("revenue").current_balance,
+        dec!(0)
+    );
+}
+
+#[test]
 fn kernel_journal_post_rolls_back_balances_and_event_when_receipt_fails() {
     let db = SqliteDatabase::in_memory().expect("create database");
     let (entry, cash_id, revenue_id) = create_kernel_journal(&db, "kernel-rollback");

@@ -920,10 +920,19 @@ describe('createCostAnalytics', () => {
     });
 
     it('supports asset/network filters for rail-specific budget forecasts', () => {
+      // Pinned clock: `spentThisMonth` is calendar-bucketed, so with a real
+      // clock the daysAgo(1)/(2) entries fall into the previous month on the
+      // 1st and 2nd of every month and this test would flake.
+      const fixedNow = '2026-06-15T12:00:00.000Z';
+      const fixedDaysAgo = (n) => {
+        const d = new Date(fixedNow);
+        d.setDate(d.getDate() - n);
+        return d.toISOString();
+      };
       analytics.record(
         spendEntry({
           amount: 0.01,
-          timestamp: daysAgo(2),
+          timestamp: fixedDaysAgo(2),
           asset: 'BTC',
           network: 'bitcoin',
           metadata: { asset: 'BTC', network: 'bitcoin' },
@@ -932,7 +941,7 @@ describe('createCostAnalytics', () => {
       analytics.record(
         spendEntry({
           amount: 0.02,
-          timestamp: daysAgo(1),
+          timestamp: fixedDaysAgo(1),
           asset: 'BTC',
           network: 'bitcoin',
           metadata: { asset: 'BTC', network: 'bitcoin' },
@@ -941,7 +950,7 @@ describe('createCostAnalytics', () => {
       analytics.record(
         spendEntry({
           amount: 1.5,
-          timestamp: daysAgo(1),
+          timestamp: fixedDaysAgo(1),
           asset: 'ZEC',
           network: 'zcash',
           metadata: { asset: 'ZEC', network: 'zcash' },
@@ -953,6 +962,7 @@ describe('createCostAnalytics', () => {
         0.1,
         30,
         { asset: 'BTC', network: 'bitcoin' },
+        fixedNow,
       );
       assert.equal(forecast.budgetForecastMeaningful, true);
       assert.equal(forecast.aggregateAsset, 'BTC');

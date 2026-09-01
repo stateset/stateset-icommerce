@@ -924,6 +924,49 @@ impl PgGeneralLedgerRepository {
         Ok(entries)
     }
 
+    /// The period an entry belongs to must be open for its balances to
+    /// change — posting into (or voiding out of) a closed/locked period
+    /// would silently diverge the period's reported financials from its
+    /// closing entry.
+    async fn ensure_period_open_async(&self, period_id: Uuid, action: &str) -> Result<()> {
+        let status: String = sqlx::query_scalar("SELECT status FROM gl_periods WHERE id = $1")
+            .bind(period_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        if status != "open" {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot {action} journal entry: its period is {status}, not open"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Non-voided journal entry already recorded for a source document, if
+    /// any — the idempotency check for the `auto_post_*` family and for
+    /// `run_period_close`.
+    async fn existing_entry_for_source_async(
+        &self,
+        source_document_type: &str,
+        source_document_id: Uuid,
+    ) -> Result<Option<JournalEntry>> {
+        let id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM gl_journal_entries
+             WHERE source_document_type = $1 AND source_document_id = $2
+               AND status != 'voided'
+             LIMIT 1",
+        )
+        .bind(source_document_type)
+        .bind(source_document_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        match id {
+            Some(id) => self.get_journal_entry_async(id).await,
+            None => Ok(None),
+        }
+    }
+
     pub async fn post_journal_entry_async(
         &self,
         id: Uuid,
@@ -935,6 +978,8 @@ impl PgGeneralLedgerRepository {
         // `commerce.ledger.line_not_single_sided` are typed; "not a draft" and
         // "no lines" keep the historical untyped message.
         entry.ensure_postable()?;
+
+        self.ensure_period_open_async(entry.period_id, "post").await?;
 
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -1003,6 +1048,8 @@ impl PgGeneralLedgerRepository {
                 "Entry cannot be voided - must be posted".to_string(),
             ));
         }
+
+        self.ensure_period_open_async(entry.period_id, "void").await?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
@@ -1213,6 +1260,10 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn auto_post_invoice_async(&self, invoice_id: Uuid) -> Result<JournalEntry> {
+        // Idempotent under retry: the same source document never posts twice.
+        if let Some(existing) = self.existing_entry_for_source_async("invoice", invoice_id).await? {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1250,6 +1301,9 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn auto_post_payment_received_async(&self, payment_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) = self.existing_entry_for_source_async("payment", payment_id).await? {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1288,6 +1342,9 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn auto_post_bill_async(&self, bill_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) = self.existing_entry_for_source_async("bill", bill_id).await? {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1323,6 +1380,11 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn auto_post_bill_payment_async(&self, payment_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) =
+            self.existing_entry_for_source_async("bill_payment", payment_id).await?
+        {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1361,6 +1423,11 @@ impl PgGeneralLedgerRepository {
         &self,
         cost_transaction_id: Uuid,
     ) -> Result<JournalEntry> {
+        if let Some(existing) =
+            self.existing_entry_for_source_async("cost_transaction", cost_transaction_id).await?
+        {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1406,6 +1473,11 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn auto_post_write_off_async(&self, write_off_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) =
+            self.existing_entry_for_source_async("write_off", write_off_id).await?
+        {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1588,6 +1660,7 @@ impl PgGeneralLedgerRepository {
              WHERE a.is_posting = TRUE AND a.status = 'active'
                AND a.account_type IN ('revenue', 'expense')
                AND (je.status = 'posted' OR je.id IS NULL)
+               AND (je.entry_type != 'closing' OR je.id IS NULL)
                AND (je.entry_date >= $1 AND je.entry_date <= $2 OR je.id IS NULL)
              GROUP BY a.id
              ORDER BY a.account_number",
@@ -1719,6 +1792,18 @@ impl PgGeneralLedgerRepository {
 
         if period.status != PeriodStatus::Open {
             return Err(CommerceError::ValidationError("Period must be open to close".to_string()));
+        }
+
+        // The income statement excludes closing entries, so a re-close would
+        // sweep the same revenue/expense again: while a closing entry stands
+        // (not voided), the period cannot be closed a second time.
+        if let Some(existing) =
+            self.existing_entry_for_source_async("period_close", period_id).await?
+        {
+            return Err(CommerceError::ValidationError(format!(
+                "Period already has closing entry {}; void it before re-closing",
+                existing.entry_number
+            )));
         }
 
         let income_statement =

@@ -1,9 +1,10 @@
 //! Postgres parity for AP payment listing/counting filters.
 //!
-//! SQLite `count_payments` ignored its filter entirely and `list_payments` dropped
-//! `payment_method`/`offset`; Postgres already applies `supplier_id/status`/
-//! `payment_method` in both. This test locks in that behavior so a filtered
-//! `count_payments` matches the filtered `list_payments` on Postgres too. Payments
+//! Both backends now apply the full `BillPaymentFilter` (`supplier_id`, `status`,
+//! `payment_method`, and the `from_date`/`to_date` range) in `list_payments` AND
+//! `count_payments`. This test locks in that behavior so a filtered
+//! `count_payments` matches the filtered `list_payments` on Postgres too (the
+//! SQLite side is covered by `ap_money_guards_test.rs`). Payments
 //! are scoped to fresh random suppliers so a shared DB's other rows don't interfere.
 //!
 //! Requires a live Postgres instance (`POSTGRES_URL` / `DATABASE_URL`); skipped

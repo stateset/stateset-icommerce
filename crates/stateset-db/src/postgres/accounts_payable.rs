@@ -534,7 +534,10 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn approve_bill_async(&self, id: Uuid) -> Result<Bill> {
-        sqlx::query(
+        // Status-guarded UPDATE: only a draft/pending bill can be approved, and
+        // 0 matched rows is an error (previously a silent success that returned
+        // the bill unchanged).
+        let updated = sqlx::query(
             "UPDATE ap_bills SET status = $1 WHERE id = $2 AND status IN ('draft','pending')",
         )
         .bind(BillStatus::Approved.to_string())
@@ -542,6 +545,11 @@ impl PgAccountsPayableRepository {
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Bill not found or not in an approvable status".into(),
+            ));
+        }
 
         self.get_bill_async(id)
             .await?
@@ -549,12 +557,22 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn cancel_bill_async(&self, id: Uuid) -> Result<Bill> {
-        sqlx::query("UPDATE ap_bills SET status = $1 WHERE id = $2")
-            .bind(BillStatus::Cancelled.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // A bill with payments applied (paid/partially paid) or already
+        // cancelled cannot be cancelled; void the payments first.
+        let updated = sqlx::query(
+            "UPDATE ap_bills SET status = $1 WHERE id = $2
+             AND status IN ('draft','pending','approved','overdue','disputed')",
+        )
+        .bind(BillStatus::Cancelled.to_string())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Bill not found or not in a cancellable status".into(),
+            ));
+        }
 
         self.get_bill_async(id)
             .await?
@@ -562,12 +580,22 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn dispute_bill_async(&self, id: Uuid) -> Result<Bill> {
-        sqlx::query("UPDATE ap_bills SET status = $1 WHERE id = $2")
-            .bind(BillStatus::Disputed.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // Only an open (unpaid or partially paid) bill can be disputed — never a
+        // cancelled or fully paid one.
+        let updated = sqlx::query(
+            "UPDATE ap_bills SET status = $1 WHERE id = $2
+             AND status IN ('draft','pending','approved','partially_paid','overdue')",
+        )
+        .bind(BillStatus::Disputed.to_string())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Bill not found or not in a disputable status".into(),
+            ));
+        }
 
         self.get_bill_async(id)
             .await?
@@ -1009,12 +1037,22 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn clear_payment_async(&self, id: Uuid) -> Result<BillPayment> {
-        sqlx::query("UPDATE ap_payments SET status = $1 WHERE id = $2")
-            .bind(PaymentStatusAP::Cleared.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // Status-guarded UPDATE (same pattern as `void_payment_async`): only a
+        // payment still in flight (pending/processed) can clear the bank — a
+        // voided, failed, or already-cleared payment cannot.
+        let updated = sqlx::query(
+            "UPDATE ap_payments SET status = $1 WHERE id = $2 AND status IN ('pending','processed')",
+        )
+        .bind(PaymentStatusAP::Cleared.to_string())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Payment not found or not in a clearable status".into(),
+            ));
+        }
 
         self.get_payment_async(id)
             .await?
@@ -1060,6 +1098,14 @@ impl PgAccountsPayableRepository {
         }
         if let Some(method) = filter.payment_method {
             builder.push(" AND payment_method = ").push_bind(method.to_string());
+        }
+        // Mirror `list_payments_async` exactly so a filtered count always
+        // matches the filtered list.
+        if let Some(from_date) = filter.from_date {
+            builder.push(" AND payment_date >= ").push_bind(to_date(from_date));
+        }
+        if let Some(to_date_value) = filter.to_date {
+            builder.push(" AND payment_date <= ").push_bind(to_date(to_date_value));
         }
 
         let row =

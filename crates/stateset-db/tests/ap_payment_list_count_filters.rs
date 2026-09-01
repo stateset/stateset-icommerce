@@ -9,10 +9,9 @@
 //!   `payment_method` (Postgres applies it) and `offset` (no pagination past the
 //!   first page).
 //!
-//! Both now share a WHERE-builder covering `supplier_id`/`status`/`payment_method`, so a
-//! filtered `count_payments` matches the filtered `list_payments`, and both agree
-//! with Postgres. (`from_date`/`to_date` remain deferred — entangled with the AP
-//! date-storage divergence, as with `list_bills`.)
+//! Both now share a WHERE-builder covering `supplier_id`/`status`/`payment_method`
+//! and the `from_date`/`to_date` range, so a filtered `count_payments` matches the
+//! filtered `list_payments`, and both agree with Postgres.
 
 use chrono::{DateTime, Utc};
 use rust_decimal_macros::dec;

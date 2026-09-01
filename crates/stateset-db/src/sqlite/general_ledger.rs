@@ -225,6 +225,58 @@ impl SqliteGeneralLedgerRepository {
         Ok(entry)
     }
 
+    /// The period an entry belongs to must be open for its balances to
+    /// change — posting into (or voiding out of) a closed/locked period
+    /// would silently diverge the period's reported financials from its
+    /// closing entry.
+    fn ensure_period_open_with_conn(
+        conn: &rusqlite::Connection,
+        period_id: Uuid,
+        action: &str,
+    ) -> rusqlite::Result<()> {
+        let status: String = conn.query_row(
+            "SELECT status FROM gl_periods WHERE id = ?1",
+            params![period_id.to_string()],
+            |row| row.get(0),
+        )?;
+        if status != "open" {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                stateset_core::CommerceError::ValidationError(format!(
+                    "Cannot {action} journal entry: its period is {status}, not open"
+                )),
+            )));
+        }
+        Ok(())
+    }
+
+    /// Non-voided journal entry already recorded for a source document, if
+    /// any — the idempotency check for the `auto_post_*` family and for
+    /// `run_period_close`.
+    fn existing_entry_for_source(
+        &self,
+        source_document_type: &str,
+        source_document_id: Uuid,
+    ) -> Result<Option<JournalEntry>> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let id: String = match conn.query_row(
+            "SELECT id FROM gl_journal_entries
+             WHERE source_document_type = ?1 AND source_document_id = ?2
+               AND status != 'voided'
+             LIMIT 1",
+            params![source_document_type, source_document_id.to_string()],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(map_db_error(e)),
+        };
+        drop(conn);
+        self.get_journal_entry(parse_uuid(&id, "gl_journal_entry", "id")?)
+    }
+
     /// Look up the exchange rate converting one `from` unit into `to` units,
     /// falling back to the inverse of the reverse pair when only that is set.
     fn lookup_rate_with_conn(
@@ -978,6 +1030,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e)));
             }
 
+            Self::ensure_period_open_with_conn(tx, entry.period_id, "post")?;
+
             for line in &entry.lines {
                 Self::update_account_balance_with_conn(
                     tx,
@@ -1042,6 +1096,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     ),
                 )));
             }
+
+            Self::ensure_period_open_with_conn(tx, entry.period_id, "void")?;
 
             // Reverse account balances
             for line in &entry.lines {
@@ -1251,6 +1307,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_invoice(&self, invoice_id: InvoiceId) -> Result<JournalEntry> {
+        // Idempotent under retry: the same source document never posts twice.
+        if let Some(existing) = self.existing_entry_for_source("invoice", invoice_id.into())? {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config()?.ok_or_else(|| {
             stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1304,6 +1364,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) = self.existing_entry_for_source("payment", payment_id)? {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config()?.ok_or_else(|| {
             stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1357,6 +1420,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_bill(&self, bill_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) = self.existing_entry_for_source("bill", bill_id)? {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config()?.ok_or_else(|| {
             stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1409,6 +1475,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) = self.existing_entry_for_source("bill_payment", payment_id)? {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config()?.ok_or_else(|| {
             stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1462,6 +1531,11 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) =
+            self.existing_entry_for_source("cost_transaction", cost_transaction_id)?
+        {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config()?.ok_or_else(|| {
             stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1524,6 +1598,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry> {
+        if let Some(existing) = self.existing_entry_for_source("write_off", write_off_id)? {
+            return Ok(existing);
+        }
         let config = self.get_auto_posting_config()?.ok_or_else(|| {
             stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1755,6 +1832,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
              WHERE a.is_posting = 1 AND a.status = 'active'
                AND a.account_type IN ('revenue', 'expense')
                AND (je.status = 'posted' OR je.id IS NULL)
+               AND (je.entry_type != 'closing' OR je.id IS NULL)
                AND (je.entry_date >= ?1 AND je.entry_date <= ?2 OR je.id IS NULL)
              GROUP BY a.id
              ORDER BY a.account_number",
@@ -1901,6 +1979,16 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             return Err(stateset_core::CommerceError::ValidationError(
                 "Period must be open to close".to_string(),
             ));
+        }
+
+        // The income statement excludes closing entries, so a re-close would
+        // sweep the same revenue/expense again: while a closing entry stands
+        // (not voided), the period cannot be closed a second time.
+        if let Some(existing) = self.existing_entry_for_source("period_close", period_id)? {
+            return Err(stateset_core::CommerceError::ValidationError(format!(
+                "Period already has closing entry {}; void it before re-closing",
+                existing.entry_number
+            )));
         }
 
         // Generate income statement for the period

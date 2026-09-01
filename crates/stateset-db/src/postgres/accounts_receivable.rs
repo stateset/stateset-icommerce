@@ -841,10 +841,15 @@ impl PgAccountsReceivableRepository {
     }
 
     pub async fn create_write_off_async(&self, input: CreateWriteOff) -> Result<WriteOff> {
+        if input.amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Write-off amount must be greater than zero".into(),
+            ));
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let write_off_number = generate_write_off_number();
-        let customer_id = self.get_invoice_customer_id_async(input.invoice_id).await?;
 
         let approved_at = input.approved_by.as_ref().map(|_| now);
 
@@ -853,6 +858,30 @@ impl PgAccountsReceivableRepository {
         // atomicity (a failure between them left them inconsistent) and no guard
         // against double write-off.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Read the invoice under the row lock: a voided/cancelled invoice cannot
+        // be written off, and the write-off cannot exceed the balance due. An
+        // already written-off invoice is rejected by the guarded UPDATE below.
+        let (customer_id, invoice_status, balance_due): (Uuid, String, Decimal) = sqlx::query_as(
+            "SELECT customer_id, status, balance_due FROM invoices WHERE id = $1 FOR UPDATE",
+        )
+        .bind(input.invoice_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        if matches!(invoice_status.as_str(), "voided" | "cancelled") {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot write off invoice {} with status {invoice_status}",
+                input.invoice_id
+            )));
+        }
+        if input.amount > balance_due {
+            return Err(CommerceError::ValidationError(format!(
+                "Write-off amount ({}) exceeds invoice balance due ({balance_due})",
+                input.amount
+            )));
+        }
 
         let updated = sqlx::query(
             "UPDATE invoices SET status = 'written_off', collection_status = 'written_off'
@@ -1000,6 +1029,12 @@ impl PgAccountsReceivableRepository {
     }
 
     pub async fn create_credit_memo_async(&self, input: CreateCreditMemo) -> Result<CreditMemo> {
+        if input.amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Credit memo amount must be greater than zero".into(),
+            ));
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let credit_memo_number = generate_credit_memo_number();
@@ -1166,13 +1201,20 @@ impl PgAccountsReceivableRepository {
 
         // Lock the invoice row too: the memo FOR UPDATE above only serializes
         // applications of the SAME memo. Two DIFFERENT memos applied to the same
-        // invoice would otherwise both read a stale balance and over-apply.
-        let balance_due: Decimal =
-            sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1 FOR UPDATE")
+        // invoice would otherwise both read a stale balance and over-apply. Also
+        // read the status: a credit memo must not be applied to a terminal invoice.
+        let (balance_due, invoice_status): (Decimal, String) =
+            sqlx::query_as("SELECT balance_due, status FROM invoices WHERE id = $1 FOR UPDATE")
                 .bind(input.invoice_id)
                 .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
+        if matches!(invoice_status.as_str(), "voided" | "cancelled" | "written_off") {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot apply credit memo to invoice {} with status {invoice_status}",
+                input.invoice_id
+            )));
+        }
         if input.amount > balance_due {
             return Err(CommerceError::ValidationError(
                 "Credit amount exceeds invoice balance due".into(),
@@ -1287,19 +1329,57 @@ impl PgAccountsReceivableRepository {
         let mut applications = Vec::new();
         let mut expected_customer_id: Option<Uuid> = None;
 
-        for app in input.applications {
+        // The payment itself bounds the total that can be applied: read its
+        // amount and what is already applied inside the transaction, so a
+        // payment can never be applied beyond its own value.
+        let payment_amount: Decimal =
+            sqlx::query_scalar("SELECT amount FROM payments WHERE id = $1")
+                .bind(input.payment_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or_else(|| {
+                    CommerceError::ValidationError(format!(
+                        "Payment {} not found",
+                        input.payment_id
+                    ))
+                })?;
+        let existing_applied: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(applied_amount), 0) FROM ar_payment_applications WHERE payment_id = $1",
+        )
+        .bind(input.payment_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let mut total_new = Decimal::ZERO;
+        for app in &input.applications {
             if app.amount <= Decimal::ZERO {
                 return Err(CommerceError::ValidationError(
                     "Payment application amount must be greater than zero".into(),
                 ));
             }
+            total_new += app.amount;
+        }
+        if existing_applied + total_new > payment_amount {
+            return Err(CommerceError::ValidationError(format!(
+                "Payment applications ({total_new}) plus already applied ({existing_applied}) exceed payment amount ({payment_amount})"
+            )));
+        }
 
-            let invoice_customer_id: Uuid =
-                sqlx::query_scalar("SELECT customer_id FROM invoices WHERE id = $1")
+        for app in input.applications {
+            let (invoice_customer_id, invoice_status): (Uuid, String) =
+                sqlx::query_as("SELECT customer_id, status FROM invoices WHERE id = $1")
                     .bind(app.invoice_id)
                     .fetch_one(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
+            if matches!(invoice_status.as_str(), "voided" | "cancelled" | "written_off") {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot apply payment to invoice {} with status {invoice_status}",
+                    app.invoice_id
+                )));
+            }
             if let Some(expected) = expected_customer_id {
                 if expected != invoice_customer_id {
                     return Err(CommerceError::ValidationError(
