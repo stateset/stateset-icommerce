@@ -1,6 +1,5 @@
 ---
 source: crates/stateset-core/tests/snapshot_serialization.rs
-assertion_line: 92
 expression: input
 ---
 {
@@ -30,5 +29,8 @@ expression: input
   "notes": "Please gift wrap",
   "payment_method": "credit_card",
   "shipping_method": "standard",
+  "tax_amount": null,
+  "shipping_amount": null,
+  "discount_amount": null,
   "stock_policy": "allow_backorder"
 }
