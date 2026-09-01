@@ -6,6 +6,75 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.28.4] - 2026-09-01
+
+Hardens the procurement and warehouse modules to the standard the finance
+suite holds: every state change is a guarded transition, every
+multi-statement mutation is one transaction, on both storage backends.
+
+### Fixed
+- **Receiving no longer bypasses purchase-order approval.** `receive` is
+  now bounded by the PO state machine (derived from
+  `PurchaseOrderStatus::can_transition_to`), so goods cannot be booked
+  against a draft, unsent, cancelled or completed purchase order.
+  Receiving a PO that was never approved previously flipped it straight
+  to Received. Every other PO transition (submit, approve, send,
+  acknowledge, hold, cancel, complete) is likewise status-guarded, and
+  approver/sent stamps now land in the guarded UPDATE so a refused
+  approval cannot leave an approver on an unapproved PO.
+- **Supplier invoice payments are capped and idempotent.** A payment can
+  no longer exceed the remaining balance (a $200 payment on a $100
+  invoice drove `balance_due` to −100 and marked it Paid) and none may be
+  recorded against a voided, cancelled or written-off invoice. Payments
+  carrying a `payment_id` are idempotent against a new
+  `invoice_direct_payments` table (migrations 076 / 083), so a retried
+  request cannot double-pay. Void, write-off, send and dispute became
+  guarded transitions: a paid invoice can no longer be voided (erasing
+  collected receivable) and a voided one can no longer be resurrected
+  into aging and collections.
+- **The credit limit is enforced against total exposure.**
+  `charge_credit` checked `balance + amount` while ignoring outstanding
+  holds, so a customer with a 1000 limit could reserve 400 and then
+  charge 700, reaching 1100 of exposure with `available_credit` at −100.
+  The limit now covers `balance + remaining holds`. `charge_credit`,
+  `apply_payment`, `reserve_credit`, `release_credit_reservation`,
+  `adjust_credit_limit` and `update_credit_account` each collapse from
+  two to four transactions into one, so a crash can no longer
+  double-consume credit or leave the ledger disagreeing with the
+  balance. Credit account, hold and application lifecycles are guarded.
+  Also fixes a ledger `running_balance` written as `balance − 2× amount`.
+- **Cost adjustments move a cost exactly once.** Approve, apply and
+  reject are guarded transitions, and claiming an adjustment now shares
+  a transaction with the item-cost write, so an applied adjustment
+  cannot be re-approved, re-applied or retroactively rejected, and two
+  concurrent applies cannot both move the cost.
+- **Location inventory adjustments are atomic.** `adjust_inventory` was
+  an unguarded read-modify-write on both backends: two concurrent `+5`
+  adjustments both read 10 and both wrote 15, silently losing one.
+  Cycle-count transitions and warehouse, zone and location
+  create/update/delete are likewise transactional and guarded.
+- **Receipts are bounded and all-or-nothing.** `receive_items` runs as a
+  single transaction with an over-receipt cap mirroring the
+  purchase-order guard, applies no lines if any line fails, and can no
+  longer receive a line belonging to a different receipt.
+- **Warehouse task lifecycles are guarded.** Wave, pick, pack, ship and
+  put-away transitions now reject illegal moves: cancelling a completed
+  pick left the wave's completed-pick counter overstating reality, a
+  cancelled wave could be completed, a shipped task could be re-shipped
+  over its tracking details, and a cancelled put-away could add its
+  quantity to a receipt's put-away total.
+- **Page totals agree with their pages.** Every warehouse and
+  fulfillment `count_*` now applies exactly the filters its matching
+  `list_*` applies.
+- **Accounts-receivable recalculation preserves operator intent.** It
+  derived invoice status from the money while discarding the operator's
+  classification — the comment claimed to keep the original status but
+  the code hard-coded `sent` — so unapplying a payment cleared an
+  overdue flag and applying one cleared a dispute, bypassing the guarded
+  `dispute` transition. Terminal statuses are still reset so write-off
+  reversal continues to work.
+
+
 ## [1.28.3] - 2026-09-01
 
 ### Added
