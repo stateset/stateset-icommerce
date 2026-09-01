@@ -6,6 +6,44 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+Closes the four critical money defects at the top of the engine report card,
+plus several defects of the same class found alongside them.
+
+### ⚠️ Behaviour change
+- **Promotion conditions now fail closed.** Unhandled condition types
+  (customer group, email domain, payment method, cart contents) previously
+  evaluated to true, so a gated promotion applied to every cart. Promotions
+  that were live only because their conditions failed open will stop
+  applying. If a merchant reports "my discount stopped working" after
+  upgrading, this is the leak closing: review the promotion's conditions
+  and `eligible_customer_groups`, which is now enforced too.
+
+### Fixed
+- **Payments can no longer be captured twice.** `cancel` and `update`
+  bypassed the payment state machine: cancelling a completed payment
+  succeeded, freed its captured amount, and let a second full-amount
+  capture pass the over-capture guard. Every payment status write is now a
+  guarded transition in one transaction on both backends (Postgres
+  `update`/`mark_failed` previously ran with no transaction at all).
+- **Subscriptions are no longer billed twice for one period.** Marking a
+  billing cycle paid never advanced `billing_cycle_count` or
+  `next_billing_date`, so a billing worker re-billed the same customer on
+  its next poll. Paying a cycle now advances the subscription atomically,
+  anchored on the paid cycle's `period_end`, with legacy-safe uniqueness on
+  `(subscription_id, cycle_number)` (migrations 077 / 084). Cancelled
+  subscriptions can no longer be revived into the billing queue by
+  `update_subscription`, and concurrent skips no longer skip two periods.
+- **Passing the same coupon code twice no longer grants it twice.**
+- **Checkout payments can always be recorded.** Orders carried only
+  `total_amount`, so checkout minted an order totalling the line sum while
+  charging the cart's grand total; recording that capture was refused as
+  over-capture. Orders now carry `tax_amount`, `shipping_amount` and
+  `discount_amount` (migrations 078 / 085), exposed on `CreateOrder` and the
+  HTTP API.
+- **Batch order creation honours the stock policy.** It inserted orders and
+  items directly with no stock check, reservation or backorder; it now
+  routes through the same guarded path as a single create.
+
 ## [1.28.4] - 2026-09-01
 
 Hardens the procurement and warehouse modules to the standard the finance
