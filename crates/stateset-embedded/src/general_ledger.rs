@@ -515,6 +515,27 @@ impl GeneralLedger {
         self.db.general_ledger().run_period_close(period_id, closed_by)
     }
 
+    /// Re-close a period that was reopened for adjustments.
+    ///
+    /// [`run_period_close`](Self::run_period_close) refuses while a posted
+    /// closing entry stands (re-closing would sweep the same revenue and
+    /// expenses into retained earnings twice). This operation encodes the
+    /// correct choreography as one call: void the standing closing entry
+    /// (or entries), then close the period again so the fresh closing entry
+    /// reflects the adjusted activity. The period must be open.
+    pub fn reclose_period(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
+        let standing = self.list_journal_entries(stateset_core::JournalEntryFilter {
+            source_document_type: Some("period_close".into()),
+            source_document_id: Some(period_id),
+            status: Some(stateset_core::JournalEntryStatus::Posted),
+            ..Default::default()
+        })?;
+        for entry in standing {
+            self.void_journal_entry(entry.id)?;
+        }
+        self.run_period_close(period_id, closed_by)
+    }
+
     /// Close the month: orchestrate every period-end step in order.
     ///
     /// Runs, composing existing operations:

@@ -476,180 +476,145 @@ impl stateset_core::RevenueRecognitionRepository for SqliteRevenueRecognitionRep
         let ob_str = obligation_id.to_string();
         let now = Utc::now().to_rfc3339();
         let through_str = through.to_string();
-        let (schedule, newly_recognized, flipped, prev_recognized, completed_now, contract_str) =
-            with_immediate_transaction(&self.pool, |tx| {
-                let obligation = Self::load_obligation(tx, &ob_str)?;
-                // Revenue may only be recognized on a live contract: a draft has
-                // not been agreed and a cancelled contract is dead — a scheduled
-                // recognition job must not flip their deferred entries or post
-                // revenue to the GL. Completed stays allowed so a retry after a
-                // final recognition remains an idempotent no-op.
-                let contract_status: String = tx.query_row(
-                    "SELECT status FROM revenue_contracts WHERE id = ?",
-                    rusqlite::params![obligation.contract_id.to_string()],
-                    |row| row.get(0),
-                )?;
-                if matches!(contract_status.as_str(), "draft" | "cancelled") {
-                    return Err(Self::conflict(&format!(
-                        "cannot recognize revenue on a {contract_status} contract"
-                    )));
-                }
-                let entries = Self::load_entries(tx, &ob_str)?;
-                if entries.is_empty() {
-                    return Err(Self::conflict(
-                        "no revenue schedule has been generated for this obligation",
-                    ));
-                }
-                let flipped: Vec<u32> = entries
-                    .iter()
-                    .filter(|e| {
-                        e.status == RevenueEntryStatus::Deferred && e.period_start <= through
-                    })
-                    .map(|e| e.period)
-                    .collect();
-                let newly_recognized: Decimal = entries
-                    .iter()
-                    .filter(|e| {
-                        e.status == RevenueEntryStatus::Deferred && e.period_start <= through
-                    })
-                    .map(|e| e.amount)
-                    .sum();
-                tx.execute(
-                    "UPDATE revenue_schedule_entries SET status = 'recognized'
+        with_immediate_transaction(&self.pool, |tx| {
+            let obligation = Self::load_obligation(tx, &ob_str)?;
+            // Revenue may only be recognized on a live contract: a draft has
+            // not been agreed and a cancelled contract is dead — a scheduled
+            // recognition job must not flip their deferred entries or post
+            // revenue to the GL. Completed stays allowed so a retry after a
+            // final recognition remains an idempotent no-op.
+            let contract_status: String = tx.query_row(
+                "SELECT status FROM revenue_contracts WHERE id = ?",
+                rusqlite::params![obligation.contract_id.to_string()],
+                |row| row.get(0),
+            )?;
+            if matches!(contract_status.as_str(), "draft" | "cancelled") {
+                return Err(Self::conflict(&format!(
+                    "cannot recognize revenue on a {contract_status} contract"
+                )));
+            }
+            let entries = Self::load_entries(tx, &ob_str)?;
+            if entries.is_empty() {
+                return Err(Self::conflict(
+                    "no revenue schedule has been generated for this obligation",
+                ));
+            }
+            let newly_recognized: Decimal = entries
+                .iter()
+                .filter(|e| e.status == RevenueEntryStatus::Deferred && e.period_start <= through)
+                .map(|e| e.amount)
+                .sum();
+            tx.execute(
+                "UPDATE revenue_schedule_entries SET status = 'recognized'
                  WHERE obligation_id = ? AND status = 'deferred' AND period_start <= ?",
-                    rusqlite::params![&ob_str, &through_str],
-                )?;
-                let recognized_amount = obligation.recognized_amount + newly_recognized;
-                tx.execute(
+                rusqlite::params![&ob_str, &through_str],
+            )?;
+            let recognized_amount = obligation.recognized_amount + newly_recognized;
+            tx.execute(
                 "UPDATE performance_obligations SET recognized_amount = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![recognized_amount.to_string(), &now, &ob_str],
             )?;
-                // Complete the contract when every obligation is fully recognized.
-                let contract_str = obligation.contract_id.to_string();
-                let contract = Self::load_full(tx, &contract_str)?;
-                let mut completed_now = false;
-                if contract.status == RevenueContractStatus::Active
-                    && contract.is_fully_recognized()
-                {
-                    tx.execute(
+            // Complete the contract when every obligation is fully recognized.
+            let contract_str = obligation.contract_id.to_string();
+            let contract = Self::load_full(tx, &contract_str)?;
+            if contract.status == RevenueContractStatus::Active && contract.is_fully_recognized() {
+                tx.execute(
                     "UPDATE revenue_contracts SET status = 'completed', updated_at = ? WHERE id = ?",
                     rusqlite::params![&now, &contract_str],
                 )?;
-                    completed_now = true;
-                }
-                let entries = Self::load_entries(tx, &ob_str)?;
-                Ok((
-                    RevenueSchedule {
-                        obligation_id,
-                        method: obligation.recognition_method,
-                        total_amount: entries.iter().map(|e| e.amount).sum(),
-                        entries,
-                    },
-                    newly_recognized,
-                    flipped,
-                    obligation.recognized_amount,
-                    completed_now,
-                    contract_str,
-                ))
-            })?;
-        // The GL post runs outside the subledger transaction (the GL
-        // repository opens its own connection). If it fails, compensate:
-        // revert exactly what this call recognized so a retry recognizes and
-        // posts the full amount again, instead of leaving revenue recognized
-        // in the subledger with no journal entry and no repair path.
-        if let Err(post_err) =
-            self.auto_post_recognition_entry(obligation_id, newly_recognized, through)
-        {
-            let ob_str = obligation_id.to_string();
-            let now = Utc::now().to_rfc3339();
-            let _ = with_immediate_transaction(&self.pool, |tx| {
-                for period in &flipped {
-                    tx.execute(
-                        "UPDATE revenue_schedule_entries SET status = 'deferred'
-                         WHERE obligation_id = ? AND period = ? AND status = 'recognized'",
-                        rusqlite::params![&ob_str, i64::from(*period)],
-                    )?;
-                }
-                tx.execute(
-                    "UPDATE performance_obligations SET recognized_amount = ?, updated_at = ? WHERE id = ?",
-                    rusqlite::params![prev_recognized.to_string(), &now, &ob_str],
-                )?;
-                if completed_now {
-                    tx.execute(
-                        "UPDATE revenue_contracts SET status = 'active', updated_at = ?
-                         WHERE id = ? AND status = 'completed'",
-                        rusqlite::params![&now, &contract_str],
-                    )?;
-                }
-                Ok(())
-            });
-            return Err(post_err);
-        }
-        Ok(schedule)
+            }
+            // The GL entry posts on THIS transaction: the subledger
+            // recognition and its journal entry are one atomic fact — a
+            // GL failure rolls back the recognition, so a retry
+            // recognizes and posts the full amount.
+            Self::auto_post_recognition_entry_with_conn(
+                tx,
+                obligation_id,
+                newly_recognized,
+                through,
+            )?;
+            let entries = Self::load_entries(tx, &ob_str)?;
+            Ok(RevenueSchedule {
+                obligation_id,
+                method: obligation.recognition_method,
+                total_amount: entries.iter().map(|e| e.amount).sum(),
+                entries,
+            })
+        })
     }
 }
 
 impl SqliteRevenueRecognitionRepository {
     /// Create and post a balanced revenue-recognition journal entry
     /// (debit deferred/unearned revenue, credit sales revenue) when the active
-    /// GL auto-posting config has `auto_post_revenue_recognition` enabled.
-    ///
-    /// Mirrors the invoice auto-posting pattern: config-gated, posted via the
-    /// existing general-ledger repository. The deferred-revenue account is the
-    /// config's `unearned_revenue_account_id`, falling back to the first active
-    /// posting account with the `unearned_revenue` sub-type; revenue is credited
-    /// to the config's `sales_revenue_account_id`.
-    fn auto_post_recognition_entry(
-        &self,
+    /// GL auto-posting config has `auto_post_revenue_recognition` enabled —
+    /// entirely on the caller's transaction, so the subledger recognition and
+    /// its GL entry commit or roll back together. The deferred-revenue account
+    /// is the config's `unearned_revenue_account_id`, falling back to the
+    /// first active posting account with the `unearned_revenue` sub-type;
+    /// revenue is credited to the config's `sales_revenue_account_id`.
+    fn auto_post_recognition_entry_with_conn(
+        conn: &rusqlite::Transaction<'_>,
         obligation_id: Uuid,
         amount: Decimal,
         through: NaiveDate,
-    ) -> Result<()> {
-        use stateset_core::GeneralLedgerRepository;
-        let gl = super::general_ledger::SqliteGeneralLedgerRepository::new(self.pool.clone());
-        let Some(config) = gl.get_auto_posting_config()? else { return Ok(()) };
+    ) -> rusqlite::Result<()> {
+        use super::general_ledger::SqliteGeneralLedgerRepository as Gl;
+        let to_rusqlite = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+        let Some(config) = Gl::get_auto_posting_config_with_conn(conn)? else { return Ok(()) };
         if !config.auto_post_revenue_recognition || amount <= Decimal::ZERO {
             return Ok(());
         }
         let deferred_account_id = match config.unearned_revenue_account_id {
             Some(id) => id,
-            None => gl
-                .list_accounts(stateset_core::GlAccountFilter {
-                    account_sub_type: Some(stateset_core::AccountSubType::UnearnedRevenue),
-                    status: Some(stateset_core::AccountStatus::Active),
-                    is_posting: Some(true),
-                    limit: Some(1),
-                    ..Default::default()
-                })?
-                .first()
-                .map(|a| a.id)
-                .ok_or_else(|| {
-                    CommerceError::ValidationError(
-                        "auto-post revenue recognition requires an unearned_revenue account in the auto-posting config or chart of accounts"
-                            .to_string(),
-                    )
-                })?,
+            None => {
+                let fallback: Option<String> = match conn.query_row(
+                    "SELECT id FROM gl_accounts
+                     WHERE account_sub_type = 'unearned_revenue'
+                       AND status = 'active' AND is_posting = 1
+                     ORDER BY account_number LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                ) {
+                    Ok(id) => Some(id),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                    Err(e) => return Err(e),
+                };
+                match fallback {
+                    Some(id) => parse_uuid_row(&id, "gl_account", "id")?,
+                    None => {
+                        return Err(to_rusqlite(CommerceError::ValidationError(
+                            "auto-post revenue recognition requires an unearned_revenue account in the auto-posting config or chart of accounts"
+                                .to_string(),
+                        )));
+                    }
+                }
+            }
         };
-        gl.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date: through,
-            entry_type: Some(stateset_core::JournalEntryType::Standard),
-            description: format!("Revenue recognition for obligation {obligation_id}"),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    deferred_account_id,
-                    amount,
-                    Some("Deferred Revenue".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    config.sales_revenue_account_id,
-                    amount,
-                    Some("Sales Revenue".to_string()),
-                ),
-            ],
-            source_document_type: Some("revenue_recognition".to_string()),
-            source_document_id: Some(obligation_id),
-            auto_post: Some(true),
-        })?;
+        Gl::create_posted_entry_with_conn(
+            conn,
+            &stateset_core::CreateJournalEntry {
+                entry_date: through,
+                entry_type: Some(stateset_core::JournalEntryType::Standard),
+                description: format!("Revenue recognition for obligation {obligation_id}"),
+                lines: vec![
+                    stateset_core::CreateJournalEntryLine::debit(
+                        deferred_account_id,
+                        amount,
+                        Some("Deferred Revenue".to_string()),
+                    ),
+                    stateset_core::CreateJournalEntryLine::credit(
+                        config.sales_revenue_account_id,
+                        amount,
+                        Some("Sales Revenue".to_string()),
+                    ),
+                ],
+                source_document_type: Some("revenue_recognition".to_string()),
+                source_document_id: Some(obligation_id),
+                auto_post: Some(true),
+            },
+            "system",
+        )?;
         Ok(())
     }
 }

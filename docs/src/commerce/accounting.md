@@ -105,7 +105,9 @@ The finance modules enforce these invariants on both storage backends
 **General ledger**
 - Journal entries must balance exactly (decimal-exact debits == credits)
   and every line is a pure debit or a pure credit.
-- Auto-posting is idempotent: retrying `auto_post_invoice`,
+- Auto-posting is idempotent and race-free: the duplicate check, the source
+  document read, and the posted entry share one write transaction, so
+  retrying (or concurrently invoking) `auto_post_invoice`,
   `auto_post_payment_received`, `auto_post_bill`, `auto_post_bill_payment`,
   `auto_post_inventory_cost`, or `auto_post_write_off` for the same source
   document returns the existing journal entry instead of posting twice.
@@ -113,8 +115,8 @@ The finance modules enforce these invariants on both storage backends
   including through the governed kernel `ledger.post` command, which
   rejects durably with `commerce.ledger.period_not_open`.
 - A period with a standing closing entry cannot be closed again. To adjust
-  a closed period: reopen it, void the closing entry, post adjustments,
-  and re-run the close.
+  a closed period: reopen it, post adjustments, and call `reclose_period`,
+  which voids the standing closing entry and closes again in one operation.
 - The income statement excludes closing entries, so a closed period's P&L
   reports its actual activity.
 - Trial balance, balance sheet, and dated account balances derive from
@@ -150,8 +152,9 @@ The finance modules enforce these invariants on both storage backends
   write-offs in one dated running balance that starts from a derived
   opening balance.
 - Revenue is only recognized on active contracts (never draft or
-  cancelled), and a failed GL post after a recognition or depreciation
-  reverts the subledger so a retry posts the full amount exactly once.
+  cancelled), and a recognition or depreciation posts its GL entry inside
+  the same transaction as the subledger update — the two commit or roll
+  back together, so they can never diverge.
 
 ## Treasury
 

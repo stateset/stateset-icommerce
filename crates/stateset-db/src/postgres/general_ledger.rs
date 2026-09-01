@@ -967,6 +967,240 @@ impl PgGeneralLedgerRepository {
         }
     }
 
+    /// Load a journal entry with its lines on the caller's transaction.
+    async fn load_journal_entry_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<JournalEntry> {
+        let row = sqlx::query_as::<_, JournalEntryRow>(
+            "SELECT id, entry_number, entry_date, period_id, entry_type, source,
+                    source_document_type, source_document_id, description, total_debits,
+                    total_credits, is_balanced, status, posted_at, posted_by,
+                    reversed_entry_id, reversing_entry_id, created_at, updated_at
+             FROM gl_journal_entries WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let mut entry = Self::row_to_journal_entry(row)?;
+        let lines = sqlx::query_as::<_, JournalEntryLineRow>(
+            "SELECT id, journal_entry_id, line_number, account_id, account_number, account_name,
+                    description, debit_amount, credit_amount, currency, reference_type, reference_id,
+                    created_at
+             FROM gl_journal_entry_lines WHERE journal_entry_id = $1 ORDER BY line_number",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        entry.lines = lines.into_iter().map(Self::row_to_journal_entry_line).collect();
+        Ok(entry)
+    }
+
+    /// Non-voided journal entry for a source document, read on the caller's
+    /// transaction: behind a `pg_advisory_xact_lock` on the source document
+    /// this is a race-free idempotency check.
+    pub(crate) async fn existing_entry_for_source_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        source_document_type: &str,
+        source_document_id: Uuid,
+    ) -> Result<Option<JournalEntry>> {
+        let id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM gl_journal_entries
+             WHERE source_document_type = $1 AND source_document_id = $2
+               AND status != 'voided'
+             LIMIT 1",
+        )
+        .bind(source_document_type)
+        .bind(source_document_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        match id {
+            Some(id) => Self::load_journal_entry_tx(tx, id).await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Active auto-posting configuration, read on the caller's transaction so
+    /// subledger transactions can resolve accounts without leaving their
+    /// transaction.
+    pub(crate) async fn get_auto_posting_config_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+    ) -> Result<Option<AutoPostingConfig>> {
+        let row = sqlx::query_as::<_, AutoPostingConfigRow>(
+            "SELECT id, config_name, cash_account_id, accounts_receivable_account_id, inventory_account_id,
+                    accounts_payable_account_id, unearned_revenue_account_id, sales_revenue_account_id,
+                    shipping_revenue_account_id, cogs_account_id, bad_debt_expense_account_id,
+                    fx_gain_loss_account_id, auto_post_depreciation, auto_post_revenue_recognition,
+                    is_active, created_at, updated_at
+             FROM gl_auto_posting_config WHERE is_active = TRUE
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Ok(row.map(Self::row_to_auto_posting_config))
+    }
+
+    /// Create AND post a balanced journal entry entirely on the caller's
+    /// transaction: validation, the entry and line inserts, the
+    /// account-balance updates, and the outbox event commit (or roll back)
+    /// together with whatever else the caller is doing. This is what lets a
+    /// subledger mutation and its GL posting be a single atomic fact.
+    pub(crate) async fn create_posted_entry_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        input: &CreateJournalEntry,
+        posted_by: &str,
+    ) -> Result<JournalEntry> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let entry_number = generate_journal_entry_number();
+
+        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
+        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
+        if total_debits != total_credits {
+            return Err(CommerceError::ValidationError(format!(
+                "Journal entry must balance to post: debits {total_debits} != credits {total_credits}"
+            )));
+        }
+        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
+        // debit or a pure credit, never both and never neither.
+        if let Some((index, _)) = input.lines.iter().enumerate().find(|(_, l)| {
+            !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
+        }) {
+            return Err(CommerceError::JournalLineNotSingleSided {
+                entry_id: id,
+                line_number: i32::try_from(index + 1).unwrap_or(i32::MAX),
+            });
+        }
+
+        let period: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, status FROM gl_periods WHERE start_date <= $1 AND end_date >= $1",
+        )
+        .bind(input.entry_date)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let (period_id, period_status) = period.ok_or_else(|| {
+            CommerceError::ValidationError(format!("No period found for date {}", input.entry_date))
+        })?;
+        if period_status != "open" {
+            return Err(CommerceError::ValidationError(
+                "Period is not open for posting".to_string(),
+            ));
+        }
+
+        sqlx::query(
+            "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id, entry_type,
+                source, source_document_type, source_document_id, description, total_debits,
+                total_credits, is_balanced, status, posted_at, posted_by, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, 'posted', $12, $13, $14, $14)",
+        )
+        .bind(id)
+        .bind(&entry_number)
+        .bind(input.entry_date)
+        .bind(period_id)
+        .bind(input.entry_type.unwrap_or(JournalEntryType::Standard).to_string())
+        .bind(JournalEntrySource::Manual.to_string())
+        .bind(input.source_document_type.clone())
+        .bind(input.source_document_id)
+        .bind(&input.description)
+        .bind(total_debits)
+        .bind(total_credits)
+        .bind(now)
+        .bind(posted_by)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        for (line_num, line) in input.lines.iter().enumerate() {
+            let account: Option<(String, String, CurrencyCode)> = sqlx::query_as(
+                "SELECT account_number, name, currency FROM gl_accounts WHERE id = $1",
+            )
+            .bind(line.account_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            let (account_number, account_name, currency) =
+                account.ok_or(CommerceError::NotFound)?;
+
+            sqlx::query(
+                "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number, account_id,
+                    account_number, account_name, description, debit_amount, credit_amount, currency,
+                    reference_type, reference_id, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(id)
+            .bind((line_num + 1) as i32)
+            .bind(line.account_id)
+            .bind(account_number)
+            .bind(account_name)
+            .bind(line.description.clone())
+            .bind(line.debit_amount)
+            .bind(line.credit_amount)
+            .bind(currency)
+            .bind(line.reference_type.clone())
+            .bind(line.reference_id)
+            .bind(now)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            self.update_account_balance_tx(
+                tx,
+                line.account_id,
+                line.debit_amount,
+                line.credit_amount,
+            )
+            .await?;
+        }
+
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "ledger.journal_entry_posted.v1",
+                "journal_entry",
+                id.to_string(),
+                serde_json::json!({
+                    "journal_entry_id": id.to_string(),
+                    "entry_number": entry_number,
+                    "source": JournalEntrySource::Manual.to_string(),
+                    "total_debits": total_debits.to_string(),
+                    "total_credits": total_credits.to_string(),
+                    "line_count": input.lines.len(),
+                    "posted_by": posted_by,
+                    "status": JournalEntryStatus::Posted.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await?;
+
+        Self::load_journal_entry_tx(tx, id).await
+    }
+
+    /// Serialize concurrent auto-posts for the same source document on a
+    /// transaction-scoped advisory lock (released at commit/rollback), making
+    /// the `existing_entry_for_source_tx` idempotency check race-free.
+    async fn take_auto_post_lock_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        source_document_type: &str,
+        source_document_id: Uuid,
+    ) -> Result<()> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("gl_autopost:{source_document_type}:{source_document_id}"))
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        Ok(())
+    }
+
     pub async fn post_journal_entry_async(
         &self,
         id: Uuid,
@@ -1297,50 +1531,65 @@ impl PgGeneralLedgerRepository {
 
     pub async fn auto_post_invoice_async(&self, invoice_id: Uuid) -> Result<JournalEntry> {
         // Idempotent under retry: the same source document never posts twice.
-        if let Some(existing) = self.existing_entry_for_source_async("invoice", invoice_id).await? {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::take_auto_post_lock_tx(&mut tx, "invoice", invoice_id).await?;
+        if let Some(existing) =
+            Self::existing_entry_for_source_tx(&mut tx, "invoice", invoice_id).await?
+        {
             return Ok(existing);
         }
-        let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
+        let config = Self::get_auto_posting_config_tx(&mut tx).await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
 
         let (amount, invoice_date): (Decimal, DateTime<Utc>) =
             sqlx::query_as("SELECT total, invoice_date FROM invoices WHERE id = $1")
                 .bind(invoice_id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
         let entry_date = invoice_date.date_naive();
 
-        self.create_journal_entry_async(CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Invoice {}", invoice_id),
-            lines: vec![
-                CreateJournalEntryLine::debit(
-                    config.accounts_receivable_account_id,
-                    amount,
-                    Some("Accounts Receivable".to_string()),
-                ),
-                CreateJournalEntryLine::credit(
-                    config.sales_revenue_account_id,
-                    amount,
-                    Some("Sales Revenue".to_string()),
-                ),
-            ],
-            source_document_type: Some("invoice".to_string()),
-            source_document_id: Some(invoice_id),
-            auto_post: Some(true),
-        })
-        .await
+        let entry = self
+            .create_posted_entry_tx(
+                &mut tx,
+                &CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Invoice {}", invoice_id),
+                    lines: vec![
+                        CreateJournalEntryLine::debit(
+                            config.accounts_receivable_account_id,
+                            amount,
+                            Some("Accounts Receivable".to_string()),
+                        ),
+                        CreateJournalEntryLine::credit(
+                            config.sales_revenue_account_id,
+                            amount,
+                            Some("Sales Revenue".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("invoice".to_string()),
+                    source_document_id: Some(invoice_id),
+                    auto_post: Some(true),
+                },
+                "system",
+            )
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(entry)
     }
 
     pub async fn auto_post_payment_received_async(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        if let Some(existing) = self.existing_entry_for_source_async("payment", payment_id).await? {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::take_auto_post_lock_tx(&mut tx, "payment", payment_id).await?;
+        if let Some(existing) =
+            Self::existing_entry_for_source_tx(&mut tx, "payment", payment_id).await?
+        {
             return Ok(existing);
         }
-        let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
+        let config = Self::get_auto_posting_config_tx(&mut tx).await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
 
@@ -1348,123 +1597,152 @@ impl PgGeneralLedgerRepository {
             "SELECT amount, COALESCE(paid_at, created_at) FROM payments WHERE id = $1",
         )
         .bind(payment_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         let entry_date = paid_at.date_naive();
 
-        self.create_journal_entry_async(CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Payment {}", payment_id),
-            lines: vec![
-                CreateJournalEntryLine::debit(
-                    config.cash_account_id,
-                    amount,
-                    Some("Cash".to_string()),
-                ),
-                CreateJournalEntryLine::credit(
-                    config.accounts_receivable_account_id,
-                    amount,
-                    Some("Accounts Receivable".to_string()),
-                ),
-            ],
-            source_document_type: Some("payment".to_string()),
-            source_document_id: Some(payment_id),
-            auto_post: Some(true),
-        })
-        .await
+        let entry = self
+            .create_posted_entry_tx(
+                &mut tx,
+                &CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Payment {}", payment_id),
+                    lines: vec![
+                        CreateJournalEntryLine::debit(
+                            config.cash_account_id,
+                            amount,
+                            Some("Cash".to_string()),
+                        ),
+                        CreateJournalEntryLine::credit(
+                            config.accounts_receivable_account_id,
+                            amount,
+                            Some("Accounts Receivable".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("payment".to_string()),
+                    source_document_id: Some(payment_id),
+                    auto_post: Some(true),
+                },
+                "system",
+            )
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(entry)
     }
 
     pub async fn auto_post_bill_async(&self, bill_id: Uuid) -> Result<JournalEntry> {
-        if let Some(existing) = self.existing_entry_for_source_async("bill", bill_id).await? {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::take_auto_post_lock_tx(&mut tx, "bill", bill_id).await?;
+        if let Some(existing) = Self::existing_entry_for_source_tx(&mut tx, "bill", bill_id).await?
+        {
             return Ok(existing);
         }
-        let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
+        let config = Self::get_auto_posting_config_tx(&mut tx).await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
 
         let (amount, bill_date): (Decimal, NaiveDate) =
             sqlx::query_as("SELECT total_amount, bill_date FROM ap_bills WHERE id = $1")
                 .bind(bill_id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
-        self.create_journal_entry_async(CreateJournalEntry {
-            entry_date: bill_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Bill {}", bill_id),
-            lines: vec![
-                CreateJournalEntryLine::debit(
-                    config.inventory_account_id,
-                    amount,
-                    Some("Inventory/Expense".to_string()),
-                ),
-                CreateJournalEntryLine::credit(
-                    config.accounts_payable_account_id,
-                    amount,
-                    Some("Accounts Payable".to_string()),
-                ),
-            ],
-            source_document_type: Some("bill".to_string()),
-            source_document_id: Some(bill_id),
-            auto_post: Some(true),
-        })
-        .await
+        let entry = self
+            .create_posted_entry_tx(
+                &mut tx,
+                &CreateJournalEntry {
+                    entry_date: bill_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Bill {}", bill_id),
+                    lines: vec![
+                        CreateJournalEntryLine::debit(
+                            config.inventory_account_id,
+                            amount,
+                            Some("Inventory/Expense".to_string()),
+                        ),
+                        CreateJournalEntryLine::credit(
+                            config.accounts_payable_account_id,
+                            amount,
+                            Some("Accounts Payable".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("bill".to_string()),
+                    source_document_id: Some(bill_id),
+                    auto_post: Some(true),
+                },
+                "system",
+            )
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(entry)
     }
 
     pub async fn auto_post_bill_payment_async(&self, payment_id: Uuid) -> Result<JournalEntry> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::take_auto_post_lock_tx(&mut tx, "bill_payment", payment_id).await?;
         if let Some(existing) =
-            self.existing_entry_for_source_async("bill_payment", payment_id).await?
+            Self::existing_entry_for_source_tx(&mut tx, "bill_payment", payment_id).await?
         {
             return Ok(existing);
         }
-        let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
+        let config = Self::get_auto_posting_config_tx(&mut tx).await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
 
         let (amount, payment_date): (Decimal, NaiveDate) =
             sqlx::query_as("SELECT amount, payment_date FROM ap_payments WHERE id = $1")
                 .bind(payment_id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
-        self.create_journal_entry_async(CreateJournalEntry {
-            entry_date: payment_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Bill Payment {}", payment_id),
-            lines: vec![
-                CreateJournalEntryLine::debit(
-                    config.accounts_payable_account_id,
-                    amount,
-                    Some("Accounts Payable".to_string()),
-                ),
-                CreateJournalEntryLine::credit(
-                    config.cash_account_id,
-                    amount,
-                    Some("Cash".to_string()),
-                ),
-            ],
-            source_document_type: Some("bill_payment".to_string()),
-            source_document_id: Some(payment_id),
-            auto_post: Some(true),
-        })
-        .await
+        let entry = self
+            .create_posted_entry_tx(
+                &mut tx,
+                &CreateJournalEntry {
+                    entry_date: payment_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Bill Payment {}", payment_id),
+                    lines: vec![
+                        CreateJournalEntryLine::debit(
+                            config.accounts_payable_account_id,
+                            amount,
+                            Some("Accounts Payable".to_string()),
+                        ),
+                        CreateJournalEntryLine::credit(
+                            config.cash_account_id,
+                            amount,
+                            Some("Cash".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("bill_payment".to_string()),
+                    source_document_id: Some(payment_id),
+                    auto_post: Some(true),
+                },
+                "system",
+            )
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(entry)
     }
 
     pub async fn auto_post_inventory_cost_async(
         &self,
         cost_transaction_id: Uuid,
     ) -> Result<JournalEntry> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::take_auto_post_lock_tx(&mut tx, "cost_transaction", cost_transaction_id).await?;
         if let Some(existing) =
-            self.existing_entry_for_source_async("cost_transaction", cost_transaction_id).await?
+            Self::existing_entry_for_source_tx(&mut tx, "cost_transaction", cost_transaction_id)
+                .await?
         {
             return Ok(existing);
         }
-        let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
+        let config = Self::get_auto_posting_config_tx(&mut tx).await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
 
@@ -1473,7 +1751,7 @@ impl PgGeneralLedgerRepository {
                 "SELECT total_cost, created_at, transaction_type FROM cost_transactions WHERE id = $1",
             )
             .bind(cost_transaction_id)
-            .fetch_one(&self.pool)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1485,36 +1763,45 @@ impl PgGeneralLedgerRepository {
             (config.inventory_account_id, config.cogs_account_id)
         };
 
-        self.create_journal_entry_async(CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Inventory Cost {}", cost_transaction_id),
-            lines: vec![
-                CreateJournalEntryLine::debit(
-                    debit_account,
-                    cost,
-                    Some(if is_issue { "COGS" } else { "Inventory" }.to_string()),
-                ),
-                CreateJournalEntryLine::credit(
-                    credit_account,
-                    cost,
-                    Some(if is_issue { "Inventory" } else { "COGS" }.to_string()),
-                ),
-            ],
-            source_document_type: Some("cost_transaction".to_string()),
-            source_document_id: Some(cost_transaction_id),
-            auto_post: Some(true),
-        })
-        .await
+        let entry = self
+            .create_posted_entry_tx(
+                &mut tx,
+                &CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Inventory Cost {}", cost_transaction_id),
+                    lines: vec![
+                        CreateJournalEntryLine::debit(
+                            debit_account,
+                            cost,
+                            Some(if is_issue { "COGS" } else { "Inventory" }.to_string()),
+                        ),
+                        CreateJournalEntryLine::credit(
+                            credit_account,
+                            cost,
+                            Some(if is_issue { "Inventory" } else { "COGS" }.to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("cost_transaction".to_string()),
+                    source_document_id: Some(cost_transaction_id),
+                    auto_post: Some(true),
+                },
+                "system",
+            )
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(entry)
     }
 
     pub async fn auto_post_write_off_async(&self, write_off_id: Uuid) -> Result<JournalEntry> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::take_auto_post_lock_tx(&mut tx, "write_off", write_off_id).await?;
         if let Some(existing) =
-            self.existing_entry_for_source_async("write_off", write_off_id).await?
+            Self::existing_entry_for_source_tx(&mut tx, "write_off", write_off_id).await?
         {
             return Ok(existing);
         }
-        let config = self.get_auto_posting_config_async().await?.ok_or_else(|| {
+        let config = Self::get_auto_posting_config_tx(&mut tx).await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
 
@@ -1525,31 +1812,38 @@ impl PgGeneralLedgerRepository {
         let (amount, write_off_date): (Decimal, NaiveDate) =
             sqlx::query_as("SELECT amount, write_off_date FROM ar_write_offs WHERE id = $1")
                 .bind(write_off_id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
-        self.create_journal_entry_async(CreateJournalEntry {
-            entry_date: write_off_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Write-off {}", write_off_id),
-            lines: vec![
-                CreateJournalEntryLine::debit(
-                    bad_debt_account,
-                    amount,
-                    Some("Bad Debt Expense".to_string()),
-                ),
-                CreateJournalEntryLine::credit(
-                    config.accounts_receivable_account_id,
-                    amount,
-                    Some("Accounts Receivable".to_string()),
-                ),
-            ],
-            source_document_type: Some("write_off".to_string()),
-            source_document_id: Some(write_off_id),
-            auto_post: Some(true),
-        })
-        .await
+        let entry = self
+            .create_posted_entry_tx(
+                &mut tx,
+                &CreateJournalEntry {
+                    entry_date: write_off_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Write-off {}", write_off_id),
+                    lines: vec![
+                        CreateJournalEntryLine::debit(
+                            bad_debt_account,
+                            amount,
+                            Some("Bad Debt Expense".to_string()),
+                        ),
+                        CreateJournalEntryLine::credit(
+                            config.accounts_receivable_account_id,
+                            amount,
+                            Some("Accounts Receivable".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("write_off".to_string()),
+                    source_document_id: Some(write_off_id),
+                    auto_post: Some(true),
+                },
+                "system",
+            )
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(entry)
     }
 
     pub async fn get_trial_balance_async(&self, as_of_date: NaiveDate) -> Result<TrialBalance> {

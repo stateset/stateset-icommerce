@@ -753,6 +753,87 @@ fn statement_includes_credit_memos_and_balances() {
 }
 
 #[test]
+fn statement_reconciles_payment_credit_memo_and_write_off_to_zero() {
+    // $100 invoice, $30 payment application, $10 credit memo, write off the
+    // $60 remainder: the statement must show all four entries, the running
+    // balance must foot to zero, and total_credits must be exactly the memo.
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+
+    let payment_id = create_payment(&commerce, customer_id, dec!(30.00));
+    commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(30.00) }],
+        })
+        .expect("apply payment");
+
+    let memo = commerce
+        .accounts_receivable()
+        .create_credit_memo(CreateCreditMemo {
+            customer_id: customer_id.into(),
+            amount: dec!(10.00),
+            reason: CreditMemoReason::ServiceCredit,
+            original_invoice_id: None,
+            notes: None,
+        })
+        .expect("create credit memo");
+    commerce
+        .accounts_receivable()
+        .apply_credit_memo(ApplyCreditMemo {
+            credit_memo_id: memo.id,
+            invoice_id,
+            amount: dec!(10.00),
+        })
+        .expect("apply credit memo");
+
+    commerce
+        .accounts_receivable()
+        .create_write_off(CreateWriteOff {
+            invoice_id,
+            amount: dec!(60.00),
+            reason: WriteOffReason::Uncollectible,
+            notes: None,
+            approved_by: None,
+        })
+        .expect("write off the remainder");
+
+    let statement = commerce
+        .accounts_receivable()
+        .generate_statement(GenerateStatementRequest {
+            customer_id: customer_id.into(),
+            period_start: None, // default: last 30 days, covers everything
+            period_end: None,
+            include_paid_invoices: None,
+        })
+        .expect("generate statement");
+
+    // All four entries appear as line items.
+    assert_eq!(statement.line_items.len(), 4, "lines: {:?}", statement.line_items);
+    let count = |t: StatementTransactionType| {
+        statement.line_items.iter().filter(|l| l.transaction_type == t).count()
+    };
+    assert_eq!(count(StatementTransactionType::Invoice), 1);
+    assert_eq!(count(StatementTransactionType::Payment), 1);
+    assert_eq!(count(StatementTransactionType::CreditMemo), 1);
+    assert_eq!(count(StatementTransactionType::WriteOff), 1);
+
+    assert_eq!(statement.total_invoices, dec!(100.00));
+    assert_eq!(statement.total_payments, dec!(30.00));
+    assert_eq!(statement.total_credits, dec!(10.00), "only the credit memo counts as a credit");
+
+    // The running balance foots from 0 through all four entries to 0, and the
+    // live-aging closing balance agrees (a written-off invoice is no longer
+    // outstanding).
+    assert_eq!(statement.opening_balance, dec!(0.00));
+    let final_balance = statement.line_items.last().expect("line items").balance;
+    assert_eq!(final_balance, dec!(0.00), "100 - 30 - 10 - 60 must foot to zero");
+    assert_eq!(statement.closing_balance, dec!(0.00));
+}
+
+#[test]
 fn statement_opening_balance_carries_pre_period_activity() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);

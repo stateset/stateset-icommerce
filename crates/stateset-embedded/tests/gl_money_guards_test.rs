@@ -132,6 +132,50 @@ fn auto_post_invoice_is_idempotent() {
 }
 
 #[test]
+fn auto_post_invoice_concurrent_race_is_idempotent() {
+    // Two OS threads auto-post the same invoice at the same time. The
+    // idempotency check runs inside one immediate (write-locked) transaction,
+    // so both calls must succeed, return the SAME entry, and leave exactly one
+    // journal entry for the source document.
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let commerce = Arc::new(new_commerce());
+    setup(&commerce);
+    let invoice_id = create_invoice(&commerce);
+
+    let barrier = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let commerce = Arc::clone(&commerce);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                commerce.general_ledger().auto_post_invoice(invoice_id)
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread panicked")).collect();
+
+    let entries: Vec<_> = results
+        .into_iter()
+        .map(|r| r.expect("concurrent auto-post must succeed idempotently"))
+        .collect();
+    assert_eq!(entries[0].id, entries[1].id, "both threads must get the same journal entry");
+
+    let listed = commerce
+        .general_ledger()
+        .list_journal_entries(JournalEntryFilter {
+            source_document_type: Some("invoice".into()),
+            source_document_id: Some(invoice_id),
+            ..Default::default()
+        })
+        .expect("list entries");
+    assert_eq!(listed.len(), 1, "the racing auto-posts must leave exactly one journal entry");
+    assert!(listed[0].is_balanced, "the surviving entry must balance");
+}
+
+#[test]
 fn post_into_closed_period_is_rejected() {
     let commerce = new_commerce();
     let period_id = setup(&commerce);
@@ -291,4 +335,36 @@ fn run_period_close_twice_is_rejected() {
     // Voiding the standing closing entry makes re-close legitimate.
     gl.void_journal_entry(closing.id).expect("void closing entry");
     gl.run_period_close(period_id, "tester").expect("re-close after voiding closing entry");
+}
+
+#[test]
+fn reclose_period_encodes_the_adjustment_flow() {
+    let commerce = new_commerce();
+    let period_id = setup(&commerce);
+    let gl = commerce.general_ledger();
+
+    post_revenue_entry(&commerce, date(2026, 1, 15)); // $100
+    gl.run_period_close(period_id, "tester").expect("first close");
+
+    // Adjustments arrive late: reopen, post, and re-close in one call.
+    gl.reopen_period(period_id).expect("reopen period");
+    post_revenue_entry(&commerce, date(2026, 1, 20)); // $100 more
+    let closing = gl.reclose_period(period_id, "tester").expect("reclose");
+
+    // The fresh closing entry sweeps the FULL adjusted activity ($200),
+    // the old closing entry is voided, and the period is closed again.
+    assert_eq!(closing.total_debits, dec!(200.00));
+    assert_eq!(
+        gl.get_period(period_id).expect("get period").expect("period").status,
+        PeriodStatus::Closed
+    );
+    let posted_closings = gl
+        .list_journal_entries(JournalEntryFilter {
+            source_document_type: Some("period_close".into()),
+            source_document_id: Some(period_id),
+            status: Some(JournalEntryStatus::Posted),
+            ..Default::default()
+        })
+        .expect("list closing entries");
+    assert_eq!(posted_closings.len(), 1, "exactly one closing entry stands");
 }
