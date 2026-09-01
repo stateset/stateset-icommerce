@@ -1,6 +1,6 @@
 {
   "name": "create-stateset-app",
-  "version": "1.28.3",
+  "version": "1.28.4",
   "description": "Create StateSet-powered commerce storefronts with one command",
   "license": "MIT OR Apache-2.0",
   "repository": {
