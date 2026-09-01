@@ -874,9 +874,11 @@ export function createCostAnalytics() {
    * @param {string} agentAddress
    * @param {number} monthlyBudget - The agent's monthly budget
    * @param {number} [lookbackDays=30] - Days to use for trend calculation
+   * @param {Object} [filter] - Optional asset/network filter
+   * @param {Date|string} [now] - Reference clock (defaults to the current time)
    * @returns {{ dailyAvgSpend: number, daysRemaining: number|null, exhaustionDate: string|null, spentThisMonth: number, remainingBudget: number }}
    */
-  function getBudgetForecast(agentAddress, monthlyBudget, lookbackDays = 30, filter = {}) {
+  function getBudgetForecast(agentAddress, monthlyBudget, lookbackDays = 30, filter = {}, now) {
     if (lookbackDays && typeof lookbackDays === 'object' && !Array.isArray(lookbackDays)) {
       filter = lookbackDays;
       lookbackDays = 30;
@@ -886,7 +888,9 @@ export function createCostAnalytics() {
     }
 
     const entries = _getAgentEntries(agentAddress, filter);
-    const now = new Date();
+    // `now` is injectable so month-bucketed forecasts can be tested
+    // deterministically (spent-this-month depends on the calendar).
+    now = now ? new Date(now) : new Date();
     const budgetSummary = _buildBudgetBreakdown(entries, lookbackDays, now);
     const aggregate = _getAggregateDescriptor(budgetSummary.assets, filter);
     const budgetForecastMeaningful = aggregate.aggregateTotalsMeaningful;
