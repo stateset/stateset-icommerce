@@ -6,6 +6,58 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.28.3] - 2026-09-01
+
+### Added
+- **Real AP payment runs** (SQLite and Postgres): `create_payment_run`
+  validates bills atomically (payable status, positive balance, no
+  duplicate bill ids, exclusivity against other active runs);
+  `approve_payment_run`/`cancel_payment_run` are status-guarded
+  transitions; `process_payment_run` claims approved → completed in one
+  transaction and creates actual payments plus allocations per bill,
+  skipping (and recording on the run) bills paid since run creation.
+  Previously processing only flipped the run status and paid nothing.
+- **`invoices.direct_amount_paid`** (migrations 074 SQLite / 081
+  Postgres): directly-recorded invoice payments survive AR
+  recalculation — `amount_paid` = direct payments + payment
+  applications + applied credit memos.
+- **Customer statements** include credit-memo applications and
+  non-reversed write-offs as line items, report real `total_credits`,
+  and start the running balance from a derived opening balance.
+- A "Money-Integrity Guarantees" section in the accounting docs stating
+  the enforced invariants across GL, AP, and AR/revenue recognition.
+
+### Fixed
+- **As-of-date reports**: trial balance, balance sheet, and dated
+  account balances derive from posted/reversed journal lines dated on
+  or before the requested date instead of echoing the live running
+  balance.
+- **Subledger/GL divergence**: a failed GL auto-post after a revenue
+  recognition or depreciation posting reverts the subledger
+  (entries back to deferred/scheduled, obligation/asset state restored)
+  so a retry recognizes and posts the full amount exactly once.
+- **Revenue recognition status guards**: recognition is rejected on
+  draft and cancelled contracts, and schedule generation on cancelled
+  contracts; retries on completed contracts stay idempotent no-ops.
+- **Journal reversal crash recovery**: `reverse_journal_entry` resumes
+  a stranded claim (crash between the posted → reversed claim and the
+  reversing entry's creation), repairs lost cross-links, and still
+  rejects a genuine second reversal.
+- **Bill editing guards**: line items can only be added or removed on
+  draft/pending bills, so a paid bill's `amount_due` can no longer be
+  driven negative or grow invisible debt; `create_bill` commits header,
+  lines, and totals in one transaction.
+- **SQLite/Postgres date parity in AP**: `get_bills_due_soon` includes
+  the boundary day; aging buckets and supplier summaries compare
+  midnight-truncated dates, so a bill due today is not overdue.
+- **Atomic AR operations**: `unapply_payment` runs in one transaction;
+  `reverse_write_off` derives the restored status from recalculation
+  and the standard overdue rule instead of stamping future-due invoices
+  overdue.
+- **CLI**: the rail-specific budget forecast test pins an injectable
+  clock, fixing a coverage failure on the 1st and 2nd of every month
+  (`getBudgetForecast` accepts an optional `now`).
+
 ## [1.28.2] - 2026-08-31
 
 ### Fixed

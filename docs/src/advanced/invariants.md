@@ -69,7 +69,7 @@ violation reproduces without waiting for the generator to rediscover it.
 | P2 | Σ completed **and in-flight** refunds ≤ amount captured — two concurrent refunds cannot both pass | `commerce.refund.exceeds_captured` | same, inside the write transaction (`BEGIN IMMEDIATE` / `SELECT … FOR UPDATE`) |
 | P3 | `payments.amount_refunded` equals Σ completed refunds | — | same |
 | P4 | A refund amount is strictly positive | — | same |
-| P5 | A **completed** refund cannot be transitioned to failed | — | status guard on the update; violating it silently corrupted `amount_refunded` before v1.28.2 |
+| P5 | A **completed** refund cannot be transitioned to failed | — | status guard on the update; violating it silently corrupted `amount_refunded` before v1.28.3 |
 | P6 | Σ captures (completed and in-flight) ≤ the order total | `commerce.capture.exceeds_order_total` | `capturing_statuses()` fold in both backends |
 
 P2 and P6 are deliberately computed *inside* the same transaction that writes, not
