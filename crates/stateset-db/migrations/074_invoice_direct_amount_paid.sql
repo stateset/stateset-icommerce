@@ -1,0 +1,15 @@
+-- Direct invoice payments (record_payment) previously wrote only to
+-- invoices.amount_paid, while the AR recalculation REPLACED amount_paid with
+-- SUM(ar_payment_applications) + SUM(ar_credit_memo_applications) — silently
+-- erasing direct payments the next time a credit memo or payment application
+-- touched the invoice. Track direct payments in their own bookkeeping column
+-- so recalculation can add them back in:
+--
+--   amount_paid == direct_amount_paid + payment applications + credit memos
+--
+-- Backfill note: money lives in TEXT decimal columns on this backend and SQL
+-- arithmetic over them coerces to IEEE-754 floats (lossy), so existing rows
+-- are backfilled with '0' rather than a computed difference. That matches the
+-- pre-fix behavior (a direct payment was already lost at the next
+-- recalculation) and only affects rows recalculated after this upgrade.
+ALTER TABLE invoices ADD COLUMN direct_amount_paid TEXT NOT NULL DEFAULT '0';

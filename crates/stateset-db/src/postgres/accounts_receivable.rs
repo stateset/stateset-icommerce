@@ -405,14 +405,17 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        let total_applied = paid + credits;
+        // Direct payments (record_payment) have no ar_payment_applications
+        // row; without adding direct_amount_paid back here, this recalculation
+        // would REPLACE amount_paid with the application sums and erase them.
+        let (total, direct): (Decimal, Decimal) =
+            sqlx::query_as("SELECT total, direct_amount_paid FROM invoices WHERE id = $1")
+                .bind(invoice_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
-        let total: Decimal = sqlx::query_scalar("SELECT total FROM invoices WHERE id = $1")
-            .bind(invoice_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let total_applied = direct + paid + credits;
         let balance_due = total - total_applied;
         let status = if balance_due <= Decimal::ZERO {
             "paid"
@@ -456,14 +459,20 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        let total_applied = paid + credits;
+        // Direct payments (record_payment) have no ar_payment_applications
+        // row; without adding direct_amount_paid back here, this recalculation
+        // would REPLACE amount_paid with the application sums and erase them.
+        // Read it inside the transaction (FOR UPDATE) so a concurrent
+        // record_payment serializes against this recalculation.
+        let (total, direct): (Decimal, Decimal) = sqlx::query_as(
+            "SELECT total, direct_amount_paid FROM invoices WHERE id = $1 FOR UPDATE",
+        )
+        .bind(invoice_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
-        let total: Decimal = sqlx::query_scalar("SELECT total FROM invoices WHERE id = $1")
-            .bind(invoice_id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
+        let total_applied = direct + paid + credits;
         let balance_due = total - total_applied;
         let status = if balance_due <= Decimal::ZERO {
             "paid"

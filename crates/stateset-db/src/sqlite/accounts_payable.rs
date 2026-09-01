@@ -1070,44 +1070,99 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     }
 
     fn create_payment_run(&self, input: CreatePaymentRun) -> Result<PaymentRun> {
-        let conn = self.conn()?;
-        let now = Utc::now().to_rfc3339();
-        let id = Uuid::new_v4();
-        let run_number = generate_payment_run_number();
-
-        // Calculate total
-        let mut total = Decimal::ZERO;
+        if input.bill_ids.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Payment run requires at least one bill".into(),
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
         for bill_id in &input.bill_ids {
-            if let Some(bill) = self.get_bill(*bill_id)? {
-                total += bill.amount_due;
+            if !seen.insert(*bill_id) {
+                return Err(CommerceError::ValidationError("Duplicate bill in payment run".into()));
             }
         }
 
-        conn.execute(
-            "INSERT INTO ap_payment_runs (id, run_number, status, payment_date, payment_method, total_amount, payment_count, notes, created_by, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
-            params![
-                id.to_string(),
-                run_number,
-                PaymentRunStatus::Draft.to_string(),
-                ap_date_rfc3339(input.payment_date),
-                input.payment_method.to_string(),
-                total.to_string(),
-                input.bill_ids.len() as i32,
-                input.notes,
-                input.created_by,
-                now,
-            ],
-        ).map_err(map_db_error)?;
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+        let run_number = generate_payment_run_number();
 
-        // Add bills to run
-        for bill_id in input.bill_ids {
-            conn.execute(
-                "INSERT INTO ap_payment_run_bills (run_id, bill_id) VALUES (?1, ?2)",
-                params![id.to_string(), bill_id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
+        // Immediate (write-locked) transaction so bill validation, the run
+        // header, and the run-bill rows commit atomically, and concurrent run
+        // creation serializes: a bill cannot land in two active runs. Each bill
+        // must exist, be in a payable status with a positive balance, and not
+        // already sit in another draft/pending/approved/processing run.
+        with_immediate_transaction(&self.pool, |tx| {
+            let to_rusqlite =
+                |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+
+            let mut total = Decimal::ZERO;
+            for bill_id in &input.bill_ids {
+                let bill = tx
+                    .query_row(
+                        "SELECT * FROM ap_bills WHERE id = ?1",
+                        params![bill_id.to_string()],
+                        Self::row_to_bill,
+                    )
+                    .optional()?
+                    .ok_or_else(|| to_rusqlite(CommerceError::NotFound))?;
+
+                if !matches!(
+                    bill.status,
+                    BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue
+                ) {
+                    return Err(to_rusqlite(CommerceError::ValidationError(
+                        "Bill is not in a payable status".into(),
+                    )));
+                }
+                if bill.amount_due <= Decimal::ZERO {
+                    return Err(to_rusqlite(CommerceError::ValidationError(
+                        "Bill has no amount due".into(),
+                    )));
+                }
+
+                let active_runs: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM ap_payment_run_bills rb
+                     JOIN ap_payment_runs r ON r.id = rb.run_id
+                     WHERE rb.bill_id = ?1
+                       AND r.status IN ('draft', 'pending', 'approved', 'processing')",
+                    params![bill_id.to_string()],
+                    |row| row.get(0),
+                )?;
+                if active_runs > 0 {
+                    return Err(to_rusqlite(CommerceError::ValidationError(
+                        "Bill is already included in an active payment run".into(),
+                    )));
+                }
+
+                total += bill.amount_due;
+            }
+
+            tx.execute(
+                "INSERT INTO ap_payment_runs (id, run_number, status, payment_date, payment_method, total_amount, payment_count, notes, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                params![
+                    id.to_string(),
+                    run_number,
+                    PaymentRunStatus::Draft.to_string(),
+                    ap_date_rfc3339(input.payment_date),
+                    input.payment_method.to_string(),
+                    total.to_string(),
+                    input.bill_ids.len() as i32,
+                    &input.notes,
+                    &input.created_by,
+                    now.to_rfc3339(),
+                ],
+            )?;
+
+            for bill_id in &input.bill_ids {
+                tx.execute(
+                    "INSERT INTO ap_payment_run_bills (run_id, bill_id) VALUES (?1, ?2)",
+                    params![id.to_string(), bill_id.to_string()],
+                )?;
+            }
+
+            Ok(())
+        })?;
 
         self.get_payment_run(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create payment run".into()))
@@ -1173,24 +1228,160 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
 
-        conn.execute(
-            "UPDATE ap_payment_runs SET status = ?1, approved_by = ?2, approved_at = ?3 WHERE id = ?4",
+        // Status-guarded UPDATE (same pattern as `clear_payment`): only a
+        // draft/pending run can be approved — a cancelled, completed, or
+        // in-flight run cannot.
+        let rows = conn.execute(
+            "UPDATE ap_payment_runs SET status = ?1, approved_by = ?2, approved_at = ?3 WHERE id = ?4 AND status IN ('draft', 'pending')",
             params![PaymentRunStatus::Approved.to_string(), approved_by, now, id.to_string()],
         ).map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(CommerceError::Conflict(
+                "Payment run not found or not in an approvable status".into(),
+            ));
+        }
 
         self.get_payment_run(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to approve run".into()))
     }
 
     fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        let conn = self.conn()?;
-        let now = Utc::now().to_rfc3339();
+        // One immediate (write-locked) transaction for the whole disbursement:
+        // the status claim (approved → completed), every payment + allocation
+        // row, the bill updates, and the run totals commit atomically. A
+        // failure anywhere rolls everything back, leaving the run approved
+        // (retry-safe) and no money moved.
+        with_immediate_transaction(&self.pool, |tx| {
+            let to_rusqlite =
+                |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+            let now = Utc::now();
 
-        conn.execute(
-            "UPDATE ap_payment_runs SET status = ?1, processed_at = ?2 WHERE id = ?3",
-            params![PaymentRunStatus::Completed.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            // Claim: only an approved run may process.
+            let rows = tx.execute(
+                "UPDATE ap_payment_runs SET status = ?1, processed_at = ?2 WHERE id = ?3 AND status = ?4",
+                params![
+                    PaymentRunStatus::Completed.to_string(),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    PaymentRunStatus::Approved.to_string(),
+                ],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(CommerceError::Conflict(
+                    "Payment run not found or not in a processable status".into(),
+                )));
+            }
+
+            let (run_method, run_date): (String, String) = tx.query_row(
+                "SELECT payment_method, payment_date FROM ap_payment_runs WHERE id = ?1",
+                params![id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+
+            let bills: Vec<Bill> = {
+                let mut stmt = tx.prepare(
+                    "SELECT b.* FROM ap_bills b JOIN ap_payment_run_bills rb ON b.id = rb.bill_id WHERE rb.run_id = ?1",
+                )?;
+                let mut rows = stmt.query(params![id.to_string()])?;
+                let mut values = Vec::new();
+                while let Some(row) = rows.next()? {
+                    values.push(Self::row_to_bill(row)?);
+                }
+                values
+            };
+
+            let mut disbursed_total = Decimal::ZERO;
+            let mut disbursed_count: i32 = 0;
+            let mut skipped: u32 = 0;
+
+            for bill in bills {
+                // Balance/status were re-read under the write lock (the SELECT
+                // above runs inside this immediate transaction). A bill paid
+                // off or made unpayable (paid/cancelled/disputed) since run
+                // creation is skipped, not double-paid — recorded below.
+                if bill.amount_due <= Decimal::ZERO
+                    || !matches!(
+                        bill.status,
+                        BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue
+                    )
+                {
+                    skipped += 1;
+                    continue;
+                }
+
+                let amount = bill.amount_due;
+                let payment_id = Uuid::new_v4();
+                let payment_number = generate_ap_payment_number();
+                tx.execute(
+                    "INSERT INTO ap_payments (id, payment_number, supplier_id, payment_date, payment_method, amount, currency, reference_number, bank_account, check_number, memo, status, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, NULL, NULL, ?8, ?9, ?9)",
+                    params![
+                        payment_id.to_string(),
+                        payment_number,
+                        bill.supplier_id.to_string(),
+                        &run_date,
+                        &run_method,
+                        amount.to_string(),
+                        bill.currency,
+                        PaymentStatusAP::Pending.to_string(),
+                        now.to_rfc3339(),
+                    ],
+                )?;
+
+                let alloc_id = Uuid::new_v4();
+                tx.execute(
+                    "INSERT INTO ap_payment_allocations (id, payment_id, bill_id, amount, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        alloc_id.to_string(),
+                        payment_id.to_string(),
+                        bill.id.to_string(),
+                        amount.to_string(),
+                        now.to_rfc3339(),
+                    ],
+                )?;
+
+                Self::recalculate_bill_with_conn(tx, bill.id).map_err(to_rusqlite)?;
+
+                let updated = tx.query_row(
+                    "SELECT * FROM ap_bills WHERE id = ?1",
+                    params![bill.id.to_string()],
+                    Self::row_to_bill,
+                )?;
+                let new_status = if updated.amount_due <= Decimal::ZERO {
+                    BillStatus::Paid
+                } else if updated.amount_paid > Decimal::ZERO {
+                    BillStatus::PartiallyPaid
+                } else {
+                    updated.status
+                };
+                tx.execute(
+                    "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
+                    params![new_status.to_string(), bill.id.to_string()],
+                )?;
+
+                disbursed_total += amount;
+                disbursed_count += 1;
+            }
+
+            // Reflect what was actually disbursed on the run row, and record
+            // any bills skipped between run creation and processing.
+            tx.execute(
+                "UPDATE ap_payment_runs SET total_amount = ?1, payment_count = ?2 WHERE id = ?3",
+                params![disbursed_total.to_string(), disbursed_count, id.to_string()],
+            )?;
+            if skipped > 0 {
+                let note = format!(
+                    "{skipped} bill(s) skipped at processing: fully paid or no longer payable"
+                );
+                tx.execute(
+                    "UPDATE ap_payment_runs SET notes = CASE WHEN notes IS NULL OR notes = '' THEN ?1 ELSE notes || '; ' || ?1 END WHERE id = ?2",
+                    params![note, id.to_string()],
+                )?;
+            }
+
+            Ok(())
+        })?;
 
         self.get_payment_run(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to process run".into()))
@@ -1199,11 +1390,20 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
         let conn = self.conn()?;
 
-        conn.execute(
-            "UPDATE ap_payment_runs SET status = ?1 WHERE id = ?2",
-            params![PaymentRunStatus::Cancelled.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // Status-guarded UPDATE (same pattern as `clear_payment`): only a run
+        // that has not started disbursing (draft/pending/approved) can be
+        // cancelled — a processing, completed, or already-cancelled run cannot.
+        let rows = conn
+            .execute(
+                "UPDATE ap_payment_runs SET status = ?1 WHERE id = ?2 AND status IN ('draft', 'pending', 'approved')",
+                params![PaymentRunStatus::Cancelled.to_string(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(CommerceError::Conflict(
+                "Payment run not found or not in a cancellable status".into(),
+            ));
+        }
 
         self.get_payment_run(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel run".into()))

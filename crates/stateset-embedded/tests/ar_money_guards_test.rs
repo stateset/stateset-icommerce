@@ -11,7 +11,7 @@ use rust_decimal_macros::dec;
 use stateset_embedded::{
     ApplyCreditMemo, ApplyPaymentToInvoices, Commerce, CreateCreditMemo, CreateCustomer,
     CreateInvoice, CreateInvoiceItem, CreatePayment, CreateWriteOff, CreditMemoReason,
-    PaymentApplicationLine, WriteOffReason,
+    PaymentApplicationLine, RecordInvoicePayment, WriteOffReason,
 };
 use uuid::Uuid;
 
@@ -337,6 +337,148 @@ fn write_off_of_voided_invoice_is_rejected() {
         matches!(err, stateset_embedded::CommerceError::ValidationError(_)),
         "expected ValidationError, got: {err:?}"
     );
+}
+
+// ============================================================================
+// FIX 4 — direct payments (record_payment) must survive AR recalculation
+//
+// `record_payment` writes directly to the invoice without inserting an
+// `ar_payment_applications` row; the AR recalculation used to REPLACE
+// `amount_paid` with SUM(applications) + SUM(credit memo applications),
+// silently erasing direct payments. `direct_amount_paid` now tracks them and
+// recalculation adds it back in.
+// ============================================================================
+
+#[test]
+fn direct_payment_survives_credit_memo_application() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+
+    // Record a $50 direct payment (no AR application row).
+    let invoice = commerce
+        .invoices()
+        .record_payment(
+            invoice_id,
+            RecordInvoicePayment { amount: dec!(50.00), ..Default::default() },
+        )
+        .expect("record direct payment");
+    assert_eq!(invoice.amount_paid, dec!(50.00));
+    assert_eq!(invoice.balance_due, dec!(50.00));
+
+    // Apply a $10 credit memo — this triggers the AR recalculation.
+    let memo = commerce
+        .accounts_receivable()
+        .create_credit_memo(CreateCreditMemo {
+            customer_id: customer_id.into(),
+            amount: dec!(10.00),
+            reason: CreditMemoReason::ServiceCredit,
+            original_invoice_id: None,
+            notes: None,
+        })
+        .expect("create credit memo");
+    commerce
+        .accounts_receivable()
+        .apply_credit_memo(ApplyCreditMemo {
+            credit_memo_id: memo.id,
+            invoice_id,
+            amount: dec!(10.00),
+        })
+        .expect("apply credit memo");
+
+    // The $50 direct payment must NOT vanish: 50 direct + 10 credit = 60.
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(60.00), "recalculation must preserve the direct payment");
+    assert_eq!(invoice.balance_due, dec!(40.00));
+    assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::PartiallyPaid);
+
+    // A subsequent payment application must also preserve the direct payment.
+    let payment_id = create_payment(&commerce, customer_id, dec!(20.00));
+    commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(20.00) }],
+        })
+        .expect("apply payment");
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(80.00), "50 direct + 10 credit + 20 applied");
+    assert_eq!(invoice.balance_due, dec!(20.00));
+}
+
+#[test]
+fn direct_payment_survives_apply_unapply_cycles() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+
+    commerce
+        .invoices()
+        .record_payment(
+            invoice_id,
+            RecordInvoicePayment { amount: dec!(30.00), ..Default::default() },
+        )
+        .expect("record direct payment");
+
+    let payment_id = create_payment(&commerce, customer_id, dec!(40.00));
+    let apps = commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(40.00) }],
+        })
+        .expect("apply payment");
+    assert_eq!(apps.len(), 1);
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(70.00), "30 direct + 40 applied");
+    assert_eq!(invoice.balance_due, dec!(30.00));
+
+    // Unapplying the $40 must leave the $30 direct payment intact.
+    commerce.accounts_receivable().unapply_payment(apps[0].id).expect("unapply payment");
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(30.00), "direct payment survives unapply");
+    assert_eq!(invoice.balance_due, dec!(70.00));
+
+    // Re-applying restores the combined total.
+    commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(40.00) }],
+        })
+        .expect("re-apply payment");
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(70.00));
+    assert_eq!(invoice.balance_due, dec!(30.00));
+}
+
+#[test]
+fn applications_only_invoice_still_recalculates_as_before() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+
+    let payment_id = create_payment(&commerce, customer_id, dec!(60.00));
+    let apps = commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(60.00) }],
+        })
+        .expect("apply payment");
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(60.00));
+    assert_eq!(invoice.balance_due, dec!(40.00));
+    assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::PartiallyPaid);
+
+    // With no direct payment, unapplying returns the invoice to zero paid.
+    commerce.accounts_receivable().unapply_payment(apps[0].id).expect("unapply payment");
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(0.00));
+    assert_eq!(invoice.balance_due, dec!(100.00));
 }
 
 #[test]

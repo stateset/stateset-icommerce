@@ -94,11 +94,20 @@ async fn postgres_ap_list_methods_filter_by_date() {
     };
     assert_eq!(ap.list_payments(pay_from).await.unwrap().len(), 1, "payments from_date");
 
-    // --- payment runs (no supplier scope; asserts the date window narrows) ---
+    // --- payment runs (no supplier scope; asserts the date window narrows).
+    // Each run needs a payable (approved) bill: `create_payment_run` now
+    // validates bill_ids. ---
+    let run_supplier = uuid::Uuid::new_v4();
     for date in ["2020-01-15T00:00:00Z", "2020-03-15T00:00:00Z"] {
-        ap.create_payment_run(CreatePaymentRun { payment_date: dt(date), ..Default::default() })
-            .await
-            .expect("create run");
+        let bill_id = make_bill(&commerce, run_supplier, date).await;
+        ap.approve_bill(bill_id).await.expect("approve");
+        ap.create_payment_run(CreatePaymentRun {
+            payment_date: dt(date),
+            bill_ids: vec![bill_id],
+            ..Default::default()
+        })
+        .await
+        .expect("create run");
     }
     let runs = ap
         .list_payment_runs(PaymentRunFilter {

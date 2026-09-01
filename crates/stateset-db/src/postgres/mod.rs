@@ -430,6 +430,12 @@ impl PostgresDatabase {
             "080_inventory_exact_quantity",
             include_str!("migrations/080_inventory_exact_quantity.sql"),
         ));
+        // Bookkeeping column so direct payments (record_payment) survive the
+        // AR recalculation instead of being replaced by application sums.
+        migrations.push((
+            "081_invoice_direct_amount_paid",
+            include_str!("migrations/081_invoice_direct_amount_paid.sql"),
+        ));
 
         migrations
     }

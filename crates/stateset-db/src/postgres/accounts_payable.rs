@@ -1115,16 +1115,75 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn create_payment_run_async(&self, input: CreatePaymentRun) -> Result<PaymentRun> {
+        if input.bill_ids.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Payment run requires at least one bill".into(),
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for bill_id in &input.bill_ids {
+            if !seen.insert(*bill_id) {
+                return Err(CommerceError::ValidationError("Duplicate bill in payment run".into()));
+            }
+        }
+
         let now = Utc::now();
         let id = Uuid::new_v4();
         let run_number = generate_payment_run_number();
         let payment_date = to_date(input.payment_date);
 
+        // Single transaction with FOR UPDATE reads so bill validation, the run
+        // header, and the run-bill rows commit atomically, and concurrent run
+        // creation serializes: a bill cannot land in two active runs. Each bill
+        // must exist, be in a payable status with a positive balance, and not
+        // already sit in another draft/pending/approved/processing run.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         let mut total = Decimal::ZERO;
         for bill_id in &input.bill_ids {
-            if let Some(bill) = self.get_bill_async(*bill_id).await? {
-                total += bill.amount_due;
+            let bill =
+                sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1 FOR UPDATE")
+                    .bind(*bill_id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or(CommerceError::NotFound)?;
+
+            let bill_status: BillStatus = bill.status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid bill status '{}' while creating payment run: {}",
+                    bill.status, e
+                ))
+            })?;
+            if !matches!(
+                bill_status,
+                BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue
+            ) {
+                return Err(CommerceError::ValidationError(
+                    "Bill is not in a payable status".into(),
+                ));
             }
+            if bill.amount_due <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError("Bill has no amount due".into()));
+            }
+
+            let (active_runs,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM ap_payment_run_bills rb
+                 JOIN ap_payment_runs r ON r.id = rb.run_id
+                 WHERE rb.bill_id = $1
+                   AND r.status IN ('draft', 'pending', 'approved', 'processing')",
+            )
+            .bind(*bill_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if active_runs > 0 {
+                return Err(CommerceError::ValidationError(
+                    "Bill is already included in an active payment run".into(),
+                ));
+            }
+
+            total += bill.amount_due;
         }
 
         sqlx::query(
@@ -1143,18 +1202,20 @@ impl PgAccountsPayableRepository {
         .bind(&input.notes)
         .bind(&input.created_by)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        for bill_id in input.bill_ids {
+        for bill_id in &input.bill_ids {
             sqlx::query("INSERT INTO ap_payment_run_bills (run_id, bill_id) VALUES ($1,$2)")
                 .bind(id)
-                .bind(bill_id)
-                .execute(&self.pool)
+                .bind(*bill_id)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_payment_run_async(id)
             .await?
@@ -1210,8 +1271,11 @@ impl PgAccountsPayableRepository {
     ) -> Result<PaymentRun> {
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE ap_payment_runs SET status = $1, approved_by = $2, approved_at = $3 WHERE id = $4",
+        // Status-guarded UPDATE (same pattern as `clear_payment_async`): only a
+        // draft/pending run can be approved — a cancelled, completed, or
+        // in-flight run cannot.
+        let updated = sqlx::query(
+            "UPDATE ap_payment_runs SET status = $1, approved_by = $2, approved_at = $3 WHERE id = $4 AND status IN ('draft', 'pending')",
         )
         .bind(PaymentRunStatus::Approved.to_string())
         .bind(approved_by)
@@ -1220,6 +1284,11 @@ impl PgAccountsPayableRepository {
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Payment run not found or not in an approvable status".into(),
+            ));
+        }
 
         self.get_payment_run_async(id)
             .await?
@@ -1229,13 +1298,157 @@ impl PgAccountsPayableRepository {
     pub async fn process_payment_run_async(&self, id: Uuid) -> Result<PaymentRun> {
         let now = Utc::now();
 
-        sqlx::query("UPDATE ap_payment_runs SET status = $1, processed_at = $2 WHERE id = $3")
-            .bind(PaymentRunStatus::Completed.to_string())
-            .bind(now)
+        // One transaction for the whole disbursement: the status claim
+        // (approved → completed), every payment + allocation row, the bill
+        // updates, and the run totals commit atomically. A failure anywhere
+        // rolls everything back, leaving the run approved (retry-safe) and no
+        // money moved.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Claim: only an approved run may process (also locks the run row).
+        let claimed = sqlx::query(
+            "UPDATE ap_payment_runs SET status = $1, processed_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(PaymentRunStatus::Completed.to_string())
+        .bind(now)
+        .bind(id)
+        .bind(PaymentRunStatus::Approved.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if claimed.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Payment run not found or not in a processable status".into(),
+            ));
+        }
+
+        let run: PaymentRunRow = sqlx::query_as("SELECT * FROM ap_payment_runs WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        let bill_rows = sqlx::query_as::<_, BillRow>(
+            "SELECT b.* FROM ap_bills b JOIN ap_payment_run_bills rb ON b.id = rb.bill_id WHERE rb.run_id = $1 FOR UPDATE OF b",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let mut disbursed_total = Decimal::ZERO;
+        let mut disbursed_count: i32 = 0;
+        let mut skipped: u32 = 0;
+
+        for bill in bill_rows {
+            let bill_status: BillStatus = bill.status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid bill status '{}' while processing payment run: {}",
+                    bill.status, e
+                ))
+            })?;
+
+            // Balance/status were re-read under the row lock (FOR UPDATE
+            // above). A bill paid off or made unpayable (paid/cancelled/
+            // disputed) since run creation is skipped, not double-paid —
+            // recorded below.
+            if bill.amount_due <= Decimal::ZERO
+                || !matches!(
+                    bill_status,
+                    BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue
+                )
+            {
+                skipped += 1;
+                continue;
+            }
+
+            let amount = bill.amount_due;
+            let payment_id = Uuid::new_v4();
+            let payment_number = generate_ap_payment_number();
+            sqlx::query(
+                r#"
+                INSERT INTO ap_payments (
+                    id, payment_number, supplier_id, payment_date, payment_method, amount, currency,
+                    reference_number, bank_account, check_number, memo, status, created_at, updated_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,NULL,NULL,NULL,$8,$9,$9)
+                "#,
+            )
+            .bind(payment_id)
+            .bind(&payment_number)
+            .bind(bill.supplier_id)
+            .bind(run.payment_date)
+            .bind(&run.payment_method)
+            .bind(amount)
+            .bind(bill.currency)
+            .bind(PaymentStatusAP::Pending.to_string())
+            .bind(now)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            let alloc_id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO ap_payment_allocations (id, payment_id, bill_id, amount, created_at) VALUES ($1,$2,$3,$4,$5)",
+            )
+            .bind(alloc_id)
+            .bind(payment_id)
+            .bind(bill.id)
+            .bind(amount)
+            .bind(now)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            Self::recalculate_bill_tx(&mut tx, bill.id).await?;
+
+            let updated = sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1")
+                .bind(bill.id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            let new_status = if updated.amount_due <= Decimal::ZERO {
+                BillStatus::Paid
+            } else if updated.amount_paid > Decimal::ZERO {
+                BillStatus::PartiallyPaid
+            } else {
+                bill_status
+            };
+            sqlx::query("UPDATE ap_bills SET status = $1 WHERE id = $2")
+                .bind(new_status.to_string())
+                .bind(bill.id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+
+            disbursed_total += amount;
+            disbursed_count += 1;
+        }
+
+        // Reflect what was actually disbursed on the run row, and record any
+        // bills skipped between run creation and processing.
+        sqlx::query(
+            "UPDATE ap_payment_runs SET total_amount = $1, payment_count = $2 WHERE id = $3",
+        )
+        .bind(disbursed_total)
+        .bind(disbursed_count)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if skipped > 0 {
+            let note =
+                format!("{skipped} bill(s) skipped at processing: fully paid or no longer payable");
+            sqlx::query(
+                "UPDATE ap_payment_runs SET notes = CASE WHEN notes IS NULL OR notes = '' THEN $1 ELSE notes || '; ' || $1 END WHERE id = $2",
+            )
+            .bind(note)
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_payment_run_async(id)
             .await?
@@ -1243,12 +1456,22 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn cancel_payment_run_async(&self, id: Uuid) -> Result<PaymentRun> {
-        sqlx::query("UPDATE ap_payment_runs SET status = $1 WHERE id = $2")
-            .bind(PaymentRunStatus::Cancelled.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // Status-guarded UPDATE (same pattern as `clear_payment_async`): only a
+        // run that has not started disbursing (draft/pending/approved) can be
+        // cancelled — a processing, completed, or already-cancelled run cannot.
+        let updated = sqlx::query(
+            "UPDATE ap_payment_runs SET status = $1 WHERE id = $2 AND status IN ('draft', 'pending', 'approved')",
+        )
+        .bind(PaymentRunStatus::Cancelled.to_string())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Payment run not found or not in a cancellable status".into(),
+            ));
+        }
 
         self.get_payment_run_async(id)
             .await?

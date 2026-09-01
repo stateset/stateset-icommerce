@@ -10,11 +10,37 @@
 
 #![cfg(feature = "postgres")]
 
-use stateset_core::{CreatePaymentRun, PaymentMethodAP, PaymentRunFilter, PaymentRunStatus};
+use rust_decimal_macros::dec;
+use stateset_core::{
+    CreateBill, CreateBillItem, CreatePaymentRun, PaymentMethodAP, PaymentRunFilter,
+    PaymentRunStatus,
+};
 use stateset_embedded::AsyncCommerce;
 
 fn postgres_url() -> Option<String> {
     std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+}
+
+async fn make_approved_bill(commerce: &AsyncCommerce) -> uuid::Uuid {
+    let ap = commerce.accounts_payable();
+    let bill = ap
+        .create_bill(CreateBill {
+            supplier_id: uuid::Uuid::new_v4(),
+            due_date: "2026-12-31T00:00:00Z".parse().expect("parse date"),
+            items: vec![CreateBillItem {
+                description: "x".into(),
+                account_code: None,
+                quantity: dec!(1),
+                unit_price: dec!(10),
+                tax_rate: None,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("create bill");
+    ap.approve_bill(bill.id).await.expect("approve bill");
+    bill.id
 }
 
 #[tokio::test]
@@ -29,10 +55,17 @@ async fn postgres_list_payment_runs_applies_status_and_pagination() {
     let run_date = "2026-03-10T00:00:00Z".parse().expect("parse date");
     // A distinctive payment method scopes this test on a shared database.
     let method = PaymentMethodAP::Wire;
+
+    // Each run needs a payable (approved) bill: `create_payment_run` now
+    // validates bill_ids.
+    let bill_a = make_approved_bill(&commerce).await;
+    let bill_b = make_approved_bill(&commerce).await;
+
     let draft = ap
         .create_payment_run(CreatePaymentRun {
             payment_date: run_date,
             payment_method: method,
+            bill_ids: vec![bill_a],
             ..Default::default()
         })
         .await
@@ -41,6 +74,7 @@ async fn postgres_list_payment_runs_applies_status_and_pagination() {
         .create_payment_run(CreatePaymentRun {
             payment_date: run_date,
             payment_method: method,
+            bill_ids: vec![bill_b],
             ..Default::default()
         })
         .await

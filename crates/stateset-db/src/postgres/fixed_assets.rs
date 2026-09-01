@@ -542,11 +542,48 @@ impl PgFixedAssetRepository {
         .await
         .map_err(map_db_error)?;
         tx.commit().await.map_err(map_db_error)?;
+        let prev_accumulated = asset.accumulated_depreciation;
+        let prev_status = asset.status;
         let asset = self.load_asset_async(id).await?.ok_or(CommerceError::NotFound)?;
         let posted_amount: Decimal = pending.iter().map(|e| e.amount).sum();
         let first_period = pending.first().map_or(0, |e| e.period);
         let last_period = pending.last().map_or(0, |e| e.period);
-        self.auto_post_depreciation_entry(&asset, posted_amount, first_period, last_period).await?;
+        // The GL post runs outside the subledger transaction. If it fails,
+        // compensate: revert exactly what this call posted so a retry
+        // depreciates and posts the full amount again, instead of leaving the
+        // subledger advanced with no journal entry and no repair path.
+        // Mirrors the SQLite backend.
+        if let Err(post_err) = self
+            .auto_post_depreciation_entry(&asset, posted_amount, first_period, last_period)
+            .await
+        {
+            let revert = async {
+                let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+                sqlx::query(
+                    "UPDATE fixed_asset_depreciation_entries SET status = 'scheduled'
+                     WHERE asset_id = $1 AND period >= $2 AND period <= $3 AND status = 'posted'",
+                )
+                .bind(id)
+                .bind(i32::try_from(first_period).unwrap_or(i32::MAX))
+                .bind(i32::try_from(last_period).unwrap_or(i32::MAX))
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+                sqlx::query(
+                    "UPDATE fixed_assets SET accumulated_depreciation = $1, status = $2, updated_at = $3 WHERE id = $4",
+                )
+                .bind(prev_accumulated)
+                .bind(prev_status.to_string())
+                .bind(Utc::now())
+                .bind(id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+                tx.commit().await.map_err(map_db_error)
+            };
+            let _: Result<()> = revert.await;
+            return Err(post_err);
+        }
         Ok(asset)
     }
 

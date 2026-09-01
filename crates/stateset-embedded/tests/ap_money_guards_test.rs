@@ -16,7 +16,8 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     Bill, BillPayment, BillPaymentFilter, BillStatus, Commerce, CreateBill, CreateBillItem,
-    CreateBillPayment, PaymentAllocationInput, PaymentMethodAP, PaymentStatusAP,
+    CreateBillPayment, CreatePaymentRun, PaymentAllocationInput, PaymentMethodAP, PaymentRunStatus,
+    PaymentStatusAP,
 };
 use uuid::Uuid;
 
@@ -252,4 +253,259 @@ fn count_payments_respects_date_filters() {
         ..Default::default()
     };
     assert_eq!(ap.count_payments(none_filter).expect("count none"), 0);
+}
+
+// ============================================================================
+// Payment run state machine + real disbursement (regression: `process_payment_run`
+// was a stub that flipped status to completed without creating any payments).
+// ============================================================================
+
+fn approved_bill(commerce: &Commerce, supplier: Uuid, qty: Decimal, price: Decimal) -> Bill {
+    let bill = make_bill(commerce, supplier, qty, price);
+    commerce.accounts_payable().approve_bill(bill.id).expect("approve bill");
+    commerce.accounts_payable().get_bill(bill.id).expect("get bill").expect("bill exists")
+}
+
+fn make_run(commerce: &Commerce, bill_ids: Vec<Uuid>) -> stateset_embedded::PaymentRun {
+    commerce
+        .accounts_payable()
+        .create_payment_run(CreatePaymentRun {
+            payment_date: Utc::now(),
+            payment_method: PaymentMethodAP::Ach,
+            bill_ids,
+            notes: None,
+            created_by: Some("tester".into()),
+        })
+        .expect("create payment run")
+}
+
+#[test]
+fn process_payment_run_creates_payments_and_pays_bills() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill_a = approved_bill(&commerce, supplier, dec!(2), dec!(50)); // 100
+    let bill_b = approved_bill(&commerce, supplier, dec!(3), dec!(40)); // 120
+
+    let run = make_run(&commerce, vec![bill_a.id, bill_b.id]);
+    assert_eq!(run.status, PaymentRunStatus::Draft);
+    assert_eq!(run.total_amount, dec!(220));
+    assert_eq!(run.payment_count, 2);
+
+    ap.approve_payment_run(run.id, "controller").expect("approve run");
+    let processed = ap.process_payment_run(run.id).expect("process run");
+
+    assert_eq!(processed.status, PaymentRunStatus::Completed);
+    assert!(processed.processed_at.is_some(), "processed_at must be set");
+    assert_eq!(processed.total_amount, dec!(220), "run total must equal disbursed amount");
+    assert_eq!(processed.payment_count, 2);
+
+    // Real ap_payments rows must exist, one per bill.
+    let payments = ap
+        .list_payments(BillPaymentFilter { supplier_id: Some(supplier), ..Default::default() })
+        .expect("list payments");
+    assert_eq!(payments.len(), 2, "processing must create one payment per bill");
+    let mut amounts: Vec<Decimal> = payments.iter().map(|p| p.amount).collect();
+    amounts.sort();
+    assert_eq!(amounts, vec![dec!(100), dec!(120)]);
+    for p in &payments {
+        assert_eq!(p.status, PaymentStatusAP::Pending);
+        assert_eq!(p.payment_method, PaymentMethodAP::Ach);
+    }
+
+    // Bills are paid in full.
+    for bill_id in [bill_a.id, bill_b.id] {
+        let bill = ap.get_bill(bill_id).expect("get bill").expect("bill exists");
+        assert_eq!(bill.status, BillStatus::Paid);
+        assert_eq!(bill.amount_due, Decimal::ZERO);
+    }
+}
+
+#[test]
+fn process_payment_run_rejects_unapproved_run() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill = approved_bill(&commerce, supplier, dec!(1), dec!(75));
+
+    let run = make_run(&commerce, vec![bill.id]);
+    let result = ap.process_payment_run(run.id);
+    assert!(result.is_err(), "processing a draft run must be rejected");
+
+    let after = ap.get_payment_run(run.id).expect("get run").expect("run exists");
+    assert_eq!(after.status, PaymentRunStatus::Draft, "run must stay draft");
+    assert!(
+        ap.list_payments(BillPaymentFilter { supplier_id: Some(supplier), ..Default::default() })
+            .expect("list payments")
+            .is_empty(),
+        "no payments may be created for a rejected process"
+    );
+}
+
+#[test]
+fn process_payment_run_rejects_double_process() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill = approved_bill(&commerce, supplier, dec!(1), dec!(75));
+
+    let run = make_run(&commerce, vec![bill.id]);
+    ap.approve_payment_run(run.id, "controller").expect("approve run");
+    ap.process_payment_run(run.id).expect("first process");
+
+    let result = ap.process_payment_run(run.id);
+    assert!(result.is_err(), "a completed run must not process twice");
+
+    let payments = ap
+        .list_payments(BillPaymentFilter { supplier_id: Some(supplier), ..Default::default() })
+        .expect("list payments");
+    assert_eq!(payments.len(), 1, "double-processing must not duplicate payments");
+}
+
+#[test]
+fn approve_payment_run_rejects_cancelled_run() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill = approved_bill(&commerce, supplier, dec!(1), dec!(75));
+
+    let run = make_run(&commerce, vec![bill.id]);
+    ap.cancel_payment_run(run.id).expect("cancel run");
+
+    let result = ap.approve_payment_run(run.id, "controller");
+    assert!(result.is_err(), "approving a cancelled run must be rejected");
+
+    let after = ap.get_payment_run(run.id).expect("get run").expect("run exists");
+    assert_eq!(after.status, PaymentRunStatus::Cancelled, "run must stay cancelled");
+}
+
+#[test]
+fn cancel_payment_run_rejects_completed_run() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill = approved_bill(&commerce, supplier, dec!(1), dec!(75));
+
+    let run = make_run(&commerce, vec![bill.id]);
+    ap.approve_payment_run(run.id, "controller").expect("approve run");
+    ap.process_payment_run(run.id).expect("process run");
+
+    let result = ap.cancel_payment_run(run.id);
+    assert!(result.is_err(), "cancelling a completed run must be rejected");
+
+    let after = ap.get_payment_run(run.id).expect("get run").expect("run exists");
+    assert_eq!(after.status, PaymentRunStatus::Completed, "run must stay completed");
+}
+
+#[test]
+fn create_payment_run_rejects_duplicate_bill_ids() {
+    let commerce = commerce();
+    let supplier = Uuid::new_v4();
+    let bill = approved_bill(&commerce, supplier, dec!(1), dec!(75));
+
+    let result = commerce.accounts_payable().create_payment_run(CreatePaymentRun {
+        payment_date: Utc::now(),
+        payment_method: PaymentMethodAP::Ach,
+        bill_ids: vec![bill.id, bill.id],
+        notes: None,
+        created_by: None,
+    });
+    assert!(result.is_err(), "duplicate bill ids in a run must be rejected");
+}
+
+#[test]
+fn create_payment_run_rejects_empty_missing_and_unpayable_bills() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+
+    let empty = ap.create_payment_run(CreatePaymentRun {
+        payment_date: Utc::now(),
+        payment_method: PaymentMethodAP::Ach,
+        bill_ids: vec![],
+        notes: None,
+        created_by: None,
+    });
+    assert!(empty.is_err(), "a run with no bills must be rejected");
+
+    let missing = ap.create_payment_run(CreatePaymentRun {
+        payment_date: Utc::now(),
+        payment_method: PaymentMethodAP::Ach,
+        bill_ids: vec![Uuid::new_v4()],
+        notes: None,
+        created_by: None,
+    });
+    assert!(missing.is_err(), "a nonexistent bill must be rejected");
+
+    // Draft (unapproved) bill is not payable.
+    let draft_bill = make_bill(&commerce, supplier, dec!(1), dec!(75));
+    let unpayable = ap.create_payment_run(CreatePaymentRun {
+        payment_date: Utc::now(),
+        payment_method: PaymentMethodAP::Ach,
+        bill_ids: vec![draft_bill.id],
+        notes: None,
+        created_by: None,
+    });
+    assert!(unpayable.is_err(), "a bill not in a payable status must be rejected");
+}
+
+#[test]
+fn create_payment_run_rejects_bill_already_in_active_run() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill = approved_bill(&commerce, supplier, dec!(1), dec!(75));
+
+    let first = make_run(&commerce, vec![bill.id]);
+    let second = ap.create_payment_run(CreatePaymentRun {
+        payment_date: Utc::now(),
+        payment_method: PaymentMethodAP::Ach,
+        bill_ids: vec![bill.id],
+        notes: None,
+        created_by: None,
+    });
+    assert!(second.is_err(), "a bill already in an active run must be rejected");
+
+    // Once the first run is cancelled the bill is free again.
+    ap.cancel_payment_run(first.id).expect("cancel run");
+    let third = make_run(&commerce, vec![bill.id]);
+    assert_eq!(third.payment_count, 1);
+}
+
+#[test]
+fn process_payment_run_skips_bill_paid_after_run_creation() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill_a = approved_bill(&commerce, supplier, dec!(2), dec!(50)); // 100
+    let bill_b = approved_bill(&commerce, supplier, dec!(3), dec!(40)); // 120
+
+    let run = make_run(&commerce, vec![bill_a.id, bill_b.id]);
+    ap.approve_payment_run(run.id, "controller").expect("approve run");
+
+    // bill_a is paid in full directly, between run approval and processing.
+    pay_bill(&commerce, supplier, bill_a.id, dec!(100), None);
+
+    let processed = ap.process_payment_run(run.id).expect("process run");
+    assert_eq!(processed.status, PaymentRunStatus::Completed);
+    assert_eq!(processed.total_amount, dec!(120), "only bill_b's balance is disbursed");
+    assert_eq!(processed.payment_count, 1, "the fully-paid bill is skipped");
+    assert!(
+        processed.notes.as_deref().is_some_and(|n| n.contains("skipped")),
+        "run notes must record the skipped bill, got {:?}",
+        processed.notes
+    );
+
+    // Exactly two payments overall: the manual one plus the run's one for bill_b.
+    let payments = ap
+        .list_payments(BillPaymentFilter { supplier_id: Some(supplier), ..Default::default() })
+        .expect("list payments");
+    assert_eq!(payments.len(), 2, "the run must not double-pay bill_a");
+
+    let bill_a_after = ap.get_bill(bill_a.id).expect("get").expect("bill");
+    assert_eq!(bill_a_after.status, BillStatus::Paid);
+    assert_eq!(bill_a_after.amount_due, Decimal::ZERO);
+    let bill_b_after = ap.get_bill(bill_b.id).expect("get").expect("bill");
+    assert_eq!(bill_b_after.status, BillStatus::Paid);
+    assert_eq!(bill_b_after.amount_due, Decimal::ZERO);
 }

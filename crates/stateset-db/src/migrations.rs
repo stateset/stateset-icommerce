@@ -361,6 +361,12 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ),
         ("072_a2a_escrow_kernel", include_str!("../migrations/072_a2a_escrow_kernel.sql")),
         ("073_a2a_dispute_kernel", include_str!("../migrations/073_a2a_dispute_kernel.sql")),
+        // Bookkeeping column so direct payments (record_payment) survive the
+        // AR recalculation instead of being replaced by application sums.
+        (
+            "074_invoice_direct_amount_paid",
+            include_str!("../migrations/074_invoice_direct_amount_paid.sql"),
+        ),
     ]
 }
 

@@ -243,16 +243,20 @@ impl SqliteAccountsReceivableRepository {
             "invoice",
             "credits_amount",
         )?;
-        let total_applied = paid_dec + credits_dec;
-
-        // Get invoice total
-        let total: String = conn
+        // Get invoice total and the direct-payment balance. Direct payments
+        // (record_payment) have no ar_payment_applications row; without adding
+        // them back here, this recalculation would REPLACE amount_paid with
+        // the application sums and silently erase them.
+        let (total, direct_amount_paid): (String, String) = conn
             .query_row(
-                "SELECT total FROM invoices WHERE id = ?1",
+                "SELECT total, direct_amount_paid FROM invoices WHERE id = ?1",
                 params![invoice_id.to_string()],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(map_db_error)?;
+
+        let direct_dec = parse_decimal_safe(&direct_amount_paid, "invoice", "direct_amount_paid")?;
+        let total_applied = direct_dec + paid_dec + credits_dec;
 
         let total_dec = parse_decimal_safe(&total, "invoice", "total")?;
         let balance_due = total_dec - total_applied;

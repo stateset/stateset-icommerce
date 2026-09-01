@@ -365,6 +365,20 @@ impl PgRevenueRecognitionRepository {
     pub async fn generate_schedule_async(&self, obligation_id: Uuid) -> Result<RevenueSchedule> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let obligation = Self::require_obligation_locked(&mut tx, obligation_id).await?;
+        // A cancelled contract is dead: generating (or regenerating) a
+        // recognition schedule for it would tee up revenue that must never
+        // be recognized.
+        let contract_status: String =
+            sqlx::query_scalar("SELECT status FROM revenue_contracts WHERE id = $1")
+                .bind(obligation.contract_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if contract_status == "cancelled" {
+            return Err(CommerceError::Conflict(
+                "cannot generate a revenue schedule for a cancelled contract".into(),
+            ));
+        }
         let recognized: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM revenue_schedule_entries WHERE obligation_id = $1 AND status = 'recognized'",
         )
@@ -453,6 +467,21 @@ impl PgRevenueRecognitionRepository {
     ) -> Result<RevenueSchedule> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let obligation = Self::require_obligation_locked(&mut tx, obligation_id).await?;
+        // Revenue may only be recognized on a live contract: a draft has not
+        // been agreed and a cancelled contract is dead. Completed stays
+        // allowed so a retry after a final recognition remains an idempotent
+        // no-op. Mirrors the SQLite backend.
+        let contract_status: String =
+            sqlx::query_scalar("SELECT status FROM revenue_contracts WHERE id = $1")
+                .bind(obligation.contract_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if matches!(contract_status.as_str(), "draft" | "cancelled") {
+            return Err(CommerceError::Conflict(format!(
+                "cannot recognize revenue on a {contract_status} contract"
+            )));
+        }
         let total_entries: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM revenue_schedule_entries WHERE obligation_id = $1",
         )
@@ -474,6 +503,16 @@ impl PgRevenueRecognitionRepository {
         .await
         .map_err(map_db_error)?;
         let newly_recognized = newly_recognized.unwrap_or(Decimal::ZERO);
+        // Captured so a failed GL post below can revert exactly these entries
+        // (older recognized entries share the same period_start predicate).
+        let flipped: Vec<i32> = sqlx::query_scalar(
+            "SELECT period FROM revenue_schedule_entries WHERE obligation_id = $1 AND status = 'deferred' AND period_start <= $2",
+        )
+        .bind(obligation_id)
+        .bind(through)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
         sqlx::query(
             "UPDATE revenue_schedule_entries SET status = 'recognized' WHERE obligation_id = $1 AND status = 'deferred' AND period_start <= $2",
         )
@@ -493,7 +532,7 @@ impl PgRevenueRecognitionRepository {
         .await
         .map_err(map_db_error)?;
         // Complete the contract when every obligation is fully recognized.
-        sqlx::query(
+        let completed_now = sqlx::query(
             "UPDATE revenue_contracts SET status = 'completed', updated_at = $1
              WHERE id = $2 AND status = 'active' AND NOT EXISTS (
                  SELECT 1 FROM performance_obligations
@@ -504,9 +543,54 @@ impl PgRevenueRecognitionRepository {
         .bind(obligation.contract_id)
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected()
+            > 0;
         tx.commit().await.map_err(map_db_error)?;
-        self.auto_post_recognition_entry(obligation_id, newly_recognized, through).await?;
+        // The GL post runs outside the subledger transaction. If it fails,
+        // compensate: revert exactly what this call recognized so a retry
+        // recognizes and posts the full amount again, instead of leaving
+        // revenue recognized in the subledger with no journal entry and no
+        // repair path. Mirrors the SQLite backend.
+        if let Err(post_err) =
+            self.auto_post_recognition_entry(obligation_id, newly_recognized, through).await
+        {
+            let revert = async {
+                let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+                sqlx::query(
+                    "UPDATE revenue_schedule_entries SET status = 'deferred'
+                     WHERE obligation_id = $1 AND status = 'recognized' AND period = ANY($2)",
+                )
+                .bind(obligation_id)
+                .bind(&flipped)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+                sqlx::query(
+                    "UPDATE performance_obligations SET recognized_amount = recognized_amount - $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(newly_recognized)
+                .bind(Utc::now())
+                .bind(obligation_id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+                if completed_now {
+                    sqlx::query(
+                        "UPDATE revenue_contracts SET status = 'active', updated_at = $1
+                         WHERE id = $2 AND status = 'completed'",
+                    )
+                    .bind(Utc::now())
+                    .bind(obligation.contract_id)
+                    .execute(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+                }
+                tx.commit().await.map_err(map_db_error)
+            };
+            let _: Result<()> = revert.await;
+            return Err(post_err);
+        }
         let entries = self.load_entries_async(obligation_id).await?;
         Ok(RevenueSchedule {
             obligation_id,

@@ -480,7 +480,16 @@ impl AccountsPayable {
 
     /// Create a payment run (batch payment).
     ///
-    /// Groups multiple bills together for a scheduled payment batch.
+    /// Groups multiple bills together for a scheduled payment batch. The run is
+    /// created in `Draft` status; its `total_amount` is the sum of the bills'
+    /// outstanding balances and `payment_count` is the number of bills.
+    ///
+    /// Validation (the whole run is created atomically or not at all):
+    /// - `bill_ids` must be non-empty and free of duplicates;
+    /// - every bill must exist, be in a payable status
+    ///   (approved/partially-paid/overdue), and have a positive amount due;
+    /// - a bill already included in another active run
+    ///   (draft/pending/approved/processing) is rejected.
     ///
     /// # Example
     ///
@@ -521,19 +530,46 @@ impl AccountsPayable {
 
     /// Approve a payment run.
     ///
-    /// Requires approval before processing.
+    /// Only a `Draft` or `Pending` run can be approved; approving a cancelled,
+    /// completed, or processing run returns [`CommerceError::Conflict`].
+    /// Approval is required before processing.
+    ///
+    /// [`CommerceError::Conflict`]: crate::CommerceError::Conflict
     pub fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
         self.db.accounts_payable().approve_payment_run(id, approved_by)
     }
 
-    /// Process a payment run.
+    /// Process a payment run, disbursing the batch.
     ///
-    /// Creates individual payments for each bill and updates their status.
+    /// Only an `Approved` run can be processed; anything else (draft, pending,
+    /// already completed, cancelled) returns [`CommerceError::Conflict`], so a
+    /// run cannot be disbursed twice.
+    ///
+    /// In one atomic transaction this marks the run `Completed` and, for each
+    /// bill in the run, creates a real payment for the bill's current
+    /// outstanding balance (an `ap_payments` row in `Pending` status using the
+    /// run's payment method and date, plus its allocation) and updates the
+    /// bill's `amount_paid`/`amount_due`/status exactly like
+    /// [`create_payment`](Self::create_payment). A bill that was fully paid or
+    /// became unpayable between run creation and processing is skipped rather
+    /// than double-paid: the run's `total_amount` and `payment_count` are
+    /// adjusted to what was actually disbursed and its `notes` record the
+    /// skipped bills. On any failure everything rolls back — including the
+    /// status change — leaving the run `Approved` and retry-safe.
+    ///
+    /// [`CommerceError::Conflict`]: crate::CommerceError::Conflict
     pub fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
         self.db.accounts_payable().process_payment_run(id)
     }
 
     /// Cancel a payment run.
+    ///
+    /// Only a run that has not started disbursing (`Draft`, `Pending`, or
+    /// `Approved`) can be cancelled; cancelling a processing, completed, or
+    /// already-cancelled run returns [`CommerceError::Conflict`]. Cancelling a
+    /// run frees its bills to be included in a new run.
+    ///
+    /// [`CommerceError::Conflict`]: crate::CommerceError::Conflict
     pub fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
         self.db.accounts_payable().cancel_payment_run(id)
     }

@@ -57,10 +57,33 @@ fn sqlite_list_bills_filters_by_date() {
 fn sqlite_list_payment_runs_filters_by_date() {
     let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
     let ap = db.accounts_payable();
+    let supplier = uuid::Uuid::new_v4();
 
+    // Each run needs a payable (approved) bill: `create_payment_run` now
+    // validates bill_ids.
     let make = |date: &str| {
-        ap.create_payment_run(CreatePaymentRun { payment_date: dt(date), ..Default::default() })
-            .expect("create run");
+        let bill = ap
+            .create_bill(CreateBill {
+                supplier_id: supplier,
+                due_date: dt("2026-12-31T00:00:00Z"),
+                items: vec![CreateBillItem {
+                    description: "x".into(),
+                    account_code: None,
+                    quantity: dec!(1),
+                    unit_price: dec!(10),
+                    tax_rate: None,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .expect("create bill");
+        ap.approve_bill(bill.id).expect("approve bill");
+        ap.create_payment_run(CreatePaymentRun {
+            payment_date: dt(date),
+            bill_ids: vec![bill.id],
+            ..Default::default()
+        })
+        .expect("create run");
     };
     make("2026-01-15T00:00:00Z");
     make("2026-03-15T00:00:00Z");

@@ -7,8 +7,10 @@
 //! (`from_date`/`to_date` remain deferred — entangled with the AP date-storage
 //! divergence, as with the other AP list filters.)
 
+use rust_decimal_macros::dec;
 use stateset_core::{
-    AccountsPayableRepository, CreatePaymentRun, PaymentRunFilter, PaymentRunStatus,
+    AccountsPayableRepository, CreateBill, CreateBillItem, CreatePaymentRun, PaymentRunFilter,
+    PaymentRunStatus,
 };
 use stateset_db::SqliteDatabase;
 
@@ -17,12 +19,42 @@ fn sqlite_list_payment_runs_applies_status_and_pagination() {
     let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
     let ap = db.accounts_payable();
 
+    // Each run needs a payable (approved) bill: `create_payment_run` now
+    // validates bill_ids.
+    let approved_bill = || {
+        let bill = ap
+            .create_bill(CreateBill {
+                supplier_id: uuid::Uuid::new_v4(),
+                due_date: "2026-12-31T00:00:00Z".parse().expect("parse date"),
+                items: vec![CreateBillItem {
+                    description: "x".into(),
+                    account_code: None,
+                    quantity: dec!(1),
+                    unit_price: dec!(10),
+                    tax_rate: None,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .expect("create bill");
+        ap.approve_bill(bill.id).expect("approve bill");
+        bill.id
+    };
+
     let run_date = "2026-03-10T00:00:00Z".parse().expect("parse date");
     let draft = ap
-        .create_payment_run(CreatePaymentRun { payment_date: run_date, ..Default::default() })
+        .create_payment_run(CreatePaymentRun {
+            payment_date: run_date,
+            bill_ids: vec![approved_bill()],
+            ..Default::default()
+        })
         .expect("create draft run");
     let to_cancel = ap
-        .create_payment_run(CreatePaymentRun { payment_date: run_date, ..Default::default() })
+        .create_payment_run(CreatePaymentRun {
+            payment_date: run_date,
+            bill_ids: vec![approved_bill()],
+            ..Default::default()
+        })
         .expect("create second run");
     ap.cancel_payment_run(to_cancel.id).expect("cancel run");
 
