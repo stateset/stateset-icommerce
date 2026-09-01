@@ -1133,29 +1133,58 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry> {
         let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
-        if entry.status != JournalEntryStatus::Posted {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Can only reverse posted entries".to_string(),
-            ));
-        }
-
-        // Claim the entry (posted -> reversed) before creating the reversing
-        // entry, which commits its own transactions; the status guard ensures
-        // concurrent reversals cannot both create (and auto-post) a reversal.
         let conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let claimed = conn
-            .execute(
-                "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = ?1 AND status = 'posted'",
-                params![id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        if claimed == 0 {
-            return Err(stateset_core::CommerceError::Conflict(
-                "Journal entry was modified concurrently".to_string(),
-            ));
+        match entry.status {
+            JournalEntryStatus::Posted => {
+                // Claim the entry (posted -> reversed) before creating the
+                // reversing entry, which commits its own transactions; the
+                // status guard ensures concurrent reversals cannot both
+                // create (and auto-post) a reversal.
+                let claimed = conn
+                    .execute(
+                        "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = ?1 AND status = 'posted'",
+                        params![id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                if claimed == 0 {
+                    return Err(stateset_core::CommerceError::Conflict(
+                        "Journal entry was modified concurrently".to_string(),
+                    ));
+                }
+            }
+            JournalEntryStatus::Reversed => {
+                // A claim with no reversing entry is the stranded state left
+                // by a crash between the claim and the reversing entry's
+                // creation (the best-effort un-claim below can itself be
+                // lost). Resume it; an entry whose reversal exists stays a
+                // completed reversal and rejects a second one (repairing the
+                // cross-links first if a crash lost them).
+                if let Some(reversal) = self.existing_entry_for_source("reversal", id)? {
+                    conn.execute(
+                        "UPDATE gl_journal_entries SET reversing_entry_id = ?1
+                         WHERE id = ?2 AND reversing_entry_id IS NULL",
+                        params![reversal.id.to_string(), id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                    conn.execute(
+                        "UPDATE gl_journal_entries SET reversed_entry_id = ?1
+                         WHERE id = ?2 AND reversed_entry_id IS NULL",
+                        params![id.to_string(), reversal.id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                    return Err(stateset_core::CommerceError::Conflict(
+                        "Journal entry is already reversed".to_string(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(stateset_core::CommerceError::ValidationError(
+                    "Can only reverse posted entries".to_string(),
+                ));
+            }
         }
 
         // Create reversing entry with swapped debits/credits
@@ -1659,17 +1688,37 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT a.id, a.account_number, a.name, a.account_type, a.normal_balance, a.current_balance
+        // Balances are derived from journal lines dated on or before the
+        // requested date (posted and reversed entries carry balance effect;
+        // draft and voided do not), so the report honors `as_of_date` instead
+        // of echoing the live running balance.
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.id, a.account_number, a.name, a.account_type, a.normal_balance,
+                    decimal_sum(t.debit_amount) AS debits,
+                    decimal_sum(t.credit_amount) AS credits
              FROM gl_accounts a
+             LEFT JOIN (
+                 SELECT l.account_id, l.debit_amount, l.credit_amount
+                 FROM gl_journal_entry_lines l
+                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
+                 WHERE je.status IN ('posted', 'reversed') AND je.entry_date <= ?1
+             ) t ON t.account_id = a.id
              WHERE a.is_posting = 1 AND a.status = 'active'
-             ORDER BY a.account_number"
-        ).map_err(map_db_error)?;
+             GROUP BY a.id
+             ORDER BY a.account_number",
+            )
+            .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map([], |row| {
-                let balance = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+            .query_map(params![as_of_date.to_string()], |row| {
+                let debits = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+                let credits = parse_decimal_required(row.get::<_, String>(6)?, 6)?;
                 let normal_balance: BalanceSide = parse_required(row.get::<_, String>(4)?, 4)?;
+                let balance = match normal_balance {
+                    BalanceSide::Credit => credits - debits,
+                    _ => debits - credits,
+                };
 
                 let (debit_balance, credit_balance) = match normal_balance {
                     BalanceSide::Debit => (balance, Decimal::ZERO),
@@ -1722,23 +1771,37 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         let mut total_liabilities = Decimal::ZERO;
         let mut total_equity = Decimal::ZERO;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, account_number, name, account_type, account_sub_type, current_balance, normal_balance
-             FROM gl_accounts
-             WHERE is_posting = 1 AND status = 'active'
-               AND account_type IN ('asset', 'liability', 'equity')
-             ORDER BY account_number"
-        ).map_err(map_db_error)?;
+        // Same as-of derivation as the trial balance: lines from posted and
+        // reversed entries dated on or before the requested date.
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
+                    decimal_sum(t.debit_amount) AS debits,
+                    decimal_sum(t.credit_amount) AS credits,
+                    a.normal_balance
+             FROM gl_accounts a
+             LEFT JOIN (
+                 SELECT l.account_id, l.debit_amount, l.credit_amount
+                 FROM gl_journal_entry_lines l
+                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
+                 WHERE je.status IN ('posted', 'reversed') AND je.entry_date <= ?1
+             ) t ON t.account_id = a.id
+             WHERE a.is_posting = 1 AND a.status = 'active'
+               AND a.account_type IN ('asset', 'liability', 'equity')
+             GROUP BY a.id
+             ORDER BY a.account_number",
+            )
+            .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map([], |row| {
-                let balance = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
-                let normal_balance: BalanceSide = parse_required(row.get::<_, String>(6)?, 6)?;
+            .query_map(params![as_of_date.to_string()], |row| {
+                let debits = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+                let credits = parse_decimal_required(row.get::<_, String>(6)?, 6)?;
+                let normal_balance: BalanceSide = parse_required(row.get::<_, String>(7)?, 7)?;
 
                 let display_balance = match normal_balance {
-                    BalanceSide::Debit => balance,
-                    BalanceSide::Credit => balance,
-                    _ => balance,
+                    BalanceSide::Credit => credits - debits,
+                    _ => debits - credits,
                 };
 
                 Ok((
@@ -1914,9 +1977,39 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     fn get_account_balance(
         &self,
         account_id: Uuid,
-        _as_of_date: Option<NaiveDate>,
+        as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
-        Ok(self.get_account(account_id)?.map(|account| account.current_balance))
+        let Some(account) = self.get_account(account_id)? else {
+            return Ok(None);
+        };
+        // Without a date the live running balance answers; with one, derive
+        // from journal lines dated on or before it (posted and reversed
+        // entries carry balance effect; draft and voided do not).
+        let Some(as_of) = as_of_date else {
+            return Ok(Some(account.current_balance));
+        };
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let (debits, credits): (String, String) = conn
+            .query_row(
+                "SELECT decimal_sum(l.debit_amount), decimal_sum(l.credit_amount)
+                 FROM gl_journal_entry_lines l
+                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
+                 WHERE l.account_id = ?1
+                   AND je.status IN ('posted', 'reversed') AND je.entry_date <= ?2",
+                params![account_id.to_string(), as_of.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_db_error)?;
+        let debits = parse_decimal_required(debits, 0).map_err(map_db_error)?;
+        let credits = parse_decimal_required(credits, 1).map_err(map_db_error)?;
+        let balance = match account.normal_balance {
+            BalanceSide::Credit => credits - debits,
+            _ => debits - credits,
+        };
+        Ok(Some(balance))
     }
 
     fn get_account_transactions(
@@ -2738,6 +2831,43 @@ mod tests {
 
         assert_eq!(account_balance(&repo, cash.id), dec!(0));
         assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+    }
+
+    #[test]
+    fn reverse_journal_entry_resumes_a_stranded_claim() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(60));
+        repo.post_journal_entry(entry.id, "tester").expect("post");
+
+        // Simulate a crash between the reversal claim and the reversing
+        // entry's creation: status flipped, balances applied, no reversal.
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = ?1",
+            params![entry.id.to_string()],
+        )
+        .expect("simulate stranded claim");
+        drop(conn);
+        assert_eq!(account_balance(&repo, cash.id), dec!(60));
+
+        // The retry must resume: create the reversing entry and net out.
+        let reversal = repo
+            .reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 16).expect("date"))
+            .expect("resume stranded reversal");
+        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+        let original = repo.get_journal_entry(entry.id).expect("get").expect("entry");
+        assert_eq!(original.reversing_entry_id, Some(reversal.id));
+        assert_eq!(reversal.reversed_entry_id, Some(entry.id));
+
+        // A further reversal is still rejected.
+        let err = repo
+            .reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 17).expect("date"))
+            .expect_err("second reversal must fail");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
     }
 
     #[test]

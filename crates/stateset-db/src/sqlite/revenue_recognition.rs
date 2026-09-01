@@ -387,6 +387,19 @@ impl stateset_core::RevenueRecognitionRepository for SqliteRevenueRecognitionRep
         let ob_str = obligation_id.to_string();
         with_immediate_transaction(&self.pool, |tx| {
             let obligation = Self::load_obligation(tx, &ob_str)?;
+            // A cancelled contract is dead: generating (or regenerating) a
+            // recognition schedule for it would tee up revenue that must
+            // never be recognized.
+            let contract_status: String = tx.query_row(
+                "SELECT status FROM revenue_contracts WHERE id = ?",
+                rusqlite::params![obligation.contract_id.to_string()],
+                |row| row.get(0),
+            )?;
+            if contract_status == "cancelled" {
+                return Err(Self::conflict(
+                    "cannot generate a revenue schedule for a cancelled contract",
+                ));
+            }
             let recognized: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM revenue_schedule_entries WHERE obligation_id = ? AND status = 'recognized'",
                 [&ob_str],
@@ -463,50 +476,115 @@ impl stateset_core::RevenueRecognitionRepository for SqliteRevenueRecognitionRep
         let ob_str = obligation_id.to_string();
         let now = Utc::now().to_rfc3339();
         let through_str = through.to_string();
-        let (schedule, newly_recognized) = with_immediate_transaction(&self.pool, |tx| {
-            let obligation = Self::load_obligation(tx, &ob_str)?;
-            let entries = Self::load_entries(tx, &ob_str)?;
-            if entries.is_empty() {
-                return Err(Self::conflict(
-                    "no revenue schedule has been generated for this obligation",
-                ));
-            }
-            let newly_recognized: Decimal = entries
-                .iter()
-                .filter(|e| e.status == RevenueEntryStatus::Deferred && e.period_start <= through)
-                .map(|e| e.amount)
-                .sum();
-            tx.execute(
-                "UPDATE revenue_schedule_entries SET status = 'recognized'
+        let (schedule, newly_recognized, flipped, prev_recognized, completed_now, contract_str) =
+            with_immediate_transaction(&self.pool, |tx| {
+                let obligation = Self::load_obligation(tx, &ob_str)?;
+                // Revenue may only be recognized on a live contract: a draft has
+                // not been agreed and a cancelled contract is dead — a scheduled
+                // recognition job must not flip their deferred entries or post
+                // revenue to the GL. Completed stays allowed so a retry after a
+                // final recognition remains an idempotent no-op.
+                let contract_status: String = tx.query_row(
+                    "SELECT status FROM revenue_contracts WHERE id = ?",
+                    rusqlite::params![obligation.contract_id.to_string()],
+                    |row| row.get(0),
+                )?;
+                if matches!(contract_status.as_str(), "draft" | "cancelled") {
+                    return Err(Self::conflict(&format!(
+                        "cannot recognize revenue on a {contract_status} contract"
+                    )));
+                }
+                let entries = Self::load_entries(tx, &ob_str)?;
+                if entries.is_empty() {
+                    return Err(Self::conflict(
+                        "no revenue schedule has been generated for this obligation",
+                    ));
+                }
+                let flipped: Vec<u32> = entries
+                    .iter()
+                    .filter(|e| {
+                        e.status == RevenueEntryStatus::Deferred && e.period_start <= through
+                    })
+                    .map(|e| e.period)
+                    .collect();
+                let newly_recognized: Decimal = entries
+                    .iter()
+                    .filter(|e| {
+                        e.status == RevenueEntryStatus::Deferred && e.period_start <= through
+                    })
+                    .map(|e| e.amount)
+                    .sum();
+                tx.execute(
+                    "UPDATE revenue_schedule_entries SET status = 'recognized'
                  WHERE obligation_id = ? AND status = 'deferred' AND period_start <= ?",
-                rusqlite::params![&ob_str, &through_str],
-            )?;
-            let recognized_amount = obligation.recognized_amount + newly_recognized;
-            tx.execute(
+                    rusqlite::params![&ob_str, &through_str],
+                )?;
+                let recognized_amount = obligation.recognized_amount + newly_recognized;
+                tx.execute(
                 "UPDATE performance_obligations SET recognized_amount = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![recognized_amount.to_string(), &now, &ob_str],
             )?;
-            // Complete the contract when every obligation is fully recognized.
-            let contract_str = obligation.contract_id.to_string();
-            let contract = Self::load_full(tx, &contract_str)?;
-            if contract.status == RevenueContractStatus::Active && contract.is_fully_recognized() {
-                tx.execute(
+                // Complete the contract when every obligation is fully recognized.
+                let contract_str = obligation.contract_id.to_string();
+                let contract = Self::load_full(tx, &contract_str)?;
+                let mut completed_now = false;
+                if contract.status == RevenueContractStatus::Active
+                    && contract.is_fully_recognized()
+                {
+                    tx.execute(
                     "UPDATE revenue_contracts SET status = 'completed', updated_at = ? WHERE id = ?",
                     rusqlite::params![&now, &contract_str],
                 )?;
-            }
-            let entries = Self::load_entries(tx, &ob_str)?;
-            Ok((
-                RevenueSchedule {
-                    obligation_id,
-                    method: obligation.recognition_method,
-                    total_amount: entries.iter().map(|e| e.amount).sum(),
-                    entries,
-                },
-                newly_recognized,
-            ))
-        })?;
-        self.auto_post_recognition_entry(obligation_id, newly_recognized, through)?;
+                    completed_now = true;
+                }
+                let entries = Self::load_entries(tx, &ob_str)?;
+                Ok((
+                    RevenueSchedule {
+                        obligation_id,
+                        method: obligation.recognition_method,
+                        total_amount: entries.iter().map(|e| e.amount).sum(),
+                        entries,
+                    },
+                    newly_recognized,
+                    flipped,
+                    obligation.recognized_amount,
+                    completed_now,
+                    contract_str,
+                ))
+            })?;
+        // The GL post runs outside the subledger transaction (the GL
+        // repository opens its own connection). If it fails, compensate:
+        // revert exactly what this call recognized so a retry recognizes and
+        // posts the full amount again, instead of leaving revenue recognized
+        // in the subledger with no journal entry and no repair path.
+        if let Err(post_err) =
+            self.auto_post_recognition_entry(obligation_id, newly_recognized, through)
+        {
+            let ob_str = obligation_id.to_string();
+            let now = Utc::now().to_rfc3339();
+            let _ = with_immediate_transaction(&self.pool, |tx| {
+                for period in &flipped {
+                    tx.execute(
+                        "UPDATE revenue_schedule_entries SET status = 'deferred'
+                         WHERE obligation_id = ? AND period = ? AND status = 'recognized'",
+                        rusqlite::params![&ob_str, i64::from(*period)],
+                    )?;
+                }
+                tx.execute(
+                    "UPDATE performance_obligations SET recognized_amount = ?, updated_at = ? WHERE id = ?",
+                    rusqlite::params![prev_recognized.to_string(), &now, &ob_str],
+                )?;
+                if completed_now {
+                    tx.execute(
+                        "UPDATE revenue_contracts SET status = 'active', updated_at = ?
+                         WHERE id = ? AND status = 'completed'",
+                        rusqlite::params![&now, &contract_str],
+                    )?;
+                }
+                Ok(())
+            });
+            return Err(post_err);
+        }
         Ok(schedule)
     }
 }
@@ -622,6 +700,18 @@ mod tests {
         }
     }
 
+    /// Recognition requires a live contract; activate it the way callers do.
+    fn activate(repo: &SqliteRevenueRecognitionRepository, id: Uuid) {
+        repo.update_contract(
+            id,
+            UpdateRevenueContract {
+                status: Some(RevenueContractStatus::Active),
+                ..Default::default()
+            },
+        )
+        .expect("activate contract");
+    }
+
     #[test]
     fn create_get_contract_with_obligations() {
         let repo = test_repo();
@@ -692,6 +782,7 @@ mod tests {
     fn recognize_is_idempotent_for_recognized_entries() {
         let repo = test_repo();
         let c = repo.create_contract(create_input()).expect("create");
+        activate(&repo, c.id);
         let ratable =
             c.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
         repo.generate_schedule(ratable.id).expect("schedule");
@@ -711,6 +802,7 @@ mod tests {
     fn regenerate_after_recognition_conflicts() {
         let repo = test_repo();
         let c = repo.create_contract(create_input()).expect("create");
+        activate(&repo, c.id);
         let ratable =
             c.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
         repo.generate_schedule(ratable.id).expect("schedule");
@@ -722,7 +814,54 @@ mod tests {
     fn recognize_without_schedule_conflicts() {
         let repo = test_repo();
         let c = repo.create_contract(create_input()).expect("create");
+        activate(&repo, c.id);
         assert!(repo.recognize_period(c.obligations[0].id, date(2026, 6, 30)).is_err());
+    }
+
+    #[test]
+    fn recognize_on_draft_or_cancelled_contract_conflicts() {
+        let repo = test_repo();
+        // Draft: schedules can be generated for planning, but nothing may be
+        // recognized until the contract is activated.
+        let c = repo.create_contract(create_input()).expect("create");
+        let ratable =
+            c.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
+        repo.generate_schedule(ratable.id).expect("draft schedule generation is allowed");
+        assert!(repo.recognize_period(ratable.id, date(2026, 6, 30)).is_err());
+
+        // Cancelled: recognition and schedule generation are both dead ends.
+        let c2 = repo.create_contract(create_input()).expect("create second");
+        let ratable2 =
+            c2.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
+        repo.update_contract(
+            c2.id,
+            UpdateRevenueContract {
+                status: Some(RevenueContractStatus::Cancelled),
+                ..Default::default()
+            },
+        )
+        .expect("cancel contract");
+        assert!(repo.recognize_period(ratable2.id, date(2026, 6, 30)).is_err());
+        assert!(repo.generate_schedule(ratable2.id).is_err());
+    }
+
+    #[test]
+    fn recognize_retry_on_completed_contract_is_a_noop() {
+        let repo = test_repo();
+        let c = repo.create_contract(create_input()).expect("create");
+        activate(&repo, c.id);
+        for ob in &c.obligations {
+            repo.generate_schedule(ob.id).expect("schedule");
+            repo.recognize_period(ob.id, date(2026, 12, 31)).expect("recognize");
+        }
+        let c = repo.get_contract(c.id).expect("get").expect("found");
+        assert_eq!(c.status, RevenueContractStatus::Completed);
+        // A retry after completion (e.g. re-delivered close-month job) stays
+        // an idempotent no-op rather than an error.
+        let again = repo
+            .recognize_period(c.obligations[0].id, date(2026, 12, 31))
+            .expect("retry recognizes nothing");
+        assert_eq!(again.deferred_total(), dec!(0));
     }
 
     #[test]
@@ -781,6 +920,92 @@ mod tests {
             AccountSubType, AccountType, CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod,
             GeneralLedgerRepository, JournalEntryFilter, JournalEntryStatus,
         };
+
+        #[test]
+        fn failed_gl_post_reverts_the_subledger_recognition() {
+            let (repo, gl) = test_repos();
+            // Auto-post enabled but no unearned-revenue account configured or
+            // in the chart: the GL post fails AFTER the subledger update.
+            gl.initialize_chart_of_accounts().expect("init chart");
+            let by_number = |n: &str| {
+                gl.get_account_by_number(n).expect("get account").expect("account exists").id
+            };
+            gl.set_auto_posting_config(stateset_core::CreateAutoPostingConfig {
+                config_name: "no unearned".into(),
+                cash_account_id: by_number("1010"),
+                accounts_receivable_account_id: by_number("1100"),
+                inventory_account_id: by_number("1200"),
+                accounts_payable_account_id: by_number("2010"),
+                unearned_revenue_account_id: None,
+                sales_revenue_account_id: by_number("4010"),
+                shipping_revenue_account_id: None,
+                cogs_account_id: by_number("5010"),
+                bad_debt_expense_account_id: None,
+                fx_gain_loss_account_id: None,
+                auto_post_depreciation: false,
+                auto_post_revenue_recognition: true,
+            })
+            .expect("set config");
+
+            let c = repo.create_contract(create_input()).expect("create");
+            activate(&repo, c.id);
+            let ratable =
+                c.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
+            repo.generate_schedule(ratable.id).expect("schedule");
+
+            let err = repo.recognize_period(ratable.id, date(2026, 3, 31));
+            assert!(err.is_err(), "recognition must fail when the GL post fails: {err:?}");
+
+            // Compensation: nothing recognized, everything still deferred.
+            let s = repo.get_schedule(ratable.id).expect("get").expect("schedule");
+            assert_eq!(s.recognized_total(), dec!(0), "failed GL post must revert recognition");
+            assert_eq!(s.deferred_total(), dec!(1000));
+            let ob = repo
+                .list_obligations(c.id)
+                .expect("obligations")
+                .into_iter()
+                .find(|o| o.id == ratable.id)
+                .expect("found");
+            assert_eq!(ob.recognized_amount, dec!(0));
+
+            // Fixing the configuration makes a retry recognize AND post.
+            let unearned_id = gl
+                .create_account(CreateGlAccount {
+                    account_number: "2100".into(),
+                    name: "Unearned Revenue".into(),
+                    description: None,
+                    account_type: AccountType::Liability,
+                    account_sub_type: Some(AccountSubType::UnearnedRevenue),
+                    parent_account_id: None,
+                    is_header: Some(false),
+                    is_posting: Some(true),
+                    currency: None,
+                })
+                .expect("create unearned account")
+                .id;
+            let period = gl
+                .create_period(CreateGlPeriod {
+                    period_name: "FY-wide".into(),
+                    fiscal_year: 2026,
+                    period_number: 1,
+                    start_date: date(2020, 1, 1),
+                    end_date: date(2030, 12, 31),
+                })
+                .expect("create period");
+            gl.open_period(period.id).expect("open period");
+
+            let s = repo.recognize_period(ratable.id, date(2026, 3, 31)).expect("retry");
+            assert_eq!(s.recognized_total(), dec!(249.99));
+            let entries = gl
+                .list_journal_entries(JournalEntryFilter {
+                    source_document_id: Some(ratable.id),
+                    ..Default::default()
+                })
+                .expect("list entries");
+            assert_eq!(entries.len(), 1, "retry posts the full recognition once");
+            assert_eq!(entries[0].total_debits, dec!(249.99));
+            let _ = unearned_id;
+        }
 
         fn test_repos() -> (SqliteRevenueRecognitionRepository, SqliteGeneralLedgerRepository) {
             let db = SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("in-memory db");
@@ -847,6 +1072,7 @@ mod tests {
             let unearned_id = setup_gl(&gl, true);
 
             let c = repo.create_contract(create_input()).expect("create");
+            activate(&repo, c.id);
             let ratable =
                 c.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
             repo.generate_schedule(ratable.id).expect("schedule");
@@ -893,6 +1119,7 @@ mod tests {
             setup_gl(&gl, false);
 
             let c = repo.create_contract(create_input()).expect("create");
+            activate(&repo, c.id);
             let ratable =
                 c.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
             repo.generate_schedule(ratable.id).expect("schedule");
@@ -912,6 +1139,7 @@ mod tests {
         fn recognize_period_without_config_creates_no_journal_entry() {
             let (repo, gl) = test_repos();
             let c = repo.create_contract(create_input()).expect("create");
+            activate(&repo, c.id);
             let ratable =
                 c.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
             repo.generate_schedule(ratable.id).expect("schedule");

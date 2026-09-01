@@ -695,16 +695,23 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         // an error for a payment that actually landed and tempt the caller to
         // retry and double-pay. (`tx` deref-coerces to `&Connection`.)
         with_immediate_transaction(&self.pool, |tx| {
-            let (total, amount_paid): (String, String) = tx.query_row(
-                "SELECT total, amount_paid FROM invoices WHERE id = ?",
+            let (total, amount_paid, direct_amount_paid): (String, String, String) = tx.query_row(
+                "SELECT total, amount_paid, direct_amount_paid FROM invoices WHERE id = ?",
                 [&id_str],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
 
             let total_dec = parse_decimal_row(&total, "invoice", "total")?;
             let amount_paid_dec = parse_decimal_row(&amount_paid, "invoice", "amount_paid")?;
+            let direct_dec =
+                parse_decimal_row(&direct_amount_paid, "invoice", "direct_amount_paid")?;
 
             let new_amount_paid = money(amount_paid_dec + payment.amount);
+            // A direct payment is not backed by an ar_payment_applications row,
+            // so track it separately: the AR recalculation rebuilds amount_paid
+            // as direct_amount_paid + application sums and would otherwise
+            // erase this payment.
+            let new_direct = money(direct_dec + payment.amount);
             let new_balance = money(total_dec - new_amount_paid);
 
             let new_status = if new_balance <= Decimal::ZERO {
@@ -716,10 +723,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             let paid_at = if new_status == InvoiceStatus::Paid { Some(now) } else { None };
 
             tx.execute(
-                "UPDATE invoices SET amount_paid = ?, balance_due = ?, status = ?,
-                 paid_at = COALESCE(?, paid_at), updated_at = ? WHERE id = ?",
+                "UPDATE invoices SET amount_paid = ?, direct_amount_paid = ?, balance_due = ?,
+                 status = ?, paid_at = COALESCE(?, paid_at), updated_at = ? WHERE id = ?",
                 params![
                     new_amount_paid.to_string(),
+                    new_direct.to_string(),
                     new_balance.to_string(),
                     new_status.to_string(),
                     paid_at.map(|d| d.to_rfc3339()),

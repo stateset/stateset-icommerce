@@ -1092,27 +1092,63 @@ impl PgGeneralLedgerRepository {
     ) -> Result<JournalEntry> {
         let entry = self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)?;
 
-        if entry.status != JournalEntryStatus::Posted {
-            return Err(CommerceError::ValidationError(
-                "Can only reverse posted entries".to_string(),
-            ));
-        }
+        match entry.status {
+            JournalEntryStatus::Posted => {
+                // Claim the entry (posted -> reversed) before creating the
+                // reversing entry, which commits its own transactions; the
+                // status guard ensures concurrent reversals cannot both
+                // create (and auto-post) a reversal.
+                let claimed = sqlx::query(
+                    "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = $1 AND status = 'posted'",
+                )
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
-        // Claim the entry (posted -> reversed) before creating the reversing
-        // entry, which commits its own transactions; the status guard ensures
-        // concurrent reversals cannot both create (and auto-post) a reversal.
-        let claimed = sqlx::query(
-            "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = $1 AND status = 'posted'",
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        if claimed.rows_affected() == 0 {
-            return Err(CommerceError::Conflict(
-                "Journal entry was modified concurrently".to_string(),
-            ));
+                if claimed.rows_affected() == 0 {
+                    return Err(CommerceError::Conflict(
+                        "Journal entry was modified concurrently".to_string(),
+                    ));
+                }
+            }
+            JournalEntryStatus::Reversed => {
+                // A claim with no reversing entry is the stranded state left
+                // by a crash between the claim and the reversing entry's
+                // creation (the best-effort un-claim below can itself be
+                // lost). Resume it; an entry whose reversal exists stays a
+                // completed reversal and rejects a second one (repairing the
+                // cross-links first if a crash lost them). Mirrors SQLite.
+                if let Some(reversal) = self.existing_entry_for_source_async("reversal", id).await?
+                {
+                    sqlx::query(
+                        "UPDATE gl_journal_entries SET reversing_entry_id = $1
+                         WHERE id = $2 AND reversing_entry_id IS NULL",
+                    )
+                    .bind(reversal.id)
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_db_error)?;
+                    sqlx::query(
+                        "UPDATE gl_journal_entries SET reversed_entry_id = $1
+                         WHERE id = $2 AND reversed_entry_id IS NULL",
+                    )
+                    .bind(id)
+                    .bind(reversal.id)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_db_error)?;
+                    return Err(CommerceError::Conflict(
+                        "Journal entry is already reversed".to_string(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(CommerceError::ValidationError(
+                    "Can only reverse posted entries".to_string(),
+                ));
+            }
         }
 
         let reversing_lines: Vec<CreateJournalEntryLine> = entry
@@ -1517,10 +1553,26 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn get_trial_balance_async(&self, as_of_date: NaiveDate) -> Result<TrialBalance> {
-        let rows = sqlx::query_as::<_, (Uuid, String, String, String, String, Decimal)>(
-            "SELECT id, account_number, name, account_type, normal_balance, current_balance
-             FROM gl_accounts WHERE is_posting = TRUE AND status = 'active' ORDER BY account_number",
+        // Balances are derived from journal lines dated on or before the
+        // requested date (posted and reversed entries carry balance effect;
+        // draft and voided do not), so the report honors `as_of_date` instead
+        // of echoing the live running balance. Mirrors the SQLite backend.
+        let rows = sqlx::query_as::<_, (Uuid, String, String, String, String, Decimal, Decimal)>(
+            "SELECT a.id, a.account_number, a.name, a.account_type, a.normal_balance,
+                    COALESCE(SUM(t.debit_amount), 0) AS debits,
+                    COALESCE(SUM(t.credit_amount), 0) AS credits
+             FROM gl_accounts a
+             LEFT JOIN (
+                 SELECT l.account_id, l.debit_amount, l.credit_amount
+                 FROM gl_journal_entry_lines l
+                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
+                 WHERE je.status IN ('posted', 'reversed') AND je.entry_date <= $1
+             ) t ON t.account_id = a.id
+             WHERE a.is_posting = TRUE AND a.status = 'active'
+             GROUP BY a.id
+             ORDER BY a.account_number",
         )
+        .bind(as_of_date)
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -1529,13 +1581,17 @@ impl PgGeneralLedgerRepository {
         let mut total_debits = Decimal::ZERO;
         let mut total_credits = Decimal::ZERO;
 
-        for (id, number, name, account_type, normal_balance, balance) in rows {
+        for (id, number, name, account_type, normal_balance, debits, credits) in rows {
             let normal: BalanceSide = normal_balance.parse().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid gl_account.normal_balance '{}': {}",
                     normal_balance, e
                 ))
             })?;
+            let balance = match normal {
+                BalanceSide::Credit => credits - debits,
+                _ => debits - credits,
+            };
             let (debit_balance, credit_balance) = match normal {
                 BalanceSide::Debit => (balance, Decimal::ZERO),
                 BalanceSide::Credit => (Decimal::ZERO, balance),
@@ -1572,13 +1628,29 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn get_balance_sheet_async(&self, as_of_date: NaiveDate) -> Result<BalanceSheet> {
-        let rows = sqlx::query_as::<_, (Uuid, String, String, String, Option<String>, Decimal, String)>(
-            "SELECT id, account_number, name, account_type, account_sub_type, current_balance, normal_balance
-             FROM gl_accounts
-             WHERE is_posting = TRUE AND status = 'active'
-               AND account_type IN ('asset', 'liability', 'equity')
-             ORDER BY account_number",
+        // Same as-of derivation as the trial balance: lines from posted and
+        // reversed entries dated on or before the requested date.
+        let rows = sqlx::query_as::<
+            _,
+            (Uuid, String, String, String, Option<String>, Decimal, Decimal, String),
+        >(
+            "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
+                    COALESCE(SUM(t.debit_amount), 0) AS debits,
+                    COALESCE(SUM(t.credit_amount), 0) AS credits,
+                    a.normal_balance
+             FROM gl_accounts a
+             LEFT JOIN (
+                 SELECT l.account_id, l.debit_amount, l.credit_amount
+                 FROM gl_journal_entry_lines l
+                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
+                 WHERE je.status IN ('posted', 'reversed') AND je.entry_date <= $1
+             ) t ON t.account_id = a.id
+             WHERE a.is_posting = TRUE AND a.status = 'active'
+               AND a.account_type IN ('asset', 'liability', 'equity')
+             GROUP BY a.id
+             ORDER BY a.account_number",
         )
+        .bind(as_of_date)
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -1590,7 +1662,17 @@ impl PgGeneralLedgerRepository {
         let mut total_liabilities = Decimal::ZERO;
         let mut total_equity = Decimal::ZERO;
 
-        for (id, number, name, account_type, sub_type, balance, _normal_balance) in rows {
+        for (id, number, name, account_type, sub_type, debits, credits, normal_balance) in rows {
+            let normal: BalanceSide = normal_balance.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid gl_account.normal_balance '{}': {}",
+                    normal_balance, e
+                ))
+            })?;
+            let balance = match normal {
+                BalanceSide::Credit => credits - debits,
+                _ => debits - credits,
+            };
             let account_type: AccountType = account_type.parse().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid gl_account.account_type '{}': {}",
@@ -1740,9 +1822,34 @@ impl PgGeneralLedgerRepository {
     pub async fn get_account_balance_async(
         &self,
         account_id: Uuid,
-        _as_of_date: Option<NaiveDate>,
+        as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
-        Ok(self.get_account_async(account_id).await?.map(|account| account.current_balance))
+        let Some(account) = self.get_account_async(account_id).await? else {
+            return Ok(None);
+        };
+        // Without a date the live running balance answers; with one, derive
+        // from journal lines dated on or before it (posted and reversed
+        // entries carry balance effect; draft and voided do not).
+        let Some(as_of) = as_of_date else {
+            return Ok(Some(account.current_balance));
+        };
+        let (debits, credits): (Decimal, Decimal) = sqlx::query_as(
+            "SELECT COALESCE(SUM(l.debit_amount), 0), COALESCE(SUM(l.credit_amount), 0)
+             FROM gl_journal_entry_lines l
+             JOIN gl_journal_entries je ON l.journal_entry_id = je.id
+             WHERE l.account_id = $1
+               AND je.status IN ('posted', 'reversed') AND je.entry_date <= $2",
+        )
+        .bind(account_id)
+        .bind(as_of)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        let balance = match account.normal_balance {
+            BalanceSide::Credit => credits - debits,
+            _ => debits - credits,
+        };
+        Ok(Some(balance))
     }
 
     pub async fn get_account_transactions_async(

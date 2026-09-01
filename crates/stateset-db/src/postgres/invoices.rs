@@ -659,14 +659,19 @@ impl PgInvoiceRepository {
         // payments on the same invoice serialize (each reads the prior payment's
         // committed total) rather than racing on a stale read and losing a
         // payment — matching the refund path's `FOR UPDATE` hardening.
-        let (total, amount_paid): (Decimal, Decimal) =
-            sqlx::query_as("SELECT total, amount_paid FROM invoices WHERE id = $1 FOR UPDATE")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+        let (total, amount_paid, direct_amount_paid): (Decimal, Decimal, Decimal) = sqlx::query_as(
+            "SELECT total, amount_paid, direct_amount_paid FROM invoices WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         let new_amount_paid = amount_paid + payment.amount;
+        // A direct payment is not backed by an ar_payment_applications row, so
+        // track it separately: the AR recalculation rebuilds amount_paid as
+        // direct_amount_paid + application sums and would otherwise erase it.
+        let new_direct = direct_amount_paid + payment.amount;
         let new_balance = total - new_amount_paid;
 
         let new_status = if new_balance <= Decimal::ZERO {
@@ -680,11 +685,12 @@ impl PgInvoiceRepository {
 
         sqlx::query(
             r#"UPDATE invoices SET
-                amount_paid = $1, balance_due = $2, status = $3,
-                paid_at = COALESCE($4, paid_at), updated_at = $5
-            WHERE id = $6"#,
+                amount_paid = $1, direct_amount_paid = $2, balance_due = $3, status = $4,
+                paid_at = COALESCE($5, paid_at), updated_at = $6
+            WHERE id = $7"#,
         )
         .bind(new_amount_paid)
+        .bind(new_direct)
         .bind(new_balance)
         .bind(new_status.to_string())
         .bind(paid_at)

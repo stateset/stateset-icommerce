@@ -486,9 +486,8 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         }
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
-        let (asset, posted_amount, first_period, last_period) = with_immediate_transaction(
-            &self.pool,
-            |tx| {
+        let (asset, posted_amount, first_period, last_period, prev_accumulated, prev_status) =
+            with_immediate_transaction(&self.pool, |tx| {
                 let asset = Self::load_asset(tx, &id_str)?;
                 if asset.status != FixedAssetStatus::InService {
                     return Err(Self::conflict(
@@ -530,10 +529,43 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
                 let posted_amount: Decimal = pending.iter().map(|e| e.amount).sum();
                 let first_period = pending.first().map_or(0, |e| e.period);
                 let last_period = pending.last().map_or(0, |e| e.period);
-                Ok((Self::load_asset(tx, &id_str)?, posted_amount, first_period, last_period))
-            },
-        )?;
-        self.auto_post_depreciation_entry(&asset, posted_amount, first_period, last_period)?;
+                Ok((
+                    Self::load_asset(tx, &id_str)?,
+                    posted_amount,
+                    first_period,
+                    last_period,
+                    asset.accumulated_depreciation,
+                    asset.status,
+                ))
+            })?;
+        // The GL post runs outside the subledger transaction (the GL
+        // repository opens its own connection). If it fails, compensate:
+        // revert exactly what this call posted so a retry depreciates and
+        // posts the full amount again, instead of leaving the subledger
+        // advanced with no journal entry and no repair path.
+        if let Err(post_err) =
+            self.auto_post_depreciation_entry(&asset, posted_amount, first_period, last_period)
+        {
+            let now = Utc::now().to_rfc3339();
+            let _ = with_immediate_transaction(&self.pool, |tx| {
+                tx.execute(
+                    "UPDATE fixed_asset_depreciation_entries SET status = 'scheduled'
+                     WHERE asset_id = ? AND period >= ? AND period <= ? AND status = 'posted'",
+                    rusqlite::params![&id_str, i64::from(first_period), i64::from(last_period)],
+                )?;
+                tx.execute(
+                    "UPDATE fixed_assets SET accumulated_depreciation = ?, status = ?, updated_at = ? WHERE id = ?",
+                    rusqlite::params![
+                        prev_accumulated.to_string(),
+                        prev_status.to_string(),
+                        &now,
+                        &id_str
+                    ],
+                )?;
+                Ok(())
+            });
+            return Err(post_err);
+        }
         Ok(asset)
     }
 }
@@ -893,6 +925,54 @@ mod tests {
                 .expect("in service");
             repo.generate_schedule(a.id).expect("schedule");
             a
+        }
+
+        #[test]
+        fn failed_gl_post_reverts_the_depreciation_posting() {
+            let (repo, gl) = test_repos();
+            // Auto-post enabled but no depreciation accounts exist: the GL
+            // post fails AFTER the subledger update.
+            setup_gl(&gl, true);
+
+            let a = in_service_asset(&repo);
+            let err = repo.post_depreciation(a.id, 3);
+            assert!(err.is_err(), "posting must fail when the GL post fails: {err:?}");
+
+            // Compensation: entries back to scheduled, asset untouched.
+            let a = repo.get(a.id).expect("get").expect("asset");
+            assert_eq!(a.accumulated_depreciation, dec!(0), "failed GL post must revert");
+            assert_eq!(a.status, FixedAssetStatus::InService);
+            let schedule = repo.get_schedule(a.id).expect("schedule").expect("some");
+            assert!(
+                schedule.entries.iter().all(|e| e.status == DepreciationEntryStatus::Scheduled),
+                "all entries must be back to scheduled"
+            );
+
+            // Fixing the chart makes a retry post the full amount once.
+            create_sub_account(
+                &gl,
+                "5300",
+                "Depreciation Expense",
+                AccountType::Expense,
+                AccountSubType::DepreciationExpense,
+            );
+            create_sub_account(
+                &gl,
+                "1510",
+                "Accumulated Depreciation",
+                AccountType::Asset,
+                AccountSubType::AccumulatedDepreciation,
+            );
+            let a = repo.post_depreciation(a.id, 3).expect("retry");
+            assert_eq!(a.accumulated_depreciation, dec!(750));
+            let entries = gl
+                .list_journal_entries(JournalEntryFilter {
+                    source_document_id: Some(a.id),
+                    ..Default::default()
+                })
+                .expect("list entries");
+            assert_eq!(entries.len(), 1, "retry posts the full depreciation once");
+            assert_eq!(entries[0].total_debits, dec!(750));
         }
 
         #[test]

@@ -202,6 +202,74 @@ fn income_statement_excludes_closing_entries() {
 }
 
 #[test]
+fn reports_respect_as_of_date() {
+    let commerce = new_commerce();
+    setup(&commerce);
+    let gl = commerce.general_ledger();
+    let by_number =
+        |n: &str| gl.get_account_by_number(n).expect("get account").expect("account exists").id;
+    let cash_id = by_number("1010");
+
+    post_revenue_entry(&commerce, date(2026, 1, 15)); // $100
+    post_revenue_entry(&commerce, date(2026, 2, 10)); // $100 more
+
+    // Trial balance as of Jan 31 must exclude the February entry.
+    let tb_jan = gl.get_trial_balance(date(2026, 1, 31)).expect("trial balance jan");
+    assert_eq!(tb_jan.total_debits, dec!(100.00));
+    assert_eq!(tb_jan.total_credits, dec!(100.00));
+    assert!(tb_jan.is_balanced);
+    let tb_feb = gl.get_trial_balance(date(2026, 2, 28)).expect("trial balance feb");
+    assert_eq!(tb_feb.total_debits, dec!(200.00));
+
+    // Balance sheet cash line follows the same cutoff.
+    let bs_jan = gl.get_balance_sheet(date(2026, 1, 31)).expect("balance sheet jan");
+    let cash_jan = bs_jan.assets.iter().find(|l| l.account_id == cash_id).expect("cash line");
+    assert_eq!(cash_jan.balance, dec!(100.00));
+    let bs_feb = gl.get_balance_sheet(date(2026, 2, 28)).expect("balance sheet feb");
+    let cash_feb = bs_feb.assets.iter().find(|l| l.account_id == cash_id).expect("cash line");
+    assert_eq!(cash_feb.balance, dec!(200.00));
+
+    // get_account_balance: dated queries derive; None stays the live balance.
+    assert_eq!(
+        gl.get_account_balance(cash_id, Some(date(2026, 1, 31))).expect("dated balance"),
+        Some(dec!(100.00))
+    );
+    assert_eq!(gl.get_account_balance(cash_id, None).expect("live balance"), Some(dec!(200.00)));
+}
+
+#[test]
+fn reports_exclude_voided_and_draft_entries() {
+    let commerce = new_commerce();
+    setup(&commerce);
+    let gl = commerce.general_ledger();
+    let by_number =
+        |n: &str| gl.get_account_by_number(n).expect("get account").expect("account exists").id;
+
+    let posted = post_revenue_entry(&commerce, date(2026, 1, 15)); // $100
+    // A draft entry must not appear in reports.
+    gl.create_journal_entry(CreateJournalEntry {
+        entry_date: date(2026, 1, 20),
+        description: "Draft".into(),
+        lines: vec![
+            CreateJournalEntryLine::debit(by_number("1010"), dec!(40.00), None),
+            CreateJournalEntryLine::credit(by_number("4010"), dec!(40.00), None),
+        ],
+        entry_type: None,
+        source_document_type: None,
+        source_document_id: None,
+        auto_post: Some(false),
+    })
+    .expect("create draft");
+
+    let tb = gl.get_trial_balance(date(2026, 1, 31)).expect("trial balance");
+    assert_eq!(tb.total_debits, dec!(100.00), "draft entries must not count");
+
+    gl.void_journal_entry(posted).expect("void");
+    let tb = gl.get_trial_balance(date(2026, 1, 31)).expect("trial balance after void");
+    assert_eq!(tb.total_debits, dec!(0.00), "voided entries must not count");
+}
+
+#[test]
 fn run_period_close_twice_is_rejected() {
     let commerce = new_commerce();
     let period_id = setup(&commerce);
