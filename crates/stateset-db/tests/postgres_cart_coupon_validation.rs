@@ -374,7 +374,7 @@ fn test_address() -> CartAddress {
         line2: None,
         city: "London".into(),
         state: None,
-        postal_code: "N1".into(),
+        postal_code: "N1 9GU".into(),
         country: "GB".into(),
         phone: None,
         email: Some("ada@example.com".into()),

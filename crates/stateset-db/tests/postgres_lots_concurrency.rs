@@ -131,12 +131,22 @@ async fn postgres_merge_refuses_quarantined_source_lot() {
     let sku = format!("LOT-MERGE-{}", Uuid::new_v4().simple());
     let active = db
         .lots()
-        .create_async(CreateLot { sku: sku.clone(), quantity: dec!(30), ..Default::default() })
+        .create_async(CreateLot {
+            sku: sku.clone(),
+            lot_number: Some(format!("ACTIVE-{}", Uuid::new_v4().simple())),
+            quantity: dec!(30),
+            ..Default::default()
+        })
         .await
         .expect("create active lot");
     let quarantined = db
         .lots()
-        .create_async(CreateLot { sku, quantity: dec!(20), ..Default::default() })
+        .create_async(CreateLot {
+            sku,
+            lot_number: Some(format!("QUAR-{}", Uuid::new_v4().simple())),
+            quantity: dec!(20),
+            ..Default::default()
+        })
         .await
         .expect("create second lot");
     db.lots().quarantine_async(quarantined.id, "qc fail").await.expect("quarantine");
