@@ -503,16 +503,6 @@ impl PgRevenueRecognitionRepository {
         .await
         .map_err(map_db_error)?;
         let newly_recognized = newly_recognized.unwrap_or(Decimal::ZERO);
-        // Captured so a failed GL post below can revert exactly these entries
-        // (older recognized entries share the same period_start predicate).
-        let flipped: Vec<i32> = sqlx::query_scalar(
-            "SELECT period FROM revenue_schedule_entries WHERE obligation_id = $1 AND status = 'deferred' AND period_start <= $2",
-        )
-        .bind(obligation_id)
-        .bind(through)
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
         sqlx::query(
             "UPDATE revenue_schedule_entries SET status = 'recognized' WHERE obligation_id = $1 AND status = 'deferred' AND period_start <= $2",
         )
@@ -532,7 +522,7 @@ impl PgRevenueRecognitionRepository {
         .await
         .map_err(map_db_error)?;
         // Complete the contract when every obligation is fully recognized.
-        let completed_now = sqlx::query(
+        sqlx::query(
             "UPDATE revenue_contracts SET status = 'completed', updated_at = $1
              WHERE id = $2 AND status = 'active' AND NOT EXISTS (
                  SELECT 1 FROM performance_obligations
@@ -543,54 +533,14 @@ impl PgRevenueRecognitionRepository {
         .bind(obligation.contract_id)
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?
-        .rows_affected()
-            > 0;
+        .map_err(map_db_error)?;
+        // The GL entry posts on THIS transaction: the subledger recognition
+        // and its journal entry are one atomic fact — a GL failure rolls back
+        // the recognition, so a retry recognizes and posts the full amount.
+        // Mirrors the SQLite backend.
+        self.auto_post_recognition_entry_tx(&mut tx, obligation_id, newly_recognized, through)
+            .await?;
         tx.commit().await.map_err(map_db_error)?;
-        // The GL post runs outside the subledger transaction. If it fails,
-        // compensate: revert exactly what this call recognized so a retry
-        // recognizes and posts the full amount again, instead of leaving
-        // revenue recognized in the subledger with no journal entry and no
-        // repair path. Mirrors the SQLite backend.
-        if let Err(post_err) =
-            self.auto_post_recognition_entry(obligation_id, newly_recognized, through).await
-        {
-            let revert = async {
-                let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-                sqlx::query(
-                    "UPDATE revenue_schedule_entries SET status = 'deferred'
-                     WHERE obligation_id = $1 AND status = 'recognized' AND period = ANY($2)",
-                )
-                .bind(obligation_id)
-                .bind(&flipped)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-                sqlx::query(
-                    "UPDATE performance_obligations SET recognized_amount = recognized_amount - $1, updated_at = $2 WHERE id = $3",
-                )
-                .bind(newly_recognized)
-                .bind(Utc::now())
-                .bind(obligation_id)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-                if completed_now {
-                    sqlx::query(
-                        "UPDATE revenue_contracts SET status = 'active', updated_at = $1
-                         WHERE id = $2 AND status = 'completed'",
-                    )
-                    .bind(Utc::now())
-                    .bind(obligation.contract_id)
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-                }
-                tx.commit().await.map_err(map_db_error)
-            };
-            let _: Result<()> = revert.await;
-            return Err(post_err);
-        }
         let entries = self.load_entries_async(obligation_id).await?;
         Ok(RevenueSchedule {
             obligation_id,
@@ -602,64 +552,67 @@ impl PgRevenueRecognitionRepository {
 
     /// Create and post a balanced revenue-recognition journal entry
     /// (debit deferred/unearned revenue, credit sales revenue) when the active
-    /// GL auto-posting config has `auto_post_revenue_recognition` enabled.
-    ///
-    /// Mirrors the invoice auto-posting pattern: config-gated, posted via the
-    /// existing general-ledger repository. The deferred-revenue account is the
-    /// config's `unearned_revenue_account_id`, falling back to the first active
-    /// posting account with the `unearned_revenue` sub-type; revenue is credited
-    /// to the config's `sales_revenue_account_id`.
-    async fn auto_post_recognition_entry(
+    /// GL auto-posting config has `auto_post_revenue_recognition` enabled —
+    /// entirely on the caller's transaction, so the subledger recognition and
+    /// its GL entry commit or roll back together. The deferred-revenue account
+    /// is the config's `unearned_revenue_account_id`, falling back to the
+    /// first active posting account with the `unearned_revenue` sub-type;
+    /// revenue is credited to the config's `sales_revenue_account_id`.
+    async fn auto_post_recognition_entry_tx(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         obligation_id: Uuid,
         amount: Decimal,
         through: NaiveDate,
     ) -> Result<()> {
-        let gl = super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone());
-        let Some(config) = gl.get_auto_posting_config_async().await? else { return Ok(()) };
+        use super::general_ledger::PgGeneralLedgerRepository as Gl;
+        let Some(config) = Gl::get_auto_posting_config_tx(tx).await? else { return Ok(()) };
         if !config.auto_post_revenue_recognition || amount <= Decimal::ZERO {
             return Ok(());
         }
         let deferred_account_id = match config.unearned_revenue_account_id {
             Some(id) => id,
-            None => gl
-                .list_accounts_async(stateset_core::GlAccountFilter {
-                    account_sub_type: Some(stateset_core::AccountSubType::UnearnedRevenue),
-                    status: Some(stateset_core::AccountStatus::Active),
-                    is_posting: Some(true),
-                    limit: Some(1),
-                    ..Default::default()
-                })
-                .await?
-                .first()
-                .map(|a| a.id)
-                .ok_or_else(|| {
-                    CommerceError::ValidationError(
-                        "auto-post revenue recognition requires an unearned_revenue account in the auto-posting config or chart of accounts"
-                            .to_string(),
-                    )
-                })?,
+            None => sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM gl_accounts
+                 WHERE account_sub_type = 'unearned_revenue'
+                   AND status = 'active' AND is_posting = TRUE
+                 ORDER BY account_number LIMIT 1",
+            )
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or_else(|| {
+                CommerceError::ValidationError(
+                    "auto-post revenue recognition requires an unearned_revenue account in the auto-posting config or chart of accounts"
+                        .to_string(),
+                )
+            })?,
         };
-        gl.create_journal_entry_async(stateset_core::CreateJournalEntry {
-            entry_date: through,
-            entry_type: Some(stateset_core::JournalEntryType::Standard),
-            description: format!("Revenue recognition for obligation {obligation_id}"),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    deferred_account_id,
-                    amount,
-                    Some("Deferred Revenue".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    config.sales_revenue_account_id,
-                    amount,
-                    Some("Sales Revenue".to_string()),
-                ),
-            ],
-            source_document_type: Some("revenue_recognition".to_string()),
-            source_document_id: Some(obligation_id),
-            auto_post: Some(true),
-        })
+        let gl = Gl::new(self.pool.clone());
+        gl.create_posted_entry_tx(
+            tx,
+            &stateset_core::CreateJournalEntry {
+                entry_date: through,
+                entry_type: Some(stateset_core::JournalEntryType::Standard),
+                description: format!("Revenue recognition for obligation {obligation_id}"),
+                lines: vec![
+                    stateset_core::CreateJournalEntryLine::debit(
+                        deferred_account_id,
+                        amount,
+                        Some("Deferred Revenue".to_string()),
+                    ),
+                    stateset_core::CreateJournalEntryLine::credit(
+                        config.sales_revenue_account_id,
+                        amount,
+                        Some("Sales Revenue".to_string()),
+                    ),
+                ],
+                source_document_type: Some("revenue_recognition".to_string()),
+                source_document_id: Some(obligation_id),
+                auto_post: Some(true),
+            },
+            "system",
+        )
         .await?;
         Ok(())
     }

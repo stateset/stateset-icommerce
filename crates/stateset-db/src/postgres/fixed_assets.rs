@@ -541,50 +541,24 @@ impl PgFixedAssetRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-        tx.commit().await.map_err(map_db_error)?;
-        let prev_accumulated = asset.accumulated_depreciation;
-        let prev_status = asset.status;
-        let asset = self.load_asset_async(id).await?.ok_or(CommerceError::NotFound)?;
         let posted_amount: Decimal = pending.iter().map(|e| e.amount).sum();
         let first_period = pending.first().map_or(0, |e| e.period);
         let last_period = pending.last().map_or(0, |e| e.period);
-        // The GL post runs outside the subledger transaction. If it fails,
-        // compensate: revert exactly what this call posted so a retry
-        // depreciates and posts the full amount again, instead of leaving the
-        // subledger advanced with no journal entry and no repair path.
-        // Mirrors the SQLite backend.
-        if let Err(post_err) = self
-            .auto_post_depreciation_entry(&asset, posted_amount, first_period, last_period)
-            .await
-        {
-            let revert = async {
-                let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-                sqlx::query(
-                    "UPDATE fixed_asset_depreciation_entries SET status = 'scheduled'
-                     WHERE asset_id = $1 AND period >= $2 AND period <= $3 AND status = 'posted'",
-                )
-                .bind(id)
-                .bind(i32::try_from(first_period).unwrap_or(i32::MAX))
-                .bind(i32::try_from(last_period).unwrap_or(i32::MAX))
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-                sqlx::query(
-                    "UPDATE fixed_assets SET accumulated_depreciation = $1, status = $2, updated_at = $3 WHERE id = $4",
-                )
-                .bind(prev_accumulated)
-                .bind(prev_status.to_string())
-                .bind(Utc::now())
-                .bind(id)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-                tx.commit().await.map_err(map_db_error)
-            };
-            let _: Result<()> = revert.await;
-            return Err(post_err);
-        }
-        Ok(asset)
+        // The GL entry posts on THIS transaction: the depreciation posting
+        // and its journal entry are one atomic fact — a GL failure rolls back
+        // the posting, so a retry posts the full amount. Mirrors the SQLite
+        // backend. The account fields the entry needs are unchanged by the
+        // updates above, so the pre-update asset row is authoritative.
+        self.auto_post_depreciation_entry_tx(
+            &mut tx,
+            &asset,
+            posted_amount,
+            first_period,
+            last_period,
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.load_asset_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Create and post a balanced depreciation journal entry
@@ -595,26 +569,30 @@ impl PgFixedAssetRepository {
     /// existing general-ledger repository. Accounts come from the asset itself,
     /// falling back to the first active posting account with the matching
     /// account sub-type.
-    async fn auto_post_depreciation_entry(
+    ///
+    /// The entry posts on the CALLER'S transaction, so the subledger posting
+    /// and its GL entry commit or roll back together.
+    async fn auto_post_depreciation_entry_tx(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         asset: &FixedAsset,
         amount: Decimal,
         first_period: u32,
         last_period: u32,
     ) -> Result<()> {
-        let gl = super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone());
-        let Some(config) = gl.get_auto_posting_config_async().await? else { return Ok(()) };
+        use super::general_ledger::PgGeneralLedgerRepository as Gl;
+        let Some(config) = Gl::get_auto_posting_config_tx(tx).await? else { return Ok(()) };
         if !config.auto_post_depreciation || amount <= Decimal::ZERO {
             return Ok(());
         }
-        let expense_account_id = Self::resolve_depreciation_account(
-            &gl,
+        let expense_account_id = Self::resolve_depreciation_account_tx(
+            tx,
             asset.depreciation_expense_account_id,
             stateset_core::AccountSubType::DepreciationExpense,
         )
         .await?;
-        let accumulated_account_id = Self::resolve_depreciation_account(
-            &gl,
+        let accumulated_account_id = Self::resolve_depreciation_account_tx(
+            tx,
             asset.accumulated_depreciation_account_id,
             stateset_core::AccountSubType::AccumulatedDepreciation,
         )
@@ -624,51 +602,56 @@ impl PgFixedAssetRepository {
         } else {
             format!("periods {first_period}-{last_period}")
         };
-        gl.create_journal_entry_async(stateset_core::CreateJournalEntry {
-            entry_date: Utc::now().date_naive(),
-            entry_type: Some(stateset_core::JournalEntryType::Standard),
-            description: format!("Depreciation {} {periods}", asset.asset_number),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    expense_account_id,
-                    amount,
-                    Some("Depreciation Expense".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    accumulated_account_id,
-                    amount,
-                    Some("Accumulated Depreciation".to_string()),
-                ),
-            ],
-            source_document_type: Some("fixed_asset_depreciation".to_string()),
-            source_document_id: Some(asset.id),
-            auto_post: Some(true),
-        })
+        let gl = Gl::new(self.pool.clone());
+        gl.create_posted_entry_tx(
+            tx,
+            &stateset_core::CreateJournalEntry {
+                entry_date: Utc::now().date_naive(),
+                entry_type: Some(stateset_core::JournalEntryType::Standard),
+                description: format!("Depreciation {} {periods}", asset.asset_number),
+                lines: vec![
+                    stateset_core::CreateJournalEntryLine::debit(
+                        expense_account_id,
+                        amount,
+                        Some("Depreciation Expense".to_string()),
+                    ),
+                    stateset_core::CreateJournalEntryLine::credit(
+                        accumulated_account_id,
+                        amount,
+                        Some("Accumulated Depreciation".to_string()),
+                    ),
+                ],
+                source_document_type: Some("fixed_asset_depreciation".to_string()),
+                source_document_id: Some(asset.id),
+                auto_post: Some(true),
+            },
+            "system",
+        )
         .await?;
         Ok(())
     }
 
     /// Resolve a GL account for depreciation posting: prefer the account
     /// configured on the asset, then fall back to the first active posting
-    /// account with the given sub-type in the chart of accounts.
-    async fn resolve_depreciation_account(
-        gl: &super::general_ledger::PgGeneralLedgerRepository,
+    /// account with the given sub-type in the chart of accounts — read on the
+    /// caller's transaction.
+    async fn resolve_depreciation_account_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         preferred: Option<Uuid>,
         sub_type: stateset_core::AccountSubType,
     ) -> Result<Uuid> {
         if let Some(id) = preferred {
             return Ok(id);
         }
-        gl.list_accounts_async(stateset_core::GlAccountFilter {
-            account_sub_type: Some(sub_type),
-            status: Some(stateset_core::AccountStatus::Active),
-            is_posting: Some(true),
-            limit: Some(1),
-            ..Default::default()
-        })
-        .await?
-        .first()
-        .map(|a| a.id)
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM gl_accounts
+             WHERE account_sub_type = $1 AND status = 'active' AND is_posting = TRUE
+             ORDER BY account_number LIMIT 1",
+        )
+        .bind(sub_type.to_string())
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
         .ok_or_else(|| {
             CommerceError::ValidationError(format!(
                 "auto-post depreciation requires a {sub_type} account on the asset or in the chart of accounts"

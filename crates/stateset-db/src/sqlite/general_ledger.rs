@@ -20,6 +20,42 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Families where one journal entry per source document is an invariant.
+/// Recognition and depreciation post many entries per document and are
+/// deliberately excluded. The returned key feeds the unique
+/// `gl_journal_entries.source_document_key` backstop index.
+fn source_document_key(
+    source_document_type: Option<&str>,
+    source_document_id: Option<Uuid>,
+) -> Option<String> {
+    const SINGLE_ENTRY_TYPES: [&str; 8] = [
+        "invoice",
+        "payment",
+        "bill",
+        "bill_payment",
+        "cost_transaction",
+        "write_off",
+        "period_close",
+        "reversal",
+    ];
+    match (source_document_type, source_document_id) {
+        (Some(kind), Some(id)) if SINGLE_ENTRY_TYPES.contains(&kind) => {
+            Some(format!("{kind}:{id}"))
+        }
+        _ => None,
+    }
+}
+
+/// Reduce a stored RFC3339 timestamp to its calendar date, erroring in
+/// `rusqlite` terms for use inside transaction closures.
+fn parse_rfc3339_date_with_conn(raw: &str, field: &str) -> rusqlite::Result<NaiveDate> {
+    chrono::DateTime::parse_from_rfc3339(raw).map(|dt| dt.date_naive()).map_err(|e| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(
+            stateset_core::CommerceError::DatabaseError(format!("invalid {field} {raw:?}: {e}")),
+        ))
+    })
+}
+
 #[derive(Debug)]
 pub struct SqliteGeneralLedgerRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -275,6 +311,212 @@ impl SqliteGeneralLedgerRepository {
         };
         drop(conn);
         self.get_journal_entry(parse_uuid(&id, "gl_journal_entry", "id")?)
+    }
+
+    /// Active auto-posting configuration, read on the caller's connection so
+    /// subledger transactions can resolve accounts without leaving their
+    /// transaction.
+    pub(crate) fn get_auto_posting_config_with_conn(
+        conn: &rusqlite::Transaction<'_>,
+    ) -> rusqlite::Result<Option<AutoPostingConfig>> {
+        match conn.query_row(
+            "SELECT id, config_name, cash_account_id, accounts_receivable_account_id,
+                    inventory_account_id, accounts_payable_account_id, unearned_revenue_account_id,
+                    sales_revenue_account_id, shipping_revenue_account_id, cogs_account_id,
+                    bad_debt_expense_account_id, fx_gain_loss_account_id, auto_post_depreciation,
+                    auto_post_revenue_recognition, is_active, created_at, updated_at
+             FROM gl_auto_posting_config WHERE is_active = 1 LIMIT 1",
+            [],
+            Self::map_auto_posting_config_row,
+        ) {
+            Ok(config) => Ok(Some(config)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Active auto-posting configuration or a typed "not configured" error,
+    /// for the `auto_post_*` transaction bodies.
+    fn require_auto_posting_config_with_conn(
+        conn: &rusqlite::Transaction<'_>,
+    ) -> rusqlite::Result<AutoPostingConfig> {
+        Self::get_auto_posting_config_with_conn(conn)?.ok_or_else(|| {
+            rusqlite::Error::ToSqlConversionFailure(Box::new(
+                stateset_core::CommerceError::ValidationError(
+                    "Auto-posting not configured".to_string(),
+                ),
+            ))
+        })
+    }
+
+    /// Create AND post a balanced journal entry entirely on the caller's
+    /// connection/transaction: validation, the entry and line inserts, the
+    /// account-balance updates, and the outbox event commit (or roll back)
+    /// together with whatever else the caller is doing. This is what lets a
+    /// subledger mutation and its GL posting be a single atomic fact.
+    pub(crate) fn create_posted_entry_with_conn(
+        conn: &rusqlite::Transaction<'_>,
+        input: &CreateJournalEntry,
+        posted_by: &str,
+    ) -> rusqlite::Result<JournalEntry> {
+        let to_rusqlite =
+            |e: stateset_core::CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let entry_number = generate_journal_entry_number();
+
+        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
+        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
+        if total_debits != total_credits {
+            return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
+                "Journal entry must balance to post: debits {total_debits} != credits {total_credits}"
+            ))));
+        }
+        if let Some((index, _)) = input.lines.iter().enumerate().find(|(_, l)| {
+            !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
+        }) {
+            return Err(to_rusqlite(stateset_core::CommerceError::JournalLineNotSingleSided {
+                entry_id: id,
+                line_number: i32::try_from(index + 1).unwrap_or(i32::MAX),
+            }));
+        }
+
+        let (period_id, period_status): (String, String) = match conn.query_row(
+            "SELECT id, status FROM gl_periods WHERE start_date <= ?1 AND end_date >= ?1",
+            params![input.entry_date.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ) {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
+                    "No period found for date {}",
+                    input.entry_date
+                ))));
+            }
+            Err(e) => return Err(e),
+        };
+        if period_status != "open" {
+            return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
+                "Period is not open for posting".to_string(),
+            )));
+        }
+
+        conn.execute(
+            "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id,
+             entry_type, source, source_document_type, source_document_id,
+             source_document_key, description,
+             total_debits, total_credits, is_balanced, status, posted_at, posted_by,
+             created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, 'posted', ?13, ?14, ?15, ?15)",
+            params![
+                id.to_string(),
+                entry_number,
+                input.entry_date.to_string(),
+                period_id,
+                input.entry_type.unwrap_or(JournalEntryType::Standard).to_string(),
+                JournalEntrySource::Manual.to_string(),
+                input.source_document_type,
+                input.source_document_id.map(|id| id.to_string()),
+                source_document_key(
+                    input.source_document_type.as_deref(),
+                    input.source_document_id,
+                ),
+                input.description,
+                total_debits.to_string(),
+                total_credits.to_string(),
+                now.to_rfc3339(),
+                posted_by,
+                now.to_rfc3339(),
+            ],
+        )?;
+
+        for (line_num, line) in input.lines.iter().enumerate() {
+            let account: GlAccount = conn.query_row(
+                "SELECT id, account_number, name, description, account_type, account_sub_type,
+                        parent_account_id, is_header, is_posting, normal_balance, currency,
+                        status, current_balance, created_at, updated_at
+                 FROM gl_accounts WHERE id = ?1",
+                params![line.account_id.to_string()],
+                Self::map_account_row,
+            )?;
+            conn.execute(
+                "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number,
+                 account_id, account_number, account_name, description, debit_amount,
+                 credit_amount, currency, reference_type, reference_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    id.to_string(),
+                    (line_num + 1) as i32,
+                    line.account_id.to_string(),
+                    account.account_number,
+                    account.name,
+                    line.description,
+                    line.debit_amount.to_string(),
+                    line.credit_amount.to_string(),
+                    account.currency,
+                    line.reference_type,
+                    line.reference_id.map(|id| id.to_string()),
+                    now.to_rfc3339(),
+                ],
+            )?;
+            Self::update_account_balance_with_conn(
+                conn,
+                line.account_id,
+                line.debit_amount,
+                line.credit_amount,
+            )
+            .map_err(to_rusqlite)?;
+        }
+
+        append_kernel_event_tx(
+            conn,
+            &KernelOutboxEvent::domain(
+                "ledger.journal_entry_posted.v1",
+                "journal_entry",
+                id.to_string(),
+                serde_json::json!({
+                    "journal_entry_id": id.to_string(),
+                    "entry_number": entry_number,
+                    "source": JournalEntrySource::Manual.to_string(),
+                    "total_debits": total_debits.to_string(),
+                    "total_credits": total_credits.to_string(),
+                    "line_count": input.lines.len(),
+                    "posted_by": posted_by,
+                    "status": JournalEntryStatus::Posted.to_string(),
+                }),
+                None,
+            ),
+        )?;
+
+        Self::load_journal_entry_with_conn(conn, id)
+    }
+
+    /// Non-voided journal entry for a source document, read on the caller's
+    /// connection: inside an IMMEDIATE transaction this is a race-free
+    /// idempotency check (SQLite serializes writers).
+    pub(crate) fn existing_entry_for_source_with_conn(
+        conn: &rusqlite::Transaction<'_>,
+        source_document_type: &str,
+        source_document_id: Uuid,
+    ) -> rusqlite::Result<Option<JournalEntry>> {
+        let id: String = match conn.query_row(
+            "SELECT id FROM gl_journal_entries
+             WHERE source_document_type = ?1 AND source_document_id = ?2
+               AND status != 'voided'
+             LIMIT 1",
+            params![source_document_type, source_document_id.to_string()],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let id = parse_uuid(&id, "gl_journal_entry", "id")
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        Self::load_journal_entry_with_conn(conn, id).map(Some)
     }
 
     /// Look up the exchange rate converting one `from` unit into `to` units,
@@ -810,9 +1052,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         tx.execute(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id,
-             entry_type, source, source_document_type, source_document_id, description,
+             entry_type, source, source_document_type, source_document_id,
+             source_document_key, description,
              total_debits, total_credits, is_balanced, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 id.to_string(),
                 entry_number,
@@ -822,6 +1065,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 JournalEntrySource::Manual.to_string(),
                 input.source_document_type,
                 input.source_document_id.map(|id| id.to_string()),
+                source_document_key(
+                    input.source_document_type.as_deref(),
+                    input.source_document_id,
+                ),
                 input.description,
                 total_debits.to_string(),
                 total_credits.to_string(),
@@ -1113,7 +1360,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             // Guard on status so the balance reversal above can only commit
             // together with exactly one posted -> voided transition.
             let rows_affected = tx.execute(
-                "UPDATE gl_journal_entries SET status = 'voided' WHERE id = ?1 AND status = 'posted'",
+                "UPDATE gl_journal_entries SET status = 'voided', source_document_key = NULL
+                 WHERE id = ?1 AND status = 'posted'",
                 params![id.to_string()],
             )?;
             if rows_affected == 0 {
@@ -1336,345 +1584,286 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_invoice(&self, invoice_id: InvoiceId) -> Result<JournalEntry> {
-        // Idempotent under retry: the same source document never posts twice.
-        if let Some(existing) = self.existing_entry_for_source("invoice", invoice_id.into())? {
-            return Ok(existing);
-        }
-        let config = self.get_auto_posting_config()?.ok_or_else(|| {
-            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
-        })?;
-
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        // Get invoice details. The money column is `total` (not `total_amount`),
-        // and `invoice_date` is stored as a full RFC3339 timestamp, so it must be
-        // parsed as a datetime and reduced to its date (matching Postgres, which
-        // reads a `DateTime<Utc>` and calls `.date_naive()`).
-        let (total, invoice_date): (String, String) = conn
-            .query_row(
+        // One IMMEDIATE transaction covers the idempotency check, the source
+        // document read, and the posted entry: SQLite serializes writers, so
+        // the same document can never post twice even under concurrent retry.
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) =
+                Self::existing_entry_for_source_with_conn(tx, "invoice", invoice_id.into())?
+            {
+                return Ok(existing);
+            }
+            let config = Self::require_auto_posting_config_with_conn(tx)?;
+            // The money column is `total` (not `total_amount`), and
+            // `invoice_date` is a full RFC3339 timestamp reduced to its date
+            // (matching Postgres, which reads a `DateTime<Utc>`).
+            let (total, invoice_date): (String, String) = tx.query_row(
                 "SELECT total, invoice_date FROM invoices WHERE id = ?1",
                 params![invoice_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let amount = parse_decimal_required(total, 0)?;
+            let entry_date = parse_rfc3339_date_with_conn(&invoice_date, "invoice_date")?;
+            Self::create_posted_entry_with_conn(
+                tx,
+                &stateset_core::CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Invoice {invoice_id}"),
+                    lines: vec![
+                        stateset_core::CreateJournalEntryLine::debit(
+                            config.accounts_receivable_account_id,
+                            amount,
+                            Some("Accounts Receivable".to_string()),
+                        ),
+                        stateset_core::CreateJournalEntryLine::credit(
+                            config.sales_revenue_account_id,
+                            amount,
+                            Some("Sales Revenue".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("invoice".to_string()),
+                    source_document_id: Some(invoice_id.into()),
+                    auto_post: Some(true),
+                },
+                "system",
             )
-            .map_err(map_db_error)?;
-
-        let amount = parse_decimal_required(total, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&invoice_date)
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!(
-                    "invalid invoice_date {invoice_date:?}: {e}"
-                ))
-            })?
-            .date_naive();
-
-        self.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Invoice {invoice_id}"),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    config.accounts_receivable_account_id,
-                    amount,
-                    Some("Accounts Receivable".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    config.sales_revenue_account_id,
-                    amount,
-                    Some("Sales Revenue".to_string()),
-                ),
-            ],
-            source_document_type: Some("invoice".to_string()),
-            source_document_id: Some(invoice_id.into()),
-            auto_post: Some(true),
         })
     }
 
     fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        if let Some(existing) = self.existing_entry_for_source("payment", payment_id)? {
-            return Ok(existing);
-        }
-        let config = self.get_auto_posting_config()?.ok_or_else(|| {
-            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
-        })?;
-
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        // The `payments` table has no `payment_date` column; the payment date is
-        // `paid_at` (nullable) falling back to `created_at`, stored as full RFC3339
-        // timestamps. Match Postgres, which reads `COALESCE(paid_at, created_at)`
-        // as a `DateTime<Utc>` and reduces it with `.date_naive()`.
-        let (amount_str, payment_date): (String, String) = conn
-            .query_row(
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) =
+                Self::existing_entry_for_source_with_conn(tx, "payment", payment_id)?
+            {
+                return Ok(existing);
+            }
+            let config = Self::require_auto_posting_config_with_conn(tx)?;
+            // The payment date is `paid_at` (nullable) falling back to
+            // `created_at`, stored as full RFC3339 timestamps.
+            let (amount_str, payment_date): (String, String) = tx.query_row(
                 "SELECT amount, COALESCE(paid_at, created_at) FROM payments WHERE id = ?1",
                 params![payment_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let amount = parse_decimal_required(amount_str, 0)?;
+            let entry_date = parse_rfc3339_date_with_conn(&payment_date, "payment date")?;
+            Self::create_posted_entry_with_conn(
+                tx,
+                &stateset_core::CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Payment {payment_id}"),
+                    lines: vec![
+                        stateset_core::CreateJournalEntryLine::debit(
+                            config.cash_account_id,
+                            amount,
+                            Some("Cash".to_string()),
+                        ),
+                        stateset_core::CreateJournalEntryLine::credit(
+                            config.accounts_receivable_account_id,
+                            amount,
+                            Some("Accounts Receivable".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("payment".to_string()),
+                    source_document_id: Some(payment_id),
+                    auto_post: Some(true),
+                },
+                "system",
             )
-            .map_err(map_db_error)?;
-
-        let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&payment_date)
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!(
-                    "invalid payment date {payment_date:?}: {e}"
-                ))
-            })?
-            .date_naive();
-
-        self.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Payment {payment_id}"),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    config.cash_account_id,
-                    amount,
-                    Some("Cash".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    config.accounts_receivable_account_id,
-                    amount,
-                    Some("Accounts Receivable".to_string()),
-                ),
-            ],
-            source_document_type: Some("payment".to_string()),
-            source_document_id: Some(payment_id),
-            auto_post: Some(true),
         })
     }
 
     fn auto_post_bill(&self, bill_id: Uuid) -> Result<JournalEntry> {
-        if let Some(existing) = self.existing_entry_for_source("bill", bill_id)? {
-            return Ok(existing);
-        }
-        let config = self.get_auto_posting_config()?.ok_or_else(|| {
-            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
-        })?;
-
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        // AP bills live in `ap_bills` (there is no `bills` table), and `bill_date`
-        // is stored as a full RFC3339 timestamp, so it must be parsed as a datetime
-        // and reduced to its date (Postgres reads `ap_bills` with a native `DATE`).
-        let (total, bill_date): (String, String) = conn
-            .query_row(
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = Self::existing_entry_for_source_with_conn(tx, "bill", bill_id)?
+            {
+                return Ok(existing);
+            }
+            let config = Self::require_auto_posting_config_with_conn(tx)?;
+            // AP bills live in `ap_bills`; `bill_date` is a full RFC3339
+            // timestamp reduced to its date.
+            let (total, bill_date): (String, String) = tx.query_row(
                 "SELECT total_amount, bill_date FROM ap_bills WHERE id = ?1",
                 params![bill_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let amount = parse_decimal_required(total, 0)?;
+            let entry_date = parse_rfc3339_date_with_conn(&bill_date, "bill_date")?;
+            Self::create_posted_entry_with_conn(
+                tx,
+                &stateset_core::CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Bill {bill_id}"),
+                    lines: vec![
+                        stateset_core::CreateJournalEntryLine::debit(
+                            config.inventory_account_id,
+                            amount,
+                            Some("Inventory/Expense".to_string()),
+                        ),
+                        stateset_core::CreateJournalEntryLine::credit(
+                            config.accounts_payable_account_id,
+                            amount,
+                            Some("Accounts Payable".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("bill".to_string()),
+                    source_document_id: Some(bill_id),
+                    auto_post: Some(true),
+                },
+                "system",
             )
-            .map_err(map_db_error)?;
-
-        let amount = parse_decimal_required(total, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&bill_date)
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!(
-                    "invalid bill_date {bill_date:?}: {e}"
-                ))
-            })?
-            .date_naive();
-
-        self.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Bill {bill_id}"),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    config.inventory_account_id,
-                    amount,
-                    Some("Inventory/Expense".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    config.accounts_payable_account_id,
-                    amount,
-                    Some("Accounts Payable".to_string()),
-                ),
-            ],
-            source_document_type: Some("bill".to_string()),
-            source_document_id: Some(bill_id),
-            auto_post: Some(true),
         })
     }
 
     fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        if let Some(existing) = self.existing_entry_for_source("bill_payment", payment_id)? {
-            return Ok(existing);
-        }
-        let config = self.get_auto_posting_config()?.ok_or_else(|| {
-            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
-        })?;
-
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        // AP payments live in `ap_payments` (there is no `bill_payments` table), and
-        // `payment_date` is stored as a full RFC3339 timestamp, so it must be parsed
-        // as a datetime and reduced to its date (Postgres reads `ap_payments` with a
-        // native `DATE`).
-        let (amount_str, payment_date): (String, String) = conn
-            .query_row(
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) =
+                Self::existing_entry_for_source_with_conn(tx, "bill_payment", payment_id)?
+            {
+                return Ok(existing);
+            }
+            let config = Self::require_auto_posting_config_with_conn(tx)?;
+            // AP payments live in `ap_payments`; `payment_date` is a full
+            // RFC3339 timestamp reduced to its date.
+            let (amount_str, payment_date): (String, String) = tx.query_row(
                 "SELECT amount, payment_date FROM ap_payments WHERE id = ?1",
                 params![payment_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let amount = parse_decimal_required(amount_str, 0)?;
+            let entry_date = parse_rfc3339_date_with_conn(&payment_date, "payment date")?;
+            Self::create_posted_entry_with_conn(
+                tx,
+                &stateset_core::CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Bill Payment {payment_id}"),
+                    lines: vec![
+                        stateset_core::CreateJournalEntryLine::debit(
+                            config.accounts_payable_account_id,
+                            amount,
+                            Some("Accounts Payable".to_string()),
+                        ),
+                        stateset_core::CreateJournalEntryLine::credit(
+                            config.cash_account_id,
+                            amount,
+                            Some("Cash".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("bill_payment".to_string()),
+                    source_document_id: Some(payment_id),
+                    auto_post: Some(true),
+                },
+                "system",
             )
-            .map_err(map_db_error)?;
-
-        let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&payment_date)
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!(
-                    "invalid payment date {payment_date:?}: {e}"
-                ))
-            })?
-            .date_naive();
-
-        self.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Bill Payment {payment_id}"),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    config.accounts_payable_account_id,
-                    amount,
-                    Some("Accounts Payable".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    config.cash_account_id,
-                    amount,
-                    Some("Cash".to_string()),
-                ),
-            ],
-            source_document_type: Some("bill_payment".to_string()),
-            source_document_id: Some(payment_id),
-            auto_post: Some(true),
         })
     }
 
     fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry> {
-        if let Some(existing) =
-            self.existing_entry_for_source("cost_transaction", cost_transaction_id)?
-        {
-            return Ok(existing);
-        }
-        let config = self.get_auto_posting_config()?.ok_or_else(|| {
-            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
-        })?;
-
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        // The date column is `created_at` (there is no `transaction_date`), stored
-        // as a full RFC3339 timestamp, so it must be parsed as a datetime and
-        // reduced to its date (Postgres reads `created_at` as a `DateTime<Utc>` and
-        // calls `.date_naive()`).
-        let (cost_str, created_at, transaction_type): (String, String, String) = conn.query_row(
-            "SELECT total_cost, created_at, transaction_type FROM cost_transactions WHERE id = ?1",
-            params![cost_transaction_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).map_err(map_db_error)?;
-
-        let cost = parse_decimal_required(cost_str, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = chrono::DateTime::parse_from_rfc3339(&created_at)
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!(
-                    "invalid created_at {created_at:?}: {e}"
-                ))
-            })?
-            .date_naive();
-
-        // An inventory issue/sale moves cost out of Inventory into COGS (debit COGS,
-        // credit Inventory); anything else (a receipt) does the reverse. Postgres
-        // treats both `"issue"` and `"sale"` as issues — matching that here fixes an
-        // `"issue"` transaction posting with debit/credit reversed on SQLite.
-        let is_issue = transaction_type == "issue" || transaction_type == "sale";
-        let (debit_account, credit_account) = if is_issue {
-            (config.cogs_account_id, config.inventory_account_id)
-        } else {
-            (config.inventory_account_id, config.cogs_account_id)
-        };
-
-        self.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Inventory Cost {cost_transaction_id}"),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    debit_account,
-                    cost,
-                    Some(if is_issue { "COGS" } else { "Inventory" }.to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    credit_account,
-                    cost,
-                    Some(if is_issue { "Inventory" } else { "COGS" }.to_string()),
-                ),
-            ],
-            source_document_type: Some("cost_transaction".to_string()),
-            source_document_id: Some(cost_transaction_id),
-            auto_post: Some(true),
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = Self::existing_entry_for_source_with_conn(
+                tx,
+                "cost_transaction",
+                cost_transaction_id,
+            )? {
+                return Ok(existing);
+            }
+            let config = Self::require_auto_posting_config_with_conn(tx)?;
+            // The date column is `created_at`, a full RFC3339 timestamp
+            // reduced to its date.
+            let (cost_str, created_at, transaction_type): (String, String, String) = tx.query_row(
+                "SELECT total_cost, created_at, transaction_type FROM cost_transactions WHERE id = ?1",
+                params![cost_transaction_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            let cost = parse_decimal_required(cost_str, 0)?;
+            let entry_date = parse_rfc3339_date_with_conn(&created_at, "created_at")?;
+            // An inventory issue/sale moves cost out of Inventory into COGS
+            // (debit COGS, credit Inventory); anything else (a receipt) does
+            // the reverse. Both `"issue"` and `"sale"` count as issues,
+            // matching Postgres.
+            let is_issue = transaction_type == "issue" || transaction_type == "sale";
+            let (debit_account, credit_account) = if is_issue {
+                (config.cogs_account_id, config.inventory_account_id)
+            } else {
+                (config.inventory_account_id, config.cogs_account_id)
+            };
+            Self::create_posted_entry_with_conn(
+                tx,
+                &stateset_core::CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Inventory Cost {cost_transaction_id}"),
+                    lines: vec![
+                        stateset_core::CreateJournalEntryLine::debit(
+                            debit_account,
+                            cost,
+                            Some(if is_issue { "COGS" } else { "Inventory" }.to_string()),
+                        ),
+                        stateset_core::CreateJournalEntryLine::credit(
+                            credit_account,
+                            cost,
+                            Some(if is_issue { "Inventory" } else { "COGS" }.to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("cost_transaction".to_string()),
+                    source_document_id: Some(cost_transaction_id),
+                    auto_post: Some(true),
+                },
+                "system",
+            )
         })
     }
 
     fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry> {
-        if let Some(existing) = self.existing_entry_for_source("write_off", write_off_id)? {
-            return Ok(existing);
-        }
-        let config = self.get_auto_posting_config()?.ok_or_else(|| {
-            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
-        })?;
-
-        let bad_debt_account = config.bad_debt_expense_account_id.ok_or_else(|| {
-            stateset_core::CommerceError::ValidationError(
-                "Bad debt expense account not configured".to_string(),
-            )
-        })?;
-
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        let (amount_str, write_off_date): (String, String) = conn
-            .query_row(
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) =
+                Self::existing_entry_for_source_with_conn(tx, "write_off", write_off_id)?
+            {
+                return Ok(existing);
+            }
+            let config = Self::require_auto_posting_config_with_conn(tx)?;
+            let Some(bad_debt_account) = config.bad_debt_expense_account_id else {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    stateset_core::CommerceError::ValidationError(
+                        "Bad debt expense account not configured".to_string(),
+                    ),
+                )));
+            };
+            let (amount_str, write_off_date): (String, String) = tx.query_row(
                 "SELECT amount, write_off_date FROM ar_write_offs WHERE id = ?1",
                 params![write_off_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let amount = parse_decimal_required(amount_str, 0)?;
+            let entry_date: NaiveDate = parse_required(write_off_date, 1)?;
+            Self::create_posted_entry_with_conn(
+                tx,
+                &stateset_core::CreateJournalEntry {
+                    entry_date,
+                    entry_type: Some(JournalEntryType::Standard),
+                    description: format!("Write-off {write_off_id}"),
+                    lines: vec![
+                        stateset_core::CreateJournalEntryLine::debit(
+                            bad_debt_account,
+                            amount,
+                            Some("Bad Debt Expense".to_string()),
+                        ),
+                        stateset_core::CreateJournalEntryLine::credit(
+                            config.accounts_receivable_account_id,
+                            amount,
+                            Some("Accounts Receivable".to_string()),
+                        ),
+                    ],
+                    source_document_type: Some("write_off".to_string()),
+                    source_document_id: Some(write_off_id),
+                    auto_post: Some(true),
+                },
+                "system",
             )
-            .map_err(map_db_error)?;
-
-        let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
-        let entry_date: NaiveDate = parse_required(write_off_date, 1).map_err(map_db_error)?;
-
-        self.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date,
-            entry_type: Some(JournalEntryType::Standard),
-            description: format!("Write-off {write_off_id}"),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    bad_debt_account,
-                    amount,
-                    Some("Bad Debt Expense".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    config.accounts_receivable_account_id,
-                    amount,
-                    Some("Accounts Receivable".to_string()),
-                ),
-            ],
-            source_document_type: Some("write_off".to_string()),
-            source_document_id: Some(write_off_id),
-            auto_post: Some(true),
         })
     }
 
@@ -2732,6 +2921,58 @@ mod tests {
             auto_post: Some(false),
         })
         .expect("create entry")
+    }
+
+    /// A balanced entry tied to a source document, for the unique-key tests.
+    fn make_sourced_entry(
+        repo: &SqliteGeneralLedgerRepository,
+        debit_account: &GlAccount,
+        credit_account: &GlAccount,
+        doc_type: &str,
+        doc_id: Uuid,
+        auto_post: bool,
+    ) -> stateset_core::Result<JournalEntry> {
+        repo.create_journal_entry(CreateJournalEntry {
+            entry_date: NaiveDate::from_ymd_opt(2026, 1, 10).expect("date"),
+            entry_type: None,
+            description: format!("{doc_type} {doc_id}"),
+            lines: vec![
+                CreateJournalEntryLine::debit(debit_account.id, dec!(40), None),
+                CreateJournalEntryLine::credit(credit_account.id, dec!(40), None),
+            ],
+            source_document_type: Some(doc_type.to_string()),
+            source_document_id: Some(doc_id),
+            auto_post: Some(auto_post),
+        })
+    }
+
+    #[test]
+    fn source_document_key_backstop_rejects_duplicates_at_the_database() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let doc = Uuid::new_v4();
+
+        // First entry for a single-entry-family document succeeds; a second
+        // one is rejected by the unique index even though this path has no
+        // application-level idempotency check — the database is the backstop.
+        let first =
+            make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, true).expect("first");
+        let dup = make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, false);
+        assert!(dup.is_err(), "duplicate source document must be rejected: {dup:?}");
+
+        // Voiding frees the document for a corrected re-post.
+        repo.void_journal_entry(first.id).expect("void");
+        make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, false)
+            .expect("re-post after void");
+
+        // Multi-entry families (recognition, depreciation) are exempt.
+        let ob = Uuid::new_v4();
+        make_sourced_entry(&repo, &cash, &revenue, "revenue_recognition", ob, false)
+            .expect("first recognition");
+        make_sourced_entry(&repo, &cash, &revenue, "revenue_recognition", ob, false)
+            .expect("second recognition for the same obligation");
     }
 
     fn account_balance(repo: &SqliteGeneralLedgerRepository, id: Uuid) -> rust_decimal::Decimal {

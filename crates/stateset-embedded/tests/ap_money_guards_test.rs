@@ -24,6 +24,8 @@ use stateset_embedded::{
     CreateBillPayment, CreatePaymentRun, PaymentAllocationInput, PaymentMethodAP, PaymentRunStatus,
     PaymentStatusAP,
 };
+use std::sync::{Arc, Barrier};
+use std::thread;
 use uuid::Uuid;
 
 fn commerce() -> Commerce {
@@ -379,6 +381,68 @@ fn process_payment_run_rejects_double_process() {
         .list_payments(BillPaymentFilter { supplier_id: Some(supplier), ..Default::default() })
         .expect("list payments");
     assert_eq!(payments.len(), 1, "double-processing must not duplicate payments");
+}
+
+#[test]
+fn process_payment_run_concurrent_double_process_pays_each_bill_once() {
+    // Two OS threads race to process the same approved run over two bills.
+    // The status-guarded UPDATE (approved -> completed) inside one immediate
+    // transaction must let exactly one thread win; the loser sees Conflict and
+    // no bill may be paid twice.
+    let commerce = Arc::new(commerce());
+    let supplier = Uuid::new_v4();
+    let bill_a = approved_bill(&commerce, supplier, dec!(2), dec!(50)); // 100
+    let bill_b = approved_bill(&commerce, supplier, dec!(3), dec!(40)); // 120
+
+    let run = make_run(&commerce, vec![bill_a.id, bill_b.id]);
+    commerce.accounts_payable().approve_payment_run(run.id, "controller").expect("approve run");
+
+    let barrier = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let commerce = Arc::clone(&commerce);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                commerce.accounts_payable().process_payment_run(run.id)
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread panicked")).collect();
+
+    let ok_count = results.iter().filter(|r| r.is_ok()).count();
+    assert_eq!(ok_count, 1, "exactly one thread may process the run, got results: {results:?}");
+    let loser = results
+        .iter()
+        .find_map(|r| r.as_ref().err())
+        .expect("one thread must lose the processing race");
+    assert!(
+        matches!(loser, stateset_embedded::CommerceError::Conflict(_)),
+        "the losing thread must get Conflict, got: {loser:?}"
+    );
+
+    let ap = commerce.accounts_payable();
+    let after = ap.get_payment_run(run.id).expect("get run").expect("run exists");
+    assert_eq!(after.status, PaymentRunStatus::Completed);
+    assert_eq!(after.total_amount, dec!(220), "run total must count each bill once");
+    assert_eq!(after.payment_count, 2);
+
+    // Exactly one payment per bill — never two.
+    let payments = ap
+        .list_payments(BillPaymentFilter { supplier_id: Some(supplier), ..Default::default() })
+        .expect("list payments");
+    assert_eq!(payments.len(), 2, "the race must not duplicate payments: {payments:?}");
+    let mut amounts: Vec<Decimal> = payments.iter().map(|p| p.amount).collect();
+    amounts.sort();
+    assert_eq!(amounts, vec![dec!(100), dec!(120)]);
+
+    // Each bill is paid its total exactly once, not twice.
+    for (bill_id, total) in [(bill_a.id, dec!(100)), (bill_b.id, dec!(120))] {
+        let bill = ap.get_bill(bill_id).expect("get bill").expect("bill exists");
+        assert_eq!(bill.status, BillStatus::Paid);
+        assert_eq!(bill.amount_paid, total, "bill must be paid once, not doubled");
+        assert_eq!(bill.amount_due, Decimal::ZERO, "amount_due must never go negative");
+    }
 }
 
 #[test]

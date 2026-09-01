@@ -486,87 +486,59 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         }
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
-        let (asset, posted_amount, first_period, last_period, prev_accumulated, prev_status) =
-            with_immediate_transaction(&self.pool, |tx| {
-                let asset = Self::load_asset(tx, &id_str)?;
-                if asset.status != FixedAssetStatus::InService {
-                    return Err(Self::conflict(
-                        "depreciation can only be posted for in-service assets",
-                    ));
-                }
-                let pending: Vec<DepreciationEntry> = {
-                    let mut stmt = tx.prepare(
+        with_immediate_transaction(&self.pool, |tx| {
+            let asset = Self::load_asset(tx, &id_str)?;
+            if asset.status != FixedAssetStatus::InService {
+                return Err(Self::conflict(
+                    "depreciation can only be posted for in-service assets",
+                ));
+            }
+            let pending: Vec<DepreciationEntry> = {
+                let mut stmt = tx.prepare(
                     "SELECT * FROM fixed_asset_depreciation_entries WHERE asset_id = ? AND status = 'scheduled' ORDER BY period LIMIT ?",
                 )?;
-                    stmt.query_map(
-                        rusqlite::params![&id_str, i64::from(periods)],
-                        Self::row_to_entry,
-                    )?
+                stmt.query_map(rusqlite::params![&id_str, i64::from(periods)], Self::row_to_entry)?
                     .collect::<std::result::Result<Vec<_>, _>>()?
-                };
-                if pending.is_empty() {
-                    return Err(Self::conflict("no scheduled depreciation entries remain to post"));
-                }
-                for e in &pending {
-                    tx.execute(
+            };
+            if pending.is_empty() {
+                return Err(Self::conflict("no scheduled depreciation entries remain to post"));
+            }
+            for e in &pending {
+                tx.execute(
                     "UPDATE fixed_asset_depreciation_entries SET status = 'posted' WHERE asset_id = ? AND period = ?",
                     rusqlite::params![&id_str, i64::from(e.period)],
                 )?;
-                }
-                // Accumulated depreciation through the last posted entry is exact.
-                let accumulated =
-                    pending.last().map(|e| e.accumulated).unwrap_or(asset.accumulated_depreciation);
-                let fully = accumulated >= asset.depreciable_base();
-                let status = if fully {
-                    FixedAssetStatus::FullyDepreciated
-                } else {
-                    FixedAssetStatus::InService
-                };
-                tx.execute(
+            }
+            // Accumulated depreciation through the last posted entry is exact.
+            let accumulated =
+                pending.last().map(|e| e.accumulated).unwrap_or(asset.accumulated_depreciation);
+            let fully = accumulated >= asset.depreciable_base();
+            let status = if fully {
+                FixedAssetStatus::FullyDepreciated
+            } else {
+                FixedAssetStatus::InService
+            };
+            tx.execute(
                 "UPDATE fixed_assets SET accumulated_depreciation = ?, status = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![accumulated.to_string(), status.to_string(), &now, &id_str],
             )?;
-                let posted_amount: Decimal = pending.iter().map(|e| e.amount).sum();
-                let first_period = pending.first().map_or(0, |e| e.period);
-                let last_period = pending.last().map_or(0, |e| e.period);
-                Ok((
-                    Self::load_asset(tx, &id_str)?,
-                    posted_amount,
-                    first_period,
-                    last_period,
-                    asset.accumulated_depreciation,
-                    asset.status,
-                ))
-            })?;
-        // The GL post runs outside the subledger transaction (the GL
-        // repository opens its own connection). If it fails, compensate:
-        // revert exactly what this call posted so a retry depreciates and
-        // posts the full amount again, instead of leaving the subledger
-        // advanced with no journal entry and no repair path.
-        if let Err(post_err) =
-            self.auto_post_depreciation_entry(&asset, posted_amount, first_period, last_period)
-        {
-            let now = Utc::now().to_rfc3339();
-            let _ = with_immediate_transaction(&self.pool, |tx| {
-                tx.execute(
-                    "UPDATE fixed_asset_depreciation_entries SET status = 'scheduled'
-                     WHERE asset_id = ? AND period >= ? AND period <= ? AND status = 'posted'",
-                    rusqlite::params![&id_str, i64::from(first_period), i64::from(last_period)],
-                )?;
-                tx.execute(
-                    "UPDATE fixed_assets SET accumulated_depreciation = ?, status = ?, updated_at = ? WHERE id = ?",
-                    rusqlite::params![
-                        prev_accumulated.to_string(),
-                        prev_status.to_string(),
-                        &now,
-                        &id_str
-                    ],
-                )?;
-                Ok(())
-            });
-            return Err(post_err);
-        }
-        Ok(asset)
+            let posted_amount: Decimal = pending.iter().map(|e| e.amount).sum();
+            let first_period = pending.first().map_or(0, |e| e.period);
+            let last_period = pending.last().map_or(0, |e| e.period);
+            let asset = Self::load_asset(tx, &id_str)?;
+            // The GL entry posts on THIS transaction: the depreciation
+            // posting and its journal entry are one atomic fact — a GL
+            // failure rolls back the posting, so a retry posts the full
+            // amount.
+            Self::auto_post_depreciation_entry_with_conn(
+                tx,
+                &asset,
+                posted_amount,
+                first_period,
+                last_period,
+            )?;
+            Ok(asset)
+        })
     }
 }
 
@@ -579,26 +551,28 @@ impl SqliteFixedAssetRepository {
     /// existing general-ledger repository. Accounts come from the asset itself,
     /// falling back to the first active posting account with the matching
     /// account sub-type.
-    fn auto_post_depreciation_entry(
-        &self,
+    /// Create and post the depreciation journal entry on the CALLER'S
+    /// transaction, so the subledger posting and its GL entry commit or roll
+    /// back together.
+    fn auto_post_depreciation_entry_with_conn(
+        tx: &rusqlite::Transaction<'_>,
         asset: &FixedAsset,
         amount: Decimal,
         first_period: u32,
         last_period: u32,
-    ) -> Result<()> {
-        use stateset_core::GeneralLedgerRepository;
-        let gl = super::general_ledger::SqliteGeneralLedgerRepository::new(self.pool.clone());
-        let Some(config) = gl.get_auto_posting_config()? else { return Ok(()) };
+    ) -> rusqlite::Result<()> {
+        use super::general_ledger::SqliteGeneralLedgerRepository as Gl;
+        let Some(config) = Gl::get_auto_posting_config_with_conn(tx)? else { return Ok(()) };
         if !config.auto_post_depreciation || amount <= Decimal::ZERO {
             return Ok(());
         }
-        let expense_account_id = resolve_depreciation_account(
-            &gl,
+        let expense_account_id = resolve_depreciation_account_with_conn(
+            tx,
             asset.depreciation_expense_account_id,
             stateset_core::AccountSubType::DepreciationExpense,
         )?;
-        let accumulated_account_id = resolve_depreciation_account(
-            &gl,
+        let accumulated_account_id = resolve_depreciation_account_with_conn(
+            tx,
             asset.accumulated_depreciation_account_id,
             stateset_core::AccountSubType::AccumulatedDepreciation,
         )?;
@@ -607,26 +581,30 @@ impl SqliteFixedAssetRepository {
         } else {
             format!("periods {first_period}-{last_period}")
         };
-        gl.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date: Utc::now().date_naive(),
-            entry_type: Some(stateset_core::JournalEntryType::Standard),
-            description: format!("Depreciation {} {periods}", asset.asset_number),
-            lines: vec![
-                stateset_core::CreateJournalEntryLine::debit(
-                    expense_account_id,
-                    amount,
-                    Some("Depreciation Expense".to_string()),
-                ),
-                stateset_core::CreateJournalEntryLine::credit(
-                    accumulated_account_id,
-                    amount,
-                    Some("Accumulated Depreciation".to_string()),
-                ),
-            ],
-            source_document_type: Some("fixed_asset_depreciation".to_string()),
-            source_document_id: Some(asset.id),
-            auto_post: Some(true),
-        })?;
+        Gl::create_posted_entry_with_conn(
+            tx,
+            &stateset_core::CreateJournalEntry {
+                entry_date: Utc::now().date_naive(),
+                entry_type: Some(stateset_core::JournalEntryType::Standard),
+                description: format!("Depreciation {} {periods}", asset.asset_number),
+                lines: vec![
+                    stateset_core::CreateJournalEntryLine::debit(
+                        expense_account_id,
+                        amount,
+                        Some("Depreciation Expense".to_string()),
+                    ),
+                    stateset_core::CreateJournalEntryLine::credit(
+                        accumulated_account_id,
+                        amount,
+                        Some("Accumulated Depreciation".to_string()),
+                    ),
+                ],
+                source_document_type: Some("fixed_asset_depreciation".to_string()),
+                source_document_id: Some(asset.id),
+                auto_post: Some(true),
+            },
+            "system",
+        )?;
         Ok(())
     }
 }
@@ -634,27 +612,33 @@ impl SqliteFixedAssetRepository {
 /// Resolve a GL account for depreciation posting: prefer the account
 /// configured on the asset, then fall back to the first active posting
 /// account with the given sub-type in the chart of accounts.
-fn resolve_depreciation_account(
-    gl: &dyn stateset_core::GeneralLedgerRepository,
+fn resolve_depreciation_account_with_conn(
+    conn: &rusqlite::Connection,
     preferred: Option<Uuid>,
     sub_type: stateset_core::AccountSubType,
-) -> Result<Uuid> {
+) -> rusqlite::Result<Uuid> {
     if let Some(id) = preferred {
         return Ok(id);
     }
-    gl.list_accounts(stateset_core::GlAccountFilter {
-        account_sub_type: Some(sub_type),
-        status: Some(stateset_core::AccountStatus::Active),
-        is_posting: Some(true),
-        limit: Some(1),
-        ..Default::default()
-    })?
-    .first()
-    .map(|a| a.id)
+    let found: Option<String> = match conn.query_row(
+        "SELECT id FROM gl_accounts
+         WHERE account_sub_type = ?1 AND status = 'active' AND is_posting = 1
+         ORDER BY account_number LIMIT 1",
+        rusqlite::params![sub_type.to_string()],
+        |row| row.get(0),
+    ) {
+        Ok(id) => Some(id),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => return Err(e),
+    };
+    found
+    .as_deref()
+    .map(|id| parse_uuid_row(id, "gl_account", "id"))
+    .transpose()?
     .ok_or_else(|| {
-        CommerceError::ValidationError(format!(
+        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::ValidationError(format!(
             "auto-post depreciation requires a {sub_type} account on the asset or in the chart of accounts"
-        ))
+        ))))
     })
 }
 

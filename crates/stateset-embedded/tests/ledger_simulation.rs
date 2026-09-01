@@ -449,30 +449,9 @@ impl Sim {
         }
     }
 
-    /// Re-closing a reopened period requires voiding the standing closing
-    /// entry first (the double-close guard would otherwise reject it).
-    fn void_standing_closing_entry(&self) {
-        let standing_close = self
-            .commerce
-            .general_ledger()
-            .list_journal_entries(stateset_core::JournalEntryFilter {
-                source_document_type: Some("period_close".into()),
-                source_document_id: Some(self.period_id),
-                status: Some(stateset_core::JournalEntryStatus::Posted),
-                ..Default::default()
-            })
-            .expect("list closing entries");
-        for entry in standing_close {
-            self.commerce
-                .general_ledger()
-                .void_journal_entry(entry.id)
-                .expect("void standing closing entry");
-        }
-    }
-
     fn op_period_close(&mut self) {
-        self.void_standing_closing_entry();
-        match self.commerce.general_ledger().run_period_close(self.period_id, "sim") {
+        // `reclose_period` encodes void-standing-entry-then-close as one call.
+        match self.commerce.general_ledger().reclose_period(self.period_id, "sim") {
             Ok(entry) => {
                 assert!(entry.is_balanced, "closing entry must balance");
                 self.assert_trial_balance("after period close");
@@ -543,8 +522,7 @@ fn randomized_ledger_simulation_stays_balanced() {
 
     // Final close: move net income to retained earnings, then the balance
     // sheet must satisfy assets == liabilities + equity.
-    sim.void_standing_closing_entry();
-    match sim.commerce.general_ledger().run_period_close(sim.period_id, "sim-final") {
+    match sim.commerce.general_ledger().reclose_period(sim.period_id, "sim-final") {
         Ok(entry) => assert!(entry.is_balanced, "final closing entry must balance"),
         Err(stateset_core::CommerceError::ValidationError(msg))
             if msg.contains("No net income") =>

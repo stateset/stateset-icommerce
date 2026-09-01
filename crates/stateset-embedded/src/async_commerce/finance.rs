@@ -985,6 +985,24 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().run_period_close_async(period_id, closed_by).await
     }
 
+    /// Re-close a period that was reopened for adjustments: void the standing
+    /// closing entry (or entries), then run the close again. The period must
+    /// be open. Mirrors the sync facade.
+    pub async fn reclose_period(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
+        let standing = self
+            .list_journal_entries(stateset_core::JournalEntryFilter {
+                source_document_type: Some("period_close".into()),
+                source_document_id: Some(period_id),
+                status: Some(stateset_core::JournalEntryStatus::Posted),
+                ..Default::default()
+            })
+            .await?;
+        for entry in standing {
+            self.void_journal_entry(entry.id).await?;
+        }
+        self.run_period_close(period_id, closed_by).await
+    }
+
     pub async fn create_accounts_batch(
         &self,
         inputs: Vec<CreateGlAccount>,
