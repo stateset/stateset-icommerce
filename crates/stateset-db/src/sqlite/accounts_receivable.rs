@@ -251,11 +251,11 @@ impl SqliteAccountsReceivableRepository {
         // (record_payment) have no ar_payment_applications row; without adding
         // them back here, this recalculation would REPLACE amount_paid with
         // the application sums and silently erase them.
-        let (total, direct_amount_paid): (String, String) = conn
+        let (total, direct_amount_paid, current_status): (String, String, String) = conn
             .query_row(
-                "SELECT total, direct_amount_paid FROM invoices WHERE id = ?1",
+                "SELECT total, direct_amount_paid, status FROM invoices WHERE id = ?1",
                 params![invoice_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(map_db_error)?;
 
@@ -265,13 +265,29 @@ impl SqliteAccountsReceivableRepository {
         let total_dec = parse_decimal_safe(&total, "invoice", "total")?;
         let balance_due = total_dec - total_applied;
 
-        // Determine status
+        // Derive the status from the money WITHOUT discarding an operator's
+        // own classification. This branch used to hard-code `sent` while its
+        // comment claimed to keep the original status, so unapplying the last
+        // payment silently cleared an `overdue` flag (dropping a past-due
+        // invoice out of collections) and applying one cleared a `disputed`
+        // flag — bypassing the guarded `dispute` transition in `invoices.rs`.
+        //
+        // Terminal statuses ARE reset: `reverse_write_off` relies on this
+        // recalculation to bring a `written_off` invoice back to a live state.
         let status = if balance_due <= Decimal::ZERO {
             "paid"
         } else if total_applied > Decimal::ZERO {
-            "partially_paid"
+            // A partly paid invoice that is under dispute is still disputed.
+            if current_status == "disputed" { "disputed" } else { "partially_paid" }
+        } else if matches!(
+            current_status.as_str(),
+            "draft" | "sent" | "viewed" | "overdue" | "disputed"
+        ) {
+            // Nothing applied: genuinely keep the original status.
+            current_status.as_str()
         } else {
-            "sent" // Keep original status if nothing applied
+            // A stale paid/partially_paid or a terminal status is reset.
+            "sent"
         };
 
         conn.execute(

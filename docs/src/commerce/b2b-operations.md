@@ -176,6 +176,56 @@ B2B operations flow into the accounting subsystem:
 
 See [Accounting & Finance](accounting.md) for general ledger integration.
 
+## Money-Integrity Guarantees
+
+The procurement modules enforce these invariants on both storage backends
+(SQLite and Postgres):
+
+**Purchase orders**
+- Goods can only be booked against a purchase order that has actually reached
+  the supplier. `receive` is guarded by the PO state machine
+  (`PurchaseOrderStatus::can_transition_to`), so receiving against a draft,
+  pending-approval, approved-but-unsent, cancelled or completed PO is refused
+  with a conflict — approval can no longer be bypassed by receiving.
+- Receipts are bounded: the quantity check re-reads what is already received
+  under a write lock, so concurrent partial receipts accumulate exactly and can
+  never exceed the ordered quantity.
+- Every other lifecycle transition (submit, approve, send, acknowledge, hold,
+  complete, cancel) is a guarded transition that reports the blocking status
+  rather than silently overwriting it.
+
+**Supplier invoices**
+- A payment cannot exceed the invoice's remaining balance, and no payment may
+  be recorded against a voided, cancelled or written-off invoice. Paying the
+  remaining balance exactly still succeeds.
+- Payments carrying a `payment_id` are idempotent: recording the same payment
+  against the same invoice twice counts once, so a retried request cannot
+  double-pay. The idempotency check and the write share the payment's own
+  transaction.
+- Void, write-off, send and dispute are guarded transitions. A paid invoice
+  cannot be voided or written off (that would erase collected receivable), and
+  a voided or written-off invoice cannot be resurrected into an open state
+  where its balance would reappear in aging and collections.
+- Recalculating an invoice from its applications derives the status from the
+  money without discarding an operator's own classification: a partly paid
+  invoice under dispute stays disputed.
+
+**Credit**
+- The credit limit is enforced against the customer's whole exposure —
+  `balance + outstanding holds` — not the balance alone, so reservations can
+  no longer be circumvented by charging directly.
+- A charge applies the balance, consumes its matching reservation and writes
+  the ledger entry in one transaction: a crash can no longer double-consume
+  credit or leave the ledger disagreeing with the balance.
+
+**Cost accounting**
+- Cost adjustments follow a guarded lifecycle (pending → approved → applied,
+  or rejected). An applied adjustment cannot be re-approved, re-applied or
+  retroactively rejected, so a revaluation moves the item cost exactly once
+  and the audit trail always matches the live cost.
+- Claiming an adjustment and writing the new item cost share one transaction,
+  so concurrent applies cannot both move the cost.
+
 ## MCP Tools
 
 | Tool | Description |

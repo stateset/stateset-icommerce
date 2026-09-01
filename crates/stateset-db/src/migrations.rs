@@ -373,6 +373,12 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "075_gl_source_document_key",
             include_str!("../migrations/075_gl_source_document_key.sql"),
         ),
+        // Idempotency ledger so a retried direct invoice payment (a caller
+        // supplying `RecordInvoicePayment.payment_id`) applies exactly once.
+        (
+            "076_invoice_payment_idempotency",
+            include_str!("../migrations/076_invoice_payment_idempotency.sql"),
+        ),
     ]
 }
 

@@ -417,8 +417,8 @@ impl PgAccountsReceivableRepository {
         // would REPLACE amount_paid with the application sums and erase them.
         // Read it inside the transaction (FOR UPDATE) so a concurrent
         // record_payment serializes against this recalculation.
-        let (total, direct): (Decimal, Decimal) = sqlx::query_as(
-            "SELECT total, direct_amount_paid FROM invoices WHERE id = $1 FOR UPDATE",
+        let (total, direct, current_status): (Decimal, Decimal, String) = sqlx::query_as(
+            "SELECT total, direct_amount_paid, status FROM invoices WHERE id = $1 FOR UPDATE",
         )
         .bind(invoice_id)
         .fetch_one(tx.as_mut())
@@ -427,10 +427,19 @@ impl PgAccountsReceivableRepository {
 
         let total_applied = direct + paid + credits;
         let balance_due = total - total_applied;
+        // Derive the status from the money WITHOUT discarding an operator's
+        // own classification — see the SQLite twin for the full rationale.
+        // Terminal statuses are still reset so `reverse_write_off` can bring a
+        // written-off invoice back to a live state.
         let status = if balance_due <= Decimal::ZERO {
             "paid"
         } else if total_applied > Decimal::ZERO {
-            "partially_paid"
+            if current_status == "disputed" { "disputed" } else { "partially_paid" }
+        } else if matches!(
+            current_status.as_str(),
+            "draft" | "sent" | "viewed" | "overdue" | "disputed"
+        ) {
+            current_status.as_str()
         } else {
             "sent"
         };

@@ -36,6 +36,15 @@ pub struct SqlitePurchaseOrderRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
+/// Carry a domain error out of a `rusqlite` closure.
+///
+/// `with_immediate_transaction` retries on lock errors; wrapping domain errors
+/// as `ToSqlConversionFailure` keeps them out of that retry loop, and
+/// `map_db_error` unwraps them back into the original `CommerceError`.
+fn to_rusqlite(e: CommerceError) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+}
+
 impl SqlitePurchaseOrderRepository {
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
@@ -279,13 +288,14 @@ impl SqlitePurchaseOrderRepository {
         Ok(items)
     }
 
-    /// Load the PO's current status and reject the update when the state
-    /// machine (`PurchaseOrderStatus::can_transition_to`) forbids it.
-    fn ensure_transition(
+    /// Read and parse the PO's current status.
+    ///
+    /// `NotFound` when the PO does not exist, so callers never mistake a
+    /// missing row for a forbidden transition.
+    fn current_status(
         conn: &rusqlite::Connection,
         id: PurchaseOrderId,
-        target: PurchaseOrderStatus,
-    ) -> Result<()> {
+    ) -> Result<PurchaseOrderStatus> {
         let status: String = conn
             .query_row("SELECT status FROM purchase_orders WHERE id = ?", [id.to_string()], |row| {
                 row.get(0)
@@ -294,15 +304,73 @@ impl SqlitePurchaseOrderRepository {
                 rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
                 other => map_db_error(other),
             })?;
-        let current: PurchaseOrderStatus = status.parse().map_err(|e| {
+        status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid purchase_order.status '{status}': {e}"))
-        })?;
-        if !current.can_transition_to(target) {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot transition purchase order from {current} to {target}"
-            )));
-        }
-        Ok(())
+        })
+    }
+
+    /// Is a receipt legal against a PO in `status`?
+    ///
+    /// Derived from the domain state machine rather than a hand-written list:
+    /// a receipt moves the PO to `partially_received` or `received`, so exactly
+    /// the statuses from which `PurchaseOrderStatus::can_transition_to` permits
+    /// one of those are receivable — `sent`, `acknowledged`, `partially_received`
+    /// and `received` (the last only so a fully received PO reports the
+    /// over-receipt error rather than a status error; the quantity guard rejects
+    /// it). `draft`, `pending_approval`, `approved` (not yet sent), `on_hold`,
+    /// `completed` and `cancelled` are all refused, so goods can never be booked
+    /// against an unapproved, unsent or dead PO.
+    fn is_receivable(status: PurchaseOrderStatus) -> bool {
+        status.can_transition_to(PurchaseOrderStatus::PartiallyReceived)
+            || status.can_transition_to(PurchaseOrderStatus::Received)
+    }
+
+    /// Apply a state-machine-guarded status transition.
+    ///
+    /// The status read, the guard and the write share one IMMEDIATE
+    /// transaction, so a concurrent transition cannot slip between the check
+    /// and the update; the UPDATE is additionally guarded on the status that
+    /// was observed, so a zero-row result surfaces as `Conflict` rather than
+    /// silently succeeding. `extra_set` appends to the SET list and may bind
+    /// `?5`, `?6`, ... from `extra_params`.
+    fn transition(
+        &self,
+        id: PurchaseOrderId,
+        target: PurchaseOrderStatus,
+        extra_set: &str,
+        extra_params: &[&dyn rusqlite::ToSql],
+    ) -> Result<PurchaseOrder> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let target_str = target.to_string();
+        let id_str = id.to_string();
+        let sql = format!(
+            "UPDATE purchase_orders SET status = ?1, updated_at = ?2{extra_set}
+             WHERE id = ?3 AND status = ?4"
+        );
+
+        with_immediate_transaction(&self.pool, |tx| {
+            let current = Self::current_status(tx, id).map_err(to_rusqlite)?;
+            if !current.can_transition_to(target) {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Cannot transition purchase order {id} from '{current}' to '{target}'"
+                ))));
+            }
+
+            let current_str = current.to_string();
+            let mut params: Vec<&dyn rusqlite::ToSql> =
+                vec![&target_str, &now, &id_str, &current_str];
+            params.extend_from_slice(extra_params);
+
+            if tx.execute(&sql, params.as_slice())? == 0 {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Purchase order {id} changed concurrently; expected status '{current}'"
+                ))));
+            }
+
+            Self::get_po_with_conn(tx, id)
+                .map_err(to_rusqlite)?
+                .ok_or_else(|| to_rusqlite(CommerceError::NotFound))
+        })
     }
 
     fn get_po_with_conn(
@@ -793,51 +861,24 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
     }
 
     fn submit_for_approval(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
-        let conn = self.conn()?;
-        Self::ensure_transition(&conn, id, PurchaseOrderStatus::PendingApproval)?;
-        let now = chrono::Utc::now();
-        let rows_affected = conn
-            .execute(
-                "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
-                params![
-                    PurchaseOrderStatus::PendingApproval.to_string(),
-                    now.to_rfc3339(),
-                    id.to_string()
-                ],
-            )
-            .map_err(map_db_error)?;
-        if rows_affected == 0 {
-            return Err(CommerceError::NotFound);
-        }
-        Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+        self.transition(id, PurchaseOrderStatus::PendingApproval, "", &[])
     }
 
     fn approve(&self, id: PurchaseOrderId, approved_by: &str) -> Result<PurchaseOrder> {
-        let conn = self.conn()?;
-        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Approved)?;
-        let now = chrono::Utc::now();
-        conn.execute(
-            "UPDATE purchase_orders SET status = ?, approved_by = ?, approved_at = ?, updated_at = ? WHERE id = ?",
-            params![PurchaseOrderStatus::Approved.to_string(), approved_by, now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
-        Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+        // `approved_by`/`approved_at` are stamped by the same guarded UPDATE, so
+        // a refused approval never leaves an approver on an unapproved PO.
+        let approved_at = chrono::Utc::now().to_rfc3339();
+        self.transition(
+            id,
+            PurchaseOrderStatus::Approved,
+            ", approved_by = ?5, approved_at = ?6",
+            &[&approved_by, &approved_at],
+        )
     }
 
     fn send(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
-        let conn = self.conn()?;
-        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Sent)?;
-        let now = chrono::Utc::now();
-        conn.execute(
-            "UPDATE purchase_orders SET status = ?, sent_at = ?, updated_at = ? WHERE id = ?",
-            params![
-                PurchaseOrderStatus::Sent.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
-        )
-        .map_err(map_db_error)?;
-        Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+        let sent_at = chrono::Utc::now().to_rfc3339();
+        self.transition(id, PurchaseOrderStatus::Sent, ", sent_at = ?5", &[&sent_at])
     }
 
     fn acknowledge(
@@ -845,38 +886,20 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         id: PurchaseOrderId,
         supplier_reference: Option<&str>,
     ) -> Result<PurchaseOrder> {
-        let conn = self.conn()?;
-        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Acknowledged)?;
-        let now = chrono::Utc::now();
-        conn.execute(
-            "UPDATE purchase_orders SET status = ?, supplier_reference = COALESCE(?, supplier_reference), updated_at = ? WHERE id = ?",
-            params![PurchaseOrderStatus::Acknowledged.to_string(), supplier_reference, now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
-        Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+        self.transition(
+            id,
+            PurchaseOrderStatus::Acknowledged,
+            ", supplier_reference = COALESCE(?5, supplier_reference)",
+            &[&supplier_reference],
+        )
     }
 
     fn hold(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
-        let conn = self.conn()?;
-        Self::ensure_transition(&conn, id, PurchaseOrderStatus::OnHold)?;
-        let now = chrono::Utc::now();
-        conn.execute(
-            "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
-            params![PurchaseOrderStatus::OnHold.to_string(), now.to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+        self.transition(id, PurchaseOrderStatus::OnHold, "", &[])
     }
 
     fn cancel(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
-        let conn = self.conn()?;
-        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Cancelled)?;
-        let now = chrono::Utc::now();
-        conn.execute(
-            "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
-            params![PurchaseOrderStatus::Cancelled.to_string(), now.to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+        self.transition(id, PurchaseOrderStatus::Cancelled, "", &[])
     }
 
     fn receive(
@@ -892,19 +915,21 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         // simultaneous receipts race and drop each other (matching the atomic
         // conditional UPDATE the Postgres backend uses). Domain errors are carried
         // out via `ToSqlConversionFailure` so they are not retried as lock errors.
-        let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+        let smuggle = to_rusqlite;
 
         with_immediate_transaction(&self.pool, |tx| {
-            let status: String = tx.query_row(
-                "SELECT status FROM purchase_orders WHERE id = ?",
-                [id.to_string()],
-                |row| row.get::<_, String>(0),
-            )?;
-            let current_status: PurchaseOrderStatus = status.parse().map_err(|e| {
-                smuggle(CommerceError::DatabaseError(format!(
-                    "Invalid purchase_order.status '{status}': {e}"
-                )))
-            })?;
+            // The state-machine guard shares this transaction with the quantity
+            // guard below, so a concurrent cancel/complete cannot slip between
+            // the check and the receipt. Without it, receiving against a draft
+            // or cancelled PO succeeded and flipped it straight to `received`,
+            // bypassing approval entirely.
+            let current_status = Self::current_status(tx, id).map_err(smuggle)?;
+            if !Self::is_receivable(current_status) {
+                return Err(smuggle(CommerceError::Conflict(format!(
+                    "Cannot receive against purchase order {id} in status '{current_status}'; \
+                     only sent, acknowledged or partially received purchase orders accept receipts"
+                ))));
+            }
 
             for item in &items.items {
                 if item.quantity_received <= Decimal::ZERO {
@@ -1012,15 +1037,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
     }
 
     fn complete(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
-        let conn = self.conn()?;
-        Self::ensure_transition(&conn, id, PurchaseOrderStatus::Completed)?;
-        let now = chrono::Utc::now();
-        conn.execute(
-            "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
-            params![PurchaseOrderStatus::Completed.to_string(), now.to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+        self.transition(id, PurchaseOrderStatus::Completed, "", &[])
     }
 
     fn add_item(
@@ -1653,8 +1670,9 @@ mod tests {
         assert_eq!(approved.status, PurchaseOrderStatus::Approved);
 
         // Guard: an illegal transition (Approved → PendingApproval) is rejected.
+        // State-machine violations are `Conflict` (409), not `ValidationError`.
         let err = repo.submit_for_approval(po.id).expect_err("approved cannot re-enter approval");
-        assert!(matches!(err, CommerceError::ValidationError(_)));
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
     }
 
     #[test]
@@ -1715,6 +1733,11 @@ mod tests {
             .expect("create po");
         let po_id = po.id;
         let item_id = po.items[0].id;
+        // Receipts are only legal from a receivable status (see `is_receivable`),
+        // so walk the PO through submit → approve → send first.
+        repo.submit_for_approval(po_id).expect("submit");
+        repo.approve(po_id, "manager").expect("approve");
+        repo.send(po_id).expect("send");
         let recv = |qty: Decimal| {
             repo.receive(
                 po_id,
@@ -1762,6 +1785,9 @@ mod tests {
             .expect("create po");
         let po_id = po.id;
         let item_id = po.items[0].id;
+        db.purchase_orders().submit_for_approval(po_id).expect("submit");
+        db.purchase_orders().approve(po_id, "manager").expect("approve");
+        db.purchase_orders().send(po_id).expect("send");
 
         // Fire many concurrent partial receipts of 2 each (all individually valid
         // against ordered 100). Every one that returns Ok must have actually added

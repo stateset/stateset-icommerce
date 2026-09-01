@@ -763,18 +763,84 @@ impl PgPurchaseOrderRepository {
         Ok(())
     }
 
+    /// Lock the purchase order row and return its parsed status.
+    ///
+    /// `FOR UPDATE` inside the caller's transaction serializes the read against
+    /// any concurrent transition, so the check and the write that follows it
+    /// cannot be interleaved. `NotFound` when the PO does not exist, so callers
+    /// never mistake a missing row for a forbidden transition.
+    async fn locked_status(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<PurchaseOrderStatus> {
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM purchase_orders WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let status = status.ok_or(CommerceError::NotFound)?;
+        status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid purchase_order.status '{status}': {e}"))
+        })
+    }
+
+    /// Is a receipt legal against a PO in `status`?
+    ///
+    /// Derived from the domain state machine rather than a hand-written list: a
+    /// receipt moves the PO to `partially_received` or `received`, so exactly
+    /// the statuses from which `PurchaseOrderStatus::can_transition_to` permits
+    /// one of those are receivable — `sent`, `acknowledged`, `partially_received`
+    /// and `received` (the last only so a fully received PO reports the
+    /// over-receipt error rather than a status error). `draft`,
+    /// `pending_approval`, `approved` (not yet sent), `on_hold`, `completed` and
+    /// `cancelled` are refused. Mirrors the SQLite backend.
+    fn is_receivable(status: PurchaseOrderStatus) -> bool {
+        status.can_transition_to(PurchaseOrderStatus::PartiallyReceived)
+            || status.can_transition_to(PurchaseOrderStatus::Received)
+    }
+
+    /// Reject a transition the state machine forbids, or a status-guarded
+    /// UPDATE that matched no row (the PO moved under a concurrent writer).
+    fn transition_conflict(
+        id: Uuid,
+        current: PurchaseOrderStatus,
+        target: PurchaseOrderStatus,
+    ) -> CommerceError {
+        CommerceError::Conflict(format!(
+            "Cannot transition purchase order {id} from '{current}' to '{target}'"
+        ))
+    }
+
     async fn update_status_async(
         &self,
         id: Uuid,
         status: PurchaseOrderStatus,
     ) -> Result<PurchaseOrder> {
-        sqlx::query("UPDATE purchase_orders SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(status.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // Status read (FOR UPDATE), state-machine guard and the status-guarded
+        // write share ONE transaction. Previously this was an unconditional
+        // UPDATE: any status could be forced to any other, so a cancelled or
+        // completed PO could be revived and an unapproved one marked sent.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current = Self::locked_status(&mut tx, id).await?;
+        if !current.can_transition_to(status) {
+            return Err(Self::transition_conflict(id, current, status));
+        }
+
+        let result = sqlx::query(
+            "UPDATE purchase_orders SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(status.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(Self::transition_conflict(id, current, status));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -784,32 +850,62 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn approve_async(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
+        // `approved_by`/`approved_at` are stamped by the same guarded UPDATE, so
+        // a refused approval never leaves an approver on an unapproved PO.
         let now = Utc::now();
-        sqlx::query("UPDATE purchase_orders SET status = $1, approved_by = $2, approved_at = $3, updated_at = $4 WHERE id = $5")
-            .bind(PurchaseOrderStatus::Approved.to_string())
-            .bind(approved_by)
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let target = PurchaseOrderStatus::Approved;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current = Self::locked_status(&mut tx, id).await?;
+        if !current.can_transition_to(target) {
+            return Err(Self::transition_conflict(id, current, target));
+        }
+
+        let result = sqlx::query(
+            "UPDATE purchase_orders SET status = $1, approved_by = $2, approved_at = $3, updated_at = $4
+             WHERE id = $5 AND status = $6",
+        )
+        .bind(target.to_string())
+        .bind(approved_by)
+        .bind(now)
+        .bind(now)
+        .bind(id)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(Self::transition_conflict(id, current, target));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn send_async(&self, id: Uuid) -> Result<PurchaseOrder> {
         let now = Utc::now();
-        sqlx::query(
-            "UPDATE purchase_orders SET status = $1, sent_at = $2, updated_at = $3 WHERE id = $4",
+        let target = PurchaseOrderStatus::Sent;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current = Self::locked_status(&mut tx, id).await?;
+        if !current.can_transition_to(target) {
+            return Err(Self::transition_conflict(id, current, target));
+        }
+
+        let result = sqlx::query(
+            "UPDATE purchase_orders SET status = $1, sent_at = $2, updated_at = $3
+             WHERE id = $4 AND status = $5",
         )
-        .bind(PurchaseOrderStatus::Sent.to_string())
+        .bind(target.to_string())
         .bind(now)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(Self::transition_conflict(id, current, target));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -820,14 +916,29 @@ impl PgPurchaseOrderRepository {
         supplier_reference: Option<&str>,
     ) -> Result<PurchaseOrder> {
         let now = Utc::now();
-        sqlx::query("UPDATE purchase_orders SET status = $1, supplier_reference = COALESCE($2, supplier_reference), updated_at = $3 WHERE id = $4")
-            .bind(PurchaseOrderStatus::Acknowledged.to_string())
-            .bind(supplier_reference)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let target = PurchaseOrderStatus::Acknowledged;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current = Self::locked_status(&mut tx, id).await?;
+        if !current.can_transition_to(target) {
+            return Err(Self::transition_conflict(id, current, target));
+        }
+
+        let result = sqlx::query(
+            "UPDATE purchase_orders SET status = $1, supplier_reference = COALESCE($2, supplier_reference), updated_at = $3
+             WHERE id = $4 AND status = $5",
+        )
+        .bind(target.to_string())
+        .bind(supplier_reference)
+        .bind(now)
+        .bind(id)
+        .bind(current.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(Self::transition_conflict(id, current, target));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -847,6 +958,19 @@ impl PgPurchaseOrderRepository {
     ) -> Result<PurchaseOrder> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // The state-machine guard shares this transaction (and the row lock)
+        // with the quantity guards below, so a concurrent cancel/complete
+        // cannot slip between the check and the receipt. Without it, receiving
+        // against a draft or cancelled PO succeeded and flipped it straight to
+        // `received`, bypassing approval entirely.
+        let current_status = Self::locked_status(&mut tx, id).await?;
+        if !Self::is_receivable(current_status) {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot receive against purchase order {id} in status '{current_status}'; \
+                 only sent, acknowledged or partially received purchase orders accept receipts"
+            )));
+        }
 
         for item in &items.items {
             if item.quantity_received <= Decimal::ZERO {

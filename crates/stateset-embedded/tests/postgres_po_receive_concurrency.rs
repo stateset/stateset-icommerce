@@ -74,6 +74,16 @@ async fn postgres_receive_accumulates_concurrent_partial_receipts() {
         })
         .await
         .expect("create po");
+    // Goods may only be booked against a PO that has actually been sent to the
+    // supplier: `receive` is guarded by `PurchaseOrderStatus::can_transition_to`,
+    // so walk the PO through its real lifecycle before receiving. Without this
+    // the concurrency assertion below would be measuring receipts against an
+    // unapproved draft.
+    let po = commerce.purchase_orders().submit(po.id.into_uuid()).await.expect("submit po");
+    let po =
+        commerce.purchase_orders().approve(po.id.into_uuid(), "manager").await.expect("approve po");
+    let po = commerce.purchase_orders().send(po.id.into_uuid()).await.expect("send po");
+
     let po_id = po.id.into_uuid();
     let item_id = po.items[0].id;
 

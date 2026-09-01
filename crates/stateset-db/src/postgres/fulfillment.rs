@@ -130,6 +130,77 @@ impl PgFulfillmentRepository {
         Self { pool }
     }
 
+    /// Finish a status-guarded transition inside its transaction.
+    ///
+    /// A 0-row UPDATE means the guard rejected the write: the row is either gone
+    /// (`NotFound`) or in a status the transition does not allow (`Conflict`,
+    /// naming the status). Otherwise the row is read back inside the same
+    /// transaction, which is then committed. `table` and `entity` are always
+    /// in-crate literals, never caller input.
+    async fn finish_transition<T, R>(
+        mut tx: sqlx::Transaction<'_, Postgres>,
+        changed: u64,
+        table: &str,
+        entity: &str,
+        id: Uuid,
+        action: &str,
+        map: impl FnOnce(R) -> Result<T>,
+    ) -> Result<T>
+    where
+        R: for<'r> FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    {
+        if changed == 0 {
+            let current: Option<String> =
+                sqlx::query_scalar(&format!("SELECT status FROM {table} WHERE id = $1"))
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            return Err(current.map_or(CommerceError::NotFound, |status| {
+                CommerceError::Conflict(format!(
+                    "cannot {action} {entity} {id}: status is {status}"
+                ))
+            }));
+        }
+
+        let row = sqlx::query_as::<_, R>(&format!("SELECT * FROM {table} WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        tx.commit().await.map_err(map_db_error)?;
+        map(row)
+    }
+
+    /// Guard that a pack task is still open for carton changes.
+    ///
+    /// Cartons may only be added while the pack task is in one of
+    /// `Pending`/`ReadyToPack`/`Assigned`/`InProgress`; adding one to a
+    /// `Completed` or `Cancelled` pack task inflates `pack_tasks.carton_count`
+    /// for a sealed shipment.
+    async fn ensure_pack_open(
+        conn: &mut sqlx::PgConnection,
+        pack_task_id: Uuid,
+        action: &str,
+    ) -> Result<()> {
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM pack_tasks WHERE id = $1 FOR UPDATE")
+                .bind(pack_task_id)
+                .fetch_optional(conn)
+                .await
+                .map_err(map_db_error)?;
+        match status {
+            None => Err(CommerceError::NotFound),
+            Some(status) if matches!(status.as_str(), "completed" | "cancelled") => {
+                Err(CommerceError::Conflict(format!(
+                    "cannot {action} pack task {pack_task_id}: status is {status}"
+                )))
+            }
+            Some(_) => Ok(()),
+        }
+    }
+
     fn row_to_wave(row: WaveRow) -> Result<Wave> {
         let status: WaveStatus = row.status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid wave.status '{}': {}", row.status, e))
@@ -368,51 +439,76 @@ impl PgFulfillmentRepository {
         rows.into_iter().map(Self::row_to_wave).collect::<Result<Vec<_>>>()
     }
 
+    /// Release a wave for picking.
+    ///
+    /// Legal only from [`WaveStatus::Draft`]; the guard used to be a silent
+    /// `AND status = 'draft'` that reported success (returning the untouched
+    /// wave) when it matched nothing.
     pub async fn release_wave_async(&self, id: Uuid) -> Result<Wave> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query(
+        let changed = sqlx::query(
             "UPDATE waves SET status = $1, started_at = $2 WHERE id = $3 AND status = 'draft'",
         )
         .bind(WaveStatus::Released.to_string())
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
 
-        self.get_wave_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to release wave".into()))
+        Self::finish_transition(tx, changed, "waves", "wave", id, "release", Self::row_to_wave)
+            .await
     }
 
+    /// Complete a wave.
+    ///
+    /// Legal only from [`WaveStatus::Released`] or [`WaveStatus::InProgress`]:
+    /// a `Draft` wave was never on the floor, and a `Cancelled` or already
+    /// `Completed` wave is terminal. Completing a cancelled wave used to
+    /// succeed, resurrecting it with counters that describe nothing.
     pub async fn complete_wave_async(&self, id: Uuid) -> Result<Wave> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query("UPDATE waves SET status = $1, completed_at = $2 WHERE id = $3")
-            .bind(WaveStatus::Completed.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
+        let changed = sqlx::query(
+            "UPDATE waves SET status = $1, completed_at = $2
+             WHERE id = $3 AND status IN ('released', 'in_progress')",
+        )
+        .bind(WaveStatus::Completed.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(tx, changed, "waves", "wave", id, "complete", Self::row_to_wave)
             .await
-            .map_err(map_db_error)?;
-
-        self.get_wave_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete wave".into()))
     }
 
+    /// Cancel a wave.
+    ///
+    /// Legal from [`WaveStatus::Draft`], [`WaveStatus::Released`] or
+    /// [`WaveStatus::InProgress`]; a `Completed` wave's picks are already folded
+    /// into its counters and a `Cancelled` one is terminal.
     pub async fn cancel_wave_async(&self, id: Uuid) -> Result<Wave> {
-        sqlx::query("UPDATE waves SET status = $1 WHERE id = $2")
-            .bind(WaveStatus::Cancelled.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_wave_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel wave".into()))
+        let changed = sqlx::query(
+            "UPDATE waves SET status = $1
+             WHERE id = $2 AND status IN ('draft', 'released', 'in_progress')",
+        )
+        .bind(WaveStatus::Cancelled.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(tx, changed, "waves", "wave", id, "cancel", Self::row_to_wave).await
     }
 
     pub async fn get_wave_orders_async(&self, wave_id: Uuid) -> Result<Vec<Uuid>> {
@@ -426,6 +522,7 @@ impl PgFulfillmentRepository {
         Ok(rows.into_iter().map(|row| row.0).collect())
     }
 
+    /// Count waves matching `filter` (same filters as `list_waves_async`).
     pub async fn count_waves_async(&self, filter: WaveFilter) -> Result<u64> {
         let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM waves WHERE 1=1");
 
@@ -435,6 +532,12 @@ impl PgFulfillmentRepository {
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
+        if let Some(from_date) = filter.from_date {
+            builder.push(" AND created_at >= ").push_bind(from_date);
+        }
+        if let Some(to_date) = filter.to_date {
+            builder.push(" AND created_at <= ").push_bind(to_date);
+        }
 
         let row =
             builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
@@ -442,7 +545,15 @@ impl PgFulfillmentRepository {
         Ok(row.0 as u64)
     }
 
-    pub async fn create_pick_async(&self, input: CreatePickTask) -> Result<PickTask> {
+    /// Insert one pick task on `conn` and read it back.
+    ///
+    /// Shared by `create_pick_async` and `create_picks_for_order_async` so a
+    /// multi-line order's picks are created by the same statement in one
+    /// transaction.
+    async fn insert_pick_on(
+        conn: &mut sqlx::PgConnection,
+        input: &CreatePickTask,
+    ) -> Result<PickTask> {
         let now = Utc::now();
         let id = Uuid::new_v4();
 
@@ -469,13 +580,23 @@ impl PgFulfillmentRepository {
         .bind(input.priority.unwrap_or(0))
         .bind(&input.notes)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await
         .map_err(map_db_error)?;
 
-        self.get_pick_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create pick".into()))
+        let row = sqlx::query_as::<_, PickRow>("SELECT * FROM pick_tasks WHERE id = $1")
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+            .map_err(map_db_error)?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to create pick".into()))?;
+
+        Self::row_to_pick(row)
+    }
+
+    pub async fn create_pick_async(&self, input: CreatePickTask) -> Result<PickTask> {
+        let mut conn = self.pool.acquire().await.map_err(map_db_error)?;
+        Self::insert_pick_on(&mut conn, &input).await
     }
 
     pub async fn get_pick_async(&self, id: Uuid) -> Result<Option<PickTask>> {
@@ -523,34 +644,71 @@ impl PgFulfillmentRepository {
         rows.into_iter().map(Self::row_to_pick).collect::<Result<Vec<_>>>()
     }
 
+    /// Assign (or re-assign) a pick task to a worker.
+    ///
+    /// Legal from [`PickStatus::Pending`] or [`PickStatus::Assigned`]. It is
+    /// refused once the pick has started or finished: the UPDATE also writes
+    /// `status = 'assigned'`, so assigning a started pick would rewind it and
+    /// assigning a finished one would resurrect it (and a later completion would
+    /// double-count it into the wave).
     pub async fn assign_pick_async(&self, id: Uuid, assigned_to: &str) -> Result<PickTask> {
-        sqlx::query("UPDATE pick_tasks SET assigned_to = $1, status = $2 WHERE id = $3")
-            .bind(assigned_to)
-            .bind(PickStatus::Assigned.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_pick_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to assign pick".into()))
+        let changed = sqlx::query(
+            "UPDATE pick_tasks SET assigned_to = $1, status = $2
+             WHERE id = $3 AND status IN ('pending', 'assigned')",
+        )
+        .bind(assigned_to)
+        .bind(PickStatus::Assigned.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(
+            tx,
+            changed,
+            "pick_tasks",
+            "pick task",
+            id,
+            "assign",
+            Self::row_to_pick,
+        )
+        .await
     }
 
+    /// Start a pick task.
+    ///
+    /// Legal from [`PickStatus::Pending`] or [`PickStatus::Assigned`]. Starting
+    /// an already-started pick would reset `started_at` (destroying the pick's
+    /// measured duration); starting a finished or cancelled one is refused.
     pub async fn start_pick_async(&self, id: Uuid) -> Result<PickTask> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query("UPDATE pick_tasks SET status = $1, started_at = $2 WHERE id = $3")
-            .bind(PickStatus::InProgress.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let changed = sqlx::query(
+            "UPDATE pick_tasks SET status = $1, started_at = $2
+             WHERE id = $3 AND status IN ('pending', 'assigned')",
+        )
+        .bind(PickStatus::InProgress.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
 
-        self.get_pick_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to start pick".into()))
+        Self::finish_transition(
+            tx,
+            changed,
+            "pick_tasks",
+            "pick task",
+            id,
+            "start",
+            Self::row_to_pick,
+        )
+        .await
     }
 
     pub async fn complete_pick_async(&self, input: CompletePick) -> Result<PickTask> {
@@ -644,39 +802,100 @@ impl PgFulfillmentRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to complete pick".into()))
     }
 
+    /// Report a shortage against a pick task, finalizing it as
+    /// [`PickStatus::Short`].
+    ///
+    /// Legal from `Pending`/`Assigned`/`InProgress` only — the terminal states
+    /// (`Completed`/`Short`/`Cancelled`) are refused, so a completed pick can no
+    /// longer be silently rewritten as short.
+    ///
+    /// `Short` is a finalized outcome exactly like `Completed` (both end a pick
+    /// for `is_order_ready_to_pack`), so — like `complete_pick` — the wave's
+    /// `completed_pick_count` is incremented in the same transaction, and only
+    /// when the guarded UPDATE actually transitioned the row.
     pub async fn report_short_async(
         &self,
         id: Uuid,
         short_qty: Decimal,
         reason: &str,
     ) -> Result<PickTask> {
-        sqlx::query(
-            "UPDATE pick_tasks SET status = $1, quantity_short = $2, notes = $3 WHERE id = $4",
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let changed = sqlx::query(
+            "UPDATE pick_tasks SET status = $1, quantity_short = $2, notes = $3, completed_at = $4
+             WHERE id = $5 AND status IN ('pending', 'assigned', 'in_progress')",
         )
         .bind(PickStatus::Short.to_string())
         .bind(short_qty)
         .bind(reason)
+        .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
 
-        self.get_pick_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to report short".into()))
+        if changed > 0 {
+            let wave_id: Option<Uuid> =
+                sqlx::query_scalar("SELECT wave_id FROM pick_tasks WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            if let Some(wave_id) = wave_id {
+                sqlx::query(
+                    "UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = $1",
+                )
+                .bind(wave_id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            }
+        }
+
+        Self::finish_transition(
+            tx,
+            changed,
+            "pick_tasks",
+            "pick task",
+            id,
+            "report a shortage on",
+            Self::row_to_pick,
+        )
+        .await
     }
 
+    /// Cancel a pick task.
+    ///
+    /// Legal from `Pending`/`Assigned`/`InProgress` only. Cancelling a finished
+    /// pick (`Completed`/`Short`) used to succeed while leaving the wave's
+    /// `completed_pick_count` counting a pick that no longer claims to have
+    /// happened, so the wave's counters stopped describing reality.
     pub async fn cancel_pick_async(&self, id: Uuid) -> Result<PickTask> {
-        sqlx::query("UPDATE pick_tasks SET status = $1 WHERE id = $2")
-            .bind(PickStatus::Cancelled.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_pick_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel pick".into()))
+        let changed = sqlx::query(
+            "UPDATE pick_tasks SET status = $1
+             WHERE id = $2 AND status IN ('pending', 'assigned', 'in_progress')",
+        )
+        .bind(PickStatus::Cancelled.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(
+            tx,
+            changed,
+            "pick_tasks",
+            "pick task",
+            id,
+            "cancel",
+            Self::row_to_pick,
+        )
+        .await
     }
 
     pub async fn get_picks_for_order_async(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
@@ -695,10 +914,14 @@ impl PgFulfillmentRepository {
         .await
     }
 
+    /// Count pick tasks matching `filter` (same filters as `list_picks_async`).
     pub async fn count_picks_async(&self, filter: PickTaskFilter) -> Result<u64> {
         let mut builder =
             QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM pick_tasks WHERE 1=1");
 
+        if let Some(warehouse_id) = filter.warehouse_id {
+            builder.push(" AND warehouse_id = ").push_bind(warehouse_id);
+        }
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
@@ -707,6 +930,9 @@ impl PgFulfillmentRepository {
         }
         if let Some(order_id) = filter.order_id {
             builder.push(" AND order_id = ").push_bind(order_id);
+        }
+        if let Some(assigned_to) = filter.assigned_to {
+            builder.push(" AND assigned_to = ").push_bind(assigned_to);
         }
 
         let row =
@@ -775,56 +1001,118 @@ impl PgFulfillmentRepository {
         rows.into_iter().map(Self::row_to_pack).collect::<Result<Vec<_>>>()
     }
 
+    /// Assign (or re-assign) a pack task to a packer.
+    ///
+    /// Legal from `Pending`/`ReadyToPack`/`Assigned`.
     pub async fn assign_pack_async(&self, id: Uuid, assigned_to: &str) -> Result<PackTask> {
-        sqlx::query("UPDATE pack_tasks SET assigned_to = $1, status = $2 WHERE id = $3")
-            .bind(assigned_to)
-            .bind(PackStatus::Assigned.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_pack_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to assign pack".into()))
+        let changed = sqlx::query(
+            "UPDATE pack_tasks SET assigned_to = $1, status = $2
+             WHERE id = $3 AND status IN ('pending', 'ready_to_pack', 'assigned')",
+        )
+        .bind(assigned_to)
+        .bind(PackStatus::Assigned.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(
+            tx,
+            changed,
+            "pack_tasks",
+            "pack task",
+            id,
+            "assign",
+            Self::row_to_pack,
+        )
+        .await
     }
 
+    /// Start a pack task.
+    ///
+    /// Legal from `Pending`/`ReadyToPack`/`Assigned`; re-starting an in-progress
+    /// pack would reset `started_at`, and a completed or cancelled pack task is
+    /// terminal.
     pub async fn start_pack_async(&self, id: Uuid) -> Result<PackTask> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query("UPDATE pack_tasks SET status = $1, started_at = $2 WHERE id = $3")
-            .bind(PackStatus::InProgress.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let changed = sqlx::query(
+            "UPDATE pack_tasks SET status = $1, started_at = $2
+             WHERE id = $3 AND status IN ('pending', 'ready_to_pack', 'assigned')",
+        )
+        .bind(PackStatus::InProgress.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
 
-        self.get_pack_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to start pack".into()))
+        Self::finish_transition(
+            tx,
+            changed,
+            "pack_tasks",
+            "pack task",
+            id,
+            "start",
+            Self::row_to_pack,
+        )
+        .await
     }
 
+    /// Complete a pack task.
+    ///
+    /// Legal from any open status (`Pending`/`ReadyToPack`/`Assigned`/
+    /// `InProgress`) — packing need not be explicitly started — but refused for
+    /// the terminal `Completed`/`Cancelled`: re-completing rewrote
+    /// `completed_at`, and completing a cancelled pack task resurrected it and
+    /// made `is_order_ready_to_ship` true for an order nobody packed.
     pub async fn complete_pack_async(&self, id: Uuid) -> Result<PackTask> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query("UPDATE pack_tasks SET status = $1, completed_at = $2 WHERE id = $3")
-            .bind(PackStatus::Completed.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let changed = sqlx::query(
+            "UPDATE pack_tasks SET status = $1, completed_at = $2
+             WHERE id = $3 AND status IN ('pending', 'ready_to_pack', 'assigned', 'in_progress')",
+        )
+        .bind(PackStatus::Completed.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
 
-        self.get_pack_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete pack".into()))
+        Self::finish_transition(
+            tx,
+            changed,
+            "pack_tasks",
+            "pack task",
+            id,
+            "complete",
+            Self::row_to_pack,
+        )
+        .await
     }
 
+    /// Add a carton to a pack task.
+    ///
+    /// The carton INSERT and the `pack_tasks.carton_count` increment are one
+    /// transaction: run separately on the pool, a failure between them left a
+    /// carton the pack task's count did not know about. The pack task must still
+    /// be open — cartons cannot be added to a completed or cancelled one.
     pub async fn add_carton_async(&self, input: AddCarton) -> Result<Carton> {
         let now = Utc::now();
         let id = Uuid::new_v4();
         let carton_number = generate_carton_number();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        Self::ensure_pack_open(tx.as_mut(), input.pack_task_id, "add a carton to").await?;
 
         sqlx::query(
             r#"
@@ -841,19 +1129,26 @@ impl PgFulfillmentRepository {
         .bind(input.width_cm)
         .bind(input.height_cm)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         sqlx::query("UPDATE pack_tasks SET carton_count = carton_count + 1 WHERE id = $1")
             .bind(input.pack_task_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        self.get_carton_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create carton".into()))
+        let row = sqlx::query_as::<_, CartonRow>("SELECT * FROM cartons WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to create carton".into()))?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        Self::row_to_carton(row)
     }
 
     async fn get_carton_async(&self, id: Uuid) -> Result<Option<Carton>> {
@@ -866,8 +1161,23 @@ impl PgFulfillmentRepository {
         row.map(Self::row_to_carton).transpose()
     }
 
+    /// Add an item to a carton.
+    ///
+    /// Refused once the owning pack task is completed or cancelled — the
+    /// carton's contents are then a sealed record of what shipped.
     pub async fn add_carton_item_async(&self, input: AddCartonItem) -> Result<CartonItem> {
         let id = Uuid::new_v4();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let pack_task_id: Uuid =
+            sqlx::query_scalar("SELECT pack_task_id FROM cartons WHERE id = $1")
+                .bind(input.carton_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        Self::ensure_pack_open(tx.as_mut(), pack_task_id, "add carton items to").await?;
 
         sqlx::query(
             "INSERT INTO carton_items (id, carton_id, sku, quantity, lot_id, serial_number) VALUES ($1,$2,$3,$4,$5,$6)",
@@ -878,23 +1188,20 @@ impl PgFulfillmentRepository {
         .bind(input.quantity)
         .bind(input.lot_id)
         .bind(&input.serial_number)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.get_carton_item_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create carton item".into()))
-    }
-
-    async fn get_carton_item_async(&self, id: Uuid) -> Result<Option<CartonItem>> {
         let row = sqlx::query_as::<_, CartonItemRow>("SELECT * FROM carton_items WHERE id = $1")
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(tx.as_mut())
             .await
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to create carton item".into()))?;
 
-        Ok(row.map(Self::row_to_carton_item))
+        tx.commit().await.map_err(map_db_error)?;
+
+        Ok(Self::row_to_carton_item(row))
     }
 
     pub async fn get_cartons_async(&self, pack_task_id: Uuid) -> Result<Vec<Carton>> {
@@ -919,28 +1226,50 @@ impl PgFulfillmentRepository {
     }
 
     pub async fn mark_label_printed_async(&self, carton_id: Uuid) -> Result<Carton> {
-        sqlx::query("UPDATE cartons SET label_printed = true WHERE id = $1")
+        let changed = sqlx::query("UPDATE cartons SET label_printed = true WHERE id = $1")
             .bind(carton_id)
             .execute(&self.pool)
             .await
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+            .rows_affected();
+        if changed == 0 {
+            // Parity with SQLite: an unknown carton is `NotFound`, not a
+            // generic database error.
+            return Err(CommerceError::NotFound);
+        }
 
-        self.get_carton_async(carton_id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to mark label printed".into()))
+        self.get_carton_async(carton_id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Cancel a pack task.
+    ///
+    /// Legal from any open status; refused for `Completed` (its cartons already
+    /// exist and its order counts as ready to ship) and for an already
+    /// `Cancelled` task.
     pub async fn cancel_pack_async(&self, id: Uuid) -> Result<PackTask> {
-        sqlx::query("UPDATE pack_tasks SET status = $1 WHERE id = $2")
-            .bind(PackStatus::Cancelled.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_pack_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel pack".into()))
+        let changed = sqlx::query(
+            "UPDATE pack_tasks SET status = $1
+             WHERE id = $2 AND status IN ('pending', 'ready_to_pack', 'assigned', 'in_progress')",
+        )
+        .bind(PackStatus::Cancelled.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(
+            tx,
+            changed,
+            "pack_tasks",
+            "pack task",
+            id,
+            "cancel",
+            Self::row_to_pack,
+        )
+        .await
     }
 
     pub async fn count_packs_async(&self, filter: PackTaskFilter) -> Result<u64> {
@@ -1028,64 +1357,132 @@ impl PgFulfillmentRepository {
         rows.into_iter().map(Self::row_to_ship).collect::<Result<Vec<_>>>()
     }
 
+    /// Assign (or re-assign) a ship task.
+    ///
+    /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`; a shipped or cancelled
+    /// task is terminal and cannot change hands.
     pub async fn assign_ship_async(&self, id: Uuid, assigned_to: &str) -> Result<ShipTask> {
-        sqlx::query("UPDATE ship_tasks SET assigned_to = $1 WHERE id = $2")
-            .bind(assigned_to)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_ship_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to assign ship".into()))
+        let changed = sqlx::query(
+            "UPDATE ship_tasks SET assigned_to = $1
+             WHERE id = $2 AND status IN ('pending', 'ready_to_ship', 'label_printed')",
+        )
+        .bind(assigned_to)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(
+            tx,
+            changed,
+            "ship_tasks",
+            "ship task",
+            id,
+            "assign",
+            Self::row_to_ship,
+        )
+        .await
     }
 
+    /// Record a printed shipping label.
+    ///
+    /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted` (a re-print carries a
+    /// new `label_url`); refused once the package is shipped or the task is
+    /// cancelled, where a new label would contradict the carrier handoff.
     pub async fn print_label_async(&self, id: Uuid, label_url: &str) -> Result<ShipTask> {
-        sqlx::query("UPDATE ship_tasks SET status = $1, label_url = $2 WHERE id = $3")
-            .bind(ShipStatus::LabelPrinted.to_string())
-            .bind(label_url)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_ship_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to update ship".into()))
+        let changed = sqlx::query(
+            "UPDATE ship_tasks SET status = $1, label_url = $2
+             WHERE id = $3 AND status IN ('pending', 'ready_to_ship', 'label_printed')",
+        )
+        .bind(ShipStatus::LabelPrinted.to_string())
+        .bind(label_url)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(
+            tx,
+            changed,
+            "ship_tasks",
+            "ship task",
+            id,
+            "print a label for",
+            Self::row_to_ship,
+        )
+        .await
     }
 
+    /// Complete a ship task (carrier handoff).
+    ///
+    /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`. Re-shipping an
+    /// already-shipped task used to overwrite its tracking number, cost and
+    /// `shipped_at`, and a cancelled task could be shipped.
     pub async fn complete_ship_async(&self, input: CompleteShip) -> Result<ShipTask> {
         let now = Utc::now();
+        let id = input.ship_task_id;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query(
-            "UPDATE ship_tasks SET status = $1, tracking_number = $2, shipping_cost = $3, shipped_at = $4 WHERE id = $5",
+        let changed = sqlx::query(
+            "UPDATE ship_tasks SET status = $1, tracking_number = $2, shipping_cost = $3, shipped_at = $4
+             WHERE id = $5 AND status IN ('pending', 'ready_to_ship', 'label_printed')",
         )
         .bind(ShipStatus::Shipped.to_string())
         .bind(&input.tracking_number)
         .bind(input.shipping_cost)
         .bind(now)
-        .bind(input.ship_task_id)
-        .execute(&self.pool)
+        .bind(id)
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
 
-        self.get_ship_async(input.ship_task_id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete ship".into()))
+        Self::finish_transition(
+            tx,
+            changed,
+            "ship_tasks",
+            "ship task",
+            id,
+            "complete",
+            Self::row_to_ship,
+        )
+        .await
     }
 
+    /// Cancel a ship task.
+    ///
+    /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`; a package already
+    /// tendered to the carrier cannot be un-shipped by a status flip.
     pub async fn cancel_ship_async(&self, id: Uuid) -> Result<ShipTask> {
-        sqlx::query("UPDATE ship_tasks SET status = $1 WHERE id = $2")
-            .bind(ShipStatus::Cancelled.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        self.get_ship_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel ship".into()))
+        let changed = sqlx::query(
+            "UPDATE ship_tasks SET status = $1
+             WHERE id = $2 AND status IN ('pending', 'ready_to_ship', 'label_printed')",
+        )
+        .bind(ShipStatus::Cancelled.to_string())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        Self::finish_transition(
+            tx,
+            changed,
+            "ship_tasks",
+            "ship task",
+            id,
+            "cancel",
+            Self::row_to_ship,
+        )
+        .await
     }
 
     pub async fn count_ships_async(&self, filter: ShipTaskFilter) -> Result<u64> {
@@ -1121,6 +1518,12 @@ impl PgFulfillmentRepository {
         .await
         .map_err(map_db_error)?;
 
+        // One transaction for the whole order: a failure part-way through used
+        // to leave an order half-picked, with picks for some lines and none for
+        // the rest — and `is_order_ready_to_pack` would then report the order
+        // ready because the missing lines have no pick task to be incomplete.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         let mut picks = Vec::new();
         for (item_id, sku, name, qty) in rows {
             let location_id = sqlx::query_as::<_, (i32,)>(
@@ -1133,14 +1536,15 @@ impl PgFulfillmentRepository {
             )
             .bind(warehouse_id)
             .bind(&sku)
-            .fetch_optional(&self.pool)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .map(|row| row.0)
             .unwrap_or(1);
 
-            let pick = self
-                .create_pick_async(CreatePickTask {
+            let pick = Self::insert_pick_on(
+                tx.as_mut(),
+                &CreatePickTask {
                     wave_id: None,
                     order_id: order_id.into(),
                     order_item_id: item_id.into(),
@@ -1153,11 +1557,14 @@ impl PgFulfillmentRepository {
                     serial_number: None,
                     priority: None,
                     notes: None,
-                })
-                .await?;
+                },
+            )
+            .await?;
 
             picks.push(pick);
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(picks)
     }

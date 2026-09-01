@@ -26,6 +26,15 @@ pub struct SqliteCreditRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
+/// Carry a domain error out of a `rusqlite` closure.
+///
+/// `with_immediate_transaction` retries on lock errors; wrapping domain errors
+/// as `ToSqlConversionFailure` keeps them out of that retry loop, and
+/// `map_db_error` unwraps them back into the original `CommerceError`.
+fn to_rusqlite(e: CommerceError) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+}
+
 impl SqliteCreditRepository {
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
@@ -227,39 +236,229 @@ impl SqliteCreditRepository {
         })
     }
 
-    fn recalculate_available_credit(&self, customer_id: CustomerId) -> Result<()> {
-        // available = limit - balance - holds.
-        //
-        // Read-modify-write of `available_credit`, run in an IMMEDIATE
-        // transaction so it is serialized against concurrent charges/payments/
-        // reservations (which move balance and holds) and retried on lock
-        // contention rather than failing with "database table is locked".
-        //
-        // `credit_limit`, `current_balance`, and `hold_amount` are TEXT columns
-        // (migration 021), so subtracting in SQL
-        // ('CAST(credit_limit AS REAL) - CAST(current_balance AS REAL) - ...')
-        // coerces every operand to an IEEE-754 float and stores the rounded
-        // result (e.g. 1000.00 - 999.90 - 0 = 0.09999999999990905 instead of
-        // 0.10). `check_credit` then approves/denies orders against that drifted
-        // value. Instead we read the three exact TEXT values, subtract with
-        // `rust_decimal::Decimal`, and write the exact string back.
-        with_immediate_transaction(&self.pool, |tx| {
-            let (limit, balance, hold): (String, String, String) = tx.query_row(
-                "SELECT credit_limit, current_balance, hold_amount FROM credit_accounts WHERE customer_id = ?",
+    /// Recompute `available = limit - balance - holds` on the caller's
+    /// connection, so it commits in the same transaction as whatever moved the
+    /// balance or the holds. A separate transaction would leave a crash window
+    /// in which `available_credit` disagreed with the numbers it is derived
+    /// from, and `check_credit` approves orders against that column.
+    ///
+    /// `credit_limit`, `current_balance`, and `hold_amount` are TEXT columns
+    /// (migration 021), so subtracting in SQL
+    /// (`CAST(credit_limit AS REAL) - CAST(current_balance AS REAL) - ...`)
+    /// coerces every operand to an IEEE-754 float and stores the rounded result
+    /// (e.g. 1000.00 - 999.90 - 0 = 0.09999999999990905 instead of 0.10).
+    /// Instead we read the three exact TEXT values, subtract with
+    /// `rust_decimal::Decimal`, and write the exact string back.
+    ///
+    /// Every mutation that moves the limit, the balance or the holds calls this
+    /// inside its own transaction, so there is no standalone variant.
+    fn recalculate_available_credit_with_conn(
+        conn: &rusqlite::Connection,
+        customer_id: CustomerId,
+    ) -> rusqlite::Result<()> {
+        let (limit, balance, hold): (String, String, String) = conn.query_row(
+            "SELECT credit_limit, current_balance, hold_amount FROM credit_accounts WHERE customer_id = ?",
+            [customer_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+
+        let available = parse_decimal_row(&limit, "credit_account", "credit_limit")?
+            - parse_decimal_row(&balance, "credit_account", "current_balance")?
+            - parse_decimal_row(&hold, "credit_account", "hold_amount")?;
+
+        conn.execute(
+            "UPDATE credit_accounts SET available_credit = ? WHERE customer_id = ?",
+            [&available.to_string(), &customer_id.to_string()],
+        )?;
+
+        Ok(())
+    }
+
+    /// Release this order's active reservation (if any) and decrement the
+    /// account hold by its amount, clamped at zero. Returns the hold that
+    /// remains, so callers can enforce the credit line against it.
+    ///
+    /// `hold_amount` is a TEXT column (migration 021), so the subtraction is
+    /// done with exact `rust_decimal::Decimal` and written back as an exact
+    /// bound parameter rather than coercing to a float in SQL.
+    fn release_reservation_with_conn(
+        conn: &rusqlite::Connection,
+        customer_id: CustomerId,
+        order_id: OrderId,
+        now: &str,
+    ) -> rusqlite::Result<Decimal> {
+        let reserved = match conn.query_row(
+            "SELECT amount FROM credit_reservations
+             WHERE customer_id = ? AND order_id = ? AND status = 'active'",
+            [customer_id.to_string(), order_id.to_string()],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(value) => parse_decimal_row(&value, "credit_reservation", "amount")?,
+            Err(rusqlite::Error::QueryReturnedNoRows) => Decimal::ZERO,
+            Err(e) => return Err(e),
+        };
+
+        conn.execute(
+            "UPDATE credit_reservations SET status = 'released', released_at = ?
+             WHERE customer_id = ? AND order_id = ? AND status = 'active'",
+            rusqlite::params![now, customer_id.to_string(), order_id.to_string()],
+        )?;
+
+        let current_hold: String = conn.query_row(
+            "SELECT hold_amount FROM credit_accounts WHERE customer_id = ?",
+            [customer_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let new_hold = (parse_decimal_row(&current_hold, "credit_account", "hold_amount")?
+            - reserved)
+            .max(Decimal::ZERO);
+        conn.execute(
+            "UPDATE credit_accounts SET hold_amount = ? WHERE customer_id = ?",
+            [&new_hold.to_string(), &customer_id.to_string()],
+        )?;
+
+        Ok(new_hold)
+    }
+
+    /// Append a ledger row on the caller's connection.
+    ///
+    /// `running_balance` is passed in rather than re-derived: callers that have
+    /// just moved the balance in this transaction know the post-transaction
+    /// figure exactly, and re-reading it would double-count a payment.
+    fn insert_transaction_with_conn(
+        conn: &rusqlite::Connection,
+        id: Uuid,
+        input: &RecordCreditTransaction,
+        running_balance: Decimal,
+        now: &str,
+    ) -> rusqlite::Result<()> {
+        conn.execute(
+            "INSERT INTO credit_transactions (id, customer_id, transaction_type, amount,
+                running_balance, reference_type, reference_id, notes, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                id.to_string(),
+                input.customer_id.to_string(),
+                input.transaction_type.to_string(),
+                input.amount.to_string(),
+                running_balance.to_string(),
+                &input.reference_type,
+                input.reference_id.map(|id| id.to_string()),
+                &input.notes,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Insert a credit account on the caller's connection.
+    fn create_credit_account_with_conn(
+        conn: &rusqlite::Connection,
+        id: CreditId,
+        input: &CreateCreditAccount,
+        now: &str,
+    ) -> rusqlite::Result<()> {
+        let currency = input.currency.unwrap_or_default();
+        conn.execute(
+            "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
+                hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                id.to_string(),
+                input.customer_id.to_string(),
+                input.credit_limit.to_string(),
+                input.credit_limit.to_string(), // available = limit initially
+                "0",
+                "0",
+                &currency,
+                CreditAccountStatus::Active.to_string(),
+                &input.payment_terms,
+                input.risk_rating.map(|r| r.to_string()),
+                &input.notes,
+                now,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Move an account's credit limit, append the `limit_change` ledger row and
+    /// recompute available credit — all on the caller's connection, so the
+    /// limit and its audit trail can never disagree.
+    fn adjust_credit_limit_with_conn(
+        conn: &rusqlite::Connection,
+        customer_id: CustomerId,
+        new_limit: Decimal,
+        reason: &str,
+        now: &str,
+    ) -> rusqlite::Result<()> {
+        let old_limit: String = conn.query_row(
+            "SELECT credit_limit FROM credit_accounts WHERE customer_id = ?",
+            [customer_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let old_limit = parse_decimal_row(&old_limit, "credit_account", "credit_limit")?;
+
+        conn.execute(
+            "UPDATE credit_accounts SET credit_limit = ?, updated_at = ? WHERE customer_id = ?",
+            rusqlite::params![new_limit.to_string(), now, customer_id.to_string()],
+        )?;
+
+        let balance: String = conn.query_row(
+            "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
+            [customer_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let running_balance = parse_decimal_row(&balance, "credit_account", "current_balance")?;
+
+        Self::insert_transaction_with_conn(
+            conn,
+            Uuid::new_v4(),
+            &RecordCreditTransaction {
+                customer_id,
+                transaction_type: CreditTransactionType::LimitChange,
+                amount: new_limit - old_limit,
+                reference_type: None,
+                reference_id: None,
+                notes: Some(reason.to_string()),
+            },
+            running_balance,
+            now,
+        )?;
+
+        Self::recalculate_available_credit_with_conn(conn, customer_id)
+    }
+
+    /// Is a credit application still open to a decision?
+    ///
+    /// `approved`, `denied` and `withdrawn` are terminal; `pending`,
+    /// `under_review` and `more_info_needed` are the working states.
+    const fn is_reviewable(status: CreditApplicationStatus) -> bool {
+        matches!(
+            status,
+            CreditApplicationStatus::Pending
+                | CreditApplicationStatus::UnderReview
+                | CreditApplicationStatus::MoreInfoNeeded
+        )
+    }
+
+    /// Read and parse an account's status by customer, or `NotFound`.
+    fn account_status_with_conn(
+        conn: &rusqlite::Connection,
+        customer_id: CustomerId,
+    ) -> Result<CreditAccountStatus> {
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-
-            let available = parse_decimal_row(&limit, "credit_account", "credit_limit")?
-                - parse_decimal_row(&balance, "credit_account", "current_balance")?
-                - parse_decimal_row(&hold, "credit_account", "hold_amount")?;
-
-            tx.execute(
-                "UPDATE credit_accounts SET available_credit = ? WHERE customer_id = ?",
-                [&available.to_string(), &customer_id.to_string()],
-            )?;
-
-            Ok(())
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                other => map_db_error(other),
+            })?;
+        status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid credit_account.status '{status}': {e}"))
         })
     }
 }
@@ -268,30 +467,11 @@ impl CreditRepository for SqliteCreditRepository {
     fn create_credit_account(&self, input: CreateCreditAccount) -> Result<CreditAccount> {
         let id = CreditId::new();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or_default();
 
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
-                "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
-                    hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    input.customer_id.to_string(),
-                    input.credit_limit.to_string(),
-                    input.credit_limit.to_string(), // available = limit initially
-                    "0",
-                    "0",
-                    &currency,
-                    CreditAccountStatus::Active.to_string(),
-                    input.payment_terms,
-                    input.risk_rating.map(|r| r.to_string()),
-                    input.notes,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            ).map_err(map_db_error)?;
+            Self::create_credit_account_with_conn(&conn, id, &input, &now.to_rfc3339())
+                .map_err(map_db_error)?;
         }
 
         self.get_credit_account(id)?.ok_or(CommerceError::NotFound)
@@ -341,13 +521,27 @@ impl CreditRepository for SqliteCreditRepository {
         id: CreditId,
         input: UpdateCreditAccount,
     ) -> Result<CreditAccount> {
-        let now = Utc::now();
-
+        // The status guard, the write and the available-credit recompute share
+        // one IMMEDIATE transaction: `credit_limit` feeds `available_credit`, so
+        // committing one without the other leaves `check_credit` approving
+        // orders against a stale line.
+        let now = Utc::now().to_rfc3339();
         let account = self.get_credit_account(id)?.ok_or(CommerceError::NotFound)?;
+        let customer_id = account.customer_id;
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        with_immediate_transaction(&self.pool, |tx| {
+            let current = Self::account_status_with_conn(tx, customer_id).map_err(to_rusqlite)?;
+            // `closed` is terminal: an account may not be reopened by a blind
+            // update, only by opening a new one.
+            if current == CreditAccountStatus::Closed
+                && input.status.is_some_and(|next| next != CreditAccountStatus::Closed)
+            {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit account {id} is '{current}' and cannot be reopened"
+                ))));
+            }
+
+            let rows = tx.execute(
                 "UPDATE credit_accounts SET
                     credit_limit = COALESCE(?, credit_limit),
                     status = COALESCE(?, status),
@@ -355,21 +549,27 @@ impl CreditRepository for SqliteCreditRepository {
                     risk_rating = COALESCE(?, risk_rating),
                     notes = COALESCE(?, notes),
                     updated_at = ?
-                 WHERE id = ?",
+                 WHERE id = ? AND status = ?",
                 rusqlite::params![
                     input.credit_limit.map(|l| l.to_string()),
                     input.status.map(|s| s.to_string()),
-                    input.payment_terms,
+                    &input.payment_terms,
                     input.risk_rating.map(|r| r.to_string()),
-                    input.notes,
-                    now.to_rfc3339(),
+                    &input.notes,
+                    &now,
                     id.to_string(),
+                    current.to_string(),
                 ],
-            )
-            .map_err(map_db_error)?;
-        }
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit account {id} changed concurrently; expected status '{current}'"
+                ))));
+            }
 
-        self.recalculate_available_credit(account.customer_id)?;
+            Self::recalculate_available_credit_with_conn(tx, customer_id)
+        })?;
+
         self.get_credit_account(id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -436,30 +636,14 @@ impl CreditRepository for SqliteCreditRepository {
         new_limit: Decimal,
         reason: &str,
     ) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
-
-        let account =
-            self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)?;
-        let old_limit = account.credit_limit;
-
-        conn.execute(
-            "UPDATE credit_accounts SET credit_limit = ?, updated_at = ? WHERE customer_id = ?",
-            [&new_limit.to_string(), &now.to_rfc3339(), &customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        // Record the change
-        self.record_transaction(RecordCreditTransaction {
-            customer_id,
-            transaction_type: CreditTransactionType::LimitChange,
-            amount: new_limit - old_limit,
-            reference_type: None,
-            reference_id: None,
-            notes: Some(reason.to_string()),
+        // The limit write, its `limit_change` ledger row and the available-credit
+        // recompute are ONE IMMEDIATE transaction: a limit that moved without an
+        // audit row (or vice versa) is unreconcilable.
+        let now = Utc::now().to_rfc3339();
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::adjust_credit_limit_with_conn(tx, customer_id, new_limit, reason, &now)
         })?;
 
-        self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -468,32 +652,74 @@ impl CreditRepository for SqliteCreditRepository {
         customer_id: CustomerId,
         reason: &str,
     ) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
+        // `closed` is terminal — suspending a closed account would resurrect a
+        // line nobody re-underwrote. The status read and the guarded write share
+        // one IMMEDIATE transaction so a concurrent close cannot slip between
+        // them; a zero-row UPDATE means exactly that race and surfaces as
+        // `Conflict`.
+        let now = Utc::now().to_rfc3339();
+        let note = format!("\nSuspended: {reason}");
 
-        conn.execute(
-            "UPDATE credit_accounts SET status = ?, notes = COALESCE(notes, '') || ? || '\n', updated_at = ?
-             WHERE customer_id = ?",
-            rusqlite::params![
-                CreditAccountStatus::Suspended.to_string(),
-                format!("\nSuspended: {}", reason),
-                now.to_rfc3339(),
-                customer_id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let current = Self::account_status_with_conn(tx, customer_id).map_err(to_rusqlite)?;
+            if current == CreditAccountStatus::Closed {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit account for customer {customer_id} is '{current}' and cannot be suspended"
+                ))));
+            }
+
+            let rows = tx.execute(
+                "UPDATE credit_accounts SET status = ?, notes = COALESCE(notes, '') || ? || '\n', updated_at = ?
+                 WHERE customer_id = ? AND status = ?",
+                rusqlite::params![
+                    CreditAccountStatus::Suspended.to_string(),
+                    &note,
+                    &now,
+                    customer_id.to_string(),
+                    current.to_string(),
+                ],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit account for customer {customer_id} changed concurrently; expected status '{current}'"
+                ))));
+            }
+            Ok(())
+        })?;
 
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn reactivate_credit_account(&self, customer_id: CustomerId) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
+        // Mirror of `suspend_credit_account`: `closed` is terminal, so a closed
+        // account cannot be flipped back to active.
+        let now = Utc::now().to_rfc3339();
 
-        conn.execute(
-            "UPDATE credit_accounts SET status = ?, updated_at = ? WHERE customer_id = ?",
-            [CreditAccountStatus::Active.to_string(), now.to_rfc3339(), customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let current = Self::account_status_with_conn(tx, customer_id).map_err(to_rusqlite)?;
+            if current == CreditAccountStatus::Closed {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit account for customer {customer_id} is '{current}' and cannot be reactivated"
+                ))));
+            }
+
+            let rows = tx.execute(
+                "UPDATE credit_accounts SET status = ?, updated_at = ?
+                 WHERE customer_id = ? AND status = ?",
+                rusqlite::params![
+                    CreditAccountStatus::Active.to_string(),
+                    &now,
+                    customer_id.to_string(),
+                    current.to_string(),
+                ],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit account for customer {customer_id} changed concurrently; expected status '{current}'"
+                ))));
+            }
+            Ok(())
+        })?;
 
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
@@ -565,10 +791,11 @@ impl CreditRepository for SqliteCreditRepository {
         // The available-credit check, the reservation INSERT, and the hold bump
         // must be atomic and serialized: otherwise concurrent reservations each
         // pass the check against the same stale hold and all commit, extending
-        // credit past the agreed line. Run them in an IMMEDIATE transaction (the
-        // same hardening `charge_credit` and the Postgres backend use), then
-        // recompute available credit afterward — outside the transaction, so we
-        // never hold the write connection while that helper opens its own.
+        // credit past the agreed line. Run them — and the `available_credit`
+        // recompute they invalidate — in ONE IMMEDIATE transaction (the same
+        // hardening `charge_credit` and the Postgres backend use), so a crash
+        // can never leave a reservation whose hold or available credit was
+        // never written.
         //
         // `credit_limit`, `current_balance`, and `hold_amount` are TEXT columns
         // (migration 021), so the arithmetic is done with exact
@@ -610,10 +837,9 @@ impl CreditRepository for SqliteCreditRepository {
                 [&new_hold.to_string(), &customer_id.to_string()],
             )?;
 
-            Ok(())
+            Self::recalculate_available_credit_with_conn(tx, customer_id)
         })?;
 
-        self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -624,55 +850,17 @@ impl CreditRepository for SqliteCreditRepository {
     ) -> Result<CreditAccount> {
         let now = Utc::now();
 
-        // Release the reservation and decrement the hold in one IMMEDIATE
-        // transaction so the read-modify-write of `hold_amount` is serialized
-        // against concurrent reservations/releases and retried on lock
-        // contention. `recalculate_available_credit` runs afterward, outside the
-        // transaction (it opens its own), so we never hold this write connection
-        // while it acquires another.
-        //
-        // `hold_amount` is a TEXT column (migration 021), so the subtraction is
-        // done with exact `rust_decimal::Decimal`, clamped at zero, and written
-        // back as an exact bound parameter rather than coercing to a float in SQL.
+        // Release the reservation, decrement the hold and recompute available
+        // credit in ONE IMMEDIATE transaction, so the read-modify-write of
+        // `hold_amount` is serialized against concurrent reservations/releases,
+        // retried on lock contention, and never commits a hold without the
+        // matching `available_credit`.
+        let now = now.to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
-            let amount: Option<String> = match tx.query_row(
-                "SELECT amount FROM credit_reservations WHERE customer_id = ? AND order_id = ? AND status = 'active'",
-                [customer_id.to_string(), order_id.to_string()],
-                |row| row.get(0),
-            ) {
-                Ok(value) => Some(value),
-                Err(rusqlite::Error::QueryReturnedNoRows) => None,
-                Err(e) => return Err(e),
-            };
-
-            let amount = match amount {
-                Some(value) => parse_decimal_row(&value, "credit_reservation", "amount")?,
-                None => Decimal::ZERO,
-            };
-
-            tx.execute(
-                "UPDATE credit_reservations SET status = 'released', released_at = ?
-                 WHERE customer_id = ? AND order_id = ? AND status = 'active'",
-                [now.to_rfc3339(), customer_id.to_string(), order_id.to_string()],
-            )?;
-
-            let current_hold: String = tx.query_row(
-                "SELECT hold_amount FROM credit_accounts WHERE customer_id = ?",
-                [customer_id.to_string()],
-                |row| row.get(0),
-            )?;
-            let new_hold = (parse_decimal_row(&current_hold, "credit_account", "hold_amount")?
-                - amount)
-                .max(Decimal::ZERO);
-            tx.execute(
-                "UPDATE credit_accounts SET hold_amount = ? WHERE customer_id = ?",
-                [&new_hold.to_string(), &customer_id.to_string()],
-            )?;
-
-            Ok(())
+            Self::release_reservation_with_conn(tx, customer_id, order_id, &now)?;
+            Self::recalculate_available_credit_with_conn(tx, customer_id)
         })?;
 
-        self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -688,23 +876,31 @@ impl CreditRepository for SqliteCreditRepository {
             ));
         }
 
-        // The limit check and the balance write must be atomic and serialized:
-        // otherwise two concurrent charges each read the same balance, both pass
-        // the limit check, and both commit — together exceeding the credit limit.
-        // Run them in an IMMEDIATE transaction (write lock held across the
-        // read-modify-write), the same hardening the gift-card, store-credit,
-        // and invoice-payment paths use.
+        // The whole charge is ONE IMMEDIATE transaction: limit check, balance
+        // write, reservation release and ledger row commit or roll back
+        // together.
         //
-        // A rejected charge (limit exceeded) returns before the reservation is
-        // released, so the hold is preserved. The reservation release, ledger
-        // entry, and available-credit recompute run *after* the transaction
-        // commits and outside it, so we never hold the write connection while
-        // those helpers acquire their own pooled connections (which would
-        // exhaust the pool under concurrency).
+        // Splitting them (balance in one transaction, then the release and the
+        // ledger row in their own) let a crash in between double-consume the
+        // customer's credit with no reconciliation path, and left the ledger
+        // disagreeing with the balance. Holding the write lock across the
+        // read-modify-write also serializes concurrent charges, so two of them
+        // cannot both pass the limit check against the same stale balance.
+        //
+        // Limit rule: `new_balance + remaining_hold <= credit_limit`. Charging
+        // against *this* order's own reservation converts hold into balance, so
+        // the reservation is consumed first and only the holds still
+        // outstanding for OTHER orders bind the charge. Checking the balance
+        // alone (the previous rule) let a charge for one order spend credit
+        // already reserved for another, driving `available_credit` — documented
+        // as `limit - balance - holds` — negative.
         //
         // `current_balance` is a TEXT column (migration 021), so the arithmetic
         // is done with exact `rust_decimal::Decimal` and written back as an exact
         // bound parameter rather than coercing to an IEEE-754 float in SQL.
+        let now = Utc::now().to_rfc3339();
+        let ledger_id = Uuid::new_v4();
+
         with_immediate_transaction(&self.pool, |tx| {
             let (current_balance, limit_str): (String, String) = tx.query_row(
                 "SELECT current_balance, credit_limit FROM credit_accounts WHERE customer_id = ?",
@@ -714,33 +910,44 @@ impl CreditRepository for SqliteCreditRepository {
             let new_balance =
                 parse_decimal_row(&current_balance, "credit_account", "current_balance")? + amount;
             let credit_limit = parse_decimal_row(&limit_str, "credit_account", "credit_limit")?;
-            if new_balance > credit_limit {
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::ValidationError(format!(
-                        "Charge would exceed credit limit: new balance {new_balance}, limit {credit_limit}"
-                    )),
-                )));
+
+            // Consume this order's reservation before testing the line, so a
+            // charge against your own hold is not counted twice. A rejected
+            // charge rolls the release back with everything else, preserving
+            // the reservation.
+            let remaining_hold =
+                Self::release_reservation_with_conn(tx, customer_id, order_id, &now)?;
+
+            if new_balance + remaining_hold > credit_limit {
+                return Err(to_rusqlite(CommerceError::ValidationError(format!(
+                    "Charge would exceed credit limit: new balance {new_balance}, \
+                     holds {remaining_hold}, limit {credit_limit}"
+                ))));
             }
+
             tx.execute(
-                "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
-                [&new_balance.to_string(), &customer_id.to_string()],
+                "UPDATE credit_accounts SET current_balance = ?, updated_at = ? WHERE customer_id = ?",
+                rusqlite::params![new_balance.to_string(), &now, customer_id.to_string()],
             )?;
-            Ok(())
+
+            Self::insert_transaction_with_conn(
+                tx,
+                ledger_id,
+                &RecordCreditTransaction {
+                    customer_id,
+                    transaction_type: CreditTransactionType::Charge,
+                    amount,
+                    reference_type: Some("order".to_string()),
+                    reference_id: Some(Uuid::from(order_id)),
+                    notes: None,
+                },
+                new_balance,
+                &now,
+            )?;
+
+            Self::recalculate_available_credit_with_conn(tx, customer_id)
         })?;
 
-        // Charge committed: release the hold, record the ledger entry, and
-        // recompute available credit.
-        self.release_credit_reservation(customer_id, order_id)?;
-        self.record_transaction(RecordCreditTransaction {
-            customer_id,
-            transaction_type: CreditTransactionType::Charge,
-            amount,
-            reference_type: Some("order".to_string()),
-            reference_id: Some(Uuid::from(order_id)),
-            notes: None,
-        })?;
-
-        self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -830,19 +1037,55 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn release_hold(&self, input: ReleaseCreditHold) -> Result<CreditHold> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
+        // Only an active hold may be released. Previously unguarded: releasing
+        // an already-released (or expired) hold silently succeeded and
+        // overwrote the original `released_by`/`released_at`/`release_notes`,
+        // destroying the audit trail of who actually cleared it — and reported
+        // success for a hold that never existed as active.
+        let now = Utc::now().to_rfc3339();
+        let hold_id = input.hold_id.to_string();
 
-        conn.execute(
-            "UPDATE credit_holds SET status = 'released', released_by = ?, released_at = ?, release_notes = ?
-             WHERE id = ?",
-            rusqlite::params![
-                input.released_by,
-                now.to_rfc3339(),
-                input.release_notes,
-                input.hold_id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let status: String = tx
+                .query_row("SELECT status FROM credit_holds WHERE id = ?", [&hold_id], |row| {
+                    row.get(0)
+                })
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => to_rusqlite(CommerceError::NotFound),
+                    other => other,
+                })?;
+            let current: CreditHoldStatus = status.parse().map_err(|e| {
+                to_rusqlite(CommerceError::DatabaseError(format!(
+                    "Invalid credit_hold.status '{status}': {e}"
+                )))
+            })?;
+            if current != CreditHoldStatus::Active {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit hold {} is '{current}' and cannot be released",
+                    input.hold_id
+                ))));
+            }
+
+            let rows = tx.execute(
+                "UPDATE credit_holds SET status = ?, released_by = ?, released_at = ?, release_notes = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    CreditHoldStatus::Released.to_string(),
+                    &input.released_by,
+                    &now,
+                    &input.release_notes,
+                    &hold_id,
+                    CreditHoldStatus::Active.to_string(),
+                ],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit hold {} was released concurrently",
+                    input.hold_id
+                ))));
+            }
+            Ok(())
+        })?;
 
         self.get_hold(input.hold_id)?.ok_or(CommerceError::NotFound)
     }
@@ -951,59 +1194,156 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn review_application(&self, input: ReviewCreditApplication) -> Result<CreditApplication> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
+        // A decision is once-only: `approved`, `denied` and `withdrawn` are
+        // terminal. Previously unguarded, re-reviewing an approved application
+        // re-ran the account side effects, so a second "approval" at any limit
+        // silently rewrote the customer's credit line (and appended a second
+        // `limit_change` ledger row) with no application-state trail.
+        //
+        // The decision and the account it creates or re-limits share ONE
+        // IMMEDIATE transaction, so an approved application always has the
+        // matching account.
+        let now = Utc::now().to_rfc3339();
+        let app_id = input.application_id.to_string();
 
-        let app = self.get_application(input.application_id)?.ok_or(CommerceError::NotFound)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let (customer, status): (String, String) = tx
+                .query_row(
+                    "SELECT customer_id, status FROM credit_applications WHERE id = ?",
+                    [&app_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => to_rusqlite(CommerceError::NotFound),
+                    other => other,
+                })?;
+            let customer_id =
+                CustomerId::from(parse_uuid_row(&customer, "credit_application", "customer_id")?);
+            let current: CreditApplicationStatus = status.parse().map_err(|e| {
+                to_rusqlite(CommerceError::DatabaseError(format!(
+                    "Invalid credit_application.status '{status}': {e}"
+                )))
+            })?;
+            if !Self::is_reviewable(current) {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit application {} is '{current}' and has already been decided",
+                    input.application_id
+                ))));
+            }
 
-        conn.execute(
-            "UPDATE credit_applications SET approved_limit = ?, status = ?, reviewed_by = ?,
-                reviewed_at = ?, decision_notes = ?, updated_at = ?
-             WHERE id = ?",
-            rusqlite::params![
-                input.approved_limit.map(|l| l.to_string()),
-                input.status.to_string(),
-                &input.reviewed_by,
-                now.to_rfc3339(),
-                input.decision_notes,
-                now.to_rfc3339(),
-                input.application_id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+            let rows = tx.execute(
+                "UPDATE credit_applications SET approved_limit = ?, status = ?, reviewed_by = ?,
+                    reviewed_at = ?, decision_notes = ?, updated_at = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    input.approved_limit.map(|l| l.to_string()),
+                    input.status.to_string(),
+                    &input.reviewed_by,
+                    &now,
+                    &input.decision_notes,
+                    &now,
+                    &app_id,
+                    current.to_string(),
+                ],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit application {} was decided concurrently",
+                    input.application_id
+                ))));
+            }
 
-        // If approved, create or update credit account
-        if input.status == CreditApplicationStatus::Approved {
-            if let Some(limit) = input.approved_limit {
-                let existing = self.get_credit_account_by_customer(app.customer_id)?;
-                if existing.is_some() {
-                    self.adjust_credit_limit(
-                        app.customer_id,
-                        limit,
-                        "Credit application approved",
-                    )?;
-                } else {
-                    self.create_credit_account(CreateCreditAccount {
-                        customer_id: app.customer_id,
-                        credit_limit: limit,
-                        ..Default::default()
-                    })?;
+            // If approved, create or re-limit the credit account in the same
+            // transaction as the decision.
+            if input.status == CreditApplicationStatus::Approved {
+                if let Some(limit) = input.approved_limit {
+                    let exists: Option<String> = tx
+                        .query_row(
+                            "SELECT id FROM credit_accounts WHERE customer_id = ?",
+                            [customer_id.to_string()],
+                            |row| row.get(0),
+                        )
+                        .map(Some)
+                        .or_else(|e| match e {
+                            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                            other => Err(other),
+                        })?;
+
+                    if exists.is_some() {
+                        Self::adjust_credit_limit_with_conn(
+                            tx,
+                            customer_id,
+                            limit,
+                            "Credit application approved",
+                            &now,
+                        )?;
+                    } else {
+                        Self::create_credit_account_with_conn(
+                            tx,
+                            CreditId::new(),
+                            &CreateCreditAccount {
+                                customer_id,
+                                credit_limit: limit,
+                                ..Default::default()
+                            },
+                            &now,
+                        )?;
+                    }
                 }
             }
-        }
+
+            Ok(())
+        })?;
 
         self.get_application(input.application_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn withdraw_application(&self, id: Uuid) -> Result<CreditApplication> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
+        // Same terminal-state rule as `review_application`: an application that
+        // has already been approved, denied or withdrawn cannot be withdrawn
+        // (which previously erased the recorded decision's status).
+        let now = Utc::now().to_rfc3339();
+        let app_id = id.to_string();
 
-        conn.execute(
-            "UPDATE credit_applications SET status = 'withdrawn', updated_at = ? WHERE id = ?",
-            [now.to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let status: String = tx
+                .query_row(
+                    "SELECT status FROM credit_applications WHERE id = ?",
+                    [&app_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => to_rusqlite(CommerceError::NotFound),
+                    other => other,
+                })?;
+            let current: CreditApplicationStatus = status.parse().map_err(|e| {
+                to_rusqlite(CommerceError::DatabaseError(format!(
+                    "Invalid credit_application.status '{status}': {e}"
+                )))
+            })?;
+            if !Self::is_reviewable(current) {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit application {id} is '{current}' and cannot be withdrawn"
+                ))));
+            }
+
+            let rows = tx.execute(
+                "UPDATE credit_applications SET status = ?, updated_at = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    CreditApplicationStatus::Withdrawn.to_string(),
+                    &now,
+                    &app_id,
+                    current.to_string(),
+                ],
+            )?;
+            if rows == 0 {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Credit application {id} was decided concurrently"
+                ))));
+            }
+            Ok(())
+        })?;
 
         self.get_application(id)?.ok_or(CommerceError::NotFound)
     }
@@ -1018,6 +1358,7 @@ impl CreditRepository for SqliteCreditRepository {
         // balance and may re-run on retry, so it borrows `input` and returns only
         // the computed running balance; the owned `CreditTransaction` is built
         // afterward.
+        let now_str = now.to_rfc3339();
         let running_balance = with_immediate_transaction(&self.pool, |tx| {
             let balance: String = tx.query_row(
                 "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
@@ -1033,22 +1374,7 @@ impl CreditRepository for SqliteCreditRepository {
                 _ => current_balance,
             };
 
-            tx.execute(
-                "INSERT INTO credit_transactions (id, customer_id, transaction_type, amount,
-                    running_balance, reference_type, reference_id, notes, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    input.customer_id.to_string(),
-                    input.transaction_type.to_string(),
-                    input.amount.to_string(),
-                    running_balance.to_string(),
-                    &input.reference_type,
-                    input.reference_id.map(|id| id.to_string()),
-                    &input.notes,
-                    now.to_rfc3339(),
-                ],
-            )?;
+            Self::insert_transaction_with_conn(tx, id, &input, running_balance, &now_str)?;
 
             Ok(running_balance)
         })?;
@@ -1116,15 +1442,18 @@ impl CreditRepository for SqliteCreditRepository {
             ));
         }
 
-        // Reduce balance under an IMMEDIATE transaction so concurrent payments
-        // serialize on the write lock instead of racing on a stale read and
-        // losing an update. The ledger entry and available-credit recompute run
-        // afterward, outside the transaction (see `charge_credit`).
+        // Balance write, ledger row and available-credit recompute are ONE
+        // IMMEDIATE transaction (see `charge_credit`): concurrent payments
+        // serialize on the write lock instead of racing on a stale read, and a
+        // crash can never bank a payment the ledger does not show.
         //
         // `current_balance` is a TEXT column (migration 021), so the subtraction
         // is done with exact `rust_decimal::Decimal`, clamped at zero, and
         // written back as an exact bound parameter rather than coercing to an
         // IEEE-754 float in SQL.
+        let now = Utc::now().to_rfc3339();
+        let ledger_id = Uuid::new_v4();
+
         with_immediate_transaction(&self.pool, |tx| {
             let current_balance: String = tx.query_row(
                 "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
@@ -1136,23 +1465,31 @@ impl CreditRepository for SqliteCreditRepository {
                     - amount)
                     .max(Decimal::ZERO);
             tx.execute(
-                "UPDATE credit_accounts SET current_balance = ? WHERE customer_id = ?",
-                [&new_balance.to_string(), &customer_id.to_string()],
+                "UPDATE credit_accounts SET current_balance = ?, updated_at = ? WHERE customer_id = ?",
+                rusqlite::params![new_balance.to_string(), &now, customer_id.to_string()],
             )?;
-            Ok(())
+
+            // The ledger's running balance is the balance this transaction just
+            // wrote. Re-deriving it (as the standalone `record_transaction`
+            // must) would subtract the payment a second time.
+            Self::insert_transaction_with_conn(
+                tx,
+                ledger_id,
+                &RecordCreditTransaction {
+                    customer_id,
+                    transaction_type: CreditTransactionType::Payment,
+                    amount,
+                    reference_type: Some("payment".to_string()),
+                    reference_id,
+                    notes: None,
+                },
+                new_balance,
+                &now,
+            )?;
+
+            Self::recalculate_available_credit_with_conn(tx, customer_id)
         })?;
 
-        // Record transaction
-        self.record_transaction(RecordCreditTransaction {
-            customer_id,
-            transaction_type: CreditTransactionType::Payment,
-            amount,
-            reference_type: Some("payment".to_string()),
-            reference_id,
-            notes: None,
-        })?;
-
-        self.recalculate_available_credit(customer_id)?;
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
