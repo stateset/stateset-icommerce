@@ -12,9 +12,9 @@ name = "stateset_go"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", version = "1.28.2" }
-stateset-core = { path = "../../crates/stateset-core", version = "1.28.2" }
-stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.28.2" }
+stateset-embedded = { path = "../../crates/stateset-embedded", version = "1.28.3" }
+stateset-core = { path = "../../crates/stateset-core", version = "1.28.3" }
+stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.28.3" }
 
 # Serialization
 serde = { workspace = true }
