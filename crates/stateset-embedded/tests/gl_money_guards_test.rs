@@ -157,7 +157,7 @@ fn post_into_closed_period_is_rejected() {
     gl.close_period(period_id, "tester").expect("close period");
 
     let err = gl.post_journal_entry(draft.id, "tester");
-    assert!(err.is_err(), "posting a draft into a closed period must fail: {err:?}");
+    assert!(err.is_err(), "posting a draft into a closed period must fail");
 
     // Reopening the period makes the draft postable again.
     gl.reopen_period(period_id).expect("reopen period");
@@ -174,7 +174,7 @@ fn void_in_closed_period_is_rejected() {
     gl.close_period(period_id, "tester").expect("close period");
 
     let err = gl.void_journal_entry(entry_id);
-    assert!(err.is_err(), "voiding an entry in a closed period must fail: {err:?}");
+    assert!(err.is_err(), "voiding an entry in a closed period must fail");
 
     // Reopening the period makes the entry voidable again.
     gl.reopen_period(period_id).expect("reopen period");
@@ -218,7 +218,7 @@ fn run_period_close_twice_is_rejected() {
     // entry while the first one still stands.
     gl.reopen_period(period_id).expect("reopen period");
     let err = gl.run_period_close(period_id, "tester");
-    assert!(err.is_err(), "re-close with a standing closing entry must fail: {err:?}");
+    assert!(err.is_err(), "re-close with a standing closing entry must fail");
 
     // Voiding the standing closing entry makes re-close legitimate.
     gl.void_journal_entry(closing.id).expect("void closing entry");
