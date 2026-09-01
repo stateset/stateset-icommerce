@@ -283,14 +283,6 @@ impl SqliteAccountsReceivableRepository {
 
         Ok(())
     }
-
-    fn recalculate_invoice(&self, invoice_id: InvoiceId) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        Self::recalculate_invoice_with_conn(&conn, invoice_id)
-    }
 }
 
 impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
@@ -1093,8 +1085,19 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 )));
             }
 
+            // Restore the invoice from written_off via the single recalculation
+            // source of truth (amount_paid / balance_due / status), then apply
+            // the standard overdue rule (due_date < now and still open) rather
+            // than unconditionally forcing 'overdue' — the invoice may not be
+            // due yet, or payments/credits may cover part (or all) of it.
             tx.execute(
-                "UPDATE invoices SET status = 'overdue', collection_status = 'none' WHERE id = ?1",
+                "UPDATE invoices SET collection_status = 'none' WHERE id = ?1",
+                params![wo.invoice_id.to_string()],
+            )?;
+            Self::recalculate_invoice_with_conn(tx, wo.invoice_id.into()).map_err(to_rusqlite)?;
+            tx.execute(
+                "UPDATE invoices SET status = 'overdue'
+                 WHERE id = ?1 AND due_date < datetime('now') AND status NOT IN ('paid', 'voided')",
                 params![wo.invoice_id.to_string()],
             )?;
 
@@ -1608,31 +1611,35 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        // Atomic: read the application, delete it, and recalculate the invoice
+        // in one immediate transaction. Previously three autocommit statements —
+        // a recalculation failure after the DELETE committed left the
+        // application gone while the invoice still showed the old
+        // amount_paid/status.
+        with_immediate_transaction(&self.pool, |tx| {
+            let to_rusqlite = |e: stateset_core::CommerceError| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+            };
 
-        // Get invoice_id first
-        let invoice_id: String = conn
-            .query_row(
+            // Missing application id -> QueryReturnedNoRows -> NotFound.
+            let invoice_id: String = tx.query_row(
                 "SELECT invoice_id FROM ar_payment_applications WHERE id = ?1",
                 params![application_id.to_string()],
                 |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-        // Delete application
-        conn.execute(
-            "DELETE FROM ar_payment_applications WHERE id = ?1",
-            params![application_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            tx.execute(
+                "DELETE FROM ar_payment_applications WHERE id = ?1",
+                params![application_id.to_string()],
+            )?;
 
-        // Recalculate invoice
-        let parsed_invoice_id = parse_uuid_row(&invoice_id, "payment_application", "invoice_id")
-            .map_err(map_db_error)?;
-        self.recalculate_invoice(parsed_invoice_id.into())?;
+            let parsed_invoice_id =
+                parse_uuid_row(&invoice_id, "payment_application", "invoice_id")?;
+            Self::recalculate_invoice_with_conn(tx, parsed_invoice_id.into())
+                .map_err(to_rusqlite)?;
+
+            Ok(())
+        })?;
 
         Ok(())
     }

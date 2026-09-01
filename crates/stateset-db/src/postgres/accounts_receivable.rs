@@ -388,57 +388,6 @@ impl PgAccountsReceivableRepository {
         Ok(customer_id)
     }
 
-    async fn recalculate_invoice_async(&self, invoice_id: Uuid) -> Result<()> {
-        let paid: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(applied_amount), 0) FROM ar_payment_applications WHERE invoice_id = $1",
-        )
-        .bind(invoice_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        let credits: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(applied_amount), 0) FROM ar_credit_memo_applications WHERE invoice_id = $1",
-        )
-        .bind(invoice_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        // Direct payments (record_payment) have no ar_payment_applications
-        // row; without adding direct_amount_paid back here, this recalculation
-        // would REPLACE amount_paid with the application sums and erase them.
-        let (total, direct): (Decimal, Decimal) =
-            sqlx::query_as("SELECT total, direct_amount_paid FROM invoices WHERE id = $1")
-                .bind(invoice_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?;
-
-        let total_applied = direct + paid + credits;
-        let balance_due = total - total_applied;
-        let status = if balance_due <= Decimal::ZERO {
-            "paid"
-        } else if total_applied > Decimal::ZERO {
-            "partially_paid"
-        } else {
-            "sent"
-        };
-
-        sqlx::query(
-            "UPDATE invoices SET amount_paid = $1, balance_due = $2, status = $3 WHERE id = $4",
-        )
-        .bind(total_applied)
-        .bind(balance_due)
-        .bind(status)
-        .bind(invoice_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        Ok(())
-    }
-
     async fn recalculate_invoice_tx(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         invoice_id: Uuid,
@@ -1024,8 +973,22 @@ impl PgAccountsReceivableRepository {
             return Err(CommerceError::Conflict("Write-off not found or already reversed".into()));
         }
 
+        // Restore the invoice from written_off via the single recalculation
+        // source of truth (amount_paid / balance_due / status), then apply the
+        // standard overdue rule (due_date < now and still open) rather than
+        // unconditionally forcing 'overdue' — the invoice may not be due yet,
+        // or payments/credits may cover part (or all) of it.
+        sqlx::query("UPDATE invoices SET collection_status = 'none' WHERE id = $1")
+            .bind(write_off.invoice_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        Self::recalculate_invoice_tx(&mut tx, write_off.invoice_id).await?;
+
         sqlx::query(
-            "UPDATE invoices SET status = 'overdue', collection_status = 'none' WHERE id = $1",
+            "UPDATE invoices SET status = 'overdue'
+             WHERE id = $1 AND due_date < NOW() AND status NOT IN ('paid', 'voided')",
         )
         .bind(write_off.invoice_id)
         .execute(tx.as_mut())
@@ -1466,20 +1429,29 @@ impl PgAccountsReceivableRepository {
     }
 
     pub async fn unapply_payment_async(&self, application_id: Uuid) -> Result<()> {
+        // Atomic: read the application, delete it, and recalculate the invoice
+        // in one transaction. Previously three autocommit statements — a
+        // recalculation failure after the DELETE committed left the application
+        // gone while the invoice still showed the old amount_paid/status.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Missing application id -> RowNotFound -> NotFound.
         let invoice_id: Uuid =
             sqlx::query_scalar("SELECT invoice_id FROM ar_payment_applications WHERE id = $1")
                 .bind(application_id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM ar_payment_applications WHERE id = $1")
             .bind(application_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        self.recalculate_invoice_async(invoice_id).await?;
+        Self::recalculate_invoice_tx(&mut tx, invoice_id).await?;
+
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 

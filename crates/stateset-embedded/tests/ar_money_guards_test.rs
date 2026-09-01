@@ -481,6 +481,188 @@ fn applications_only_invoice_still_recalculates_as_before() {
     assert_eq!(invoice.balance_due, dec!(100.00));
 }
 
+// ============================================================================
+// FIX 5 — unapply_payment atomicity and reverse_write_off status derivation
+//
+// `unapply_payment` used to run three autocommit statements (read, DELETE,
+// recalculate); a failure after the DELETE left the application row gone but
+// the invoice unchanged. It now runs in one transaction, so a failing unapply
+// (e.g. nonexistent application) must change nothing.
+//
+// `reverse_write_off` used to force the invoice status to 'overdue'
+// unconditionally; it now recalculates amount_paid/balance_due/status and only
+// applies 'overdue' when the due date is actually past and the invoice is
+// still open.
+// ============================================================================
+
+/// Create an invoice with a single line and an explicit due date.
+fn create_invoice_due(
+    commerce: &Commerce,
+    customer_id: stateset_embedded::CustomerId,
+    amount: Decimal,
+    due_date: chrono::DateTime<chrono::Utc>,
+) -> Uuid {
+    let invoice = commerce
+        .invoices()
+        .create(CreateInvoice {
+            customer_id,
+            due_date: Some(due_date),
+            items: vec![CreateInvoiceItem {
+                description: "Services".into(),
+                quantity: dec!(1),
+                unit_price: amount,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("Failed to create invoice");
+    invoice.id.into()
+}
+
+#[test]
+fn unapply_payment_restores_invoice_amounts_and_status() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+
+    let payment_id = create_payment(&commerce, customer_id, dec!(40.00));
+    let apps = commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(40.00) }],
+        })
+        .expect("apply payment");
+    assert_eq!(apps.len(), 1);
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(40.00));
+    assert_eq!(invoice.balance_due, dec!(60.00));
+    assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::PartiallyPaid);
+
+    commerce.accounts_receivable().unapply_payment(apps[0].id).expect("unapply payment");
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(0.00), "amount_paid restored after unapply");
+    assert_eq!(invoice.balance_due, dec!(100.00), "balance_due restored after unapply");
+    assert_ne!(
+        invoice.status,
+        stateset_embedded::InvoiceStatus::PartiallyPaid,
+        "status must no longer be partially_paid after the only application is removed"
+    );
+}
+
+#[test]
+fn unapply_of_nonexistent_application_errors_and_changes_nothing() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
+
+    let payment_id = create_payment(&commerce, customer_id, dec!(40.00));
+    commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(40.00) }],
+        })
+        .expect("apply payment");
+
+    let err = commerce
+        .accounts_receivable()
+        .unapply_payment(Uuid::new_v4())
+        .expect_err("unapplying a nonexistent application must fail");
+    assert!(
+        matches!(err, stateset_embedded::CommerceError::NotFound),
+        "expected NotFound, got: {err:?}"
+    );
+
+    // The failed unapply must not have touched the invoice or the application.
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.amount_paid, dec!(40.00));
+    assert_eq!(invoice.balance_due, dec!(60.00));
+    assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::PartiallyPaid);
+    let apps = commerce.accounts_receivable().get_payment_applications(payment_id).expect("apps");
+    assert_eq!(apps.len(), 1, "the existing application must survive a failed unapply");
+}
+
+#[test]
+fn reverse_write_off_with_future_due_date_is_not_overdue() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let due = chrono::Utc::now() + chrono::Duration::days(30);
+    let invoice_id = create_invoice_due(&commerce, customer_id, dec!(100.00), due);
+
+    // Cover part of the balance with a real application, then write off the rest.
+    let payment_id = create_payment(&commerce, customer_id, dec!(40.00));
+    commerce
+        .accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(40.00) }],
+        })
+        .expect("apply payment");
+
+    let wo = commerce
+        .accounts_receivable()
+        .create_write_off(CreateWriteOff {
+            invoice_id,
+            amount: dec!(60.00),
+            reason: WriteOffReason::Uncollectible,
+            notes: None,
+            approved_by: None,
+        })
+        .expect("write off");
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::WrittenOff);
+
+    let reversed = commerce.accounts_receivable().reverse_write_off(wo.id).expect("reverse");
+    assert!(reversed.reversed_at.is_some());
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_ne!(
+        invoice.status,
+        stateset_embedded::InvoiceStatus::Overdue,
+        "an invoice due in the future must not be marked overdue on reversal"
+    );
+    assert_eq!(
+        invoice.status,
+        stateset_embedded::InvoiceStatus::PartiallyPaid,
+        "the $40 application must still count after reversal"
+    );
+    assert_eq!(invoice.amount_paid, dec!(40.00));
+    assert_eq!(invoice.balance_due, dec!(60.00), "balance_due restored after reversal");
+}
+
+#[test]
+fn reverse_write_off_of_past_due_unpaid_invoice_restores_overdue() {
+    let commerce = new_commerce();
+    let customer_id = create_test_customer(&commerce);
+    let due = chrono::Utc::now() - chrono::Duration::days(10);
+    let invoice_id = create_invoice_due(&commerce, customer_id, dec!(100.00), due);
+
+    let wo = commerce
+        .accounts_receivable()
+        .create_write_off(CreateWriteOff {
+            invoice_id,
+            amount: dec!(100.00),
+            reason: WriteOffReason::Uncollectible,
+            notes: None,
+            approved_by: None,
+        })
+        .expect("write off");
+
+    commerce.accounts_receivable().reverse_write_off(wo.id).expect("reverse");
+
+    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    assert_eq!(
+        invoice.status,
+        stateset_embedded::InvoiceStatus::Overdue,
+        "a genuinely past-due unpaid invoice must be overdue after reversal"
+    );
+    assert_eq!(invoice.amount_paid, dec!(0.00));
+    assert_eq!(invoice.balance_due, dec!(100.00), "balance_due restored after reversal");
+}
+
 #[test]
 fn credit_memo_with_nonpositive_amount_is_rejected() {
     let commerce = new_commerce();

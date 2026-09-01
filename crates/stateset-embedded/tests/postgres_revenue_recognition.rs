@@ -15,7 +15,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::{
     CreatePerformanceObligation, CreateRevenueContract, RecognitionMethod, RevenueContractFilter,
-    RevenueEntryStatus,
+    RevenueContractStatus, RevenueEntryStatus, UpdateRevenueContract,
 };
 use stateset_embedded::AsyncCommerce;
 
@@ -60,6 +60,17 @@ async fn postgres_revenue_contract_and_ratable_recognition_flow() {
         .expect("create contract");
     assert!(!contract.contract_number.is_empty(), "contract number must be generated");
     assert_eq!(contract.obligations.len(), 1);
+    // Recognition requires a live contract (draft/cancelled are rejected).
+    revrec
+        .update_contract_async(
+            contract.id,
+            UpdateRevenueContract {
+                status: Some(RevenueContractStatus::Active),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("activate contract");
     let obligation = &contract.obligations[0];
     assert_eq!(obligation.allocated_amount, dec!(1200));
     assert_eq!(obligation.recognized_amount, Decimal::ZERO);
@@ -156,6 +167,17 @@ async fn postgres_revenue_point_in_time_recognizes_in_full() {
         .await
         .expect("create contract");
     let obligation_id = contract.obligations[0].id;
+    // Recognition requires a live contract (draft/cancelled are rejected).
+    revrec
+        .update_contract_async(
+            contract.id,
+            UpdateRevenueContract {
+                status: Some(RevenueContractStatus::Active),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("activate contract");
 
     let schedule = revrec.generate_schedule_async(obligation_id).await.expect("generate schedule");
     assert_eq!(schedule.entries.len(), 1);

@@ -189,12 +189,24 @@ impl AccountsPayable {
         self.db.accounts_payable().get_bill_items(bill_id)
     }
 
-    /// Add an item to a bill.
+    /// Add an item to a bill and recalculate its totals.
+    ///
+    /// Only a `Draft` or `Pending` bill may be edited; adding an item to a
+    /// bill in any other status (approved, paid, ...) returns
+    /// [`CommerceError::Conflict`](crate::CommerceError::Conflict) naming the
+    /// status, since item edits would change totals a payment may already
+    /// depend on.
     pub fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
         self.db.accounts_payable().add_bill_item(bill_id, item)
     }
 
-    /// Remove an item from a bill.
+    /// Remove an item from a bill and recalculate its totals.
+    ///
+    /// Only a `Draft` or `Pending` bill may be edited; removing an item from a
+    /// bill in any other status (approved, paid, ...) returns
+    /// [`CommerceError::Conflict`](crate::CommerceError::Conflict) naming the
+    /// status, since item edits would change totals a payment may already
+    /// depend on.
     pub fn remove_bill_item(&self, item_id: Uuid) -> Result<()> {
         self.db.accounts_payable().remove_bill_item(item_id)
     }
@@ -212,6 +224,9 @@ impl AccountsPayable {
     }
 
     /// Get bills due soon (within specified days).
+    ///
+    /// The window compares calendar dates and is inclusive: a bill due exactly
+    /// `days` from today is included.
     ///
     /// # Example
     ///

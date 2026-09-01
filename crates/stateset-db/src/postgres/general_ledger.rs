@@ -1092,27 +1092,63 @@ impl PgGeneralLedgerRepository {
     ) -> Result<JournalEntry> {
         let entry = self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)?;
 
-        if entry.status != JournalEntryStatus::Posted {
-            return Err(CommerceError::ValidationError(
-                "Can only reverse posted entries".to_string(),
-            ));
-        }
+        match entry.status {
+            JournalEntryStatus::Posted => {
+                // Claim the entry (posted -> reversed) before creating the
+                // reversing entry, which commits its own transactions; the
+                // status guard ensures concurrent reversals cannot both
+                // create (and auto-post) a reversal.
+                let claimed = sqlx::query(
+                    "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = $1 AND status = 'posted'",
+                )
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
-        // Claim the entry (posted -> reversed) before creating the reversing
-        // entry, which commits its own transactions; the status guard ensures
-        // concurrent reversals cannot both create (and auto-post) a reversal.
-        let claimed = sqlx::query(
-            "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = $1 AND status = 'posted'",
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        if claimed.rows_affected() == 0 {
-            return Err(CommerceError::Conflict(
-                "Journal entry was modified concurrently".to_string(),
-            ));
+                if claimed.rows_affected() == 0 {
+                    return Err(CommerceError::Conflict(
+                        "Journal entry was modified concurrently".to_string(),
+                    ));
+                }
+            }
+            JournalEntryStatus::Reversed => {
+                // A claim with no reversing entry is the stranded state left
+                // by a crash between the claim and the reversing entry's
+                // creation (the best-effort un-claim below can itself be
+                // lost). Resume it; an entry whose reversal exists stays a
+                // completed reversal and rejects a second one (repairing the
+                // cross-links first if a crash lost them). Mirrors SQLite.
+                if let Some(reversal) = self.existing_entry_for_source_async("reversal", id).await?
+                {
+                    sqlx::query(
+                        "UPDATE gl_journal_entries SET reversing_entry_id = $1
+                         WHERE id = $2 AND reversing_entry_id IS NULL",
+                    )
+                    .bind(reversal.id)
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_db_error)?;
+                    sqlx::query(
+                        "UPDATE gl_journal_entries SET reversed_entry_id = $1
+                         WHERE id = $2 AND reversed_entry_id IS NULL",
+                    )
+                    .bind(id)
+                    .bind(reversal.id)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_db_error)?;
+                    return Err(CommerceError::Conflict(
+                        "Journal entry is already reversed".to_string(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(CommerceError::ValidationError(
+                    "Can only reverse posted entries".to_string(),
+                ));
+            }
         }
 
         let reversing_lines: Vec<CreateJournalEntryLine> = entry

@@ -9,7 +9,12 @@
 //! - `dispute_bill` refuses cancelled bills;
 //! - `approve_bill` errors (instead of silently succeeding) on cancelled bills;
 //! - `count_payments` applies the same `from_date`/`to_date` filters as
-//!   `list_payments`.
+//!   `list_payments`;
+//! - `add_bill_item`/`remove_bill_item` refuse bills past draft/pending (item
+//!   edits on approved/paid bills corrupted totals, e.g. negative `amount_due`
+//!   on a paid bill);
+//! - `get_bills_due_soon` includes a bill due exactly on the window's last day
+//!   (RFC3339 vs `datetime('now')` lexical comparison excluded the boundary).
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use rust_decimal::Decimal;
@@ -26,22 +31,36 @@ fn commerce() -> Commerce {
 }
 
 fn make_bill(commerce: &Commerce, supplier: Uuid, qty: Decimal, price: Decimal) -> Bill {
+    make_bill_due(commerce, supplier, qty, price, Utc::now() + Duration::days(30))
+}
+
+fn make_bill_due(
+    commerce: &Commerce,
+    supplier: Uuid,
+    qty: Decimal,
+    price: Decimal,
+    due_date: DateTime<Utc>,
+) -> Bill {
     commerce
         .accounts_payable()
         .create_bill(CreateBill {
             supplier_id: supplier,
-            due_date: Utc::now() + Duration::days(30),
-            items: vec![CreateBillItem {
-                description: "Widget".into(),
-                account_code: Some("5000".into()),
-                quantity: qty,
-                unit_price: price,
-                tax_rate: None,
-                po_line_id: None,
-            }],
+            due_date,
+            items: vec![widget_item(qty, price)],
             ..Default::default()
         })
         .expect("create bill")
+}
+
+fn widget_item(qty: Decimal, price: Decimal) -> CreateBillItem {
+    CreateBillItem {
+        description: "Widget".into(),
+        account_code: Some("5000".into()),
+        quantity: qty,
+        unit_price: price,
+        tax_rate: None,
+        po_line_id: None,
+    }
 }
 
 fn pay_bill(
@@ -508,4 +527,128 @@ fn process_payment_run_skips_bill_paid_after_run_creation() {
     let bill_b_after = ap.get_bill(bill_b.id).expect("get").expect("bill");
     assert_eq!(bill_b_after.status, BillStatus::Paid);
     assert_eq!(bill_b_after.amount_due, Decimal::ZERO);
+}
+
+// ============================================================================
+// Bill line-item edit guards (regression: `add_bill_item`/`remove_bill_item`
+// checked no bill status, so removing an item from a fully-paid bill drove
+// `amount_due` negative while status stayed 'paid', and adding an item to a
+// paid bill created owed money invisible to outstanding/aging and unpayable).
+// Only draft/pending bills may have items added or removed.
+// ============================================================================
+
+#[test]
+fn add_bill_item_rejects_paid_bill() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill = make_bill(&commerce, supplier, dec!(2), dec!(50)); // 100
+    ap.approve_bill(bill.id).expect("approve");
+    pay_bill(&commerce, supplier, bill.id, dec!(100), None);
+
+    let result = ap.add_bill_item(bill.id, widget_item(dec!(1), dec!(25)));
+    assert!(result.is_err(), "adding an item to a paid bill must be rejected");
+
+    let after = ap.get_bill(bill.id).expect("get").expect("bill");
+    assert_eq!(after.status, BillStatus::Paid, "status must remain paid");
+    assert_eq!(after.total_amount, dec!(100), "total must be unchanged");
+    assert_eq!(after.amount_due, Decimal::ZERO, "amount due must be unchanged");
+    assert_eq!(ap.get_bill_items(bill.id).expect("items").len(), 1, "no item may be added");
+}
+
+#[test]
+fn add_bill_item_rejects_approved_bill() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let bill = make_bill(&commerce, Uuid::new_v4(), dec!(2), dec!(50));
+    ap.approve_bill(bill.id).expect("approve");
+
+    let result = ap.add_bill_item(bill.id, widget_item(dec!(1), dec!(25)));
+    assert!(result.is_err(), "adding an item to an approved bill must be rejected");
+    assert_eq!(ap.get_bill_items(bill.id).expect("items").len(), 1);
+}
+
+#[test]
+fn remove_bill_item_rejects_approved_bill() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let bill = make_bill(&commerce, Uuid::new_v4(), dec!(2), dec!(50));
+    ap.approve_bill(bill.id).expect("approve");
+
+    let items = ap.get_bill_items(bill.id).expect("items");
+    let result = ap.remove_bill_item(items[0].id);
+    assert!(result.is_err(), "removing an item from an approved bill must be rejected");
+
+    assert_eq!(ap.get_bill_items(bill.id).expect("items").len(), 1, "item must remain");
+    let after = ap.get_bill(bill.id).expect("get").expect("bill");
+    assert_eq!(after.total_amount, dec!(100), "total must be unchanged");
+}
+
+#[test]
+fn remove_bill_item_rejects_paid_bill() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let bill = make_bill(&commerce, supplier, dec!(2), dec!(50)); // 100
+    ap.approve_bill(bill.id).expect("approve");
+    pay_bill(&commerce, supplier, bill.id, dec!(100), None);
+
+    let items = ap.get_bill_items(bill.id).expect("items");
+    let result = ap.remove_bill_item(items[0].id);
+    assert!(result.is_err(), "removing an item from a paid bill must be rejected");
+
+    let after = ap.get_bill(bill.id).expect("get").expect("bill");
+    assert_eq!(after.status, BillStatus::Paid, "status must remain paid");
+    assert_eq!(after.total_amount, dec!(100), "total must be unchanged");
+    assert_eq!(after.amount_paid, dec!(100), "amount paid must be unchanged");
+    assert_eq!(after.amount_due, Decimal::ZERO, "amount due must never go negative");
+}
+
+#[test]
+fn add_and_remove_bill_item_on_draft_bill_recalculates_totals() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let bill = make_bill(&commerce, Uuid::new_v4(), dec!(2), dec!(50)); // 100
+    assert_eq!(bill.status, BillStatus::Draft);
+
+    let added = ap.add_bill_item(bill.id, widget_item(dec!(3), dec!(10))).expect("add item"); // +30
+    let after_add = ap.get_bill(bill.id).expect("get").expect("bill");
+    assert_eq!(after_add.total_amount, dec!(130), "total must include the new item");
+    assert_eq!(after_add.amount_due, dec!(130), "amount due must include the new item");
+
+    let items = ap.get_bill_items(bill.id).expect("items");
+    let original = items.iter().find(|i| i.id != added.id).expect("original item");
+    ap.remove_bill_item(original.id).expect("remove item"); // -100
+
+    let after_remove = ap.get_bill(bill.id).expect("get").expect("bill");
+    assert_eq!(after_remove.total_amount, dec!(30), "total must drop to the remaining item");
+    assert_eq!(after_remove.amount_due, dec!(30), "amount due must drop to the remaining item");
+    assert_eq!(after_remove.status, BillStatus::Draft, "status must remain draft");
+    assert_eq!(ap.get_bill_items(bill.id).expect("items").len(), 1);
+}
+
+// ============================================================================
+// `get_bills_due_soon` boundary (regression: `due_date` stored RFC3339 was
+// compared lexically against `datetime('now', '+N days')`; 'T' > ' ' excluded
+// bills due exactly on the window's last day, diverging from Postgres's
+// `due_date <= CURRENT_DATE + N` date semantics).
+// ============================================================================
+
+#[test]
+fn get_bills_due_soon_includes_boundary_day_and_excludes_beyond() {
+    let commerce = commerce();
+    let ap = commerce.accounts_payable();
+    let supplier = Uuid::new_v4();
+    let due_in_7 =
+        make_bill_due(&commerce, supplier, dec!(1), dec!(10), Utc::now() + Duration::days(7));
+    let due_in_8 =
+        make_bill_due(&commerce, supplier, dec!(1), dec!(20), Utc::now() + Duration::days(8));
+
+    let due_soon = ap.get_bills_due_soon(7).expect("due soon");
+    let ids: Vec<Uuid> = due_soon.iter().map(|b| b.id).collect();
+    assert!(
+        ids.contains(&due_in_7.id),
+        "a bill due exactly 7 days out must be inside the 7-day window"
+    );
+    assert!(!ids.contains(&due_in_8.id), "a bill due 8 days out must be outside the 7-day window");
 }

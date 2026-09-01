@@ -285,47 +285,6 @@ impl PgAccountsPayableRepository {
         })
     }
 
-    async fn recalculate_bill(&self, bill_id: Uuid) -> Result<()> {
-        let (subtotal, tax_amount): (Decimal, Decimal) = sqlx::query_as(
-            "SELECT COALESCE(SUM(amount), 0), COALESCE(SUM(tax_amount), 0) FROM ap_bill_items WHERE bill_id = $1",
-        )
-        .bind(bill_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        let total = subtotal + tax_amount;
-
-        let (amount_paid,): (Decimal,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(a.amount), 0)
-             FROM ap_payment_allocations a
-             JOIN ap_payments p ON p.id = a.payment_id
-             WHERE a.bill_id = $1
-               AND p.status NOT IN ('voided', 'failed')",
-        )
-        .bind(bill_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        let amount_due = total - amount_paid;
-
-        sqlx::query(
-            "UPDATE ap_bills SET subtotal = $1, tax_amount = $2, total_amount = $3, amount_paid = $4, amount_due = $5 WHERE id = $6",
-        )
-        .bind(subtotal)
-        .bind(tax_amount)
-        .bind(total)
-        .bind(amount_paid)
-        .bind(amount_due)
-        .bind(bill_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        Ok(())
-    }
-
     async fn recalculate_bill_tx(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         bill_id: Uuid,
@@ -381,6 +340,11 @@ impl PgAccountsPayableRepository {
         let bill_date = to_date(input.bill_date.unwrap_or(now));
         let due_date = to_date(input.due_date);
 
+        // Header, every line, and the recalculated totals commit together: a
+        // failing line insert must not leave a partial draft bill behind
+        // (previously each item was added in its own transaction, so a 5-line
+        // bill could persist with 3 lines and an understated total).
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         sqlx::query(
             r#"
             INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
@@ -400,30 +364,23 @@ impl PgAccountsPayableRepository {
         .bind(&input.reference_number)
         .bind(&input.memo)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         for item in &input.items {
-            self.add_bill_item_async(
-                id,
-                CreateBillItem {
-                    description: item.description.clone(),
-                    account_code: item.account_code.clone(),
-                    quantity: item.quantity,
-                    unit_price: item.unit_price,
-                    tax_rate: item.tax_rate,
-                    po_line_id: item.po_line_id,
-                },
-            )
-            .await?;
+            Self::insert_bill_item_tx(&mut tx, Uuid::new_v4(), id, item, now).await?;
         }
 
-        self.recalculate_bill(id).await?;
+        Self::recalculate_bill_tx(&mut tx, id).await?;
 
-        self.get_bill_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create bill".into()))
+        let row = sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Self::row_to_bill(row)
     }
 
     pub async fn get_bill_async(&self, id: Uuid) -> Result<Option<Bill>> {
@@ -622,6 +579,54 @@ impl PgAccountsPayableRepository {
         let now = Utc::now();
         let id = Uuid::new_v4();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Item edits change the bill total, so only draft/pending bills may be
+        // edited (payments cannot exist before approval, so `amount_due` can
+        // never go negative under this guard). `FOR UPDATE` inside the same
+        // transaction as the insert so a concurrent approval cannot slip
+        // between the check and the mutation. Previously unguarded: adding an
+        // item to a paid bill created owed money invisible to outstanding/aging.
+        let status: (String,) =
+            sqlx::query_as("SELECT status FROM ap_bills WHERE id = $1 FOR UPDATE")
+                .bind(bill_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let bill_status: BillStatus = status.0.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid bill status '{}' while adding bill item: {}",
+                status.0, e
+            ))
+        })?;
+        if !matches!(bill_status, BillStatus::Draft | BillStatus::Pending) {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot add items to a bill in status '{}'; only draft or pending bills may be edited",
+                status.0
+            )));
+        }
+
+        Self::insert_bill_item_tx(&mut tx, id, bill_id, &item, now).await?;
+
+        Self::recalculate_bill_tx(&mut tx, bill_id).await?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_bill_item_async(id)
+            .await?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to create bill item".into()))
+    }
+
+    /// Insert one bill line (next line number, computed amounts) on the given
+    /// transaction. Status guards are the caller's responsibility.
+    async fn insert_bill_item_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        item_id: Uuid,
+        bill_id: Uuid,
+        item: &CreateBillItem,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
         // `line_number` is INTEGER (INT4), so `MAX(line_number) + 1` is INT4 —
         // decode it as i32, not i64 (an i64 decode fails with a type mismatch and
         // was breaking every bill-item insert on Postgres).
@@ -629,7 +634,7 @@ impl PgAccountsPayableRepository {
             "SELECT COALESCE(MAX(line_number), 0) + 1 FROM ap_bill_items WHERE bill_id = $1",
         )
         .bind(bill_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -643,7 +648,7 @@ impl PgAccountsPayableRepository {
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
             "#,
         )
-        .bind(id)
+        .bind(item_id)
         .bind(bill_id)
         .bind(line_number.0)
         .bind(&item.description)
@@ -655,15 +660,10 @@ impl PgAccountsPayableRepository {
         .bind(tax_amount)
         .bind(item.po_line_id)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        self.recalculate_bill(bill_id).await?;
-
-        self.get_bill_item_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create bill item".into()))
+        Ok(())
     }
 
     async fn get_bill_item_async(&self, id: Uuid) -> Result<Option<BillItem>> {
@@ -677,20 +677,45 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn remove_bill_item_async(&self, item_id: Uuid) -> Result<()> {
-        let row = sqlx::query_as::<_, (Uuid,)>("SELECT bill_id FROM ap_bill_items WHERE id = $1")
-            .bind(item_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Same guard as `add_bill_item_async`: only draft/pending bills may
+        // have items removed. Previously unguarded: removing an item from a
+        // fully paid bill drove `amount_due` negative while status stayed 'paid'.
+        let row = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT b.id, b.status FROM ap_bill_items i
+             JOIN ap_bills b ON b.id = i.bill_id
+             WHERE i.id = $1
+             FOR UPDATE OF b",
+        )
+        .bind(item_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+
+        let bill_status: BillStatus = row.1.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid bill status '{}' while removing bill item: {}",
+                row.1, e
+            ))
+        })?;
+        if !matches!(bill_status, BillStatus::Draft | BillStatus::Pending) {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot remove items from a bill in status '{}'; only draft or pending bills may be edited",
+                row.1
+            )));
+        }
 
         sqlx::query("DELETE FROM ap_bill_items WHERE id = $1")
             .bind(item_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        self.recalculate_bill(row.0).await?;
+        Self::recalculate_bill_tx(&mut tx, row.0).await?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
     }

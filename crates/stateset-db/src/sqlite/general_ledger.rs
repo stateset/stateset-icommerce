@@ -1133,29 +1133,58 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry> {
         let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
-        if entry.status != JournalEntryStatus::Posted {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Can only reverse posted entries".to_string(),
-            ));
-        }
-
-        // Claim the entry (posted -> reversed) before creating the reversing
-        // entry, which commits its own transactions; the status guard ensures
-        // concurrent reversals cannot both create (and auto-post) a reversal.
         let conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let claimed = conn
-            .execute(
-                "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = ?1 AND status = 'posted'",
-                params![id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        if claimed == 0 {
-            return Err(stateset_core::CommerceError::Conflict(
-                "Journal entry was modified concurrently".to_string(),
-            ));
+        match entry.status {
+            JournalEntryStatus::Posted => {
+                // Claim the entry (posted -> reversed) before creating the
+                // reversing entry, which commits its own transactions; the
+                // status guard ensures concurrent reversals cannot both
+                // create (and auto-post) a reversal.
+                let claimed = conn
+                    .execute(
+                        "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = ?1 AND status = 'posted'",
+                        params![id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                if claimed == 0 {
+                    return Err(stateset_core::CommerceError::Conflict(
+                        "Journal entry was modified concurrently".to_string(),
+                    ));
+                }
+            }
+            JournalEntryStatus::Reversed => {
+                // A claim with no reversing entry is the stranded state left
+                // by a crash between the claim and the reversing entry's
+                // creation (the best-effort un-claim below can itself be
+                // lost). Resume it; an entry whose reversal exists stays a
+                // completed reversal and rejects a second one (repairing the
+                // cross-links first if a crash lost them).
+                if let Some(reversal) = self.existing_entry_for_source("reversal", id)? {
+                    conn.execute(
+                        "UPDATE gl_journal_entries SET reversing_entry_id = ?1
+                         WHERE id = ?2 AND reversing_entry_id IS NULL",
+                        params![reversal.id.to_string(), id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                    conn.execute(
+                        "UPDATE gl_journal_entries SET reversed_entry_id = ?1
+                         WHERE id = ?2 AND reversed_entry_id IS NULL",
+                        params![id.to_string(), reversal.id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                    return Err(stateset_core::CommerceError::Conflict(
+                        "Journal entry is already reversed".to_string(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(stateset_core::CommerceError::ValidationError(
+                    "Can only reverse posted entries".to_string(),
+                ));
+            }
         }
 
         // Create reversing entry with swapped debits/credits
@@ -2802,6 +2831,43 @@ mod tests {
 
         assert_eq!(account_balance(&repo, cash.id), dec!(0));
         assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+    }
+
+    #[test]
+    fn reverse_journal_entry_resumes_a_stranded_claim() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(60));
+        repo.post_journal_entry(entry.id, "tester").expect("post");
+
+        // Simulate a crash between the reversal claim and the reversing
+        // entry's creation: status flipped, balances applied, no reversal.
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = ?1",
+            params![entry.id.to_string()],
+        )
+        .expect("simulate stranded claim");
+        drop(conn);
+        assert_eq!(account_balance(&repo, cash.id), dec!(60));
+
+        // The retry must resume: create the reversing entry and net out.
+        let reversal = repo
+            .reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 16).expect("date"))
+            .expect("resume stranded reversal");
+        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+        let original = repo.get_journal_entry(entry.id).expect("get").expect("entry");
+        assert_eq!(original.reversing_entry_id, Some(reversal.id));
+        assert_eq!(reversal.reversed_entry_id, Some(entry.id));
+
+        // A further reversal is still rejected.
+        let err = repo
+            .reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 17).expect("date"))
+            .expect_err("second reversal must fail");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
     }
 
     #[test]

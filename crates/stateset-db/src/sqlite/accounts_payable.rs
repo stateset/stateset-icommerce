@@ -36,6 +36,45 @@ impl SqliteAccountsPayableRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
+    /// Insert one bill line (next line number, rounded amounts) on the given
+    /// connection/transaction. Status guards are the caller's responsibility.
+    fn insert_bill_item_with_conn(
+        conn: &rusqlite::Connection,
+        item_id: Uuid,
+        bill_id: Uuid,
+        item: &CreateBillItem,
+        now: &str,
+    ) -> rusqlite::Result<()> {
+        let line_number: i32 = conn.query_row(
+            "SELECT COALESCE(MAX(line_number), 0) + 1 FROM ap_bill_items WHERE bill_id = ?1",
+            params![bill_id.to_string()],
+            |row| row.get(0),
+        )?;
+
+        let amount = item.quantity * item.unit_price;
+        let tax_amount = item.tax_rate.map_or(Decimal::ZERO, |r| amount * r / Decimal::from(100));
+
+        conn.execute(
+            "INSERT INTO ap_bill_items (id, bill_id, line_number, description, account_code, quantity, unit_price, amount, tax_rate, tax_amount, po_line_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                item_id.to_string(),
+                bill_id.to_string(),
+                line_number,
+                item.description,
+                item.account_code,
+                round_ap(item.quantity, 4),
+                round_ap(item.unit_price, 4),
+                round_ap(amount, 4),
+                item.tax_rate.map(|r| round_ap(r, 6)),
+                round_ap(tax_amount, 4),
+                item.po_line_id.map(|id| id.to_string()),
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
     fn row_to_bill(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bill> {
         Ok(Bill {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "bill", "id")?,
@@ -271,11 +310,6 @@ impl SqliteAccountsPayableRepository {
         Ok(())
     }
 
-    fn recalculate_bill(&self, bill_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        Self::recalculate_bill_with_conn(&conn, bill_id)
-    }
-
     /// Returns all `ap_bills` matching `filter` (`supplier_id`, `status`,
     /// `purchase_order_id`, `overdue_only`, the `from_date`/`to_date` range, and
     /// the Rust-side min/max amount thresholds), ordered by `due_date`, WITHOUT
@@ -300,6 +334,12 @@ impl SqliteAccountsPayableRepository {
             params_vec.push(Box::new(purchase_order_id.to_string()));
         }
         if filter.overdue_only == Some(true) {
+            // `due_date` is stored at midnight UTC ('...T00:00:00+00:00') and
+            // `datetime('now')` renders '... HH:MM:SS'; when the date parts are
+            // equal the lexical compare sees 'T' > ' ', so a bill due today is
+            // NOT overdue — exactly matching Postgres's strict
+            // `due_date < CURRENT_DATE`. (Only `<=` comparisons diverge; see
+            // `get_bills_due_soon`.)
             sql.push_str(" AND due_date < datetime('now') AND status NOT IN ('paid', 'cancelled')");
         }
         // `bill_date` is stored truncated to midnight UTC (like Postgres's `DATE`),
@@ -413,9 +453,12 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         } = input;
         let bill_number = bill_number.unwrap_or_else(generate_bill_number);
 
-        {
-            let conn = self.conn()?;
-            conn.execute(
+        // Header, every line, and the recalculated totals commit together: a
+        // failing line insert must not leave a partial draft bill behind
+        // (previously each item was added in its own transaction, so a 5-line
+        // bill could persist with 3 lines and an understated total).
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
                 "INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
                  payment_terms, currency, reference_number, memo, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
@@ -433,26 +476,22 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     memo,
                     now.to_rfc3339(),
                 ],
-            ).map_err(map_db_error)?;
-        }
-
-        for item in &items {
-            self.add_bill_item(
-                id,
-                CreateBillItem {
-                    description: item.description.clone(),
-                    account_code: item.account_code.clone(),
-                    quantity: item.quantity,
-                    unit_price: item.unit_price,
-                    tax_rate: item.tax_rate,
-                    po_line_id: item.po_line_id,
-                },
             )?;
-        }
 
-        self.recalculate_bill(id)?;
-        self.get_bill(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create bill".into()))
+            let now_str = now.to_rfc3339();
+            for item in &items {
+                Self::insert_bill_item_with_conn(tx, Uuid::new_v4(), id, item, &now_str)?;
+            }
+
+            Self::recalculate_bill_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+            tx.query_row(
+                "SELECT * FROM ap_bills WHERE id = ?1",
+                params![id.to_string()],
+                Self::row_to_bill,
+            )
+        })
     }
 
     fn get_bill(&self, id: Uuid) -> Result<Option<Bill>> {
@@ -606,70 +645,74 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
-        let created = {
-            let conn = self.conn()?;
-            let line_number: i32 = conn.query_row(
-                "SELECT COALESCE(MAX(line_number), 0) + 1 FROM ap_bill_items WHERE bill_id = ?1",
+        // Item edits change the bill total, so only draft/pending bills may be
+        // edited (payments cannot exist before approval, so `amount_due` can
+        // never go negative under this guard). The status check shares the
+        // mutation's transaction so a concurrent approval cannot slip between
+        // the check and the insert. Previously unguarded: adding an item to a
+        // paid bill created owed money invisible to outstanding/aging.
+        with_immediate_transaction(&self.pool, |tx| {
+            let to_rusqlite =
+                |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+
+            let status: String = tx.query_row(
+                "SELECT status FROM ap_bills WHERE id = ?1",
                 params![bill_id.to_string()],
                 |row| row.get(0),
-            ).map_err(map_db_error)?;
-
-            let amount = item.quantity * item.unit_price;
-            let tax_amount =
-                item.tax_rate.map_or(Decimal::ZERO, |r| amount * r / Decimal::from(100));
-
-            conn.execute(
-                "INSERT INTO ap_bill_items (id, bill_id, line_number, description, account_code, quantity, unit_price, amount, tax_rate, tax_amount, po_line_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![
-                    id.to_string(),
-                    bill_id.to_string(),
-                    line_number,
-                    item.description,
-                    item.account_code,
-                    round_ap(item.quantity, 4),
-                    round_ap(item.unit_price, 4),
-                    round_ap(amount, 4),
-                    item.tax_rate.map(|r| round_ap(r, 6)),
-                    round_ap(tax_amount, 4),
-                    item.po_line_id.map(|id| id.to_string()),
-                    now,
-                ],
-            ).map_err(map_db_error)?;
-
-            let mut stmt =
-                conn.prepare("SELECT * FROM ap_bill_items WHERE id = ?1").map_err(map_db_error)?;
-            let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
-
-            if let Some(row) = rows.next().map_err(map_db_error)? {
-                Self::row_to_bill_item(row).map_err(map_db_error)?
-            } else {
-                return Err(CommerceError::DatabaseError("Failed to create bill item".into()));
+            )?;
+            let bill_status: BillStatus = status.parse().map_err(|e| {
+                to_rusqlite(CommerceError::DatabaseError(format!(
+                    "Invalid bill status '{status}' while adding bill item: {e}"
+                )))
+            })?;
+            if !matches!(bill_status, BillStatus::Draft | BillStatus::Pending) {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Cannot add items to a bill in status '{status}'; only draft or pending bills may be edited"
+                ))));
             }
-        };
 
-        self.recalculate_bill(bill_id)?;
-        Ok(created)
+            Self::insert_bill_item_with_conn(tx, id, bill_id, &item, &now)?;
+
+            Self::recalculate_bill_with_conn(tx, bill_id).map_err(to_rusqlite)?;
+
+            tx.query_row(
+                "SELECT * FROM ap_bill_items WHERE id = ?1",
+                params![id.to_string()],
+                Self::row_to_bill_item,
+            )
+        })
     }
 
     fn remove_bill_item(&self, item_id: Uuid) -> Result<()> {
-        let bill_id: String = {
-            let conn = self.conn()?;
-            let bill_id: String = conn
-                .query_row(
-                    "SELECT bill_id FROM ap_bill_items WHERE id = ?1",
-                    params![item_id.to_string()],
-                    |row| row.get(0),
-                )
-                .map_err(map_db_error)?;
+        // Same guard as `add_bill_item`: only draft/pending bills may have
+        // items removed. Previously unguarded: removing an item from a fully
+        // paid bill drove `amount_due` negative while status stayed 'paid'.
+        with_immediate_transaction(&self.pool, |tx| {
+            let to_rusqlite =
+                |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
 
-            conn.execute("DELETE FROM ap_bill_items WHERE id = ?1", params![item_id.to_string()])
-                .map_err(map_db_error)?;
-            bill_id
-        };
+            let (bill_id, status): (String, String) = tx.query_row(
+                "SELECT b.id, b.status FROM ap_bill_items i JOIN ap_bills b ON b.id = i.bill_id WHERE i.id = ?1",
+                params![item_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let bill_status: BillStatus = status.parse().map_err(|e| {
+                to_rusqlite(CommerceError::DatabaseError(format!(
+                    "Invalid bill status '{status}' while removing bill item: {e}"
+                )))
+            })?;
+            if !matches!(bill_status, BillStatus::Draft | BillStatus::Pending) {
+                return Err(to_rusqlite(CommerceError::Conflict(format!(
+                    "Cannot remove items from a bill in status '{status}'; only draft or pending bills may be edited"
+                ))));
+            }
 
-        self.recalculate_bill(parse_uuid(&bill_id, "bill_item", "bill_id")?)?;
-        Ok(())
+            tx.execute("DELETE FROM ap_bill_items WHERE id = ?1", params![item_id.to_string()])?;
+
+            let bill_uuid = parse_uuid(&bill_id, "bill_item", "bill_id").map_err(to_rusqlite)?;
+            Self::recalculate_bill_with_conn(tx, bill_uuid).map_err(to_rusqlite)?;
+            Ok(())
+        })
     }
 
     fn count_bills(&self, filter: BillFilter) -> Result<u64> {
@@ -684,8 +727,14 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn get_bills_due_soon(&self, days: i32) -> Result<Vec<Bill>> {
         let conn = self.conn()?;
+        // Compare calendar dates, not strings: `due_date` is stored RFC3339
+        // ('...T00:00:00+00:00') while `datetime('now', ...)` renders
+        // '... HH:MM:SS', and lexically 'T' > ' ', so a plain `<=` always
+        // excluded a bill due exactly on the window's last day — diverging from
+        // Postgres's `due_date <= CURRENT_DATE + $1`. `date()` normalizes both
+        // sides to 'YYYY-MM-DD'.
         let mut stmt = conn.prepare(
-            "SELECT * FROM ap_bills WHERE due_date <= datetime('now', '+' || ?1 || ' days') AND status NOT IN ('paid', 'cancelled') ORDER BY due_date"
+            "SELECT * FROM ap_bills WHERE date(due_date) <= date('now', '+' || ?1 || ' days') AND status NOT IN ('paid', 'cancelled') ORDER BY due_date"
         ).map_err(map_db_error)?;
 
         let mut rows = stmt.query(params![days]).map_err(map_db_error)?;
@@ -1425,7 +1474,12 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn get_aging_summary(&self) -> Result<ApAgingSummary> {
         let conn = self.conn()?;
-        let now = Utc::now();
+        // Bucket on calendar dates: `due_date` is stored at midnight UTC and
+        // Postgres buckets against `CURRENT_DATE`, so truncate `now` (and the
+        // cutoffs derived from it) to midnight UTC too — otherwise a bill due
+        // today lands in 1-30 instead of current, and every bucket boundary
+        // shifts by the time of day.
+        let now = Utc::now().date_naive().and_time(NaiveTime::MIN).and_utc();
         let cutoff_30 = now - chrono::Duration::days(30);
         let cutoff_60 = now - chrono::Duration::days(60);
         let cutoff_90 = now - chrono::Duration::days(90);
@@ -1467,7 +1521,10 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
         let conn = self.conn()?;
-        let now = Utc::now();
+        // Overdue means past the due DATE (Postgres: `due_date < CURRENT_DATE`),
+        // so compare against midnight UTC — with the raw `Utc::now()` a bill due
+        // today counted as overdue for most of the day.
+        let now = Utc::now().date_naive().and_time(NaiveTime::MIN).and_utc();
         let supplier_id_param = supplier_id.to_string();
 
         let supplier_exists: Option<String> = conn
