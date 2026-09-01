@@ -1532,13 +1532,18 @@ async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
     let fiscal_year = 2200 + i32::from(bytes[0]);
     let period_number = 1 + i32::from(bytes[1] % 12);
     let gl = db.general_ledger();
+    // Use a one-day period precisely matching the entry date to avoid overlapping
+    // periods from other tests. This ensures the selected period is the one we open.
+    let month: u32 = u32::try_from(period_number).expect("valid month");
+    let entry_date =
+        chrono::NaiveDate::from_ymd_opt(fiscal_year, month, 1).expect("entry date in period");
     let period = gl
         .create_period_async(CreateGlPeriod {
             period_name: format!("FY{fiscal_year}-{period_number}-{suffix}"),
             fiscal_year,
             period_number,
-            start_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 1, 1).expect("date"),
-            end_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 12, 31).expect("date"),
+            start_date: entry_date,
+            end_date: entry_date,
         })
         .await
         .expect("create period");
@@ -1573,7 +1578,7 @@ async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
         .expect("create revenue");
     let entry = gl
         .create_journal_entry_async(CreateJournalEntry {
-            entry_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 8, 1).expect("date"),
+            entry_date,
             entry_type: None,
             description: "PostgreSQL kernel parity".into(),
             lines: vec![
