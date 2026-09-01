@@ -6,14 +6,44 @@ use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
-    AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CommerceError,
+    AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, Cart, CartId, CommerceError,
     ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode,
     CreatePromotion, CurrencyCode, CustomerId, DiscountTier, OrderId, Promotion,
     PromotionCondition, PromotionFilter, PromotionId, PromotionRepository, PromotionStatus,
     PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion,
     RejectionReason, Result, StackingBehavior, UpdatePromotion, generate_promotion_code,
+    validate_coupon_redemption,
 };
 use uuid::Uuid;
+
+#[derive(FromRow)]
+struct PromotionUsageRow {
+    id: Uuid,
+    promotion_id: Uuid,
+    coupon_id: Option<Uuid>,
+    customer_id: Option<Uuid>,
+    order_id: Option<Uuid>,
+    cart_id: Option<Uuid>,
+    discount_amount: Decimal,
+    currency: String,
+    used_at: DateTime<Utc>,
+}
+
+impl From<PromotionUsageRow> for PromotionUsage {
+    fn from(row: PromotionUsageRow) -> Self {
+        Self {
+            id: row.id,
+            promotion_id: PromotionId::from(row.promotion_id),
+            coupon_id: row.coupon_id,
+            customer_id: row.customer_id.map(CustomerId::from),
+            order_id: row.order_id.map(OrderId::from),
+            cart_id: row.cart_id.map(CartId::from),
+            discount_amount: row.discount_amount,
+            currency: row.currency.parse().unwrap_or(CurrencyCode::USD),
+            used_at: row.used_at,
+        }
+    }
+}
 
 /// PostgreSQL promotions repository
 #[derive(Debug, Clone)]
@@ -1050,9 +1080,14 @@ impl PgPromotionRepository {
         .map_err(map_db_error)
     }
 
+    /// Limit-guarded usage recording inside an existing transaction — the
+    /// body of [`Self::record_usage_async`], reusable by checkout so that
+    /// consuming a coupon commits (or rolls back) together with the order.
     #[allow(clippy::too_many_arguments)]
-    pub async fn record_usage_async(
-        &self,
+    pub(crate) async fn record_usage_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        now: DateTime<Utc>,
         promotion_id: PromotionId,
         coupon_id: Option<Uuid>,
         customer_id: Option<CustomerId>,
@@ -1060,16 +1095,7 @@ impl PgPromotionRepository {
         cart_id: Option<CartId>,
         discount_amount: Decimal,
         currency: &str,
-    ) -> Result<PromotionUsage> {
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-
-        // One transaction, limit-guarded increments first — the
-        // evaluation-time check reads a snapshot, so concurrent redemptions
-        // would race past the limits otherwise, and a rejected limit must not
-        // leave an orphaned usage row.
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
+    ) -> Result<()> {
         // Lock the promotion row for the duration of the transaction so
         // concurrent redemptions of the same promotion serialize. The
         // per-customer limit below is a COUNT-then-INSERT against the usage
@@ -1191,6 +1217,186 @@ impl PgPromotionRepository {
         .await
         .map_err(map_db_error)?;
 
+        Ok(())
+    }
+
+    /// Consume the coupon stamped on `cart` as part of checkout, inside the
+    /// checkout transaction (mirrors the SQLite twin).
+    ///
+    /// - No coupon on the cart, or a code that no longer resolves: no-op.
+    /// - A usage row for this (cart, coupon) already exists (recorded at
+    ///   evaluation time by the embedded `apply_cart_promotions` path): it is
+    ///   linked to the order rather than counted twice.
+    /// - Otherwise the promotion and coupon counters advance under their
+    ///   limits; an exhausted coupon fails the checkout.
+    pub(crate) async fn consume_cart_coupon_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        cart: &Cart,
+        customer_id: Option<CustomerId>,
+        order_id: OrderId,
+    ) -> Result<()> {
+        let Some(code) = cart.coupon_code.as_deref() else {
+            return Ok(());
+        };
+        let coupon: Option<(Uuid, Uuid)> =
+            sqlx::query_as("SELECT id, promotion_id FROM coupon_codes WHERE code = $1")
+                .bind(code)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let Some((coupon_id, promotion_id)) = coupon else {
+            return Ok(());
+        };
+
+        let existing: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM promotion_usage WHERE cart_id = $1 AND coupon_id = $2 LIMIT 1",
+        )
+        .bind(cart.id.into_uuid())
+        .bind(coupon_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if let Some(usage_id) = existing {
+            sqlx::query(
+                "UPDATE promotion_usage SET order_id = $1 WHERE id = $2 AND order_id IS NULL",
+            )
+            .bind(order_id.into_uuid())
+            .bind(usage_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            return Ok(());
+        }
+
+        Self::record_usage_in_tx(
+            tx,
+            Uuid::new_v4(),
+            Utc::now(),
+            PromotionId::from(promotion_id),
+            Some(coupon_id),
+            customer_id,
+            Some(order_id),
+            Some(cart.id),
+            cart.discount_amount,
+            cart.currency.as_str(),
+        )
+        .await
+    }
+
+    /// Resolve `coupon_code` and verify it may be redeemed against `cart` at
+    /// `now`: coupon status/window/usage limit, promotion status/window/usage
+    /// limit, promotion conditions (fail-closed) and per-customer limits.
+    /// Mirrors the SQLite twin; the pure checks live in `stateset-core`.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] naming the first failed check.
+    pub async fn validate_coupon_for_cart_async(
+        &self,
+        cart: &Cart,
+        coupon_code: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(CouponCode, Promotion)> {
+        let coupon = self.get_coupon_by_code_async(coupon_code).await?.ok_or_else(|| {
+            CommerceError::ValidationError(format!("Invalid coupon code: {coupon_code}"))
+        })?;
+        let promotion = self
+            .get_async(coupon.promotion_id)
+            .await?
+            .ok_or_else(|| CommerceError::ValidationError("Promotion not found".into()))?;
+
+        let request = ApplyPromotionsRequest::from_cart(cart, coupon_code);
+        validate_coupon_redemption(&coupon, &promotion, &request, now)?;
+
+        if let Some(customer_id) = cart.customer_id {
+            if let Some(limit) = coupon.per_customer_limit {
+                if self.coupon_customer_usage_count(coupon.id, customer_id).await?
+                    >= i64::from(limit)
+                {
+                    return Err(CommerceError::ValidationError(
+                        "Per-customer coupon usage limit reached".into(),
+                    ));
+                }
+            }
+            if let Some(limit) = promotion.per_customer_limit {
+                if self.customer_usage_count(promotion.id, customer_id).await? >= i64::from(limit) {
+                    return Err(CommerceError::ValidationError(
+                        "Per-customer usage limit reached".into(),
+                    ));
+                }
+            }
+        }
+
+        Ok((coupon, promotion))
+    }
+
+    /// Set a coupon's status (disable / re-enable a single code).
+    pub async fn set_coupon_status_async(
+        &self,
+        coupon_id: Uuid,
+        status: CouponStatus,
+    ) -> Result<CouponCode> {
+        let rows =
+            sqlx::query("UPDATE coupon_codes SET status = $1, updated_at = $2 WHERE id = $3")
+                .bind(status.to_string())
+                .bind(Utc::now())
+                .bind(coupon_id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_db_error)?
+                .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::NotFound);
+        }
+        self.get_coupon_async(coupon_id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Usage ledger rows recorded against a cart.
+    pub async fn usage_for_cart_async(&self, cart_id: CartId) -> Result<Vec<PromotionUsage>> {
+        let rows: Vec<PromotionUsageRow> = sqlx::query_as(
+            "SELECT id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount,
+                    currency, used_at
+             FROM promotion_usage WHERE cart_id = $1 ORDER BY used_at",
+        )
+        .bind(cart_id.into_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        Ok(rows.into_iter().map(PromotionUsage::from).collect())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_usage_async(
+        &self,
+        promotion_id: PromotionId,
+        coupon_id: Option<Uuid>,
+        customer_id: Option<CustomerId>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
+        discount_amount: Decimal,
+        currency: &str,
+    ) -> Result<PromotionUsage> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+
+        // One transaction, limit-guarded increments first — the
+        // evaluation-time check reads a snapshot, so concurrent redemptions
+        // would race past the limits otherwise, and a rejected limit must not
+        // leave an orphaned usage row.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::record_usage_in_tx(
+            &mut tx,
+            id,
+            now,
+            promotion_id,
+            coupon_id,
+            customer_id,
+            order_id,
+            cart_id,
+            discount_amount,
+            currency,
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(PromotionUsage {

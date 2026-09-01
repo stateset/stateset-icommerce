@@ -455,8 +455,10 @@ impl PgA2ARepository {
         Ok(())
     }
 
+    /// Load the quote for purchase validation, locking the row (`FOR UPDATE`)
+    /// inside the caller's transaction so concurrent purchases serialize on it.
     async fn ensure_quote_for_purchase(
-        &self,
+        tx: &mut sqlx::PgConnection,
         quote_id: Uuid,
         buyer_agent_id: Uuid,
         seller_agent_id: Uuid,
@@ -472,10 +474,11 @@ impl PgA2ARepository {
                 valid_until
             FROM a2a_quotes
             WHERE id = $1
+            FOR UPDATE
             "#,
         )
         .bind(quote_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx)
         .await
         .map_err(map_db_error)?;
 
@@ -679,41 +682,54 @@ impl PgA2ARepository {
         let purchase_number = Self::generate_purchase_number();
         let quote_id = input.quote_id;
 
-        if let Some(quote_id) = quote_id {
-            let quote = self
-                .ensure_quote_for_purchase(quote_id, input.buyer_agent_id, input.seller_agent_id)
-                .await?;
-            let quote = quote.ok_or(CommerceError::NotFound)?;
-            let quote_status = Self::parse_quote_status(&quote.status, "a2a_quote", "status")?;
-            if !matches!(quote_status, QuoteStatus::Quoted | QuoteStatus::Accepted) {
-                return Err(CommerceError::ValidationError(
-                    "quote is not available for purchase creation".to_string(),
-                ));
-            }
-            if quote_status == QuoteStatus::Purchased {
-                return Err(CommerceError::ValidationError(
-                    "quote already has a linked purchase".to_string(),
-                ));
-            }
-            if quote.valid_until <= Utc::now() {
-                return Err(CommerceError::ValidationError("quote has expired".to_string()));
-            }
-            if quote.currency != Self::normalize_currency(input.currency) {
-                return Err(CommerceError::ValidationError(
-                    "purchase currency does not match quote currency".to_string(),
-                ));
-            }
-            if quote.total != input.total {
-                return Err(CommerceError::ValidationError(
-                    "purchase total must match quote total".to_string(),
-                ));
-            }
-        }
-
         let items_json = serde_json::to_value(&input.items)
             .map_err(|e| CommerceError::Internal(e.to_string()))?;
         let currency = Self::normalize_currency(input.currency);
+
+        // Validate (with the quote row locked), insert the purchase, and consume
+        // the quote in ONE transaction. Previously the quote was read from the
+        // pool without a lock and consumed with an unconditional UPDATE, so two
+        // buyers could both purchase the same quote.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let quote_status = match quote_id {
+            Some(quote_id) => {
+                let quote = Self::ensure_quote_for_purchase(
+                    tx.as_mut(),
+                    quote_id,
+                    input.buyer_agent_id,
+                    input.seller_agent_id,
+                )
+                .await?;
+                let quote = quote.ok_or(CommerceError::NotFound)?;
+                let quote_status = Self::parse_quote_status(&quote.status, "a2a_quote", "status")?;
+                if quote_status == QuoteStatus::Purchased {
+                    return Err(CommerceError::ValidationError(
+                        "quote already has a linked purchase".to_string(),
+                    ));
+                }
+                if !matches!(quote_status, QuoteStatus::Quoted | QuoteStatus::Accepted) {
+                    return Err(CommerceError::ValidationError(
+                        "quote is not available for purchase creation".to_string(),
+                    ));
+                }
+                if quote.valid_until <= now {
+                    return Err(CommerceError::ValidationError("quote has expired".to_string()));
+                }
+                if quote.currency != currency {
+                    return Err(CommerceError::ValidationError(
+                        "purchase currency does not match quote currency".to_string(),
+                    ));
+                }
+                if quote.total != input.total {
+                    return Err(CommerceError::ValidationError(
+                        "purchase total must match quote total".to_string(),
+                    ));
+                }
+                Some(quote_status)
+            }
+            None => None,
+        };
 
         sqlx::query(
             r#"
@@ -749,17 +765,27 @@ impl PgA2ARepository {
         .await
         .map_err(map_db_error)?;
 
-        if let Some(quote_id) = quote_id {
-            sqlx::query(
-                "UPDATE a2a_quotes SET purchase_id = $1, status = $2, updated_at = $3 WHERE id = $4",
+        if let (Some(quote_id), Some(quote_status)) = (quote_id, quote_status) {
+            // Conditional consume; with the row locked above this cannot lose,
+            // but the predicate keeps the transition atomic regardless.
+            let affected = sqlx::query(
+                "UPDATE a2a_quotes SET purchase_id = $1, status = $2, updated_at = $3
+                 WHERE id = $4 AND status = $5 AND purchase_id IS NULL",
             )
             .bind(id)
             .bind(QuoteStatus::Purchased.to_string())
             .bind(now)
             .bind(quote_id)
+            .bind(quote_status.to_string())
             .execute(&mut *tx)
             .await
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+            .rows_affected();
+            if affected != 1 {
+                return Err(CommerceError::Conflict(format!(
+                    "quote {quote_id} was consumed by a concurrent purchase"
+                )));
+            }
         }
 
         tx.commit().await.map_err(map_db_error)?;

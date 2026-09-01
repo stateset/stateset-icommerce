@@ -87,6 +87,56 @@ struct LotReservationRow {
     reference_id: Uuid,
 }
 
+/// Refuse to use `lot` as a source for a stock-moving operation (`merge`,
+/// `split`) unless the units it holds are genuinely sellable.
+///
+/// Both operations create a *new* lot whose `status`, `quantity_reserved` and
+/// `quantity_quarantined` are reset, so anything blocked on the source would be
+/// laundered into free, sellable stock. Conservatively we require:
+///
+/// * status == `Active` — quarantined / on-hold / expired / recalled / scrapped
+///   stock must be released (or disposed of) through its own workflow first, and
+///   a `Consumed` lot has nothing left to move;
+/// * no quarantined units — belt-and-braces alongside the status check.
+///
+/// Reservations are handled per operation: `split` only moves units within
+/// `quantity_available()` (reservations stay on the original lot), whereas
+/// `merge` additionally refuses any open reservation because it zeroes the
+/// source and would orphan the reservation rows.
+fn ensure_consolidatable_source(lot: &Lot, operation: &str) -> Result<()> {
+    if lot.status != LotStatus::Active {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} lot {} ({}): status is {} (only active lots may be {operation}d)",
+            lot.lot_number, lot.id, lot.status
+        )));
+    }
+    if lot.quantity_quarantined > Decimal::ZERO {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} lot {} ({}): {} units are quarantined",
+            lot.lot_number, lot.id, lot.quantity_quarantined
+        )));
+    }
+    Ok(())
+}
+
+/// Reject a `MergeLots` request whose source list is malformed before any row
+/// is touched: fewer than two lots, or the same lot listed twice (which would
+/// double-count its quantity on the merged lot).
+fn validate_merge_sources(source_lot_ids: &[Uuid]) -> Result<()> {
+    if source_lot_ids.len() < 2 {
+        return Err(CommerceError::ValidationError("Need at least 2 lots to merge".to_string()));
+    }
+    let mut seen = std::collections::HashSet::with_capacity(source_lot_ids.len());
+    for id in source_lot_ids {
+        if !seen.insert(*id) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot merge: duplicate source lot id {id}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl PgLotRepository {
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -845,18 +895,28 @@ impl PgLotRepository {
     pub async fn split_async(&self, input: SplitLot) -> Result<Lot> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let original_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
-            .bind(input.lot_id)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-            .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
+        let original_row =
+            sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
+                .bind(input.lot_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
         let original = Self::row_to_lot(original_row)?;
 
-        if original.quantity_remaining < input.quantity {
+        ensure_consolidatable_source(&original, "split")?;
+        if input.quantity <= Decimal::ZERO {
             return Err(CommerceError::ValidationError(
-                "Insufficient quantity to split".to_string(),
+                "Split quantity must be positive".to_string(),
             ));
+        }
+        // Only unreserved, unquarantined units may leave the lot.
+        if original.quantity_available() < input.quantity {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient quantity to split: {} available, {} requested",
+                original.quantity_available(),
+                input.quantity
+            )));
         }
 
         let new_lot_id = Uuid::new_v4();
@@ -931,11 +991,7 @@ impl PgLotRepository {
     }
 
     pub async fn merge_async(&self, input: MergeLots) -> Result<Lot> {
-        if input.source_lot_ids.len() < 2 {
-            return Err(CommerceError::ValidationError(
-                "Need at least 2 lots to merge".to_string(),
-            ));
-        }
+        validate_merge_sources(&input.source_lot_ids)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
@@ -945,14 +1001,15 @@ impl PgLotRepository {
         let mut lots_to_consume: Vec<(Uuid, String, Decimal)> = Vec::new();
 
         for lot_id in &input.source_lot_ids {
-            let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
-                .bind(lot_id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or_else(|| {
-                    CommerceError::ValidationError(format!("Lot {} not found", lot_id))
-                })?;
+            let lot_row =
+                sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
+                    .bind(lot_id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or_else(|| {
+                        CommerceError::ValidationError(format!("Lot {} not found", lot_id))
+                    })?;
             let lot = Self::row_to_lot(lot_row)?;
 
             if let Some(ref s) = sku {
@@ -963,6 +1020,21 @@ impl PgLotRepository {
                 }
             } else {
                 sku = Some(lot.sku.clone());
+            }
+
+            ensure_consolidatable_source(&lot, "merge")?;
+            if lot.quantity_reserved > Decimal::ZERO {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot merge lot {} ({}): {} units are reserved; release or confirm the \
+                     reservations first",
+                    lot.lot_number, lot.id, lot.quantity_reserved
+                )));
+            }
+            if lot.quantity_remaining <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot merge lot {} ({}): nothing remaining",
+                    lot.lot_number, lot.id
+                )));
             }
 
             total_quantity += lot.quantity_remaining;

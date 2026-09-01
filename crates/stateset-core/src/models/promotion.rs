@@ -391,6 +391,102 @@ impl std::fmt::Display for CouponStatus {
     }
 }
 
+impl CouponCode {
+    /// Why this coupon cannot be redeemed at `now`, if it cannot: its own
+    /// status, validity window and total usage limit. Per-customer limits
+    /// need the usage ledger and are checked by the repository.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the coupon is not redeemable.
+    pub fn redeemability_at(&self, now: DateTime<Utc>) -> std::result::Result<(), String> {
+        if self.status != CouponStatus::Active {
+            return Err(format!("Coupon is not active (status: {})", self.status));
+        }
+        if self.starts_at.is_some_and(|s| s > now) {
+            return Err("Coupon has not started yet".to_string());
+        }
+        if self.ends_at.is_some_and(|e| e < now) {
+            return Err("Coupon has expired".to_string());
+        }
+        if self.usage_limit.is_some_and(|l| self.usage_count >= l) {
+            return Err("Coupon usage limit reached".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Validate that `coupon` (which activates `promotion`) may be redeemed
+/// against the cart described by `request` at `now`.
+///
+/// This is the single source of truth shared by both storage backends'
+/// cart `apply_discount` paths and by promotion evaluation: coupon status /
+/// window / usage limit, promotion status / window / usage limit, and the
+/// promotion's conditions (e.g. minimum subtotal), evaluated fail-closed.
+/// Per-customer usage limits are enforced by the repository against the
+/// usage ledger.
+///
+/// # Errors
+///
+/// [`CommerceError::ValidationError`] naming the first failed check.
+pub fn validate_coupon_redemption(
+    coupon: &CouponCode,
+    promotion: &Promotion,
+    request: &ApplyPromotionsRequest,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    if coupon.promotion_id != promotion.id {
+        return Err(CommerceError::ValidationError(
+            "Coupon does not belong to this promotion".to_string(),
+        ));
+    }
+    coupon.redeemability_at(now).map_err(CommerceError::ValidationError)?;
+    promotion.redeemability_at(now).map_err(CommerceError::ValidationError)?;
+    if let Some(reason) = promotion.check_conditions(request)? {
+        return Err(CommerceError::ValidationError(format!(
+            "Promotion conditions not met: {reason}"
+        )));
+    }
+    Ok(())
+}
+
+impl ApplyPromotionsRequest {
+    /// Build an evaluation request from a persisted cart, redeeming
+    /// `coupon_code`.
+    ///
+    /// `is_first_order` is set to `false` because the cart alone cannot prove
+    /// otherwise; a first-order condition therefore refuses (fail-closed)
+    /// unless the caller overrides it.
+    #[must_use]
+    pub fn from_cart(cart: &crate::models::Cart, coupon_code: &str) -> Self {
+        Self {
+            cart_id: Some(cart.id),
+            customer_id: cart.customer_id,
+            coupon_codes: vec![coupon_code.to_string()],
+            line_items: cart
+                .items
+                .iter()
+                .map(|item| PromotionLineItem {
+                    id: item.id.to_string(),
+                    product_id: item.product_id,
+                    variant_id: item.variant_id,
+                    sku: Some(item.sku.clone()),
+                    category_ids: Vec::new(),
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    line_total: item.unit_price * Decimal::from(item.quantity),
+                })
+                .collect(),
+            subtotal: cart.subtotal,
+            shipping_amount: cart.shipping_amount,
+            shipping_country: cart.shipping_address.as_ref().map(|a| a.country.clone()),
+            shipping_state: cart.shipping_address.as_ref().and_then(|a| a.state.clone()),
+            currency: cart.currency,
+            is_first_order: false,
+        }
+    }
+}
+
 impl std::str::FromStr for CouponStatus {
     type Err = String;
 
@@ -741,29 +837,44 @@ impl Promotion {
     /// Check if promotion is currently active
     #[must_use]
     pub fn is_active(&self) -> bool {
+        self.is_active_at(Utc::now())
+    }
+
+    /// Check if promotion is active at `now` (status, validity window and
+    /// total usage limit).
+    #[must_use]
+    pub fn is_active_at(&self, now: DateTime<Utc>) -> bool {
+        self.redeemability_at(now).is_ok()
+    }
+
+    /// Why this promotion cannot be redeemed at `now`, if it cannot.
+    ///
+    /// The `Ok` branch means the promotion is `Active`, inside its validity
+    /// window, and under its total usage limit. The `Err` branch carries a
+    /// merchant-readable reason; it is deliberately a plain string so callers
+    /// can wrap it in whichever error/rejection shape they use.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the promotion is not redeemable.
+    pub fn redeemability_at(&self, now: DateTime<Utc>) -> std::result::Result<(), String> {
         if self.status != PromotionStatus::Active {
-            return false;
+            return Err(format!("Promotion is not active (status: {})", self.status));
         }
-
-        let now = Utc::now();
         if now < self.starts_at {
-            return false;
+            return Err("Promotion has not started yet".to_string());
         }
-
         if let Some(ends_at) = self.ends_at {
             if now > ends_at {
-                return false;
+                return Err("Promotion has expired".to_string());
             }
         }
-
-        // Check usage limits
         if let Some(limit) = self.total_usage_limit {
             if self.usage_count >= limit {
-                return false;
+                return Err("Promotion usage limit reached".to_string());
             }
         }
-
-        true
+        Ok(())
     }
 
     /// Get human-readable discount description

@@ -1291,37 +1291,16 @@ impl PgCartRepository {
         // Get the cart first to calculate the discount off its subtotal.
         let cart = self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)?;
 
-        // Look up the coupon and its promotion. An unknown coupon is rejected
-        // (rather than silently stamped onto the cart).
+        // Resolve the coupon and its promotion, and refuse anything that is
+        // not redeemable right now (inactive/expired/exhausted coupon,
+        // draft/paused/expired/exhausted promotion, unmet conditions such as
+        // a minimum subtotal, per-customer limit reached). Mirrors the SQLite
+        // backend; the checks live in `stateset-core` + the promotions repo.
         let promo_repo = PgPromotionRepository::new(self.pool.clone());
-        let coupon = promo_repo.get_coupon_by_code_async(coupon_code).await?.ok_or_else(|| {
-            CommerceError::ValidationError(format!("Invalid coupon code: {coupon_code}"))
-        })?;
+        let (_coupon, promotion) =
+            promo_repo.validate_coupon_for_cart_async(&cart, coupon_code, Utc::now()).await?;
 
-        let promotion = promo_repo
-            .get_async(coupon.promotion_id)
-            .await?
-            .ok_or_else(|| CommerceError::ValidationError("Promotion not found".into()))?;
-
-        // Calculate the discount based on promotion type (mirrors the SQLite
-        // backend so the two agree to the cent).
-        let subtotal = cart.subtotal;
-        let discount_amount = match promotion.promotion_type {
-            PromotionType::PercentageOff => {
-                let percentage = promotion.percentage_off.unwrap_or(Decimal::ZERO);
-                let discount = subtotal * percentage;
-                // Apply max discount cap if set.
-                if let Some(max) = promotion.max_discount_amount {
-                    discount.min(max)
-                } else {
-                    discount
-                }
-            }
-            PromotionType::FixedAmountOff => {
-                promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
-            }
-            _ => Decimal::ZERO, // Other types not fully implemented
-        };
+        let discount_amount = coupon_discount_amount(&promotion, &cart);
 
         let discount_description = promotion.name;
 
@@ -1578,6 +1557,17 @@ impl PgCartRepository {
             order.payment_status = PaymentStatus::Paid;
         }
         order.version += 1;
+
+        // Consume the cart's coupon in the same transaction as the order:
+        // usage counters advance under their limits, and a coupon exhausted
+        // since it was applied fails the checkout instead of being honoured.
+        PgPromotionRepository::consume_cart_coupon_in_tx(
+            tx,
+            &cart,
+            Some(CustomerId::from(customer_id)),
+            order.id,
+        )
+        .await?;
 
         let now = Utc::now();
         let cart_update = if x402_settled {
@@ -2272,4 +2262,22 @@ impl CartRepository for PgCartRepository {
         let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
         super::block_on(self.get_batch_async(raw_ids))
     }
+}
+
+/// Order-level discount a coupon-activated promotion grants on `cart`,
+/// rounded to the cart currency's precision (mirrors the SQLite twin so the
+/// two backends agree to the cent).
+pub(crate) fn coupon_discount_amount(promotion: &stateset_core::Promotion, cart: &Cart) -> Decimal {
+    let subtotal = cart.subtotal;
+    let raw = match promotion.promotion_type {
+        PromotionType::PercentageOff => {
+            let discount = subtotal * promotion.percentage_off.unwrap_or(Decimal::ZERO);
+            promotion.max_discount_amount.map_or(discount, |max| discount.min(max))
+        }
+        PromotionType::FixedAmountOff => {
+            promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
+        }
+        _ => Decimal::ZERO, // Other types are priced by full promotion evaluation
+    };
+    raw.max(Decimal::ZERO).round_dp(u32::from(cart.currency.decimal_places()))
 }

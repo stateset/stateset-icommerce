@@ -428,6 +428,51 @@ impl PgX402PaymentIntentRepository {
         row.map(Self::row_to_intent).transpose()
     }
 
+    /// Statuses from which an intent may still move (anything else is terminal).
+    const NON_TERMINAL: [X402IntentStatus; 4] = [
+        X402IntentStatus::Created,
+        X402IntentStatus::Signed,
+        X402IntentStatus::Sequenced,
+        X402IntentStatus::Batched,
+    ];
+
+    /// Load the intent with `FOR UPDATE` inside `tx` and check it is in one of
+    /// the statuses `verb` may start from.
+    async fn load_for_transition(
+        tx: &mut sqlx::PgConnection,
+        id: Uuid,
+        allowed: &[X402IntentStatus],
+        verb: &str,
+    ) -> Result<X402PaymentIntent> {
+        let row = sqlx::query_as::<_, IntentRow>(
+            "SELECT * FROM x402_payment_intents WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx)
+        .await
+        .map_err(map_db_error)?;
+        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
+        if !allowed.contains(&intent.status) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot {verb} intent in {} status",
+                intent.status
+            )));
+        }
+        Ok(intent)
+    }
+
+    /// The conditional UPDATE (`WHERE id AND status = <expected>`) must hit
+    /// exactly one row; zero means the status moved underneath us.
+    fn check_transition(id: Uuid, affected: u64, verb: &str) -> Result<()> {
+        if affected == 1 {
+            Ok(())
+        } else {
+            Err(CommerceError::Conflict(format!(
+                "x402 payment intent {id} changed status concurrently; cannot {verb}"
+            )))
+        }
+    }
+
     pub async fn sign_async(
         &self,
         id: Uuid,
@@ -532,25 +577,10 @@ impl PgX402PaymentIntentRepository {
         batch_id: Uuid,
     ) -> Result<X402PaymentIntent> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let row = sqlx::query_as::<_, IntentRow>(
-            "SELECT * FROM x402_payment_intents WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        Self::load_for_transition(tx.as_mut(), id, &[X402IntentStatus::Signed], "sequence").await?;
 
-        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
-
-        if intent.status != X402IntentStatus::Signed {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot sequence intent in {} status",
-                intent.status
-            )));
-        }
-
-        sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, sequence_number = $2, batch_id = $3, sequenced_at = $4, updated_at = $5 WHERE id = $6",
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, sequence_number = $2, batch_id = $3, sequenced_at = $4, updated_at = $5 WHERE id = $6 AND status = $7",
         )
         .bind(X402IntentStatus::Sequenced.to_string())
         .bind(Self::to_i64(sequence_number, "x402 sequence_number")?)
@@ -558,9 +588,12 @@ impl PgX402PaymentIntentRepository {
         .bind(Utc::now())
         .bind(Utc::now())
         .bind(id)
+        .bind(X402IntentStatus::Signed.to_string())
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "sequence")?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -574,24 +607,11 @@ impl PgX402PaymentIntentRepository {
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let row = sqlx::query_as::<_, IntentRow>(
-            "SELECT * FROM x402_payment_intents WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        Self::load_for_transition(tx.as_mut(), id, &[X402IntentStatus::Sequenced], "settle")
+            .await?;
 
-        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
-        if intent.status != X402IntentStatus::Sequenced {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot settle intent in {} status",
-                intent.status
-            )));
-        }
-
-        sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, block_number = $3, settled_at = $4, updated_at = $5 WHERE id = $6",
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, block_number = $3, settled_at = $4, updated_at = $5 WHERE id = $6 AND status = $7",
         )
         .bind(X402IntentStatus::Settled.to_string())
         .bind(tx_hash)
@@ -599,9 +619,12 @@ impl PgX402PaymentIntentRepository {
         .bind(Utc::now())
         .bind(Utc::now())
         .bind(id)
+        .bind(X402IntentStatus::Sequenced.to_string())
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "settle")?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -609,51 +632,78 @@ impl PgX402PaymentIntentRepository {
     }
 
     pub async fn mark_failed_async(&self, id: Uuid, reason: &str) -> Result<X402PaymentIntent> {
-        let intent = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let intent =
+            Self::load_for_transition(tx.as_mut(), id, &Self::NON_TERMINAL, "fail").await?;
+        let expected = intent.status;
         let metadata = Self::merge_failure_reason(intent.metadata, reason);
 
-        sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, metadata = $2, updated_at = $3 WHERE id = $4",
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, metadata = $2, updated_at = $3 WHERE id = $4 AND status = $5",
         )
         .bind(X402IntentStatus::Failed.to_string())
         .bind(metadata)
         .bind(Utc::now())
         .bind(id)
-        .execute(&self.pool)
+        .bind(expected.to_string())
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "fail")?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn mark_expired_async(&self, id: Uuid) -> Result<X402PaymentIntent> {
-        sqlx::query("UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(X402IntentStatus::Expired.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let intent =
+            Self::load_for_transition(tx.as_mut(), id, &Self::NON_TERMINAL, "expire").await?;
+
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(X402IntentStatus::Expired.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .bind(intent.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "expire")?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn cancel_async(&self, id: Uuid) -> Result<X402PaymentIntent> {
-        let intent = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if !matches!(intent.status, X402IntentStatus::Created | X402IntentStatus::Signed) {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel intent in {} status",
-                intent.status
-            )));
-        }
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let intent = Self::load_for_transition(
+            tx.as_mut(),
+            id,
+            &[X402IntentStatus::Created, X402IntentStatus::Signed],
+            "cancel",
+        )
+        .await?;
 
-        sqlx::query("UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(X402IntentStatus::Cancelled.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(X402IntentStatus::Cancelled.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .bind(intent.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "cancel")?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }

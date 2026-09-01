@@ -3,7 +3,6 @@
 use super::{
     map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
     parse_json_opt_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
-    with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -793,48 +792,58 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let id = Uuid::new_v4();
         let purchase_number = Self::generate_purchase_number();
 
-        if let Some(quote_id) = input.quote_id {
-            let conn = self.conn()?;
-            let quote = self.ensure_quote_for_purchase(
-                &conn,
-                quote_id,
-                input.buyer_agent_id,
-                input.seller_agent_id,
-            )?;
-            let quote = quote.ok_or(CommerceError::NotFound)?;
-            if !matches!(quote.status, QuoteStatus::Quoted | QuoteStatus::Accepted) {
-                return Err(CommerceError::ValidationError(
-                    "quote is not available for purchase creation".to_string(),
-                ));
-            }
-            if quote.status == QuoteStatus::Purchased {
-                return Err(CommerceError::ValidationError(
-                    "quote already has a linked purchase".to_string(),
-                ));
-            }
-            if quote.valid_until <= Utc::now() {
-                return Err(CommerceError::ValidationError("quote has expired".to_string()));
-            }
-            if quote.currency != Self::normalize_currency(input.currency).as_str() {
-                return Err(CommerceError::ValidationError(
-                    "purchase currency does not match quote currency".to_string(),
-                ));
-            }
-            if quote.total != input.total {
-                return Err(CommerceError::ValidationError(
-                    "purchase total must match quote total".to_string(),
-                ));
-            }
-        }
-
         let items_json = serde_json::to_string(&input.items)
             .map_err(|e| CommerceError::Internal(e.to_string()))?;
         let currency = Self::normalize_currency(input.currency);
-
         let quote_id = input.quote_id;
-        with_immediate_transaction(&self.pool, |tx| {
-            tx.execute(
-                r"
+
+        // Validate the quote, insert the purchase, and consume the quote all
+        // inside ONE `BEGIN IMMEDIATE` transaction so two buyers racing on the
+        // same quote are serialized (regression: the check used to run on a
+        // pooled connection outside the write transaction, and the consuming
+        // UPDATE carried no status predicate, so both buyers won).
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+
+        let quote_status = match quote_id {
+            Some(quote_id) => {
+                let quote = self.ensure_quote_for_purchase(
+                    &tx,
+                    quote_id,
+                    input.buyer_agent_id,
+                    input.seller_agent_id,
+                )?;
+                let quote = quote.ok_or(CommerceError::NotFound)?;
+                if quote.status == QuoteStatus::Purchased {
+                    return Err(CommerceError::ValidationError(
+                        "quote already has a linked purchase".to_string(),
+                    ));
+                }
+                if !matches!(quote.status, QuoteStatus::Quoted | QuoteStatus::Accepted) {
+                    return Err(CommerceError::ValidationError(
+                        "quote is not available for purchase creation".to_string(),
+                    ));
+                }
+                if quote.valid_until <= now {
+                    return Err(CommerceError::ValidationError("quote has expired".to_string()));
+                }
+                if quote.currency != currency.as_str() {
+                    return Err(CommerceError::ValidationError(
+                        "purchase currency does not match quote currency".to_string(),
+                    ));
+                }
+                if quote.total != input.total {
+                    return Err(CommerceError::ValidationError(
+                        "purchase total must match quote total".to_string(),
+                    ));
+                }
+                Some(quote.status)
+            }
+            None => None,
+        };
+
+        tx.execute(
+            r"
             INSERT INTO a2a_purchases (
                 id, purchase_number, status, buyer_agent_id, seller_agent_id, quote_id,
                 cart_id, order_id, payment_intent_id, items, total, currency,
@@ -845,43 +854,56 @@ impl A2ACommerceRepository for SqliteA2ARepository {
                 ?13, ?14, ?15, ?16, ?17
             )
             ",
-                rusqlite::params![
-                    id.to_string(),
-                    purchase_number,
-                    PurchaseStatus::Initiated.to_string(),
-                    input.buyer_agent_id.to_string(),
-                    input.seller_agent_id.to_string(),
-                    quote_id.map(|v| v.to_string()),
-                    None::<String>,
-                    None::<String>,
-                    input.payment_intent_id.map(|v| v.to_string()),
-                    items_json,
-                    input.total.to_string(),
-                    currency,
-                    input.fulfillment_type,
-                    input.notes,
-                    input.metadata,
-                    now_str,
-                    now_str,
-                ],
-            )?;
+            rusqlite::params![
+                id.to_string(),
+                purchase_number,
+                PurchaseStatus::Initiated.to_string(),
+                input.buyer_agent_id.to_string(),
+                input.seller_agent_id.to_string(),
+                quote_id.map(|v| v.to_string()),
+                None::<String>,
+                None::<String>,
+                input.payment_intent_id.map(|v| v.to_string()),
+                items_json,
+                input.total.to_string(),
+                currency,
+                input.fulfillment_type,
+                input.notes,
+                input.metadata,
+                now_str,
+                now_str,
+            ],
+        )
+        .map_err(map_db_error)?;
 
-            if let Some(quote_id) = quote_id {
-                tx.execute(
-                    "UPDATE a2a_quotes SET purchase_id = ?, status = ?, updated_at = ? WHERE id = ?",
+        if let (Some(quote_id), Some(quote_status)) = (quote_id, quote_status) {
+            // Conditional consume: only the status we validated above, and only
+            // if no purchase is linked yet. Zero rows means another purchase
+            // consumed the quote first; the transaction is dropped (rolled
+            // back) so the purchase row above never becomes visible.
+            let affected = tx
+                .execute(
+                    "UPDATE a2a_quotes SET purchase_id = ?, status = ?, updated_at = ?
+                     WHERE id = ? AND status = ? AND purchase_id IS NULL",
                     rusqlite::params![
                         id.to_string(),
                         QuoteStatus::Purchased.to_string(),
                         now_str,
                         quote_id.to_string(),
+                        quote_status.to_string(),
                     ],
-                )?;
+                )
+                .map_err(map_db_error)?;
+            if affected != 1 {
+                return Err(CommerceError::Conflict(format!(
+                    "quote {quote_id} was consumed by a concurrent purchase"
+                )));
             }
+        }
 
-            Ok(())
-        })?;
+        tx.commit().map_err(map_db_error)?;
 
-        self.get_purchase(id).ok().flatten().ok_or(CommerceError::NotFound)
+        self.get_purchase(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_purchase(&self, id: Uuid) -> Result<Option<A2APurchase>> {

@@ -23,6 +23,56 @@ pub struct SqliteLotRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
+/// Refuse to use `lot` as a source for a stock-moving operation (`merge`,
+/// `split`) unless the units it holds are genuinely sellable.
+///
+/// Both operations create a *new* lot whose `status`, `quantity_reserved` and
+/// `quantity_quarantined` are reset, so anything blocked on the source would be
+/// laundered into free, sellable stock. Conservatively we require:
+///
+/// * status == `Active` — quarantined / on-hold / expired / recalled / scrapped
+///   stock must be released (or disposed of) through its own workflow first, and
+///   a `Consumed` lot has nothing left to move;
+/// * no quarantined units — belt-and-braces alongside the status check.
+///
+/// Reservations are handled per operation: `split` only moves units within
+/// `quantity_available()` (reservations stay on the original lot), whereas
+/// `merge` additionally refuses any open reservation because it zeroes the
+/// source and would orphan the reservation rows.
+fn ensure_consolidatable_source(lot: &Lot, operation: &str) -> Result<()> {
+    if lot.status != LotStatus::Active {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} lot {} ({}): status is {} (only active lots may be {operation}d)",
+            lot.lot_number, lot.id, lot.status
+        )));
+    }
+    if lot.quantity_quarantined > Decimal::ZERO {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} lot {} ({}): {} units are quarantined",
+            lot.lot_number, lot.id, lot.quantity_quarantined
+        )));
+    }
+    Ok(())
+}
+
+/// Reject a `MergeLots` request whose source list is malformed before any row
+/// is touched: fewer than two lots, or the same lot listed twice (which would
+/// double-count its quantity on the merged lot).
+fn validate_merge_sources(source_lot_ids: &[Uuid]) -> Result<()> {
+    if source_lot_ids.len() < 2 {
+        return Err(CommerceError::ValidationError("Need at least 2 lots to merge".to_string()));
+    }
+    let mut seen = std::collections::HashSet::with_capacity(source_lot_ids.len());
+    for id in source_lot_ids {
+        if !seen.insert(*id) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot merge: duplicate source lot id {id}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl SqliteLotRepository {
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
@@ -933,10 +983,19 @@ impl LotRepository for SqliteLotRepository {
                 e => map_db_error(e),
             })?;
 
-        if original.quantity_remaining < input.quantity {
+        ensure_consolidatable_source(&original, "split")?;
+        if input.quantity <= Decimal::ZERO {
             return Err(CommerceError::ValidationError(
-                "Insufficient quantity to split".to_string(),
+                "Split quantity must be positive".to_string(),
             ));
+        }
+        // Only unreserved, unquarantined units may leave the lot.
+        if original.quantity_available() < input.quantity {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient quantity to split: {} available, {} requested",
+                original.quantity_available(),
+                input.quantity
+            )));
         }
 
         let new_lot_id = Uuid::new_v4();
@@ -1013,11 +1072,7 @@ impl LotRepository for SqliteLotRepository {
     }
 
     fn merge(&self, input: MergeLots) -> Result<Lot> {
-        if input.source_lot_ids.len() < 2 {
-            return Err(CommerceError::ValidationError(
-                "Need at least 2 lots to merge".to_string(),
-            ));
-        }
+        validate_merge_sources(&input.source_lot_ids)?;
 
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
@@ -1051,6 +1106,21 @@ impl LotRepository for SqliteLotRepository {
                 }
             } else {
                 sku = Some(lot.sku.clone());
+            }
+
+            ensure_consolidatable_source(&lot, "merge")?;
+            if lot.quantity_reserved > Decimal::ZERO {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot merge lot {} ({}): {} units are reserved; release or confirm the \
+                     reservations first",
+                    lot.lot_number, lot.id, lot.quantity_reserved
+                )));
+            }
+            if lot.quantity_remaining <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot merge lot {} ({}): nothing remaining",
+                    lot.lot_number, lot.id
+                )));
             }
 
             total_quantity += lot.quantity_remaining;
@@ -1541,7 +1611,8 @@ mod tests {
     use chrono::Duration;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        CreateLot, LotFilter, LotRepository, LotStatus, MergeLots, ReserveLot, SplitLot, UpdateLot,
+        AdjustLot, CreateLot, LotFilter, LotRepository, LotStatus, MergeLots, ReserveLot, SplitLot,
+        UpdateLot,
     };
 
     fn fresh_repo() -> SqliteLotRepository {
@@ -1816,6 +1887,210 @@ mod tests {
             })
             .expect("merge");
         assert_eq!(merged.lot_number, "MERGED-001");
+    }
+
+    fn assert_validation_mentions(err: &CommerceError, needles: &[&str]) {
+        match err {
+            CommerceError::ValidationError(msg) => {
+                for needle in needles {
+                    assert!(msg.contains(needle), "expected {needle:?} in {msg:?}");
+                }
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+    }
+
+    /// Regression: merging a quarantined lot with an active one used to produce a
+    /// brand-new `active` lot holding the quarantined units, laundering blocked
+    /// stock into sellable stock.
+    #[test]
+    fn merge_refuses_quarantined_source_lot() {
+        let repo = fresh_repo();
+        let active = make_lot(&repo, "SKU-MQ", dec!(30));
+        let bad = make_lot(&repo, "SKU-MQ", dec!(20));
+        repo.quarantine(bad.id, "qc fail").expect("quarantine");
+
+        let err = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![active.id, bad.id],
+                target_lot_number: Some("MERGED-Q".into()),
+                reason: None,
+            })
+            .expect_err("quarantined stock must not be merged into an active lot");
+        assert_validation_mentions(&err, &[&bad.lot_number, "quarantine"]);
+
+        // Nothing changed: both sources intact, no merged lot created.
+        let a = repo.get(active.id).expect("ok").expect("found");
+        let b = repo.get(bad.id).expect("ok").expect("found");
+        assert_eq!(a.status, LotStatus::Active);
+        assert_eq!(a.quantity_remaining, dec!(30));
+        assert_eq!(b.status, LotStatus::Quarantine);
+        assert_eq!(b.quantity_remaining, dec!(20));
+        assert!(repo.get_by_number("MERGED-Q").expect("ok").is_none());
+    }
+
+    #[test]
+    fn merge_refuses_every_non_active_source_status() {
+        for status in [
+            LotStatus::OnHold,
+            LotStatus::Expired,
+            LotStatus::Recalled,
+            LotStatus::Scrapped,
+            LotStatus::Consumed,
+        ] {
+            let repo = fresh_repo();
+            let active = make_lot(&repo, "SKU-MS", dec!(30));
+            let bad = make_lot(&repo, "SKU-MS", dec!(20));
+            repo.update(bad.id, UpdateLot { status: Some(status), ..Default::default() })
+                .expect("set status");
+            let err = repo
+                .merge(MergeLots {
+                    source_lot_ids: vec![bad.id, active.id],
+                    target_lot_number: None,
+                    reason: None,
+                })
+                .expect_err("non-active source must be refused");
+            assert_validation_mentions(&err, &[&bad.lot_number, &status.to_string()]);
+            let a = repo.get(active.id).expect("ok").expect("found");
+            assert_eq!(a.status, LotStatus::Active, "{status:?}");
+            assert_eq!(a.quantity_remaining, dec!(30), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn merge_refuses_duplicate_source_ids() {
+        let repo = fresh_repo();
+        let l1 = make_lot(&repo, "SKU-MD", dec!(30));
+        let err = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![l1.id, l1.id],
+                target_lot_number: None,
+                reason: None,
+            })
+            .expect_err("same lot twice would double-count its quantity");
+        assert_validation_mentions(&err, &["duplicate"]);
+        let after = repo.get(l1.id).expect("ok").expect("found");
+        assert_eq!(after.status, LotStatus::Active);
+        assert_eq!(after.quantity_remaining, dec!(30));
+    }
+
+    #[test]
+    fn merge_refuses_source_with_open_reservation() {
+        let repo = fresh_repo();
+        let l1 = make_lot(&repo, "SKU-MR", dec!(30));
+        let l2 = make_lot(&repo, "SKU-MR", dec!(20));
+        repo.reserve(ReserveLot {
+            lot_id: l2.id,
+            quantity: dec!(5),
+            reference_type: "order".into(),
+            reference_id: Uuid::new_v4(),
+            expires_in_seconds: None,
+        })
+        .expect("reserve");
+        let err = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![l1.id, l2.id],
+                target_lot_number: None,
+                reason: None,
+            })
+            .expect_err("merging would orphan the reservation");
+        assert_validation_mentions(&err, &[&l2.lot_number, "reserved"]);
+    }
+
+    #[test]
+    fn merge_refuses_source_with_nothing_remaining() {
+        let repo = fresh_repo();
+        let l1 = make_lot(&repo, "SKU-MZ", dec!(30));
+        let l2 = make_lot(&repo, "SKU-MZ", dec!(20));
+        repo.adjust(AdjustLot {
+            lot_id: l2.id,
+            quantity_change: dec!(-20),
+            reason: "zero out".into(),
+            ..Default::default()
+        })
+        .expect("zero out");
+        let zeroed = repo.get(l2.id).expect("ok").expect("found");
+        assert_eq!(zeroed.status, LotStatus::Active, "still active, just empty");
+        let err = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![l1.id, l2.id],
+                target_lot_number: None,
+                reason: None,
+            })
+            .expect_err("an empty source contributes nothing and must be rejected");
+        assert_validation_mentions(&err, &[&l2.lot_number, "nothing remaining"]);
+    }
+
+    #[test]
+    fn merge_of_active_sources_records_totals() {
+        let repo = fresh_repo();
+        let l1 = make_lot(&repo, "SKU-MOK", dec!(30));
+        let l2 = make_lot(&repo, "SKU-MOK", dec!(20));
+        let merged = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![l1.id, l2.id],
+                target_lot_number: Some("MERGED-OK".into()),
+                reason: None,
+            })
+            .expect("merge");
+        assert_eq!(merged.status, LotStatus::Active);
+        assert_eq!(merged.quantity_remaining, dec!(50));
+        for id in [l1.id, l2.id] {
+            let src = repo.get(id).expect("ok").expect("found");
+            assert_eq!(src.status, LotStatus::Consumed);
+            assert_eq!(src.quantity_remaining, dec!(0));
+        }
+    }
+
+    /// Sibling of the merge defect: `split` used to move stock out of a
+    /// non-active lot and ignored reservations/quarantined units when checking
+    /// how much could be split off.
+    #[test]
+    fn split_refuses_non_active_source_lot() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-SPQ", dec!(100));
+        repo.quarantine(lot.id, "qc fail").expect("quarantine");
+        let err = repo
+            .split(SplitLot {
+                lot_id: lot.id,
+                quantity: dec!(40),
+                new_lot_number: None,
+                reason: None,
+            })
+            .expect_err("split of a quarantined lot must be refused");
+        assert_validation_mentions(&err, &[&lot.lot_number, "quarantine"]);
+        let after = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.quantity_remaining, dec!(100));
+    }
+
+    #[test]
+    fn split_only_moves_unreserved_quantity() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-SPR", dec!(100));
+        repo.reserve(ReserveLot {
+            lot_id: lot.id,
+            quantity: dec!(70),
+            reference_type: "order".into(),
+            reference_id: Uuid::new_v4(),
+            expires_in_seconds: None,
+        })
+        .expect("reserve");
+        let err = repo
+            .split(SplitLot {
+                lot_id: lot.id,
+                quantity: dec!(40),
+                new_lot_number: None,
+                reason: None,
+            })
+            .expect_err("only 30 units are unreserved");
+        assert_validation_mentions(&err, &["Insufficient"]);
+        repo.split(SplitLot {
+            lot_id: lot.id,
+            quantity: dec!(30),
+            new_lot_number: None,
+            reason: None,
+        })
+        .expect("splitting the available remainder is fine");
     }
 
     #[test]

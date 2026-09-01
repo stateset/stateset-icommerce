@@ -197,6 +197,63 @@ impl SqliteX402PaymentIntentRepository {
         })
     }
 
+    fn get_in_tx(tx: &rusqlite::Transaction<'_>, id: Uuid) -> Result<Option<X402PaymentIntent>> {
+        let mut stmt =
+            tx.prepare("SELECT * FROM x402_payment_intents WHERE id = ?").map_err(map_db_error)?;
+        stmt.query_row([id.to_string()], Self::row_to_intent).optional().map_err(map_db_error)
+    }
+
+    /// Statuses from which an intent may still move (anything else is terminal).
+    const NON_TERMINAL: [X402IntentStatus; 4] = [
+        X402IntentStatus::Created,
+        X402IntentStatus::Signed,
+        X402IntentStatus::Sequenced,
+        X402IntentStatus::Batched,
+    ];
+
+    /// Load the intent inside the write transaction and check it is in one of
+    /// the statuses `verb` may start from.
+    ///
+    /// Every status transition runs inside a `BEGIN IMMEDIATE` transaction on a
+    /// single connection, so this read and the subsequent UPDATE are serialized
+    /// against concurrent writers. The UPDATE additionally carries a
+    /// `status = <expected>` predicate and is checked via
+    /// [`Self::finish_transition`], so the transition stays atomic even for a
+    /// caller that bypasses the transaction.
+    fn load_for_transition(
+        tx: &rusqlite::Transaction<'_>,
+        id: Uuid,
+        allowed: &[X402IntentStatus],
+        verb: &str,
+    ) -> Result<X402PaymentIntent> {
+        let intent = Self::get_in_tx(tx, id)?.ok_or(CommerceError::NotFound)?;
+        if !allowed.contains(&intent.status) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot {verb} intent in {} status",
+                intent.status
+            )));
+        }
+        Ok(intent)
+    }
+
+    /// Verify the conditional UPDATE hit exactly one row, then commit and
+    /// return the fresh row. Zero rows means the status moved underneath us.
+    fn finish_transition(
+        tx: rusqlite::Transaction<'_>,
+        id: Uuid,
+        affected: usize,
+        verb: &str,
+    ) -> Result<X402PaymentIntent> {
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "x402 payment intent {id} changed status concurrently; cannot {verb}"
+            )));
+        }
+        let updated = Self::get_in_tx(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
+    }
+
     fn get_next_nonce_in_tx(tx: &rusqlite::Transaction<'_>, payer_address: &str) -> Result<u64> {
         let max_nonce: Option<i64> = tx
             .query_row(
@@ -327,22 +384,17 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     }
 
     fn sign(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
-        let conn = self.conn()?;
-
         if input.intent_id != id {
             return Err(CommerceError::ValidationError(
                 "Sign intent_id does not match target payment intent".to_string(),
             ));
         }
 
-        // Verify intent exists and is in Created status
-        let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        if intent.status != X402IntentStatus::Created {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot sign intent in {} status",
-                intent.status
-            )));
-        }
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+
+        // Verify intent exists and is in Created status (under the write lock).
+        let intent = Self::load_for_transition(&tx, id, &[X402IntentStatus::Created], "sign")?;
 
         // Check if expired
         let now_unix = Utc::now().timestamp() as u64;
@@ -399,26 +451,28 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             ));
         }
 
-        conn.execute(
-            "UPDATE x402_payment_intents SET
+        let affected = tx
+            .execute(
+                "UPDATE x402_payment_intents SET
                 status = ?, signing_hash = ?, payer_signature_scheme = ?, payer_signature = ?, payer_public_key = ?,
                 payer_signature_bundle = ?, payer_public_key_bundle = ?, updated_at = ?
-             WHERE id = ?",
-            rusqlite::params![
-                X402IntentStatus::Signed.to_string(),
-                signing_hash,
-                signature_scheme.to_string(),
-                signature,
-                public_key,
-                signature_bundle_json,
-                public_key_bundle_json,
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+             WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    X402IntentStatus::Signed.to_string(),
+                    signing_hash,
+                    signature_scheme.to_string(),
+                    signature,
+                    public_key,
+                    signature_bundle_json,
+                    public_key_bundle_json,
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    X402IntentStatus::Created.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::finish_transition(tx, id, affected, "sign")
     }
 
     fn mark_sequenced(
@@ -427,32 +481,28 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         sequence_number: u64,
         batch_id: Uuid,
     ) -> Result<X402PaymentIntent> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        Self::load_for_transition(&tx, id, &[X402IntentStatus::Signed], "sequence")?;
 
-        let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        if intent.status != X402IntentStatus::Signed {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot sequence intent in {} status",
-                intent.status
-            )));
-        }
-
-        conn.execute(
-            "UPDATE x402_payment_intents SET
+        let affected = tx
+            .execute(
+                "UPDATE x402_payment_intents SET
                 status = ?, sequence_number = ?, batch_id = ?, sequenced_at = ?, updated_at = ?
-             WHERE id = ?",
-            rusqlite::params![
-                X402IntentStatus::Sequenced.to_string(),
-                sequence_number as i64,
-                batch_id.to_string(),
-                Utc::now().to_rfc3339(),
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+             WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    X402IntentStatus::Sequenced.to_string(),
+                    sequence_number as i64,
+                    batch_id.to_string(),
+                    Utc::now().to_rfc3339(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    X402IntentStatus::Signed.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::finish_transition(tx, id, affected, "sequence")
     }
 
     fn mark_settled(
@@ -461,91 +511,98 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         tx_hash: &str,
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
-        let conn = self.conn()?;
-        let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        Self::load_for_transition(&tx, id, &[X402IntentStatus::Sequenced], "settle")?;
 
-        if intent.status != X402IntentStatus::Sequenced {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot settle intent in {} status",
-                intent.status
-            )));
-        }
-
-        conn.execute(
-            "UPDATE x402_payment_intents SET
+        let affected = tx
+            .execute(
+                "UPDATE x402_payment_intents SET
                 status = ?, tx_hash = ?, block_number = ?, settled_at = ?, updated_at = ?
-             WHERE id = ?",
-            rusqlite::params![
-                X402IntentStatus::Settled.to_string(),
-                tx_hash,
-                block_number as i64,
-                Utc::now().to_rfc3339(),
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+             WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    X402IntentStatus::Settled.to_string(),
+                    tx_hash,
+                    block_number as i64,
+                    Utc::now().to_rfc3339(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    X402IntentStatus::Sequenced.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::finish_transition(tx, id, affected, "settle")
     }
 
     fn mark_failed(&self, id: Uuid, reason: &str) -> Result<X402PaymentIntent> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let intent = Self::load_for_transition(&tx, id, &Self::NON_TERMINAL, "fail")?;
 
-        conn.execute(
-            "UPDATE x402_payment_intents SET
+        let affected = tx
+            .execute(
+                "UPDATE x402_payment_intents SET
                 status = ?, metadata = json_set(COALESCE(metadata, '{}'), '$.failure_reason', ?), updated_at = ?
-             WHERE id = ?",
-            rusqlite::params![
-                X402IntentStatus::Failed.to_string(),
-                reason,
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+             WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    X402IntentStatus::Failed.to_string(),
+                    reason,
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    intent.status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::finish_transition(tx, id, affected, "fail")
     }
 
     fn mark_expired(&self, id: Uuid) -> Result<X402PaymentIntent> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let intent = Self::load_for_transition(&tx, id, &Self::NON_TERMINAL, "expire")?;
 
-        conn.execute(
-            "UPDATE x402_payment_intents SET status = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                X402IntentStatus::Expired.to_string(),
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        let affected = tx
+            .execute(
+                "UPDATE x402_payment_intents SET status = ?, updated_at = ?
+             WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    X402IntentStatus::Expired.to_string(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    intent.status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::finish_transition(tx, id, affected, "expire")
     }
 
     fn cancel(&self, id: Uuid) -> Result<X402PaymentIntent> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let intent = Self::load_for_transition(
+            &tx,
+            id,
+            &[X402IntentStatus::Created, X402IntentStatus::Signed],
+            "cancel",
+        )?;
 
-        let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        if !matches!(intent.status, X402IntentStatus::Created | X402IntentStatus::Signed) {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel intent in {} status",
-                intent.status
-            )));
-        }
+        let affected = tx
+            .execute(
+                "UPDATE x402_payment_intents SET status = ?, updated_at = ?
+             WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    X402IntentStatus::Cancelled.to_string(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    intent.status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
 
-        conn.execute(
-            "UPDATE x402_payment_intents SET status = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                X402IntentStatus::Cancelled.to_string(),
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::finish_transition(tx, id, affected, "cancel")
     }
 
     fn for_cart(&self, cart_id: Uuid) -> Result<Vec<X402PaymentIntent>> {

@@ -6,10 +6,26 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-Closes the four critical money defects at the top of the engine report card,
-plus several defects of the same class found alongside them.
+Closes every open finding on the engine report card: the four critical money
+defects and the three high-severity ones, plus several defects of the same
+class found alongside them.
 
 ### ⚠️ Behaviour change
+- **Coupons are validated when applied and consumed at checkout.** The cart
+  layer applied any coupon whose code resolved, with no check of coupon or
+  promotion status, start/end window, usage limits, per-customer limits or
+  promotion conditions such as a minimum subtotal, and checkout never
+  recorded usage, so a single-use or expired coupon applied indefinitely.
+  Such coupons are now refused with a message naming the reason, checkout
+  increments usage inside the order transaction and rejects the order if
+  the coupon was exhausted after it was applied, and percentage discounts
+  are rounded to the currency's minor unit.
+- **Lot merge and split only accept Active lots.** Merging a quarantined,
+  on-hold, expired, recalled or scrapped lot with an active one produced a
+  new Active lot containing the blocked units. Sources that are not
+  Active, carry quarantined or reserved quantity, have nothing remaining
+  or appear twice are now refused; blocked stock must be released through
+  its own workflow first.
 - **Promotion conditions now fail closed.** Unhandled condition types
   (customer group, email domain, payment method, cart contents) previously
   evaluated to true, so a gated promotion applied to every cart. Promotions
@@ -19,6 +35,13 @@ plus several defects of the same class found alongside them.
   and `eligible_customer_groups`, which is now enforced too.
 
 ### Fixed
+- **x402 intent transitions and a2a quote purchase are atomic.** On
+  SQLite every x402 status change read on one pooled connection and wrote
+  unconditionally on another, so a settle racing a cancel or expire let
+  both win; on Postgres `mark_failed`, `mark_expired` and `cancel` had the
+  same gap. Two buyers could purchase one a2a quote on both backends. Each
+  transition now runs in one transaction with a status-conditional update,
+  and the loser receives a conflict.
 - **Payments can no longer be captured twice.** `cancel` and `update`
   bypassed the payment state machine: cancelling a completed payment
   succeeded, freed its captured amount, and let a second full-amount

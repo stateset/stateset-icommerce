@@ -114,3 +114,56 @@ async fn postgres_concurrent_consume_does_not_over_consume() {
         "lot remaining must be exactly zero, never negative"
     );
 }
+
+/// Regression: `merge_async` ignored the source lots' status and hard-coded the
+/// merged lot as `active`, so merging a quarantined lot with an active one
+/// laundered the quarantined units into sellable stock. Merge now refuses any
+/// non-active source and leaves both lots untouched.
+#[tokio::test]
+async fn postgres_merge_refuses_quarantined_source_lot() {
+    use stateset_core::{LotStatus, MergeLots};
+
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let sku = format!("LOT-MERGE-{}", Uuid::new_v4().simple());
+    let active = db
+        .lots()
+        .create_async(CreateLot { sku: sku.clone(), quantity: dec!(30), ..Default::default() })
+        .await
+        .expect("create active lot");
+    let quarantined = db
+        .lots()
+        .create_async(CreateLot { sku, quantity: dec!(20), ..Default::default() })
+        .await
+        .expect("create second lot");
+    db.lots().quarantine_async(quarantined.id, "qc fail").await.expect("quarantine");
+
+    let target = format!("MERGED-{}", Uuid::new_v4().simple());
+    let err = db
+        .lots()
+        .merge_async(MergeLots {
+            source_lot_ids: vec![active.id, quarantined.id],
+            target_lot_number: Some(target.clone()),
+            reason: None,
+        })
+        .await
+        .expect_err("quarantined stock must not be merged into an active lot");
+    match &err {
+        CommerceError::ValidationError(msg) => {
+            assert!(msg.contains(&quarantined.lot_number), "got {msg}");
+            assert!(msg.contains("quarantine"), "got {msg}");
+        }
+        other => panic!("expected ValidationError, got {other:?}"),
+    }
+
+    let a = db.lots().get_async(active.id).await.expect("ok").expect("found");
+    let q = db.lots().get_async(quarantined.id).await.expect("ok").expect("found");
+    assert_eq!(a.status, LotStatus::Active);
+    assert_eq!(a.quantity_remaining, dec!(30));
+    assert_eq!(q.status, LotStatus::Quarantine);
+    assert_eq!(q.quantity_remaining, dec!(20));
+    assert!(db.lots().get_by_number_async(&target).await.expect("ok").is_none());
+}
