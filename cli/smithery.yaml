@@ -12,7 +12,7 @@ description: >
   agent cards, escrow). Local-first: no API keys, no rate limits — the
   engine and its database run inside the server process.
 
-version: 1.28.3
+version: 1.28.4
 license: MIT OR Apache-2.0
 
 startCommand:
