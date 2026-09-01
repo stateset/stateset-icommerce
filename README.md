@@ -93,7 +93,7 @@ println!("Order {} — ${}", order.order_number, order.total_amount);
 
 No database setup. No config files. No migrations to run. It just works.
 
-**[10-Minute Quickstart →](./QUICKSTART.md)** | **[API Reference](https://docs.rs/stateset-sdk)** | **[OpenAPI Spec](http://localhost:8080/api/v1/openapi.json)** | **[Security](./docs/src/security/overview.md)** | **[Trust Foundation](./TRUST_FOUNDATION.md)**
+**[10-Minute Quickstart →](./QUICKSTART.md)** | **[API Reference](https://docs.rs/stateset-sdk)** | **[OpenAPI Spec](http://localhost:3000/api/v1/openapi.json)** | **[Security](./docs/src/security/overview.md)** | **[Trust Foundation](./TRUST_FOUNDATION.md)**
 
 <details>
 <summary><b>Table of contents</b></summary>
@@ -1321,7 +1321,7 @@ Work Orders, Quality, BOMs, Lots, Serials, Backorders).
 
 Each domain ships with strongly-typed Rust models, generated language
 bindings, MCP tool descriptors, and OpenAPI schemas. The authoritative
-inventory lives in the [OpenAPI spec](http://localhost:8080/api/v1/openapi.json)
+inventory lives in the [OpenAPI spec](http://localhost:3000/api/v1/openapi.json)
 and the source crates under `crates/stateset-core/src/models/`.
 
 ---
