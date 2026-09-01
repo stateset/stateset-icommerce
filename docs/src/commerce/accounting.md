@@ -97,6 +97,62 @@ commerce.generalLedger.createEntry({
 });
 ```
 
+## Money-Integrity Guarantees
+
+The finance modules enforce these invariants on both storage backends
+(SQLite and Postgres):
+
+**General ledger**
+- Journal entries must balance exactly (decimal-exact debits == credits)
+  and every line is a pure debit or a pure credit.
+- Auto-posting is idempotent: retrying `auto_post_invoice`,
+  `auto_post_payment_received`, `auto_post_bill`, `auto_post_bill_payment`,
+  `auto_post_inventory_cost`, or `auto_post_write_off` for the same source
+  document returns the existing journal entry instead of posting twice.
+- Posting or voiding an entry requires its accounting period to be open —
+  including through the governed kernel `ledger.post` command, which
+  rejects durably with `commerce.ledger.period_not_open`.
+- A period with a standing closing entry cannot be closed again. To adjust
+  a closed period: reopen it, void the closing entry, post adjustments,
+  and re-run the close.
+- The income statement excludes closing entries, so a closed period's P&L
+  reports its actual activity.
+- Trial balance, balance sheet, and dated account balances derive from
+  posted journal lines dated on or before the requested date; an undated
+  account-balance read returns the live running balance.
+- A crashed reversal (claimed but never posted) resumes on retry; a
+  completed reversal rejects a second attempt.
+
+**Accounts payable**
+- Bill line items can only be added or removed on draft/pending bills;
+  bill creation commits header, lines, and totals in one transaction.
+- Payments are bounded by the bill balance, serialized under a write
+  lock, and payment/bill lifecycle transitions (clear, cancel, dispute,
+  approve) are status-guarded.
+- Payment runs follow a state machine (draft/pending → approved →
+  completed, cancellable until processing). Processing atomically creates
+  a real payment plus allocation per bill, re-reading each balance under
+  lock; bills paid since run creation are skipped and recorded on the run.
+- Three-way matching aggregates billed quantities per purchase-order line
+  across the whole bill, so split or duplicated lines cannot pass
+  over-billing through the match.
+
+**Accounts receivable & revenue recognition**
+- A payment can never be applied beyond its own amount, and applications
+  and credit memos are rejected on voided or written-off invoices.
+- Write-offs must be positive and bounded by the invoice balance;
+  reversing a write-off restores the status the balance and due date
+  actually imply.
+- Direct payments recorded on an invoice survive later credit-memo and
+  payment-application recalculations (`amount_paid` = direct payments +
+  applications + applied credits).
+- Customer statements list invoices, payments, credit memos, and
+  write-offs in one dated running balance that starts from a derived
+  opening balance.
+- Revenue is only recognized on active contracts (never draft or
+  cancelled), and a failed GL post after a recognition or depreciation
+  reverts the subledger so a retry posts the full amount exactly once.
+
 ## Treasury
 
 Fund management and cash flow:

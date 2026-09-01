@@ -1432,6 +1432,95 @@ async fn postgres_kernel_order_shipment_and_return_commands_share_state_machine_
 }
 
 #[tokio::test]
+async fn postgres_kernel_journal_post_rejects_closed_period_durably() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping closed-period rejection proof");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect and migrate");
+    let suffix = Uuid::new_v4();
+    let bytes = suffix.as_bytes();
+    let fiscal_year = 2200 + i32::from(bytes[2]);
+    let gl = db.general_ledger();
+    let period = gl
+        .create_period_async(CreateGlPeriod {
+            period_name: format!("FY{fiscal_year}-closed-{suffix}"),
+            fiscal_year,
+            period_number: 1 + i32::from(bytes[3] % 12),
+            start_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 1, 1).expect("date"),
+            end_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 12, 31).expect("date"),
+        })
+        .await
+        .expect("create period");
+    gl.open_period_async(period.id).await.expect("open period");
+    let cash = gl
+        .create_account_async(CreateGlAccount {
+            account_number: format!("1000-closed-{suffix}"),
+            name: "Closed Period Cash".into(),
+            description: None,
+            account_type: AccountType::Asset,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: Some(false),
+            is_posting: Some(true),
+            currency: None,
+        })
+        .await
+        .expect("create cash");
+    let revenue = gl
+        .create_account_async(CreateGlAccount {
+            account_number: format!("4000-closed-{suffix}"),
+            name: "Closed Period Revenue".into(),
+            description: None,
+            account_type: AccountType::Revenue,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: Some(false),
+            is_posting: Some(true),
+            currency: None,
+        })
+        .await
+        .expect("create revenue");
+    let entry = gl
+        .create_journal_entry_async(CreateJournalEntry {
+            entry_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 8, 1).expect("date"),
+            entry_type: None,
+            description: "Draft stranded by period close".into(),
+            lines: vec![
+                CreateJournalEntryLine::debit(cash.id, dec!(60), None),
+                CreateJournalEntryLine::credit(revenue.id, dec!(60), None),
+            ],
+            source_document_type: Some("kernel_command".into()),
+            source_document_id: None,
+            auto_post: Some(false),
+        })
+        .await
+        .expect("create journal");
+    gl.close_period_async(period.id, "tester").await.expect("close period");
+
+    let mut post = kernel_command(
+        "ledger.post",
+        format!("pg-ledger-post-closed-{suffix}"),
+        "ledger.post",
+        PostJournalEntry { journal_entry_id: entry.id, posted_by: "agent:postgres-parity".into() },
+    );
+    post.mode = ExecutionMode::Apply;
+    let receipt = db
+        .kernel_executor(policy())
+        .execute_post_journal_entry_async(&post)
+        .await
+        .expect("execute against closed period");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected);
+    assert_eq!(receipt.error_code.as_deref(), Some("commerce.ledger.period_not_open"));
+
+    let entry =
+        gl.get_journal_entry_async(entry.id).await.expect("get entry").expect("entry exists");
+    assert_eq!(entry.status, JournalEntryStatus::Draft, "rejected post must leave a draft");
+    let cash = gl.get_account_async(cash.id).await.expect("get cash").expect("cash exists");
+    assert_eq!(cash.current_balance, dec!(0), "no balance may move on rejection");
+}
+
+#[tokio::test]
 async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
     let Some(url) = postgres_url() else {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping finance parity proof");
