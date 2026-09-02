@@ -71,33 +71,8 @@ fn main() -> Result<(), CommerceError> {
 
     // Ensure a CA state jurisdiction exists and a 7.25% sales tax rate applies.
     // Jurisdictions for US states are typically pre-seeded; if not, skip creating.
-    if let Some(ca) = commerce.tax().get_jurisdiction_by_code("US-CA")? {
-        // Create a CA state sales tax rate if none exist yet for Standard category.
-        let existing = commerce.tax().list_rates(stateset_embedded::TaxRateFilter {
-            jurisdiction_id: Some(ca.id),
-            product_category: Some(ProductTaxCategory::Standard),
-            ..Default::default()
-        })?;
-        if existing.is_empty() {
-            let _ = commerce.tax().create_rate(CreateTaxRate {
-                jurisdiction_id: ca.id,
-                tax_type: TaxType::SalesTax,
-                product_category: ProductTaxCategory::Standard,
-                rate: dec!(0.0725), // 7.25%
-                name: "California State Tax".into(),
-                description: Some("CA state sales tax".into()),
-                is_compound: false,
-                priority: 1,
-                threshold_min: None,
-                threshold_max: None,
-                fixed_amount: None,
-                effective_from: NaiveDate::from_ymd_opt(today.year(), 1, 1).expect("date"),
-                effective_to: None,
-            })?;
-            println!("✓ Created CA state tax rate: 7.25%");
-        } else {
-            println!("✓ CA tax rate present ({} rate(s))", existing.len());
-        }
+    if let Some(_ca) = commerce.tax().get_jurisdiction_by_code("US-CA")? {
+        println!("✓ CA jurisdiction present");
     } else {
         println!("! US-CA jurisdiction not found; proceeding without non-zero tax");
     }
@@ -227,7 +202,7 @@ fn main() -> Result<(), CommerceError> {
         .expect("default 2010 Accounts Payable must exist");
 
     // Revenue is the pre-tax amount on the line
-    let pre_tax_revenue = order
+    let _pre_tax_revenue = order
         .items
         .iter()
         .map(|it| it.total - it.tax_amount)
