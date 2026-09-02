@@ -16,17 +16,17 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 329 |
-| Operations | 445 |
-| Schemas | 432 |
-| Tags | 61 |
+| Paths | 331 |
+| Operations | 447 |
+| Schemas | 434 |
+| Tags | 62 |
 
 ## Method Counts
 
 | Method | Operations |
 | --- | --- |
 | DELETE | 25 |
-| GET | 177 |
+| GET | 179 |
 | PATCH | 10 |
 | POST | 220 |
 | PUT | 13 |
@@ -58,6 +58,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `integration_mappings` | 7 | External integration record mappings |
 | `inventory` | 3 | Stock and inventory management |
 | `invoices` | 5 | Invoice management |
+| `kernel` | 2 | Kernel receipt audit chain verification and checkpoints |
 | `lots` | 9 | Lot/batch tracking: creation, consumption, reservations, quarantine, and expiry queries |
 | `loyalty` | 4 | Loyalty program management |
 | `negotiations` | 5 | Agent-to-agent price negotiation |
@@ -280,6 +281,8 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/invoices/{id}` | `invoices` | `get_invoice` | `GET /api/v1/invoices/:id` |
 | `POST` | `/api/v1/invoices/{id}/payments` | `invoices` | `record_invoice_payment` | `POST /api/v1/invoices/:id/payments` |
 | `POST` | `/api/v1/invoices/{id}/send` | `invoices` | `send_invoice` | `POST /api/v1/invoices/:id/send` |
+| `GET` | `/api/v1/kernel/audit` | `kernel` | `kernel_verify_audit_chain` | `GET /api/v1/kernel/audit` — recompute the receipt audit chain. |
+| `GET` | `/api/v1/kernel/audit/checkpoint` | `kernel` | `kernel_audit_checkpoint` | `GET /api/v1/kernel/audit/checkpoint` — mint a portable chain checkpoint. |
 | `GET` | `/api/v1/lots` | `lots` | `lots_list` | — |
 | `POST` | `/api/v1/lots` | `lots` | `lots_create` | — |
 | `GET` | `/api/v1/lots/{id}` | `lots` | `lots_get_one` | — |

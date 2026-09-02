@@ -54,7 +54,7 @@ workspace = true
 [features]
 default = ["sqlite"]
 sqlite = ["dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:hex", "dep:tracing", "stateset-core/rusqlite"]
-postgres = ["dep:sqlx", "dep:tokio", "stateset-core/sqlx-postgres"]
+postgres = ["dep:sqlx", "dep:tokio", "dep:tracing", "stateset-core/sqlx-postgres"]
 vector = ["sqlite", "stateset-core/embeddings"]
 # Experimental: persisted saga coordinator for multi-step orchestration.
 # Kept behind an explicit feature to avoid forcing downstream users to provision

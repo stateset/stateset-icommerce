@@ -344,11 +344,16 @@ if (
 ) {
   errors.push('PostgreSQL durable outbox recovery parity eval is missing');
 }
-if (!sqliteOutbox.includes('WHERE sequence = ? AND audit_hash = ?')) {
-  errors.push('SQLite audit checkpoint is not bound to its claimed sequence');
+// The checkpoint must be bound to the POSITION it claims, not merely to a
+// matching hash somewhere in the log. It addresses the entry by ordinal
+// position rather than by `sequence` value so that a gap left by a
+// rolled-back append cannot invalidate an otherwise honest checkpoint; the
+// binding is equally strong and `*_rejects_resealed_wrong_sequence` guards it.
+if (!sqliteOutbox.includes('ORDER BY sequence LIMIT 1 OFFSET ?')) {
+  errors.push('SQLite audit checkpoint is not bound to its claimed position');
 }
-if (!postgresOutbox.includes('WHERE sequence = $1 AND audit_hash = $2')) {
-  errors.push('PostgreSQL audit checkpoint is not bound to its claimed sequence');
+if (!postgresOutbox.includes('ORDER BY sequence OFFSET $1 LIMIT 1')) {
+  errors.push('PostgreSQL audit checkpoint is not bound to its claimed position');
 }
 if (!coreKernel.includes('"authority": authority')) {
   errors.push('signed authority digest does not bind authority claim metadata');

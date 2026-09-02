@@ -7,10 +7,10 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 329,
-  "totalOperations": 445,
-  "totalSchemas": 432,
-  "totalTags": 61,
+  "totalPaths": 331,
+  "totalOperations": 447,
+  "totalSchemas": 434,
+  "totalTags": 62,
   "methods": [
     {
       "name": "DELETE",
@@ -18,7 +18,7 @@
     },
     {
       "name": "GET",
-      "count": 177
+      "count": 179
     },
     {
       "name": "PATCH",
@@ -148,6 +148,11 @@
       "name": "invoices",
       "description": "Invoice management",
       "count": 5
+    },
+    {
+      "name": "kernel",
+      "description": "Kernel receipt audit chain verification and checkpoints",
+      "count": 2
     },
     {
       "name": "lots",
@@ -582,6 +587,8 @@
     "JournalEntryLineResponse",
     "JournalEntryListResponse",
     "JournalEntryResponse",
+    "KernelAuditCheckpointResponse",
+    "KernelAuditVerificationResponse",
     "LinkBillRequest",
     "LocationInventoryListResponse",
     "LocationInventoryResponse",
@@ -2385,6 +2392,24 @@
         "invoices"
       ],
       "summary": "`POST /api/v1/invoices/:id/send`"
+    },
+    {
+      "path": "/api/v1/kernel/audit",
+      "method": "GET",
+      "operationId": "kernel_verify_audit_chain",
+      "tags": [
+        "kernel"
+      ],
+      "summary": "`GET /api/v1/kernel/audit` — recompute the receipt audit chain."
+    },
+    {
+      "path": "/api/v1/kernel/audit/checkpoint",
+      "method": "GET",
+      "operationId": "kernel_audit_checkpoint",
+      "tags": [
+        "kernel"
+      ],
+      "summary": "`GET /api/v1/kernel/audit/checkpoint` — mint a portable chain checkpoint."
     },
     {
       "path": "/api/v1/lots",
