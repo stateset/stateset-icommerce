@@ -55,4 +55,3 @@ async fn postgres_get_period_for_date_prefers_open_when_overlapping() {
     assert_eq!(selected.id, p1.id, "must select the open period covering the date");
     assert!(selected.can_post(), "selected period is open");
 }
-
