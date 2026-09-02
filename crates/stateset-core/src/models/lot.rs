@@ -1,6 +1,54 @@
 //! Lot/Batch Tracking domain models
 //!
 //! Models for lot tracking, traceability, and batch management.
+//!
+//! # How lots relate to inventory
+//!
+//! A lot is the itemised view of a SKU's stock: `quantity_remaining` is what
+//! the lot still holds, `quantity_reserved` what is promised to orders, and
+//! `quantity_quarantined` what a quality event has blocked. The sellable
+//! remainder is [`Lot::quantity_available`].
+//!
+//! Lots are **linked to `inventory_balances`** (the per-SKU, per-location
+//! on-hand / allocated / available triple) whenever two things are true:
+//!
+//! 1. the lot has a placement in `lot_locations` (created with
+//!    `initial_location_id`, or moved there by a transfer), and
+//! 2. an `inventory_items` row exists for the lot's SKU.
+//!
+//! When both hold, every lot mutation adjusts the balance for
+//! `(sku, location)` **in the same database transaction**:
+//!
+//! | lot operation              | inventory effect at the lot's location        |
+//! |----------------------------|-----------------------------------------------|
+//! | create (with a location)   | on-hand `+= quantity` (receipt)                |
+//! | adjust                     | on-hand `+= quantity_change`                   |
+//! | consume / confirm          | on-hand `-= quantity` (confirm also frees the hold) |
+//! | reserve / release          | allocated `+= / -= quantity` (a hold)          |
+//! | quarantine / release       | allocated `+= / -= quarantined units` (a hold) |
+//! | expiry sweep               | allocated `+= available units` (a hold)        |
+//! | transfer                   | on-hand moves from source to destination       |
+//!
+//! Inventory has no dedicated quarantine bucket, so a quarantined (or expired)
+//! lot **holds** its blocked units via `quantity_allocated`: the stock stays
+//! on hand, but `quantity_available` — which the order path checks — drops.
+//! Each on-hand change also writes an `inventory_transactions` row referencing
+//! the lot. The invariant maintained is, per `(sku, location)`:
+//!
+//! ```text
+//! Σ active lots (remaining − reserved − quarantined) == inventory available
+//! ```
+//!
+//! Lots without a location, or SKUs without an inventory item, float free
+//! (the pre-existing behaviour). `split` / `merge` move units *between lots*
+//! and leave inventory untouched; the derived lots carry no placement.
+//! Balances are floored at zero when a legacy lot was never received into
+//! inventory, so the linkage can be adopted on live data without failing
+//! consumption.
+//!
+//! Quarantining a lot also quarantines its `Available` / `Reserved` serials
+//! (closing their reservations) and releasing it returns them to `Available`;
+//! a failed inspection does the same through the quality repository.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;

@@ -828,3 +828,398 @@ async fn postgres_concurrent_add_item_keeps_subtotal_consistent() {
     assert_eq!(cart.subtotal, expected, "stored subtotal lost a concurrent add");
     assert_eq!(cart.grand_total, expected);
 }
+
+// ============================================================================
+// Round 4: transactional coupon reads, all promotion types, preview parity,
+// totals-through-one-path, tax rescale, money scale, discount recovery
+// ============================================================================
+
+/// Every coupon read during a cart mutation or checkout happens on the
+/// mutation's own transaction: with a pool of ONE connection, add / update /
+/// checkout with a coupon must complete rather than deadlock waiting for a
+/// second pooled connection.
+#[tokio::test]
+async fn postgres_size_one_pool_coupon_paths_do_not_deadlock() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    drop(db); // migrations applied
+    let url = postgres_url().expect("url");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .expect("size-1 pool");
+    let carts = PgCartRepository::new(pool.clone());
+    let promos = PgPromotionRepository::new(pool.clone());
+    let code = unique("ONECONN");
+    active_promo_with_coupon(&promos, &code, |c| c).await;
+
+    let run = async {
+        let cart = checkoutable_cart(&carts).await;
+        let id = cart.id.into_uuid();
+        let cart = carts.apply_discount_async(id, &code).await.expect("apply");
+        assert_eq!(cart.discount_amount, dec!(1.00));
+        let item = carts.add_item_async(id, line("SKU-ONE", 1, dec!(30))).await.expect("add");
+        carts
+            .update_item_async(item.id, UpdateCartItem { quantity: Some(2), ..Default::default() })
+            .await
+            .expect("update");
+        let cart = carts.get_async(id).await.expect("ok").expect("found");
+        assert_eq!(cart.subtotal, dec!(70));
+        assert_eq!(cart.discount_amount, dec!(7.00));
+        carts.remove_item_async(item.id).await.expect("remove");
+        let result = carts.complete_async(id).await.expect("checkout");
+        assert_eq!(result.total_charged, dec!(9.00));
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(20), run)
+        .await
+        .expect("coupon paths deadlocked on a size-1 pool");
+}
+
+/// Mirror of the SQLite `bundle_coupon_loses_discount_when_bundle_item_removed`.
+#[tokio::test]
+async fn postgres_bundle_coupon_loses_discount_when_bundle_item_removed() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let (carts, promos) = (db.carts(), db.promotions());
+    // `cart_items.product_id` is a real foreign key on Postgres.
+    let mut product_ids = Vec::new();
+    for name in ["Widget", "Gadget"] {
+        let product = db
+            .products()
+            .create_async(stateset_core::CreateProduct {
+                name: format!("{name} {}", unique("BNDL")),
+                ..Default::default()
+            })
+            .await
+            .expect("create product");
+        product_ids.push(product.id);
+    }
+    let (widget, gadget) = (product_ids[0], product_ids[1]);
+    let code = unique("BUNDLE15");
+    let promo = promos
+        .create_async(CreatePromotion {
+            code: Some(format!("{code}-PROMO")),
+            name: "Widget + Gadget bundle".into(),
+            promotion_type: PromotionType::BundleDiscount,
+            trigger: PromotionTrigger::CouponCode,
+            target: PromotionTarget::Order,
+            stacking: StackingBehavior::Stackable,
+            bundle_product_ids: Some(vec![widget, gadget]),
+            bundle_discount: Some(dec!(15)),
+            ..Default::default()
+        })
+        .await
+        .expect("create promo");
+    promos.activate_async(promo.id.into_uuid()).await.expect("activate");
+    promos.create_coupon_async(coupon_input(promo.id, &code)).await.expect("coupon");
+
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    let with_product = |product, sku: &str, price| AddCartItem {
+        product_id: Some(product),
+        ..line(sku, 1, price)
+    };
+    carts.add_item_async(id, with_product(widget, "SKU-WIDGET", dec!(40))).await.expect("add");
+    let gadget_line =
+        carts.add_item_async(id, with_product(gadget, "SKU-GADGET", dec!(60))).await.expect("add");
+    let cart = carts.apply_discount_async(id, &code).await.expect("applies");
+    assert_eq!(cart.subtotal, dec!(110));
+    assert_eq!(cart.discount_amount, dec!(15));
+    assert_eq!(cart.grand_total, dec!(95));
+
+    carts.remove_item_async(gadget_line.id).await.expect("remove");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.subtotal, dec!(50));
+    assert_eq!(cart.discount_amount, dec!(0), "bundle discount must be re-derived");
+    assert_eq!(cart.grand_total, dec!(50));
+    assert_eq!(cart.coupon_code.as_deref(), Some(code.as_str()));
+
+    carts.add_item_async(id, with_product(gadget, "SKU-GADGET", dec!(60))).await.expect("add");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.discount_amount, dec!(15));
+    assert_eq!(cart.grand_total, dec!(95));
+}
+
+/// The kernel's checkout Preview runs the same coupon re-validation as
+/// Apply: it cannot succeed where Apply would refuse, and reports the same
+/// error.
+#[tokio::test]
+async fn postgres_checkout_preview_refuses_coupon_that_stopped_qualifying() {
+    use stateset_core::{
+        CommandEnvelope, CommitCheckout, ExecutionStatus, KernelCommandPolicy, KernelPolicy,
+        KernelPrincipal, PrincipalKind, SetCartPayment,
+    };
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let (carts, promos) = (db.carts(), db.promotions());
+    let code = unique("TWENTY100");
+    pct_promo_with_minimum(&promos, &code, dec!(0.20), dec!(100)).await;
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    carts
+        .set_payment_async(
+            id,
+            SetCartPayment {
+                payment_method: "credit_card".into(),
+                payment_token: Some("tok_preview".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("payment");
+    let item = carts.add_item_async(id, line("SKU-BIG", 1, dec!(90))).await.expect("add");
+    carts.apply_discount_async(id, &code).await.expect("applies at $100");
+    carts
+        .update_item_async(
+            item.id,
+            UpdateCartItem { unit_price: Some(dec!(20)), ..Default::default() },
+        )
+        .await
+        .expect("reprice");
+
+    let policy = KernelPolicy::new("commerce-policy-1")
+        .allow("checkout.commit", KernelCommandPolicy::requiring(["checkout.commit"]));
+    let mut preview = CommandEnvelope::preview(
+        "checkout.commit",
+        format!("preview-{}", unique("KEY")),
+        KernelPrincipal {
+            id: "agent:preview".into(),
+            kind: PrincipalKind::Agent,
+            tenant_id: Some("tenant-postgres".into()),
+            delegated_by: Some("user-postgres".into()),
+            capabilities: vec!["checkout.commit".into()],
+        },
+        CommitCheckout { cart_id: cart.id },
+    );
+    preview.store_id = Some("store-postgres".into());
+    preview.policy_version = Some("commerce-policy-1".into());
+    let receipt = db
+        .kernel_executor(policy)
+        .execute_commit_checkout_async(&preview)
+        .await
+        .expect("preview executes");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected, "preview must refuse: {receipt:?}");
+    let message = receipt.error_message.clone().unwrap_or_default();
+    assert!(
+        message.contains(&code) && message.contains("no longer valid"),
+        "preview must report the coupon error: {message}"
+    );
+    let apply_err = carts.complete_async(id).await.expect_err("apply refuses too");
+    assert_eq!(apply_err.to_string(), message, "preview and apply must agree");
+}
+
+/// Mirror of the SQLite `update_with_discount_amount_recomputes_grand_total`.
+#[tokio::test]
+async fn postgres_update_with_discount_amount_recomputes_grand_total() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    let cart = carts
+        .update_async(
+            id,
+            UpdateCart {
+                discount_amount: Some(dec!(3)),
+                discount_description: Some("Manual".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update");
+    assert_eq!(cart.discount_amount, dec!(3));
+    assert_eq!(cart.grand_total, dec!(7));
+    let cart = carts
+        .update_async(id, UpdateCart { discount_amount: Some(dec!(50)), ..Default::default() })
+        .await
+        .expect("update");
+    assert_eq!(cart.discount_amount, dec!(10), "capped at what the cart can cover");
+    assert_eq!(cart.grand_total, dec!(0));
+    let err = carts
+        .update_async(id, UpdateCart { discount_amount: Some(dec!(-1)), ..Default::default() })
+        .await
+        .expect_err("negative discount");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+}
+
+/// `create` with initial items prices the cart through the shared totals
+/// path (subtotal, discount cap, `grand_total`, rounding) — not a bare
+/// `grand_total = subtotal` write — and applies the money-scale rule.
+#[tokio::test]
+async fn postgres_create_with_items_prices_through_totals_path() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let cart = carts
+        .create_async(CreateCart {
+            items: Some(vec![line("SKU-A", 2, dec!(10.25)), line("SKU-B", 1, dec!(4.50))]),
+            ..Default::default()
+        })
+        .await
+        .expect("create");
+    assert_eq!(cart.items.len(), 2);
+    assert_eq!(cart.subtotal, dec!(25.00));
+    assert_eq!(cart.grand_total, dec!(25.00));
+    assert_eq!(cart.grand_total, cart.subtotal + cart.tax_amount + cart.shipping_amount);
+
+    let err = carts
+        .create_async(CreateCart {
+            items: Some(vec![line("SKU-C", 1, dec!(1.234))]),
+            ..Default::default()
+        })
+        .await
+        .expect_err("sub-cent price");
+    assert!(matches!(err, CommerceError::MoneyScaleExceedsCurrency { .. }), "got {err:?}");
+}
+
+/// Mirror of the SQLite `tax_follows_line_changes_proportionally`.
+#[tokio::test]
+async fn postgres_tax_follows_line_changes_proportionally() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    let cart = carts.set_tax_async(id, dec!(0.80)).await.expect("tax");
+    assert_eq!(cart.grand_total, dec!(10.80));
+
+    let more = carts.add_item_async(id, line("SKU-MORE", 1, dec!(10))).await.expect("add");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.subtotal, dec!(20));
+    assert_eq!(cart.tax_amount, dec!(1.60), "tax must be recomputed for the new lines");
+    assert_eq!(cart.grand_total, dec!(21.60));
+
+    carts
+        .update_item_async(more.id, UpdateCartItem { quantity: Some(3), ..Default::default() })
+        .await
+        .expect("qty");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.subtotal, dec!(40));
+    assert_eq!(cart.tax_amount, dec!(3.20));
+    assert_eq!(cart.grand_total, dec!(43.20));
+
+    carts.clear_items_async(id).await.expect("clear");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.tax_amount, dec!(0), "an empty cart carries no tax");
+    assert_eq!(cart.grand_total, dec!(0));
+}
+
+/// Mirror of the SQLite `add_and_update_item_reject_sub_minor_unit_money`.
+#[tokio::test]
+async fn postgres_add_and_update_item_reject_sub_minor_unit_money() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    let item = cart.items[0].clone();
+    let scale_err = |err: CommerceError| {
+        assert!(
+            matches!(err, CommerceError::MoneyScaleExceedsCurrency { .. }),
+            "expected MoneyScaleExceedsCurrency, got {err:?}"
+        );
+    };
+    scale_err(carts.add_item_async(id, line("SKU-TINY", 1, dec!(10.001))).await.expect_err("add"));
+    scale_err(
+        carts
+            .add_item_async(
+                id,
+                AddCartItem { original_price: Some(dec!(12.345)), ..line("SKU-ORIG", 1, dec!(10)) },
+            )
+            .await
+            .expect_err("original"),
+    );
+    scale_err(
+        carts
+            .update_item_async(
+                item.id,
+                UpdateCartItem { unit_price: Some(dec!(9.995)), ..Default::default() },
+            )
+            .await
+            .expect_err("unit price"),
+    );
+    scale_err(
+        carts
+            .update_item_async(
+                item.id,
+                UpdateCartItem { discount_amount: Some(dec!(0.001)), ..Default::default() },
+            )
+            .await
+            .expect_err("discount"),
+    );
+    carts.add_item_async(id, line("SKU-OK", 1, dec!(10.500))).await.expect("trailing zeros ok");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.items.len(), 2);
+    assert_eq!(cart.subtotal, dec!(20.50));
+}
+
+/// Mirror of the embedded `test_cart_remove_discount`: remove after apply.
+#[tokio::test]
+async fn postgres_remove_discount_after_apply() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let (carts, promos) = (db.carts(), db.promotions());
+    let code = unique("SAVE10");
+    active_promo_with_coupon(&promos, &code, |c| CreateCouponCode { usage_limit: Some(100), ..c })
+        .await;
+    let cart = cart_with_subtotal(&carts, dec!(59.98)).await;
+    let id = cart.id.into_uuid();
+    let cart = carts.apply_discount_async(id, &code).await.expect("apply");
+    assert_eq!(cart.discount_amount, dec!(6.00));
+    let cart = carts.remove_discount_async(id).await.expect("remove");
+    assert!(cart.coupon_code.is_none());
+    assert_eq!(cart.discount_amount, dec!(0));
+    assert_eq!(cart.discount_description, None);
+    assert_eq!(cart.grand_total, dec!(59.98));
+}
+
+/// Mirror of the SQLite `remove_discount_recovers_from_not_applied_state`.
+#[tokio::test]
+async fn postgres_remove_discount_recovers_from_not_applied_state() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let (carts, promos) = (db.carts(), db.promotions());
+    let code = unique("TWENTY100");
+    pct_promo_with_minimum(&promos, &code, dec!(0.20), dec!(100)).await;
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    let item = carts.add_item_async(id, line("SKU-BIG", 1, dec!(90))).await.expect("add");
+    carts.apply_discount_async(id, &code).await.expect("applies at $100");
+    carts
+        .update_item_async(
+            item.id,
+            UpdateCartItem { unit_price: Some(dec!(20)), ..Default::default() },
+        )
+        .await
+        .expect("reprice");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert!(cart.discount_description.unwrap_or_default().contains("not applied"));
+    carts.complete_async(id).await.expect_err("refused while not applied");
+
+    let cart = carts.remove_discount_async(id).await.expect("remove");
+    assert_eq!(cart.coupon_code, None);
+    assert_eq!(cart.discount_amount, dec!(0));
+    assert_eq!(cart.discount_description, None);
+    assert_eq!(cart.grand_total, dec!(30));
+    let result = carts.complete_async(id).await.expect("checks out without the coupon");
+    assert_eq!(result.total_charged, dec!(30));
+}

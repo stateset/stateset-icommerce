@@ -396,10 +396,25 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "079_serial_reservation_uniqueness",
             include_str!("../migrations/079_serial_reservation_uniqueness.sql"),
         ),
+        // Nullable `order_item_id` on inventory_reservations so a removed order
+        // line releases ITS reservation, not the oldest one for the same SKU.
+        (
+            "080_reservation_order_line",
+            include_str!("../migrations/080_reservation_order_line.sql"),
+        ),
         // Legacy-safe uniqueness for x402 settlement tx hashes.
         (
             "082_x402_tx_hash_uniqueness",
             include_str!("../migrations/082_x402_tx_hash_uniqueness.sql"),
+        ),
+        // Nullable billing-worker lease columns on subscriptions so due
+        // subscriptions are claimed atomically before they are billed.
+        ("084_billing_claim_lease", include_str!("../migrations/084_billing_claim_lease.sql")),
+        // Durable, tenant-scoped A2A credit terms and agent messaging
+        // (previously process-local state in the HTTP routes).
+        (
+            "086_a2a_credit_terms_and_messaging",
+            include_str!("../migrations/086_a2a_credit_terms_and_messaging.sql"),
         ),
     ]
 }

@@ -928,23 +928,31 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         Ok(locations)
     }
 
+    /// Delete a location.
+    ///
+    /// Refused (`ValidationError`) while the location holds on-hand or
+    /// reserved stock, or while any `inventory_movements`, pick task, put-away
+    /// or cycle count still references it — those rows are the audit trail
+    /// and would otherwise fail on the foreign key as an opaque database
+    /// error. Such a location should be deactivated instead. A missing id is
+    /// `NotFound`. The guards and the DELETE share one `IMMEDIATE`
+    /// transaction, so an adjustment landing between them cannot have its
+    /// stock silently cascaded away by a delete that read zero on-hand.
     fn delete_location(&self, id: i32) -> Result<()> {
-        // Check-then-delete: the stock guard and the DELETE share one IMMEDIATE
-        // transaction, so an adjustment landing between them cannot have its
-        // stock silently cascaded away by a delete that read zero on-hand.
         with_immediate_transaction(&self.pool, |tx| {
-            // `quantity_on_hand` is a TEXT decimal, so compare the exact parsed
-            // `Decimal`s in Rust instead of a float-coercing CAST(... AS REAL)
-            // in SQL.
-            let quantities: Vec<String> = {
+            // `quantity_on_hand`/`quantity_reserved` are TEXT decimals, so
+            // compare the exact parsed `Decimal`s in Rust instead of a
+            // float-coercing CAST(... AS REAL) in SQL.
+            let quantities: Vec<(String, String)> = {
                 let mut stmt = tx.prepare(
-                    "SELECT quantity_on_hand FROM location_inventory WHERE location_id = ?1",
+                    "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
+                     WHERE location_id = ?1",
                 )?;
-                let rows = stmt.query_map(params![id], |row| row.get(0))?;
+                let rows = stmt.query_map(params![id], |row| Ok((row.get(0)?, row.get(1)?)))?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()?
             };
-            for qty in &quantities {
-                if parse_decimal_strict(qty, "location_inventory", "quantity_on_hand")
+            for (on_hand, reserved) in &quantities {
+                if parse_decimal_strict(on_hand, "location_inventory", "quantity_on_hand")
                     .map_err(Self::smuggle)?
                     > Decimal::ZERO
                 {
@@ -952,9 +960,41 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                         "Cannot delete location with inventory".into(),
                     )));
                 }
+                if parse_decimal_strict(reserved, "location_inventory", "quantity_reserved")
+                    .map_err(Self::smuggle)?
+                    > Decimal::ZERO
+                {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Cannot delete location with reserved inventory".into(),
+                    )));
+                }
             }
 
-            tx.execute("DELETE FROM locations WHERE id = ?1", params![id])?;
+            let history: [(&str, &str); 4] = [
+                (
+                    "movement history",
+                    "SELECT COUNT(*) FROM inventory_movements WHERE from_location_id = ?1 OR to_location_id = ?1",
+                ),
+                ("pick tasks", "SELECT COUNT(*) FROM pick_tasks WHERE source_location_id = ?1"),
+                (
+                    "put-aways",
+                    "SELECT COUNT(*) FROM put_aways WHERE from_location_id = ?1 OR to_location_id = ?1",
+                ),
+                ("cycle counts", "SELECT COUNT(*) FROM cycle_counts WHERE location_id = ?1"),
+            ];
+            for (what, sql) in history {
+                let count: i64 = tx.query_row(sql, params![id], |row| row.get(0))?;
+                if count > 0 {
+                    return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                        "Cannot delete location {id}: it has {what}; deactivate it instead"
+                    ))));
+                }
+            }
+
+            let deleted = tx.execute("DELETE FROM locations WHERE id = ?1", params![id])?;
+            if deleted == 0 {
+                return Err(Self::smuggle(CommerceError::NotFound));
+            }
 
             Ok(())
         })
@@ -2634,5 +2674,83 @@ mod tests {
             .expect("page 2");
         assert_eq!(second_page.len(), 1);
         assert_eq!(second_page[0].id, all[2].id);
+    }
+
+    // ----- W4: delete_location guards -----
+
+    #[test]
+    fn delete_location_unknown_id_is_not_found() {
+        let repo = fresh_repo();
+        let err = repo.delete_location(999_999).expect_err("no such location");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+    }
+
+    #[test]
+    fn delete_location_refuses_reserved_stock() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-DEL-R");
+        let loc = make_loc(&repo, wh.id, "L-RES");
+        {
+            let conn = repo.conn().expect("conn");
+            conn.execute(
+                "INSERT INTO location_inventory
+                    (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+                 VALUES (?1, 'RES-SKU', '', '0', '2', datetime('now'))",
+                params![loc.id],
+            )
+            .expect("seed reserved");
+        }
+        let err = repo.delete_location(loc.id).expect_err("reserved stock");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("reserved")),
+            "got {err:?}"
+        );
+        assert!(repo.get_location(loc.id).expect("get").is_some());
+    }
+
+    #[test]
+    fn delete_location_refuses_movement_history_instead_of_fk_error() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-DEL-M");
+        let loc = make_loc(&repo, wh.id, "L-MOV");
+        // Adjust in, then adjust the same quantity out: on-hand is zero but the
+        // movement rows reference the location.
+        for qty in [dec!(4), dec!(-4)] {
+            repo.adjust_inventory(AdjustLocationInventory {
+                location_id: loc.id,
+                sku: "MOV-SKU".into(),
+                lot_id: None,
+                quantity: qty,
+                reason: "test".into(),
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .expect("adjust");
+        }
+        let err = repo.delete_location(loc.id).expect_err("movement history");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("movement history") && m.contains("deactivate")),
+            "got {err:?}"
+        );
+        assert!(repo.get_location(loc.id).expect("get").is_some());
+
+        // Deactivation is the supported path.
+        let updated = repo
+            .update_location(
+                loc.id,
+                UpdateLocation { is_active: Some(false), ..Default::default() },
+            )
+            .expect("deactivate");
+        assert!(!updated.is_active);
+    }
+
+    #[test]
+    fn delete_location_succeeds_for_untouched_location() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-DEL-OK");
+        let loc = make_loc(&repo, wh.id, "L-OK");
+        repo.delete_location(loc.id).expect("delete");
+        assert!(repo.get_location(loc.id).expect("get").is_none());
     }
 }

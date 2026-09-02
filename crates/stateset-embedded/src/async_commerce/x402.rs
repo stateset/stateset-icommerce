@@ -18,6 +18,11 @@ impl AsyncX402 {
     // ========================================================================
 
     /// Create a new x402 payment intent.
+    ///
+    /// Cart/order-linked intents follow the same reconciliation contract as
+    /// the sync accessor (see [`crate::x402::X402::create_intent`]): exact
+    /// amount, USD stablecoin against a USD-priced source, and at most one
+    /// open or settled intent per cart/order.
     pub async fn create_intent(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
         self.reconcile_with_source(&input).await?;
         self.db.x402_payment_intents().create_async(input).await
@@ -39,6 +44,11 @@ impl AsyncX402 {
                 cart.grand_total,
                 cart.currency,
             )?;
+            crate::x402::refuse_duplicate_claim(
+                "cart",
+                cart_id,
+                &self.db.x402_payment_intents().for_cart_async(cart_id).await?,
+            )?;
         }
         if let Some(order_id) = input.order_id {
             let order = self.db.orders().get_async(order_id).await?.ok_or_else(|| {
@@ -52,6 +62,11 @@ impl AsyncX402 {
                 order_id,
                 order.total_amount,
                 order.currency,
+            )?;
+            crate::x402::refuse_duplicate_claim(
+                "order",
+                order_id,
+                &self.db.x402_payment_intents().for_order_async(order_id).await?,
             )?;
         }
         Ok(())
@@ -89,6 +104,20 @@ impl AsyncX402 {
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
         self.db.x402_payment_intents().mark_settled_async(id, tx_hash, block_number).await
+    }
+
+    /// Mark a sequenced intent as included in a published batch commitment
+    /// (`Sequenced -> Batched`).
+    pub async fn mark_batched(
+        &self,
+        id: Uuid,
+        batch_merkle_root: &str,
+        inclusion_proof: Vec<String>,
+    ) -> Result<X402PaymentIntent> {
+        self.db
+            .x402_payment_intents()
+            .mark_batched_async(id, batch_merkle_root, inclusion_proof)
+            .await
     }
 
     /// Mark an intent as failed.
@@ -261,6 +290,108 @@ impl AsyncX402 {
         filter: X402CreditTransactionFilter,
     ) -> Result<Vec<X402CreditTransaction>> {
         self.db.x402_credits().list_transactions_async(filter).await
+    }
+
+    // ========================================================================
+    // A2A Credit Terms (durable net-30/60/90 lines between agents)
+    // ========================================================================
+
+    /// Open a tenant-scoped credit line between two agents.
+    pub async fn create_credit_terms(
+        &self,
+        input: stateset_core::CreateA2ACreditTerms,
+    ) -> Result<stateset_core::A2ACreditTerms> {
+        self.db.a2a_credit_terms().create_terms_async(input).await
+    }
+
+    /// Fetch a credit line by id within a tenant.
+    pub async fn get_credit_terms(
+        &self,
+        tenant_id: &str,
+        id: Uuid,
+    ) -> Result<Option<stateset_core::A2ACreditTerms>> {
+        self.db.a2a_credit_terms().get_terms_async(tenant_id, id).await
+    }
+
+    /// List credit lines within a tenant.
+    pub async fn list_credit_terms(
+        &self,
+        filter: stateset_core::A2ACreditTermsFilter,
+    ) -> Result<Vec<stateset_core::A2ACreditTerms>> {
+        self.db.a2a_credit_terms().list_terms_async(filter).await
+    }
+
+    /// Draw on a credit line (atomic; refused past the available credit).
+    pub async fn charge_credit_terms(
+        &self,
+        input: stateset_core::A2ACreditMovement,
+    ) -> Result<(stateset_core::A2ACreditTerms, stateset_core::A2ACreditEntry)> {
+        self.db.a2a_credit_terms().charge_async(input).await
+    }
+
+    /// Pay down a credit line.
+    pub async fn record_credit_terms_payment(
+        &self,
+        input: stateset_core::A2ACreditMovement,
+    ) -> Result<(stateset_core::A2ACreditTerms, stateset_core::A2ACreditEntry)> {
+        self.db.a2a_credit_terms().record_payment_async(input).await
+    }
+
+    /// Journal entries for a credit line, oldest first.
+    pub async fn list_credit_terms_entries(
+        &self,
+        tenant_id: &str,
+        terms_id: Uuid,
+    ) -> Result<Vec<stateset_core::A2ACreditEntry>> {
+        self.db.a2a_credit_terms().list_entries_async(tenant_id, terms_id).await
+    }
+
+    // ========================================================================
+    // A2A Agent Messaging (durable conversations)
+    // ========================================================================
+
+    /// Persist a message, allocating its sequence number in the conversation.
+    pub async fn send_agent_message(
+        &self,
+        input: stateset_core::SendA2AAgentMessage,
+    ) -> Result<stateset_core::A2AAgentMessage> {
+        self.db.a2a_messages().send_message_async(input).await
+    }
+
+    /// Fetch a message by id within a tenant.
+    pub async fn get_agent_message(
+        &self,
+        tenant_id: &str,
+        id: Uuid,
+    ) -> Result<Option<stateset_core::A2AAgentMessage>> {
+        self.db.a2a_messages().get_message_async(tenant_id, id).await
+    }
+
+    /// List messages within a tenant.
+    pub async fn list_agent_messages(
+        &self,
+        filter: stateset_core::A2AAgentMessageFilter,
+    ) -> Result<Vec<stateset_core::A2AAgentMessage>> {
+        self.db.a2a_messages().list_messages_async(filter).await
+    }
+
+    /// Acknowledge a pending/delivered message.
+    pub async fn acknowledge_agent_message(
+        &self,
+        tenant_id: &str,
+        id: Uuid,
+    ) -> Result<stateset_core::A2AAgentMessage> {
+        self.db.a2a_messages().acknowledge_message_async(tenant_id, id).await
+    }
+
+    /// Record a delivery failure for a message.
+    pub async fn fail_agent_message(
+        &self,
+        tenant_id: &str,
+        id: Uuid,
+        error: &str,
+    ) -> Result<stateset_core::A2AAgentMessage> {
+        self.db.a2a_messages().fail_message_async(tenant_id, id, error).await
     }
 
     // ========================================================================

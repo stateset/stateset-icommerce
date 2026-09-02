@@ -181,6 +181,19 @@ impl SqliteInventoryRepository {
         tx: &rusqlite::Transaction<'_>,
         input: &ReserveInventory,
     ) -> std::result::Result<(InventoryReservation, Uuid), rusqlite::Error> {
+        Self::reserve_for_line_in_tx(tx, input, None)
+    }
+
+    /// [`Self::reserve_in_tx`] keyed to the order line that holds the stock.
+    ///
+    /// `order_item_id` is stored on the reservation row (migration 080) so the
+    /// orders module can release/confirm exactly this line's hold instead of
+    /// "some reservation for the same SKU". Non-order references pass `None`.
+    pub(crate) fn reserve_for_line_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        input: &ReserveInventory,
+        order_item_id: Option<Uuid>,
+    ) -> std::result::Result<(InventoryReservation, Uuid), rusqlite::Error> {
         validate_quantity(input.quantity)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
@@ -286,8 +299,8 @@ impl SqliteInventoryRepository {
         let expires_at = expires_in_seconds.map(|secs| now + chrono::Duration::seconds(secs));
 
         tx.execute(
-            "INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status, reference_type, reference_id, expires_at, created_at)
-             VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+            "INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status, reference_type, reference_id, expires_at, created_at, order_item_id)
+             VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
             rusqlite::params![
                 reservation_id.to_string(),
                 item.id,
@@ -297,6 +310,7 @@ impl SqliteInventoryRepository {
                 &reference_id,
                 expires_at.map(|t| t.to_rfc3339()),
                 now.to_rfc3339(),
+                order_item_id.map(|id| id.to_string()),
             ],
         )?;
 
@@ -601,9 +615,33 @@ impl SqliteInventoryRepository {
         Ok(ReservationConfirmOutcome::Confirmed)
     }
 
-    /// Open (`pending`/`allocated`) reservations held by `reference` for `sku`,
-    /// oldest first, as `(reservation_id, quantity)`.
-    pub(crate) fn list_open_reservations_for_sku_in_tx(
+    /// Open (`pending`/`allocated`) reservations keyed to one order line
+    /// (migration 080), oldest first, as `(reservation_id, quantity)`.
+    pub(crate) fn list_open_reservations_for_line_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        order_item_id: Uuid,
+    ) -> std::result::Result<Vec<(Uuid, Decimal)>, rusqlite::Error> {
+        let mut stmt = tx.prepare(
+            "SELECT id, quantity FROM inventory_reservations
+             WHERE order_item_id = ? AND status IN ('pending', 'allocated')
+             ORDER BY created_at, id",
+        )?;
+        let rows = stmt.query_map([order_item_id.to_string()], |row| {
+            let id_str: String = row.get(0)?;
+            let qty_str: String = row.get(1)?;
+            let id = parse_uuid(&id_str, "inventory_reservation", "id")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let quantity = parse_decimal_row(&qty_str, "inventory_reservation", "quantity")?;
+            Ok((id, quantity))
+        })?;
+        rows.collect()
+    }
+
+    /// [`Self::list_open_reservations_for_sku_in_tx`] restricted to LEGACY rows
+    /// (created before migration 080, so not keyed to an order line). The
+    /// orders module uses this as the fallback after the line-keyed lookup so
+    /// a SKU-based release can never take another line's keyed hold.
+    pub(crate) fn list_open_legacy_reservations_for_sku_in_tx(
         tx: &rusqlite::Transaction<'_>,
         reference_type: &str,
         reference_id: &str,
@@ -613,6 +651,7 @@ impl SqliteInventoryRepository {
             "SELECT r.id, r.quantity FROM inventory_reservations r
              JOIN inventory_items i ON i.id = r.item_id
              WHERE r.reference_type = ? AND r.reference_id = ? AND i.sku = ?
+               AND r.order_item_id IS NULL
                AND r.status IN ('pending', 'allocated')
              ORDER BY r.created_at, r.id",
         )?;
@@ -710,8 +749,9 @@ impl SqliteInventoryRepository {
             rusqlite::params![(reserved - quantity).to_string(), reservation_id.to_string()],
         )?;
         tx.execute(
-            "INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status, reference_type, reference_id, expires_at, created_at)
-             VALUES (?, ?, ?, ?, 'confirmed', ?, ?, NULL, ?)",
+            "INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status, reference_type, reference_id, expires_at, created_at, order_item_id)
+             VALUES (?, ?, ?, ?, 'confirmed', ?, ?, NULL, ?,
+                     (SELECT order_item_id FROM inventory_reservations WHERE id = ?))",
             rusqlite::params![
                 confirmed_id.to_string(),
                 item_id,
@@ -720,6 +760,7 @@ impl SqliteInventoryRepository {
                 reference_type,
                 reference_id,
                 now.to_rfc3339(),
+                reservation_id.to_string(),
             ],
         )?;
 

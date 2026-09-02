@@ -568,6 +568,45 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         Self::finish_transition(tx, id, affected, "sequence")
     }
 
+    fn mark_batched(
+        &self,
+        id: Uuid,
+        batch_merkle_root: &str,
+        inclusion_proof: Vec<String>,
+    ) -> Result<X402PaymentIntent> {
+        if batch_merkle_root.trim().is_empty() {
+            return Err(CommerceError::ValidationError(
+                "batch_merkle_root is required to batch an x402 intent".to_string(),
+            ));
+        }
+        let proof_json = serde_json::to_string(&inclusion_proof)
+            .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let intent = Self::load_for_transition(&tx, id, &[X402IntentStatus::Sequenced], "batch")?;
+        // A commitment published after the validity window is meaningless
+        // on-chain, exactly like a late settlement.
+        Self::ensure_not_expired(&intent, "batch")?;
+
+        let affected = tx
+            .execute(
+                "UPDATE x402_payment_intents SET
+                status = ?, batch_merkle_root = ?, inclusion_proof = ?, updated_at = ?
+             WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    X402IntentStatus::Batched.to_string(),
+                    batch_merkle_root,
+                    proof_json,
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    X402IntentStatus::Sequenced.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+        Self::finish_transition(tx, id, affected, "batch")
+    }
+
     fn mark_settled(
         &self,
         id: Uuid,
@@ -576,7 +615,12 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     ) -> Result<X402PaymentIntent> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let intent = Self::load_for_transition(&tx, id, &[X402IntentStatus::Sequenced], "settle")?;
+        let intent = Self::load_for_transition(
+            &tx,
+            id,
+            &[X402IntentStatus::Sequenced, X402IntentStatus::Batched],
+            "settle",
+        )?;
         Self::ensure_not_expired(&intent, "settle")?;
 
         // One on-chain transaction settles at most one intent. Checked here
@@ -609,7 +653,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                     Utc::now().to_rfc3339(),
                     Utc::now().to_rfc3339(),
                     id.to_string(),
-                    X402IntentStatus::Sequenced.to_string(),
+                    intent.status.to_string(),
                 ],
             )
             .map_err(map_db_error)?;

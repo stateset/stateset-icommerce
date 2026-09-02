@@ -6,6 +6,71 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+Fourth engine round: the tax engine is one pure computation shared by both
+backends, carts price against the catalog and re-derive every coupon type,
+orders and payments agree on money at cancel and delete, lots cascade to
+serials and inventory, billing is claim-based, and the agentic rails persist
+their credit and messaging state.
+
+### ⚠️ Behaviour change
+- **Tax exemptions must be verified** (`verify_exemption`) before they
+  reduce tax, and are evaluated at the transaction date. **Inclusive pricing
+  is live**: `prices_include_tax` / `calculation_method = inclusive` now back
+  tax out of gross prices instead of being ignored. Per-line and per-rate tax
+  amounts are rounded with largest-remainder allocation so lines sum to the
+  total; jurisdiction codes are stored uppercase and matched
+  case-insensitively.
+- **Cart lines that resolve to a catalog variant must carry the catalog
+  price**; a differing client price is refused. Tax follows item mutations.
+  Sub-minor-unit money on cart lines is refused instead of rounded. Every
+  coupon type (bundle, tier, buy-X-get-Y, scoped) is re-derived on each cart
+  change, and kernel checkout Preview refuses exactly what Apply refuses.
+- **Cancelling an order that holds captured money is refused** unless
+  `void_payments` is set (HTTP `?void_payments=true`), which voids in-flight
+  payments and leaves settled ones for refund. **Deleting an order** that
+  holds money or is referenced by a payment is refused. A duplicate
+  idempotency key with different amount, order, currency or method is a
+  conflict. `PaymentRepository::update` can no longer set a refunded status.
+- **Lot quarantine and failed inspections now quarantine the lot's
+  Available and Reserved serials**, and lots with a location keep
+  `inventory_balances` in step (receipt, consume, holds, expiry). `update`
+  enforces the lot state machine. Failed-inspection lot resolution is
+  SKU-scoped.
+- **Billing workers must claim subscriptions** (`claim_due_for_billing`
+  with a lease; `SELECT … FOR UPDATE SKIP LOCKED` on Postgres) before
+  creating cycles; a cycle for a subscription under another worker's live
+  lease is a conflict. Checkout drops a coupon exactly when pricing would.
+- **Refunds are refused while the payment's escrow is under an open
+  dispute.** A second x402 intent for a cart or order with an open or
+  settled intent is a conflict. `/a2a/credit` and `/a2a/messages` now
+  persist per tenant (migrations 086 / 093); enum fields are snake_case.
+- **Warehouse**: put-aways are validated and capped at the received
+  quantity; `complete_wave` refuses while picks are open; a receipt line
+  expecting zero accepts a blind receipt; `delete_location` returns a
+  validation error for reserved stock or history and not-found for an
+  unknown id.
+
+### Fixed
+- Inventory reservations are keyed to the order line (migrations 080 /
+  087), so removing one line never releases a sibling line's hold; legacy
+  un-keyed reservations still release by SKU.
+- Line edits write `orders.item_added.v1` / `orders.item_removed.v1`
+  outbox events in the same transaction.
+- Postgres cart repricing validates the coupon on the transaction
+  connection (a size-1 pool no longer deadlocks); `CartRepository::update`
+  with a discount recomputes the grand total; Postgres cart create prices
+  through the same totals path as mutations.
+- x402 credit ledger debits are conditional on the balance the check read,
+  proven by real-thread and tokio races on both backends; x402 settle and
+  cancel/expire races now have Postgres proofs; `Batched` is a real guarded
+  transition; `link_purchase_to_order` is conditional.
+- Expired lot reservations are swept (`release_expired_reservations`) and
+  lazily on reserve/confirm; a `TraceabilitySweepJob` builtin runs the lot,
+  serial and expiry sweeps.
+- Exclusive stacking is order-independent; buy-X-get-Y refuses zero
+  quantities; bundles require the full bundle; `waves.pick_count` is
+  maintained.
+
 ## [1.28.5] - 2026-09-01
 
 Closes every open finding on the engine report card — the four critical money

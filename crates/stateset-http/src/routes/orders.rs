@@ -14,8 +14,8 @@ use crate::dto::{
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{
-    Address, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentStatus,
-    OrderFilter, OrderId, OrderStatus, PaymentStatus, ShipmentLineInput,
+    Address, CancelOrder, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId,
+    FulfillmentStatus, OrderFilter, OrderId, OrderStatus, PaymentStatus, ShipmentLineInput,
 };
 use std::str::FromStr;
 
@@ -227,16 +227,35 @@ pub(crate) async fn list_orders(
     }))
 }
 
+/// Query parameters for `PATCH /api/v1/orders/:id/cancel`.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct CancelOrderParams {
+    /// Void in-flight payments and cancel even though settled payments remain
+    /// outstanding (they must then be refunded separately). Without it a
+    /// cancel is refused (`422`) while any payment still holds money.
+    #[serde(default)]
+    pub void_payments: bool,
+}
+
 /// `PATCH /api/v1/orders/:id/cancel`
+///
+/// Refused with `422 validation_error` while any payment against the order
+/// still holds money, so a cancel can never orphan captured funds. Pass
+/// `?void_payments=true` to void in-flight payments and cancel anyway; settled
+/// payments are left for an explicit refund.
 #[utoipa::path(
     patch,
     path = "/api/v1/orders/{id}/cancel",
     tag = "orders",
-    params(("id" = String, Path, description = "Order ID (UUID)")),
+    params(
+        ("id" = String, Path, description = "Order ID (UUID)"),
+        ("void_payments" = Option<bool>, Query, description = "Void in-flight payments and cancel even if settled payments remain outstanding (default false: refuse while any payment holds money)"),
+    ),
     responses(
         (status = 200, description = "Order cancelled", body = OrderResponse),
         (status = 400, description = "Order cannot be cancelled", body = ErrorBody),
         (status = 404, description = "Order not found", body = ErrorBody),
+        (status = 422, description = "Payments still hold money and void_payments was not set", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers))]
@@ -244,10 +263,14 @@ pub(crate) async fn cancel_order(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<OrderId>,
+    Query(params): Query<CancelOrderParams>,
 ) -> Result<Json<OrderResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
+    let input = CancelOrder { void_payments: params.void_payments };
     let order = state
-        .run_blocking(tenant_id.as_deref(), move |commerce| Ok(commerce.orders().cancel(id)?))
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(commerce.orders().cancel_with(id, input)?)
+        })
         .await?;
     Ok(Json(OrderResponse::from(order)))
 }
@@ -548,6 +571,93 @@ mod tests {
             .unwrap();
         // Should be 404 or 400 depending on error mapping
         assert!(resp.status().is_client_error());
+    }
+
+    /// A pending order with one settled payment against it.
+    fn order_with_captured_money(state: &AppState) -> OrderId {
+        use stateset_core::{CreatePayment, PaymentMethodType};
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "cancel@example.com".into(),
+                first_name: "Cancel".into(),
+                last_name: "Test".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let order = state
+            .commerce()
+            .orders()
+            .create(CreateOrder {
+                customer_id: customer.id,
+                items: vec![CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: "CANCEL-SKU".into(),
+                    name: "Cancel me".into(),
+                    quantity: 1,
+                    unit_price: dec!(40.00),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        let payment = state
+            .commerce()
+            .payments()
+            .create(CreatePayment {
+                order_id: Some(order.id),
+                payment_method: PaymentMethodType::CreditCard,
+                amount: dec!(40.00),
+                ..Default::default()
+            })
+            .unwrap();
+        state.commerce().payments().mark_completed(payment.id).unwrap();
+        order.id
+    }
+
+    #[tokio::test]
+    async fn cancel_order_with_captured_money_is_refused_unless_void_payments() {
+        let (app, state) = app_with_state();
+        let id = order_with_captured_money(&state);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/orders/{id}/cancel"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "validation_error", "{json}");
+        assert!(json["error"]["message"].as_str().unwrap().contains("40.00 USD"), "{json}");
+        assert_eq!(
+            state.commerce().orders().get(id).unwrap().unwrap().status,
+            OrderStatus::Pending
+        );
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/orders/{id}/cancel?void_payments=true"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "cancelled", "{json}");
+        // The settled payment is left for refund, not erased.
+        assert_eq!(state.commerce().payments().open_captures_for_order(id).unwrap().len(), 1);
     }
 
     #[test]

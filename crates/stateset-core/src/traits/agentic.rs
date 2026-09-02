@@ -29,7 +29,22 @@ pub trait X402PaymentIntentRepository: Send + Sync {
         batch_id: Uuid,
     ) -> Result<X402PaymentIntent>;
 
-    /// Mark intent as settled (confirmed on-chain)
+    /// Mark a `Sequenced` intent as `Batched`: it has been included in a
+    /// published batch commitment (`batch_merkle_root` + `inclusion_proof`).
+    ///
+    /// A batched intent is no longer subject to the wall-clock sweeper
+    /// (`expire_stale_intents`): its outcome is decided by the batch's
+    /// on-chain result via `mark_settled` / `mark_failed`. The transition is
+    /// guarded (`Sequenced` only) and conditional on the stored status.
+    fn mark_batched(
+        &self,
+        id: Uuid,
+        batch_merkle_root: &str,
+        inclusion_proof: Vec<String>,
+    ) -> Result<X402PaymentIntent>;
+
+    /// Mark intent as settled (confirmed on-chain). Allowed from `Sequenced`
+    /// or `Batched`.
     fn mark_settled(&self, id: Uuid, tx_hash: &str, block_number: u64)
     -> Result<X402PaymentIntent>;
 
@@ -403,4 +418,61 @@ pub trait A2ACommerceRepository: Send + Sync {
 
     /// Count purchases matching filter
     fn count_purchases(&self, filter: A2APurchaseFilter) -> Result<u64>;
+}
+
+// ============================================================================
+// A2A Credit Terms Repository
+// ============================================================================
+
+/// Durable agent-to-agent credit lines (net-30/60/90) with a journaled
+/// outstanding balance. Every method is tenant-scoped: a row is only
+/// visible/mutable through its own `tenant_id`.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait A2ACreditTermsRepository: Send + Sync {
+    /// Open a credit line.
+    fn create_terms(&self, input: CreateA2ACreditTerms) -> Result<A2ACreditTerms>;
+
+    /// Fetch a credit line by id within `tenant_id`.
+    fn get_terms(&self, tenant_id: &str, id: Uuid) -> Result<Option<A2ACreditTerms>>;
+
+    /// List credit lines within a tenant.
+    fn list_terms(&self, filter: A2ACreditTermsFilter) -> Result<Vec<A2ACreditTerms>>;
+
+    /// Draw on the line. Atomic and conditional: refused unless the line is
+    /// `Active` and `amount <= available_credit`, and the balance write is
+    /// conditional on the balance the check was made against, so concurrent
+    /// charges can never push the line past its limit.
+    fn charge(&self, input: A2ACreditMovement) -> Result<(A2ACreditTerms, A2ACreditEntry)>;
+
+    /// Pay down the line. Refused when `amount > outstanding_balance`.
+    fn record_payment(&self, input: A2ACreditMovement) -> Result<(A2ACreditTerms, A2ACreditEntry)>;
+
+    /// Journal entries for a line, oldest first.
+    fn list_entries(&self, tenant_id: &str, terms_id: Uuid) -> Result<Vec<A2ACreditEntry>>;
+}
+
+// ============================================================================
+// A2A Agent Messaging Repository
+// ============================================================================
+
+/// Durable agent-to-agent messages grouped into conversations. Tenant-scoped.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait A2AMessagingRepository: Send + Sync {
+    /// Persist a message, allocating the next sequence number in its
+    /// conversation.
+    fn send_message(&self, input: SendA2AAgentMessage) -> Result<A2AAgentMessage>;
+
+    /// Fetch a message by id within `tenant_id`.
+    fn get_message(&self, tenant_id: &str, id: Uuid) -> Result<Option<A2AAgentMessage>>;
+
+    /// List messages within a tenant, ordered by conversation then sequence.
+    fn list_messages(&self, filter: A2AAgentMessageFilter) -> Result<Vec<A2AAgentMessage>>;
+
+    /// `Pending | Delivered -> Acknowledged`; conditional on the stored status.
+    fn acknowledge_message(&self, tenant_id: &str, id: Uuid) -> Result<A2AAgentMessage>;
+
+    /// Record a delivery failure: bumps `attempts`, stores `error`, and moves
+    /// the message to `Failed` once `max_attempts` is reached (otherwise it
+    /// stays `Pending` with a `next_retry_at`).
+    fn fail_message(&self, tenant_id: &str, id: Uuid, error: &str) -> Result<A2AAgentMessage>;
 }

@@ -58,7 +58,23 @@ fn test_payment_idempotency_key() {
         })
         .expect("Failed to create payment");
 
+    // A faithful retry (same parameters) is idempotent: same payment, no new row.
     let retry = commerce
+        .payments()
+        .create(CreatePayment {
+            amount: dec!(25.00),
+            payment_method: PaymentMethodType::CreditCard,
+            idempotency_key: Some("pay-idem-1".into()),
+            ..Default::default()
+        })
+        .expect("Failed to retry payment");
+
+    assert_eq!(payment.id, retry.id);
+    assert_eq!(commerce.payments().count(Default::default()).unwrap(), 1);
+
+    // Reusing the key with DIFFERENT parameters is a conflict, never a silent
+    // return of the original payment (the old behaviour hid a wrong amount).
+    let err = commerce
         .payments()
         .create(CreatePayment {
             amount: dec!(50.00),
@@ -66,9 +82,8 @@ fn test_payment_idempotency_key() {
             idempotency_key: Some("pay-idem-1".into()),
             ..Default::default()
         })
-        .expect("Failed to retry payment");
-
-    assert_eq!(payment.id, retry.id);
+        .expect_err("a different request under the same key must be refused");
+    assert!(matches!(err, stateset_core::CommerceError::Conflict(_)), "{err:?}");
     assert_eq!(commerce.payments().count(Default::default()).unwrap(), 1);
 }
 

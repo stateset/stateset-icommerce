@@ -1,5 +1,6 @@
 //! Pre-defined job types for common commerce operations.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::context::JobContext;
@@ -25,6 +26,9 @@ const LOW_STOCK_INTERVAL: Duration = Duration::from_secs(3600);
 
 /// Default subscription renewal check interval: 1 hour.
 const RENEWAL_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// Default traceability sweep interval: 5 minutes.
+const TRACEABILITY_SWEEP_INTERVAL: Duration = Duration::from_secs(300);
 
 // ---------------------------------------------------------------------------
 // BillingTickJob
@@ -307,6 +311,184 @@ impl JobHandler for SubscriptionRenewalJob {
     }
 }
 
+// ---------------------------------------------------------------------------
+// TraceabilitySweepJob
+// ---------------------------------------------------------------------------
+
+/// The three traceability sweeps the engine exposes but never schedules on
+/// its own: expiring lots past their `expiration_date`, and releasing lot /
+/// serial reservations that expired without being confirmed.
+///
+/// This crate does not depend on the engine, so the job is handed the
+/// sweeps as a [`TraceabilitySweeper`]; the simplest implementation is
+/// [`FnTraceabilitySweeper`] wrapping the repository calls, e.g. with
+/// `stateset-embedded`:
+///
+/// ```rust,ignore
+/// let commerce = Arc::new(commerce);
+/// let sweeper = FnTraceabilitySweeper::new(
+///     { let c = commerce.clone(); move |_now| c.lots().expire_lots().map_err(|e| e.to_string()) },
+///     { let c = commerce.clone(); move |now| c.lots().release_expired_reservations(now).map_err(|e| e.to_string()) },
+///     { let c = commerce.clone(); move |now| c.serials().release_expired_reservations(now).map_err(|e| e.to_string()) },
+/// );
+/// scheduler.register(TraceabilitySweepJob::new(Arc::new(sweeper)).to_definition());
+/// ```
+///
+/// Each sweep is idempotent and independent: a failure in one is reported
+/// in the output and does not stop the others. The job fails (and retries)
+/// only when *every* sweep failed, so one broken backend cannot silently
+/// starve the other two.
+pub trait TraceabilitySweeper: Send + Sync {
+    /// Flip `Active` lots whose expiry is before `now` to `Expired`.
+    fn expire_lots(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64, String>;
+    /// Release lot reservations that expired before `now`.
+    fn release_expired_lot_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String>;
+    /// Release serial reservations that expired before `now`.
+    fn release_expired_serial_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String>;
+}
+
+type SweepFn = dyn Fn(chrono::DateTime<chrono::Utc>) -> Result<u64, String> + Send + Sync;
+
+/// A [`TraceabilitySweeper`] built from three closures.
+pub struct FnTraceabilitySweeper {
+    expire_lots: Box<SweepFn>,
+    lot_reservations: Box<SweepFn>,
+    serial_reservations: Box<SweepFn>,
+}
+
+impl FnTraceabilitySweeper {
+    /// Wrap the three sweeps.
+    pub fn new<L, R, S>(expire_lots: L, lot_reservations: R, serial_reservations: S) -> Self
+    where
+        L: Fn(chrono::DateTime<chrono::Utc>) -> Result<u64, String> + Send + Sync + 'static,
+        R: Fn(chrono::DateTime<chrono::Utc>) -> Result<u64, String> + Send + Sync + 'static,
+        S: Fn(chrono::DateTime<chrono::Utc>) -> Result<u64, String> + Send + Sync + 'static,
+    {
+        Self {
+            expire_lots: Box::new(expire_lots),
+            lot_reservations: Box::new(lot_reservations),
+            serial_reservations: Box::new(serial_reservations),
+        }
+    }
+}
+
+impl std::fmt::Debug for FnTraceabilitySweeper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnTraceabilitySweeper").finish_non_exhaustive()
+    }
+}
+
+impl TraceabilitySweeper for FnTraceabilitySweeper {
+    fn expire_lots(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64, String> {
+        (self.expire_lots)(now)
+    }
+
+    fn release_expired_lot_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String> {
+        (self.lot_reservations)(now)
+    }
+
+    fn release_expired_serial_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String> {
+        (self.serial_reservations)(now)
+    }
+}
+
+/// Periodically runs the traceability sweeps (lot expiry, expired lot and
+/// serial reservations). See [`TraceabilitySweeper`].
+#[derive(Clone)]
+pub struct TraceabilitySweepJob {
+    /// The sweeps to run.
+    pub sweeper: Arc<dyn TraceabilitySweeper>,
+    /// How often to sweep.
+    pub interval: Duration,
+}
+
+impl std::fmt::Debug for TraceabilitySweepJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TraceabilitySweepJob")
+            .field("interval", &self.interval)
+            .finish_non_exhaustive()
+    }
+}
+
+impl TraceabilitySweepJob {
+    /// Create a sweep job with the default interval (5 minutes).
+    #[must_use]
+    pub fn new(sweeper: Arc<dyn TraceabilitySweeper>) -> Self {
+        Self { sweeper, interval: TRACEABILITY_SWEEP_INTERVAL }
+    }
+
+    /// Override the sweep interval.
+    #[must_use]
+    pub const fn with_interval(mut self, interval: Duration) -> Self {
+        self.interval = interval;
+        self
+    }
+
+    /// Create a [`JobDefinition`] for this built-in.
+    #[must_use]
+    pub fn to_definition(self) -> JobDefinition {
+        JobDefinition::new("traceability_sweep", Schedule::Interval(self.interval), Box::new(self))
+            .with_timeout(Duration::from_secs(120))
+            .with_max_retries(2)
+            .with_retry_backoff(BackoffStrategy::fixed(Duration::from_secs(30)))
+    }
+}
+
+impl JobHandler for TraceabilitySweepJob {
+    fn execute<'a>(&'a self, ctx: &'a JobContext) -> BoxFuture<'a, Result<JobOutput, JobError>> {
+        Box::pin(async move {
+            let now = ctx.scheduled_at.max(chrono::Utc::now());
+            let sweeps: [(&str, Result<u64, String>); 3] = [
+                ("lots_expired", self.sweeper.expire_lots(now)),
+                ("lot_reservations_released", self.sweeper.release_expired_lot_reservations(now)),
+                (
+                    "serial_reservations_released",
+                    self.sweeper.release_expired_serial_reservations(now),
+                ),
+            ];
+            let mut data = serde_json::Map::new();
+            let mut errors = Vec::new();
+            for (name, outcome) in sweeps {
+                match outcome {
+                    Ok(n) => {
+                        data.insert(name.to_owned(), serde_json::json!(n));
+                    }
+                    Err(e) => {
+                        data.insert(name.to_owned(), serde_json::Value::Null);
+                        errors.push(format!("{name}: {e}"));
+                    }
+                }
+            }
+            if errors.len() == 3 {
+                return Err(JobError::ExecutionFailed(errors.join("; ")));
+            }
+            if !errors.is_empty() {
+                data.insert("errors".to_owned(), serde_json::json!(errors));
+            }
+            Ok(JobOutput::with_data(
+                "traceability sweep completed",
+                serde_json::Value::Object(data),
+            ))
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "traceability_sweep"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +645,103 @@ mod tests {
         let result = job.execute(&ctx).await;
         assert!(result.is_ok());
         assert!(result.unwrap().message.contains("webhook"));
+    }
+
+    #[derive(Default)]
+    struct CountingSweeper {
+        lots: std::sync::Mutex<u32>,
+        lot_res: std::sync::Mutex<u32>,
+        serial_res: std::sync::Mutex<u32>,
+        fail_lots: bool,
+        fail_all: bool,
+    }
+
+    impl TraceabilitySweeper for CountingSweeper {
+        fn expire_lots(&self, _now: chrono::DateTime<chrono::Utc>) -> Result<u64, String> {
+            if self.fail_lots || self.fail_all {
+                return Err("lots down".into());
+            }
+            *self.lots.lock().unwrap() += 1;
+            Ok(3)
+        }
+        fn release_expired_lot_reservations(
+            &self,
+            _now: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u64, String> {
+            if self.fail_all {
+                return Err("lot res down".into());
+            }
+            *self.lot_res.lock().unwrap() += 1;
+            Ok(2)
+        }
+        fn release_expired_serial_reservations(
+            &self,
+            _now: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u64, String> {
+            if self.fail_all {
+                return Err("serial res down".into());
+            }
+            *self.serial_res.lock().unwrap() += 1;
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn traceability_sweep_definition() {
+        let job = TraceabilitySweepJob::new(Arc::new(CountingSweeper::default()));
+        assert_eq!(job.interval, TRACEABILITY_SWEEP_INTERVAL);
+        let def = job.with_interval(Duration::from_secs(60)).to_definition();
+        assert_eq!(def.name, "traceability_sweep");
+        assert!(matches!(def.schedule, Schedule::Interval(d) if d == Duration::from_secs(60)));
+        assert!(def.validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn traceability_sweep_runs_all_three_sweeps() {
+        let sweeper = Arc::new(CountingSweeper::default());
+        let job = TraceabilitySweepJob::new(sweeper.clone());
+        let ctx = crate::context::JobContext::new(uuid::Uuid::new_v4(), 0, chrono::Utc::now());
+        let out = job.execute(&ctx).await.unwrap();
+        let data = out.data.unwrap();
+        assert_eq!(data["lots_expired"], 3);
+        assert_eq!(data["lot_reservations_released"], 2);
+        assert_eq!(data["serial_reservations_released"], 1);
+        assert!(data.get("errors").is_none());
+        assert_eq!(*sweeper.lots.lock().unwrap(), 1);
+        assert_eq!(*sweeper.lot_res.lock().unwrap(), 1);
+        assert_eq!(*sweeper.serial_res.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn traceability_sweep_reports_partial_failure_but_keeps_sweeping() {
+        let sweeper = Arc::new(CountingSweeper { fail_lots: true, ..Default::default() });
+        let job = TraceabilitySweepJob::new(sweeper.clone());
+        let ctx = crate::context::JobContext::new(uuid::Uuid::new_v4(), 0, chrono::Utc::now());
+        let out = job.execute(&ctx).await.unwrap();
+        let data = out.data.unwrap();
+        assert!(data["lots_expired"].is_null());
+        assert_eq!(data["serial_reservations_released"], 1);
+        assert!(data["errors"][0].as_str().unwrap().contains("lots down"));
+        assert_eq!(*sweeper.serial_res.lock().unwrap(), 1, "other sweeps still ran");
+    }
+
+    #[tokio::test]
+    async fn traceability_sweep_fails_only_when_everything_fails() {
+        let sweeper = Arc::new(CountingSweeper { fail_all: true, ..Default::default() });
+        let job = TraceabilitySweepJob::new(sweeper);
+        let ctx = crate::context::JobContext::new(uuid::Uuid::new_v4(), 0, chrono::Utc::now());
+        assert!(job.execute(&ctx).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn fn_sweeper_forwards_to_closures() {
+        let sweeper = FnTraceabilitySweeper::new(|_| Ok(5), |_| Ok(6), |_| Err("x".into()));
+        let now = chrono::Utc::now();
+        assert_eq!(sweeper.expire_lots(now), Ok(5));
+        assert_eq!(sweeper.release_expired_lot_reservations(now), Ok(6));
+        assert_eq!(sweeper.release_expired_serial_reservations(now), Err("x".into()));
+        let job = TraceabilitySweepJob::new(Arc::new(sweeper)).to_definition();
+        assert_eq!(job.name, "traceability_sweep");
     }
 
     #[test]

@@ -5,6 +5,9 @@ use super::{
     backorder::PgBackorderRepository,
     inventory::{PgInventoryRepository, ReservationConfirmOutcome},
     map_db_error,
+    payments::{
+        open_captures_for_order_pg, order_has_payments_pg, void_in_flight_payments_for_order_pg,
+    },
 };
 use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
@@ -46,6 +49,14 @@ pub(crate) struct LineDelta {
     pub(crate) delta: i32,
 }
 
+/// What a forced cancel did to the order's payments, for the outbox event.
+#[derive(Debug, Default)]
+struct CancelMoney {
+    voided_payment_ids: Vec<Uuid>,
+    outstanding_payment_ids: Vec<Uuid>,
+    outstanding_captured: Decimal,
+}
+
 /// Result of one in-transaction order update.
 ///
 /// `post_commit_error` carries [`CommerceError::ReservationExpired`] when a
@@ -66,6 +77,29 @@ fn ensure_lines_mutable(id: Uuid, status: OrderStatus) -> Result<()> {
              lines may only be added or removed before fulfilment (pending, confirmed, processing)"
         )))
     }
+}
+
+/// Refuse deletion of an order that has money against it (see the SQLite
+/// twin): its own `payment_status` holds money, or any payment row references
+/// it.
+fn ensure_no_money_on_delete(
+    id: Uuid,
+    payment_status: PaymentStatus,
+    has_payments: bool,
+) -> Result<()> {
+    if payment_status.holds_money() {
+        return Err(CommerceError::Conflict(format!(
+            "order {id} cannot be deleted while its payment status is {payment_status}; \
+             refund the order first"
+        )));
+    }
+    if has_payments {
+        return Err(CommerceError::Conflict(format!(
+            "order {id} cannot be deleted because payments reference it; \
+             it is a financial record — cancel or refund instead"
+        )));
+    }
+    Ok(())
 }
 
 /// Refuse deletion of an order that is a fulfilment/financial record.
@@ -744,7 +778,10 @@ impl PgOrderRepository {
                 expires_in_seconds: None,
             };
 
-            match inventory_repo.reserve_in_tx(tx, &reserve_input).await {
+            match inventory_repo
+                .reserve_for_line_in_tx(tx, &reserve_input, Some(item.id.into_uuid()))
+                .await
+            {
                 Ok(_) => {
                     reserved = reserve_qty;
                 }
@@ -783,17 +820,31 @@ impl PgOrderRepository {
     /// `quantity` units (whole reservations, oldest first). Used when a line
     /// is removed; reservations are one per line so this releases that
     /// line's hold. Mirrors the SQLite backend.
+    /// Release the open reservations held by one order line. Keyed
+    /// (`order_item_id`, migration 087) holds are released exactly; legacy
+    /// un-keyed rows fall back to the SKU-based path. See the SQLite twin for
+    /// the duplicate-SKU failure this fixes.
     async fn release_line_reservations_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         order_id: Uuid,
+        item_id: Uuid,
         sku: &str,
         quantity: Decimal,
     ) -> Result<()> {
         let inventory_repo = PgInventoryRepository::new(self.pool.clone());
+        let keyed = inventory_repo.list_open_reservations_for_line_in_tx(tx, item_id).await?;
+        if !keyed.is_empty() {
+            for (reservation_id, _) in keyed {
+                inventory_repo.release_reservation_in_tx(tx, reservation_id).await?;
+            }
+            return Ok(());
+        }
+
+        // Legacy (pre-087) reservations: no line key, so release by SKU.
         let mut remaining = quantity;
         let open = inventory_repo
-            .list_open_reservations_for_sku_in_tx(tx, "order", &order_id.to_string(), sku)
+            .list_open_legacy_reservations_for_sku_in_tx(tx, "order", &order_id.to_string(), sku)
             .await?;
         for (reservation_id, reserved_qty) in open {
             if remaining <= Decimal::ZERO {
@@ -803,6 +854,64 @@ impl PgOrderRepository {
             remaining -= reserved_qty;
         }
         Ok(())
+    }
+
+    /// Open reservations to confirm for one shipped line: the line's own keyed
+    /// holds first, then legacy un-keyed holds for the same SKU on the order.
+    async fn open_reservations_for_shipped_line_in_tx(
+        inventory_repo: &PgInventoryRepository,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_id: Uuid,
+        delta: &LineDelta,
+    ) -> Result<Vec<(Uuid, Decimal)>> {
+        let mut open =
+            inventory_repo.list_open_reservations_for_line_in_tx(tx, delta.item_id).await?;
+        open.extend(
+            inventory_repo
+                .list_open_legacy_reservations_for_sku_in_tx(
+                    tx,
+                    "order",
+                    &order_id.to_string(),
+                    &delta.sku,
+                )
+                .await?,
+        );
+        Ok(open)
+    }
+
+    /// Kernel outbox event for a line edit (`orders.item_added.v1` /
+    /// `orders.item_removed.v1`), on the same transaction as the line change.
+    async fn append_line_event_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        kind: &str,
+        order_id: Uuid,
+        item: &OrderItem,
+    ) -> Result<()> {
+        let total_amount: Decimal =
+            sqlx::query_scalar("SELECT total_amount FROM orders WHERE id = $1")
+                .bind(order_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                kind,
+                "order",
+                order_id.to_string(),
+                serde_json::json!({
+                    "order_id": order_id.to_string(),
+                    "order_item_id": item.id.to_string(),
+                    "sku": item.sku,
+                    "quantity": item.quantity,
+                    "unit_price": item.unit_price.to_string(),
+                    "line_total": item.total.to_string(),
+                    "total_amount": total_amount.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await
     }
 
     /// Release every reservation and cancel every backorder held by the order.
@@ -876,19 +985,29 @@ impl PgOrderRepository {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
     ) -> Result<()> {
-        let status_raw: Option<String> =
-            sqlx::query_scalar("SELECT status FROM orders WHERE id = $1 FOR UPDATE")
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT status, payment_status FROM orders WHERE id = $1 FOR UPDATE")
                 .bind(id)
                 .fetch_optional(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
-        let Some(status_raw) = status_raw else {
+        let Some((status_raw, payment_status_raw)) = row else {
             return Ok(());
         };
         let status: OrderStatus = status_raw.parse().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid order.status '{status_raw}': {e}"))
         })?;
         ensure_deletable(id, status)?;
+        let payment_status: PaymentStatus = payment_status_raw.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid order.payment_status '{payment_status_raw}': {e}"
+            ))
+        })?;
+        ensure_no_money_on_delete(
+            id,
+            payment_status,
+            order_has_payments_pg(tx.as_mut(), id).await?,
+        )?;
 
         self.release_order_stock_in_tx(tx, id).await?;
         sqlx::query("DELETE FROM order_items WHERE order_id = $1")
@@ -1285,14 +1404,13 @@ impl PgOrderRepository {
                 ShipMode::Lines(_) => {
                     'lines: for delta in line_deltas.iter().filter(|d| d.delta > 0) {
                         let mut remaining = Decimal::from(delta.delta);
-                        let open = inventory_repo
-                            .list_open_reservations_for_sku_in_tx(
-                                tx,
-                                "order",
-                                &id.to_string(),
-                                &delta.sku,
-                            )
-                            .await?;
+                        let open = Self::open_reservations_for_shipped_line_in_tx(
+                            &inventory_repo,
+                            tx,
+                            id,
+                            delta,
+                        )
+                        .await?;
                         for (reservation_id, reserved_qty) in open {
                             if remaining <= Decimal::ZERO {
                                 break;
@@ -1374,7 +1492,35 @@ impl PgOrderRepository {
             });
         }
 
+        // Money rule for cancel (see `UpdateOrder::void_payments`): an order
+        // whose payments still hold money cannot be cancelled unless the
+        // caller explicitly voids; even then only in-flight payments are
+        // voided here — settled money leaves via a refund.
+        let mut cancel_money = CancelMoney::default();
         if matches!(input.status, Some(OrderStatus::Cancelled)) {
+            let open = open_captures_for_order_pg(tx.as_mut(), id).await?;
+            if !open.is_empty() && !input.void_payments {
+                let outstanding: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
+                let currency = open[0].currency;
+                return Err(CommerceError::ValidationError(format!(
+                    "order {id} cannot be cancelled: {} payment(s) still hold {outstanding} {currency}; \
+                     refund them first, or cancel with void_payments = true to void in-flight \
+                     payments and leave settled ones for refund",
+                    open.len()
+                )));
+            }
+            if input.void_payments {
+                cancel_money.voided_payment_ids =
+                    void_in_flight_payments_for_order_pg(tx.as_mut(), id, now).await?;
+                let voided = &cancel_money.voided_payment_ids;
+                let outstanding: Vec<_> =
+                    open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();
+                cancel_money.outstanding_captured =
+                    outstanding.iter().map(|p| p.amount - p.amount_refunded).sum();
+                cancel_money.outstanding_payment_ids =
+                    outstanding.iter().map(|p| p.id.into_uuid()).collect();
+            }
+
             let reservation_ids = inventory_repo
                 .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
                 .await?;
@@ -1400,6 +1546,10 @@ impl PgOrderRepository {
                     "version_before": expected_version,
                     "version_after": expected_version + 1,
                     "total_amount": total_amount.to_string(),
+                    "void_payments": input.void_payments,
+                    "voided_payment_ids": cancel_money.voided_payment_ids,
+                    "outstanding_payment_ids": cancel_money.outstanding_payment_ids,
+                    "outstanding_captured": cancel_money.outstanding_captured.to_string(),
                 }),
                 None,
             ),
@@ -1560,6 +1710,7 @@ impl PgOrderRepository {
         .await?;
 
         Self::update_order_total_tx(&mut tx, order_id).await?;
+        Self::append_line_event_tx(&mut tx, "orders.item_added.v1", order_id, &order_item).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(order_item)
@@ -1575,21 +1726,29 @@ impl PgOrderRepository {
             Self::load_status_and_customer_in_tx(&mut tx, order_id).await?;
         ensure_lines_mutable(order_id, status)?;
 
-        let line: Option<(String, i32)> =
-            sqlx::query_as("SELECT sku, quantity FROM order_items WHERE id = $1 AND order_id = $2")
-                .bind(item_id)
-                .bind(order_id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let Some((sku, quantity)) = line else {
+        let line = sqlx::query_as::<_, OrderItemRow>(
+            "SELECT * FROM order_items WHERE id = $1 AND order_id = $2",
+        )
+        .bind(item_id)
+        .bind(order_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some(line) = line else {
             return Err(CommerceError::ValidationError(format!(
                 "Order item {item_id} does not belong to order {order_id}"
             )));
         };
+        let removed = Self::row_to_item(line);
 
-        self.release_line_reservations_in_tx(&mut tx, order_id, &sku, Decimal::from(quantity))
-            .await?;
+        self.release_line_reservations_in_tx(
+            &mut tx,
+            order_id,
+            item_id,
+            &removed.sku,
+            Decimal::from(removed.quantity),
+        )
+        .await?;
         PgBackorderRepository::new(self.pool.clone())
             .cancel_backorders_for_order_line_in_tx(&mut tx, order_id, item_id)
             .await?;
@@ -1602,6 +1761,7 @@ impl PgOrderRepository {
             .map_err(map_db_error)?;
 
         Self::update_order_total_tx(&mut tx, order_id).await?;
+        Self::append_line_event_tx(&mut tx, "orders.item_removed.v1", order_id, &removed).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(())

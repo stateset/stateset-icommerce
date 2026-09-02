@@ -2,8 +2,9 @@
 
 use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
-    CartId, CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId, OrderItem,
-    OrderItemId, OrderStatus, PaymentStatus, Result, ShipOrder, ShipmentLineInput, UpdateOrder,
+    CancelOrder, CartId, CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId,
+    OrderItem, OrderItemId, OrderStatus, PaymentStatus, Result, ShipOrder, ShipmentLineInput,
+    UpdateOrder,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -321,10 +322,27 @@ impl Orders {
     }
 
     /// Cancel an order.
+    ///
+    /// Refused with a `ValidationError` while any payment against the order
+    /// still holds money (in flight or captured), so a cancel can never orphan
+    /// funds; use [`Self::cancel_with`] with `void_payments: true` to void
+    /// in-flight payments and cancel anyway (settled payments are left for an
+    /// explicit refund).
     #[tracing::instrument(skip(self), fields(order_id = %id))]
     pub fn cancel(&self, id: OrderId) -> Result<Order> {
+        self.cancel_with(id, CancelOrder::default())
+    }
+
+    /// Cancel an order with explicit handling of its payments.
+    ///
+    /// See [`stateset_core::UpdateOrder::void_payments`] for the money rule.
+    /// Reservations and backorders are released either way, and the
+    /// `orders.updated.v1` outbox event records which payments were voided
+    /// and which remain outstanding.
+    #[tracing::instrument(skip(self), fields(order_id = %id, void_payments = input.void_payments))]
+    pub fn cancel_with(&self, id: OrderId, input: CancelOrder) -> Result<Order> {
         tracing::info!("cancelling order");
-        self.update_status(id, OrderStatus::Cancelled)
+        self.update(id, input.into())
     }
 
     /// Mark an order as shipped (every remaining unit on every line).

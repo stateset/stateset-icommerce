@@ -1,6 +1,6 @@
 //! SQLite repository for subscriptions
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
@@ -645,6 +645,7 @@ impl SqliteSubscriptionRepository {
             cycle_number: 1,
             period_start: now,
             period_end: current_period_end,
+            claimed_by: None,
         })?;
 
         self.get_subscription(id)?.ok_or_else(|| {
@@ -676,6 +677,177 @@ impl SqliteSubscriptionRepository {
         } else {
             Ok(None)
         }
+    }
+
+    /// [`Self::get_subscription`] on a caller-supplied connection, so a write
+    /// transaction can read the subscription it is about to bill under its
+    /// own lock instead of on a second pooled connection.
+    fn get_subscription_with_conn(
+        &self,
+        conn: &rusqlite::Connection,
+        id: SubscriptionId,
+    ) -> Result<Option<Subscription>> {
+        let subscription = {
+            let mut stmt = conn
+                .prepare("SELECT * FROM subscriptions WHERE id = ?1")
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            stmt.query_row([id.to_string()], |row| self.row_to_subscription(row))
+                .optional()
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
+        };
+        let Some(mut sub) = subscription else {
+            return Ok(None);
+        };
+        let mut items = Self::load_subscription_items_batch(conn, &[id])?;
+        sub.items = items.remove(&id).unwrap_or_default();
+        Ok(Some(sub))
+    }
+
+    /// The ONE definition of "due for billing at `?1`", shared by the
+    /// read-only view and the claim so a worker can never claim a set that
+    /// differs from what the view reported:
+    /// - `active` with `next_billing_date` at or before the instant;
+    /// - `trial` whose trial has ended by then (its `next_billing_date` is
+    ///   the trial end; a legacy row without one falls back to
+    ///   `trial_ends_at`) — billing the first post-trial cycle is what
+    ///   activates it;
+    /// - not under a live billing lease (`billing_lease_until` in the future).
+    const DUE_FOR_BILLING_WHERE: &'static str = "(
+            (status = 'active' AND next_billing_date IS NOT NULL
+                AND datetime(next_billing_date) <= datetime(?1))
+            OR (status = 'trial'
+                AND COALESCE(next_billing_date, trial_ends_at) IS NOT NULL
+                AND datetime(COALESCE(next_billing_date, trial_ends_at)) <= datetime(?1))
+        )
+        AND (billing_lease_until IS NULL OR datetime(billing_lease_until) < datetime(?1))";
+
+    /// Ids of the subscriptions due at `before`, oldest due first, on the
+    /// caller's connection (so the claim reads under its write lock).
+    fn due_subscription_ids_with_conn(
+        conn: &rusqlite::Connection,
+        before: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<SubscriptionId>> {
+        let sql = format!(
+            "SELECT id FROM subscriptions WHERE {}
+             ORDER BY datetime(COALESCE(next_billing_date, trial_ends_at)) ASC, created_at ASC
+             LIMIT ?2",
+            Self::DUE_FOR_BILLING_WHERE
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(rusqlite::params![before.to_rfc3339(), i64::from(limit)], |row| {
+                let raw: String = row.get(0)?;
+                parse_uuid_row(&raw, "subscription", "id").map(SubscriptionId::from)
+            })
+            .map_err(map_db_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
+    }
+
+    /// Load subscriptions (with items) for `ids`, preserving `ids` order.
+    fn load_subscriptions_with_conn(
+        &self,
+        conn: &rusqlite::Connection,
+        ids: &[SubscriptionId],
+    ) -> Result<Vec<Subscription>> {
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(sub) = self.get_subscription_with_conn(conn, *id)? {
+                out.push(sub);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Read-only view of the subscriptions due for billing at `before`
+    /// (see [`Self::DUE_FOR_BILLING_WHERE`]). Never leases anything.
+    pub fn get_due_for_billing(
+        &self,
+        before: DateTime<Utc>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Subscription>> {
+        let conn = self.pool.get().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
+        })?;
+        let ids = Self::due_subscription_ids_with_conn(
+            &conn,
+            before,
+            limit.unwrap_or(crate::sqlite::MAX_LIST_LIMIT),
+        )?;
+        self.load_subscriptions_with_conn(&conn, &ids)
+    }
+
+    /// Atomically lease up to `limit` due subscriptions to `worker_id` until
+    /// `now + lease_secs`.
+    ///
+    /// Select and stamp happen inside ONE `IMMEDIATE` transaction (SQLite's
+    /// single writer), and the stamp is conditional on the lease still being
+    /// dead, so two workers claiming the same due set receive disjoint
+    /// results — the list-then-bill race that let both charge a customer is
+    /// closed at the claim, not left to the cycle-uniqueness backstop.
+    pub fn claim_due_for_billing(
+        &self,
+        limit: u32,
+        worker_id: &str,
+        lease_secs: i64,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Subscription>> {
+        if worker_id.trim().is_empty() {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "worker_id must not be empty".into(),
+            ));
+        }
+        if lease_secs <= 0 {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "lease_secs must be positive".into(),
+            ));
+        }
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let lease_until = now + Duration::seconds(lease_secs);
+
+        with_immediate_transaction(&self.pool, |tx| {
+            let ids = Self::due_subscription_ids_with_conn(tx, now, limit).map_err(Self::tx_err)?;
+            let mut claimed = Vec::with_capacity(ids.len());
+            for id in ids {
+                let rows = tx.execute(
+                    "UPDATE subscriptions SET
+                        billing_lease_owner = ?1,
+                        billing_lease_until = ?2,
+                        updated_at = ?3
+                     WHERE id = ?4
+                       AND (billing_lease_until IS NULL
+                            OR datetime(billing_lease_until) < datetime(?3))",
+                    rusqlite::params![
+                        worker_id,
+                        lease_until.to_rfc3339(),
+                        now.to_rfc3339(),
+                        id.to_string(),
+                    ],
+                )?;
+                if rows == 1 {
+                    claimed.push(id);
+                }
+            }
+            self.load_subscriptions_with_conn(tx, &claimed).map_err(Self::tx_err)
+        })
+    }
+
+    /// Release the billing lease on `id` if `worker_id` holds it.
+    pub fn release_billing_claim(&self, id: SubscriptionId, worker_id: &str) -> Result<bool> {
+        let now = Utc::now();
+        with_immediate_transaction(&self.pool, |tx| {
+            let rows = tx.execute(
+                "UPDATE subscriptions SET
+                    billing_lease_owner = NULL,
+                    billing_lease_until = NULL,
+                    updated_at = ?1
+                 WHERE id = ?2 AND billing_lease_owner = ?3",
+                rusqlite::params![now.to_rfc3339(), id.to_string(), worker_id],
+            )?;
+            Ok(rows == 1)
+        })
     }
 
     pub fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>> {
@@ -988,12 +1160,13 @@ impl SqliteSubscriptionRepository {
         id: SubscriptionId,
         input: CancelSubscription,
     ) -> Result<Subscription> {
-        let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
         let reason = input.reason.clone().unwrap_or_else(|| "Cancelled by customer".to_string());
         let data = input.feedback.clone().map(|f| serde_json::json!({"feedback": f}));
 
         // Guard, write and audit in ONE transaction (see `pause_subscription`).
+        // The paid-through date the cancellation ends at is read under the
+        // same lock, so a concurrent renewal cannot leave `ends_at` pointing
+        // at a period the customer has already paid past.
         with_immediate_transaction(&self.pool, |tx| {
             let status = Self::locked_subscription_status(tx, id).map_err(Self::tx_err)?;
             if status.is_terminal() {
@@ -1001,12 +1174,19 @@ impl SqliteSubscriptionRepository {
                     "Cannot cancel subscription in {status} status"
                 ))));
             }
+            let period_end_raw: String = tx.query_row(
+                "SELECT current_period_end FROM subscriptions WHERE id = ?1",
+                rusqlite::params![id.to_string()],
+                |row| row.get(0),
+            )?;
+            let current_period_end =
+                parse_datetime_row(&period_end_raw, "subscription", "current_period_end")?;
 
             let now = Utc::now();
             let immediate = input.immediate.unwrap_or(false);
 
             let (new_status, ends_at) =
-                if immediate { ("expired", now) } else { ("cancelled", sub.current_period_end) };
+                if immediate { ("expired", now) } else { ("cancelled", current_period_end) };
 
             tx.execute(
                 "UPDATE subscriptions SET
@@ -1046,29 +1226,31 @@ impl SqliteSubscriptionRepository {
         id: SubscriptionId,
         input: SkipBillingCycle,
     ) -> Result<Subscription> {
-        let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
         let reason = input.reason.unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
-        // Skip exactly one interval with the same calendar arithmetic the paid
-        // path uses (`advance`), so a monthly subscription skipped in February
-        // stays on its day of month instead of drifting by the 30-day
-        // approximation of `days()`.
-        let new_billing_date = sub.billing_interval.advance(
-            sub.next_billing_date.unwrap_or(sub.current_period_end),
-            sub.custom_interval_days,
-        );
-
-        // Guard, write and audit in ONE transaction: two concurrent skips used
-        // to read the same `next_billing_date` and each push it out by a full
-        // interval, silently skipping two periods for one customer request.
+        // Guard, read, write and audit in ONE transaction: two concurrent
+        // skips used to read the same `next_billing_date` and each push it
+        // out by a full interval, silently skipping two periods for one
+        // customer request.
         with_immediate_transaction(&self.pool, |tx| {
-            let status = Self::locked_subscription_status(tx, id).map_err(Self::tx_err)?;
-            if status != SubscriptionStatus::Active {
+            let sub = self
+                .get_subscription_with_conn(tx, id)
+                .map_err(Self::tx_err)?
+                .ok_or_else(|| Self::tx_err(stateset_core::CommerceError::NotFound))?;
+            if sub.status != SubscriptionStatus::Active {
                 return Err(Self::tx_err(stateset_core::CommerceError::ValidationError(
                     "Can only skip billing for active subscriptions".into(),
                 )));
             }
+
+            // Skip exactly one interval with the same calendar arithmetic the
+            // paid path uses (`advance`), so a monthly subscription skipped in
+            // February stays on its day of month instead of drifting by the
+            // 30-day approximation of `days()`.
+            let new_billing_date = sub.billing_interval.advance(
+                sub.next_billing_date.unwrap_or(sub.current_period_end),
+                sub.custom_interval_days,
+            );
 
             let now = Utc::now();
 
@@ -1256,19 +1438,32 @@ impl SqliteSubscriptionRepository {
     /// becomes `Active` in the SAME transaction — billing a trial is what ends
     /// it. (A trial's own initial cycle starts before the trial ends and does
     /// not activate.)
+    ///
+    /// The subscription is read INSIDE the write transaction (its price and
+    /// discounts are what the cycle bills, so they cannot change between the
+    /// read and the insert), and a subscription under another worker's live
+    /// billing lease is refused with `Conflict` — see
+    /// [`Self::claim_due_for_billing`].
     pub fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
-        let CreateBillingCycle { subscription_id, cycle_number, period_start, period_end } = input;
-        // Get subscription first (uses its own connection)
-        let sub = self
-            .get_subscription(subscription_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
-
+        let CreateBillingCycle {
+            subscription_id,
+            cycle_number,
+            period_start,
+            period_end,
+            claimed_by,
+        } = input;
         let id = Uuid::new_v4();
-        let (subtotal, discount, total) = sub.billing_cycle_amounts();
-        let currency = sub.currency;
 
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
+            let sub = self
+                .get_subscription_with_conn(tx, subscription_id)
+                .map_err(Self::tx_err)?
+                .ok_or_else(|| Self::tx_err(stateset_core::CommerceError::NotFound))?;
+            Self::refuse_foreign_billing_lease(&sub, claimed_by.as_deref(), now)
+                .map_err(Self::tx_err)?;
+            let (subtotal, discount, total) = sub.billing_cycle_amounts();
+            let currency = sub.currency;
 
             tx.execute(
                 "INSERT INTO billing_cycles (
@@ -1314,6 +1509,25 @@ impl SqliteSubscriptionRepository {
                 "Failed to retrieve created billing cycle".into(),
             )
         })
+    }
+
+    /// Refuse to bill a subscription whose LIVE billing lease is held by a
+    /// worker other than `claimed_by` (an unclaimed caller, `None`, is
+    /// refused while any live lease exists). A dead lease never blocks.
+    fn refuse_foreign_billing_lease(
+        sub: &Subscription,
+        claimed_by: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let live = sub.billing_lease_until.is_some_and(|until| until >= now);
+        if live && sub.billing_lease_owner.as_deref() != claimed_by {
+            return Err(stateset_core::CommerceError::Conflict(format!(
+                "Subscription {} is leased for billing by another worker until {}",
+                sub.id,
+                sub.billing_lease_until.map(|d| d.to_rfc3339()).unwrap_or_default()
+            )));
+        }
+        Ok(())
     }
 
     /// `Trial -> Active` once the billing clock reaches `trial_ends_at`:
@@ -1922,6 +2136,12 @@ impl SqliteSubscriptionRepository {
                 "subscription",
                 "updated_at",
             )?,
+            billing_lease_owner: row.get(30)?,
+            billing_lease_until: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(31)?,
+                "subscription",
+                "billing_lease_until",
+            )?,
             items: Vec::new(), // Loaded separately
         })
     }
@@ -2097,6 +2317,28 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         Self::skip_billing_cycle(self, id, input)
     }
 
+    fn get_due_for_billing(
+        &self,
+        before: DateTime<Utc>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Subscription>> {
+        Self::get_due_for_billing(self, before, limit)
+    }
+
+    fn claim_due_for_billing(
+        &self,
+        limit: u32,
+        worker_id: &str,
+        lease_secs: i64,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Subscription>> {
+        Self::claim_due_for_billing(self, limit, worker_id, lease_secs, now)
+    }
+
+    fn release_billing_claim(&self, id: SubscriptionId, worker_id: &str) -> Result<bool> {
+        Self::release_billing_claim(self, id, worker_id)
+    }
+
     fn record_event(
         &self,
         subscription_id: SubscriptionId,
@@ -2197,6 +2439,7 @@ mod tests {
             cycle_number: 2,
             period_start: dt("2020-01-15T00:00:00Z"),
             period_end: dt("2020-01-31T00:00:00Z"),
+            claimed_by: None,
         })
         .expect("cycle 2");
         repo.create_billing_cycle(CreateBillingCycle {
@@ -2204,6 +2447,7 @@ mod tests {
             cycle_number: 3,
             period_start: dt("2020-02-15T00:00:00Z"),
             period_end: dt("2020-02-28T00:00:00Z"),
+            claimed_by: None,
         })
         .expect("cycle 3");
 
@@ -2409,5 +2653,240 @@ mod tests {
             direct_skus.sort();
             assert_eq!(listed_skus, direct_skus);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Billing claim leases, trial activation, due-set view
+    // ------------------------------------------------------------------
+
+    use chrono::{DateTime, Duration, Utc};
+    use stateset_core::{SubscriptionEventType, SubscriptionStatus};
+
+    fn active_plan(repo: &SqliteSubscriptionRepository, trial_days: Option<i32>) -> uuid::Uuid {
+        let plan = repo
+            .create_plan(CreateSubscriptionPlan { trial_days, ..plan_input() })
+            .expect("create plan");
+        repo.activate_plan(plan.id).expect("activate plan");
+        plan.id
+    }
+
+    fn subscribe_started_at(
+        repo: &SqliteSubscriptionRepository,
+        plan_id: uuid::Uuid,
+        start: DateTime<Utc>,
+    ) -> stateset_core::Subscription {
+        let customer = CustomerId::new();
+        seed_customer(repo, customer);
+        repo.create_subscription(CreateSubscription {
+            start_date: Some(start),
+            ..create_subscription_input(customer, plan_id)
+        })
+        .expect("create subscription")
+    }
+
+    #[test]
+    fn claim_due_for_billing_hands_disjoint_batches_to_concurrent_workers() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let repo = db.subscriptions();
+        let plan = active_plan(&repo, Some(0));
+        let now = Utc::now();
+        // Monthly plans started 40 days ago were due 10 days ago.
+        let due: Vec<_> = (0..12)
+            .map(|_| subscribe_started_at(&repo, plan, now - Duration::days(40)).id)
+            .collect();
+        // A future one must never be claimed.
+        let not_due = subscribe_started_at(&repo, plan, now).id;
+        assert_eq!(repo.get_due_for_billing(now, None).expect("due").len(), 12);
+
+        let workers = 4;
+        let barrier = Arc::new(Barrier::new(workers));
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                let db = Arc::clone(&db);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let repo = db.subscriptions();
+                    barrier.wait();
+                    repo.claim_due_for_billing(5, &format!("worker-{w}"), 300, now)
+                        .map(|subs| (format!("worker-{w}"), subs))
+                })
+            })
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut claimed_total = 0;
+        for handle in handles {
+            let (worker, subs) = handle.join().expect("thread").expect("claim");
+            for sub in subs {
+                assert!(due.contains(&sub.id), "claimed a subscription that was not due");
+                assert_ne!(sub.id, not_due);
+                assert_eq!(sub.billing_lease_owner.as_deref(), Some(worker.as_str()));
+                assert_eq!(sub.billing_lease_until, Some(now + Duration::seconds(300)));
+                assert!(seen.insert(sub.id), "subscription {} claimed twice", sub.id);
+                claimed_total += 1;
+            }
+        }
+        assert_eq!(claimed_total, 12, "every due subscription is claimed exactly once");
+
+        // The view hides leased rows; the lease dies on its own.
+        assert!(repo.get_due_for_billing(now, None).expect("due").is_empty());
+        let later = now + Duration::seconds(301);
+        assert_eq!(repo.get_due_for_billing(later, None).expect("due").len(), 12);
+        let reclaimed = repo.claim_due_for_billing(100, "late-worker", 60, later).expect("claim");
+        assert_eq!(reclaimed.len(), 12, "dead leases are re-claimable");
+    }
+
+    #[test]
+    fn release_billing_claim_only_releases_the_owners_lease() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let plan = active_plan(&repo, Some(0));
+        let now = Utc::now();
+        let sub = subscribe_started_at(&repo, plan, now - Duration::days(40));
+
+        let claimed = repo.claim_due_for_billing(10, "w1", 300, now).expect("claim");
+        assert_eq!(claimed.len(), 1);
+        assert!(repo.claim_due_for_billing(10, "w2", 300, now).expect("claim").is_empty());
+
+        assert!(!repo.release_billing_claim(sub.id, "w2").expect("release"), "not w2's lease");
+        assert!(repo.get_due_for_billing(now, None).expect("due").is_empty());
+        assert!(repo.release_billing_claim(sub.id, "w1").expect("release"));
+        assert!(!repo.release_billing_claim(sub.id, "w1").expect("release"), "already released");
+        let fetched = repo.get_subscription(sub.id).expect("get").expect("found");
+        assert_eq!(fetched.billing_lease_owner, None);
+        assert_eq!(fetched.billing_lease_until, None);
+        assert_eq!(repo.get_due_for_billing(now, None).expect("due").len(), 1);
+    }
+
+    #[test]
+    fn claim_due_for_billing_validates_its_inputs() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let now = Utc::now();
+        assert!(matches!(
+            repo.claim_due_for_billing(1, "  ", 60, now),
+            Err(CommerceError::ValidationError(_))
+        ));
+        assert!(matches!(
+            repo.claim_due_for_billing(1, "w", 0, now),
+            Err(CommerceError::ValidationError(_))
+        ));
+        assert!(repo.claim_due_for_billing(0, "w", 60, now).expect("ok").is_empty());
+    }
+
+    #[test]
+    fn create_billing_cycle_refuses_a_subscription_leased_to_another_worker() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let plan = active_plan(&repo, Some(0));
+        let now = Utc::now();
+        let sub = subscribe_started_at(&repo, plan, now - Duration::days(40));
+        let claimed = repo.claim_due_for_billing(10, "w1", 300, now).expect("claim");
+        assert_eq!(claimed.len(), 1);
+
+        let cycle = |claimed_by: Option<&str>| CreateBillingCycle {
+            subscription_id: sub.id,
+            cycle_number: 2,
+            period_start: sub.current_period_end,
+            period_end: sub.current_period_end + Duration::days(30),
+            claimed_by: claimed_by.map(str::to_string),
+        };
+        // An unclaimed caller and a different worker are both refused while
+        // the lease is live...
+        assert!(matches!(repo.create_billing_cycle(cycle(None)), Err(CommerceError::Conflict(_))));
+        assert!(matches!(
+            repo.create_billing_cycle(cycle(Some("w2"))),
+            Err(CommerceError::Conflict(_))
+        ));
+        // ...the lease holder bills.
+        let created = repo.create_billing_cycle(cycle(Some("w1"))).expect("lease holder bills");
+        assert_eq!(created.cycle_number, 2);
+        // Once released, anyone may create a (new) cycle again.
+        assert!(repo.release_billing_claim(sub.id, "w1").expect("release"));
+        let mut next = cycle(None);
+        next.cycle_number = 3;
+        repo.create_billing_cycle(next).expect("unleased subscription bills");
+    }
+
+    #[test]
+    fn trial_subscription_becomes_due_when_its_trial_ends_and_activates_on_first_cycle() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let plan = active_plan(&repo, Some(7));
+        let now = Utc::now();
+
+        // Trial still running (started 3 days ago, 7-day trial): NOT due, and
+        // a cycle billed before the trial end does not activate it.
+        let running = subscribe_started_at(&repo, plan, now - Duration::days(3));
+        assert_eq!(running.status, SubscriptionStatus::Trial);
+        let trial_end = running.trial_ends_at.expect("trial end");
+        assert_eq!(running.next_billing_date, Some(trial_end));
+        assert!(repo.get_due_for_billing(now, None).expect("due").is_empty());
+        repo.create_billing_cycle(CreateBillingCycle {
+            subscription_id: running.id,
+            cycle_number: 2,
+            period_start: now,
+            period_end: trial_end,
+            claimed_by: None,
+        })
+        .expect("cycle inside the trial");
+        assert_eq!(
+            repo.get_subscription(running.id).expect("get").expect("found").status,
+            SubscriptionStatus::Trial,
+            "billing a period that starts before the trial ends must not activate"
+        );
+
+        // Trial elapsed (started 8 days ago): due, and the first post-trial
+        // cycle activates it atomically with an audited event.
+        let elapsed = subscribe_started_at(&repo, plan, now - Duration::days(8));
+        assert_eq!(elapsed.status, SubscriptionStatus::Trial);
+        let elapsed_trial_end = elapsed.trial_ends_at.expect("trial end");
+        assert!(elapsed_trial_end <= now);
+        let due = repo.get_due_for_billing(now, None).expect("due");
+        assert_eq!(due.iter().map(|s| s.id).collect::<Vec<_>>(), vec![elapsed.id]);
+
+        let claimed = repo.claim_due_for_billing(10, "trial-worker", 60, now).expect("claim");
+        assert_eq!(claimed.len(), 1);
+        let cycle = repo
+            .create_billing_cycle(CreateBillingCycle {
+                subscription_id: elapsed.id,
+                cycle_number: 2,
+                period_start: elapsed_trial_end,
+                period_end: BillingInterval::Monthly.advance(elapsed_trial_end, None),
+                claimed_by: Some("trial-worker".into()),
+            })
+            .expect("first post-trial cycle");
+        assert_eq!(cycle.total, dec!(10.00));
+        let activated = repo.get_subscription(elapsed.id).expect("get").expect("found");
+        assert_eq!(activated.status, SubscriptionStatus::Active);
+        let events = repo.get_subscription_events(elapsed.id, None).expect("events");
+        assert!(
+            events.iter().any(|e| e.event_type == SubscriptionEventType::Activated),
+            "activation must be audited: {events:?}"
+        );
+        // Still leased to the worker until released: hidden from the view.
+        assert!(repo.get_due_for_billing(now, None).expect("due").is_empty());
+        assert!(repo.release_billing_claim(elapsed.id, "trial-worker").expect("release"));
+    }
+
+    #[test]
+    fn due_view_excludes_paused_cancelled_and_future_subscriptions() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let plan = active_plan(&repo, Some(0));
+        let now = Utc::now();
+        let due = subscribe_started_at(&repo, plan, now - Duration::days(40));
+        let paused = subscribe_started_at(&repo, plan, now - Duration::days(40));
+        repo.pause_subscription(paused.id, stateset_core::PauseSubscription::default())
+            .expect("pause");
+        let cancelled = subscribe_started_at(&repo, plan, now - Duration::days(40));
+        repo.cancel_subscription(cancelled.id, stateset_core::CancelSubscription::default())
+            .expect("cancel");
+        let _future = subscribe_started_at(&repo, plan, now);
+
+        let ids: Vec<_> =
+            repo.get_due_for_billing(now, None).expect("due").iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec![due.id]);
+        // `limit` bounds the view.
+        let _second = subscribe_started_at(&repo, plan, now - Duration::days(50));
+        assert_eq!(repo.get_due_for_billing(now, Some(1)).expect("due").len(), 1);
+        assert_eq!(repo.get_due_for_billing(now, None).expect("due").len(), 2);
     }
 }

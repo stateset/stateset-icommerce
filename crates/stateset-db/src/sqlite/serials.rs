@@ -266,7 +266,6 @@ impl SqliteSerialRepository {
 
     #[allow(clippy::too_many_arguments)]
     fn record_history(
-        &self,
         conn: &rusqlite::Connection,
         serial: &SerialNumber,
         event_type: SerialEventType,
@@ -393,6 +392,110 @@ impl SqliteSerialRepository {
             Self::close_open_reservations(tx, serial.id, now)?;
         }
         Ok(())
+    }
+
+    /// Quarantine every `Available` / `Reserved` serial of `lot_id` on the
+    /// caller's transaction, closing open reservations; returns how many moved.
+    ///
+    /// This is the serial half of a lot quarantine: `SqliteLotRepository`
+    /// and the quality repository call it inside the transaction that flips
+    /// the lot, so a quarantined lot can never leave a sellable serial behind.
+    /// Shipped / sold / already-quarantined serials are untouched.
+    pub(crate) fn quarantine_for_lot_on(
+        tx: &rusqlite::Transaction<'_>,
+        lot_id: Uuid,
+        reason: &str,
+        now: &str,
+    ) -> stateset_core::Result<u64> {
+        let candidates: Vec<SerialNumber> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT * FROM serial_numbers WHERE lot_id = ? AND status IN (?, ?)
+                     ORDER BY created_at ASC",
+                )
+                .map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(
+                    params![
+                        lot_id.to_string(),
+                        SerialStatus::Available.to_string(),
+                        SerialStatus::Reserved.to_string()
+                    ],
+                    Self::map_serial_row,
+                )
+                .map_err(map_db_error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_db_error)?
+        };
+
+        let mut count = 0u64;
+        for serial in candidates {
+            Self::write_transition(tx, &serial, SerialStatus::Quarantined, now, "", &[])?;
+            Self::record_history(
+                tx,
+                &serial,
+                SerialEventType::Quarantined,
+                serial.status,
+                SerialStatus::Quarantined,
+                Some("lot"),
+                Some(lot_id),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(reason),
+            )
+            .map_err(map_db_error)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Return every `Quarantined` serial of `lot_id` to `Available` on the
+    /// caller's transaction; the counterpart of [`Self::quarantine_for_lot_on`].
+    pub(crate) fn release_quarantine_for_lot_on(
+        tx: &rusqlite::Transaction<'_>,
+        lot_id: Uuid,
+        now: &str,
+    ) -> stateset_core::Result<u64> {
+        let candidates: Vec<SerialNumber> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT * FROM serial_numbers WHERE lot_id = ? AND status = ?
+                     ORDER BY created_at ASC",
+                )
+                .map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(
+                    params![lot_id.to_string(), SerialStatus::Quarantined.to_string()],
+                    Self::map_serial_row,
+                )
+                .map_err(map_db_error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_db_error)?
+        };
+
+        let mut count = 0u64;
+        for serial in candidates {
+            Self::write_transition(tx, &serial, SerialStatus::Available, now, "", &[])?;
+            Self::record_history(
+                tx,
+                &serial,
+                SerialEventType::QuarantineReleased,
+                SerialStatus::Quarantined,
+                SerialStatus::Available,
+                Some("lot"),
+                Some(lot_id),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(map_db_error)?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     fn generate_serial(&self, prefix: Option<&str>) -> String {
@@ -621,7 +724,7 @@ impl SerialRepository for SqliteSerialRepository {
                 if serial.status == SerialStatus::Reserved {
                     Self::close_open_reservations(&tx, serial.id, &now)?;
                 }
-                self.record_history(
+                Self::record_history(
                     &tx,
                     &serial,
                     SerialEventType::StatusChanged,
@@ -747,7 +850,7 @@ impl SerialRepository for SqliteSerialRepository {
                 &[&input.location_id, &owner_id, &input.owner_type],
             )?;
 
-            self.record_history(
+            Self::record_history(
                 &tx,
                 &serial,
                 SerialEventType::StatusChanged,
@@ -794,7 +897,7 @@ impl SerialRepository for SqliteSerialRepository {
                 .map_err(map_db_error)?;
             if let Some(stale) = stale {
                 Self::write_transition(&tx, &serial, SerialStatus::Available, &now_str, "", &[])?;
-                self.record_history(
+                Self::record_history(
                     &tx,
                     &serial,
                     SerialEventType::Released,
@@ -847,7 +950,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         Self::write_transition(&tx, &serial, SerialStatus::Reserved, &now_str, "", &[])?;
 
-        self.record_history(
+        Self::record_history(
             &tx,
             &serial,
             SerialEventType::Reserved,
@@ -917,7 +1020,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         Self::write_transition(&tx, &serial, SerialStatus::Available, &now, "", &[])?;
 
-        self.record_history(
+        Self::record_history(
             &tx,
             &serial,
             SerialEventType::Released,
@@ -1035,7 +1138,7 @@ impl SerialRepository for SqliteSerialRepository {
                 continue; // The unit already moved on; only the stale row needed closing.
             }
             Self::write_transition(&tx, &serial, SerialStatus::Available, &now_str, "", &[])?;
-            self.record_history(
+            Self::record_history(
                 &tx,
                 &serial,
                 SerialEventType::Released,
@@ -1132,7 +1235,7 @@ impl SerialRepository for SqliteSerialRepository {
                 &[&new_owner, &input.new_owner_type],
             )?;
 
-            self.record_history(
+            Self::record_history(
                 &tx,
                 &serial,
                 SerialEventType::Transferred,
@@ -1180,7 +1283,7 @@ impl SerialRepository for SqliteSerialRepository {
                 &[&customer, &now],
             )?;
 
-            self.record_history(
+            Self::record_history(
                 &tx,
                 &serial,
                 SerialEventType::Sold,
@@ -1212,7 +1315,7 @@ impl SerialRepository for SqliteSerialRepository {
         // Shipping consumes the open reservation (see write_transition).
         Self::write_transition(&tx, &serial, SerialStatus::Shipped, &now, "", &[])?;
 
-        self.record_history(
+        Self::record_history(
             &tx,
             &serial,
             SerialEventType::Shipped,
@@ -1249,7 +1352,7 @@ impl SerialRepository for SqliteSerialRepository {
             &[],
         )?;
 
-        self.record_history(
+        Self::record_history(
             &tx,
             &serial,
             SerialEventType::Returned,
@@ -1310,7 +1413,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         Self::write_transition(&tx, &serial, SerialStatus::Quarantined, &now, "", &[])?;
 
-        self.record_history(
+        Self::record_history(
             &tx,
             &serial,
             SerialEventType::Quarantined,
@@ -1346,7 +1449,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         Self::write_transition(&tx, &serial, SerialStatus::Available, &now, "", &[])?;
 
-        self.record_history(
+        Self::record_history(
             &tx,
             &serial,
             SerialEventType::QuarantineReleased,
@@ -1370,50 +1473,7 @@ impl SerialRepository for SqliteSerialRepository {
     fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> stateset_core::Result<u64> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let now = Utc::now().to_rfc3339();
-
-        let candidates: Vec<SerialNumber> = {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT * FROM serial_numbers WHERE lot_id = ? AND status IN (?, ?)
-                     ORDER BY created_at ASC",
-                )
-                .map_err(map_db_error)?;
-            let rows = stmt
-                .query_map(
-                    params![
-                        lot_id.to_string(),
-                        SerialStatus::Available.to_string(),
-                        SerialStatus::Reserved.to_string()
-                    ],
-                    Self::map_serial_row,
-                )
-                .map_err(map_db_error)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(map_db_error)?
-        };
-
-        let mut count = 0u64;
-        for serial in candidates {
-            Self::write_transition(&tx, &serial, SerialStatus::Quarantined, &now, "", &[])?;
-            self.record_history(
-                &tx,
-                &serial,
-                SerialEventType::Quarantined,
-                serial.status,
-                SerialStatus::Quarantined,
-                Some("lot"),
-                Some(lot_id),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(reason),
-            )
-            .map_err(map_db_error)?;
-            count += 1;
-        }
-
+        let count = Self::quarantine_for_lot_on(&tx, lot_id, reason, &Utc::now().to_rfc3339())?;
         tx.commit().map_err(map_db_error)?;
         Ok(count)
     }
@@ -1421,46 +1481,7 @@ impl SerialRepository for SqliteSerialRepository {
     fn release_quarantine_for_lot(&self, lot_id: Uuid) -> stateset_core::Result<u64> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let now = Utc::now().to_rfc3339();
-
-        let candidates: Vec<SerialNumber> = {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT * FROM serial_numbers WHERE lot_id = ? AND status = ?
-                     ORDER BY created_at ASC",
-                )
-                .map_err(map_db_error)?;
-            let rows = stmt
-                .query_map(
-                    params![lot_id.to_string(), SerialStatus::Quarantined.to_string()],
-                    Self::map_serial_row,
-                )
-                .map_err(map_db_error)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(map_db_error)?
-        };
-
-        let mut count = 0u64;
-        for serial in candidates {
-            Self::write_transition(&tx, &serial, SerialStatus::Available, &now, "", &[])?;
-            self.record_history(
-                &tx,
-                &serial,
-                SerialEventType::QuarantineReleased,
-                SerialStatus::Quarantined,
-                SerialStatus::Available,
-                Some("lot"),
-                Some(lot_id),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .map_err(map_db_error)?;
-            count += 1;
-        }
-
+        let count = Self::release_quarantine_for_lot_on(&tx, lot_id, &Utc::now().to_rfc3339())?;
         tx.commit().map_err(map_db_error)?;
         Ok(count)
     }
@@ -1474,7 +1495,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         Self::write_transition(&tx, &serial, SerialStatus::Scrapped, &now, "", &[])?;
 
-        self.record_history(
+        Self::record_history(
             &tx,
             &serial,
             SerialEventType::Scrapped,
@@ -2288,6 +2309,28 @@ mod tests {
             .expect("reserve with past expiry");
         let err = repo.confirm_reservation(expired.id).expect_err("expired cannot be confirmed");
         assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+    }
+
+    /// Confirmation commits the reservation row but the unit has not moved,
+    /// so an order cancelled after confirmation can still hand the serial
+    /// back; only shipping / selling consumes the reservation for good.
+    #[test]
+    fn release_reservation_after_confirm_returns_serial_to_stock() {
+        let repo = fresh_repo();
+        let serial = make_serial(&repo, "SKU-RC", "SN-RC-1");
+        let res = repo.reserve(reserve_input(serial.id)).expect("reserve");
+        repo.confirm_reservation(res.id).expect("confirm");
+        assert_eq!(repo.get(serial.id).unwrap().unwrap().status, SerialStatus::Reserved);
+        repo.release_reservation(res.id).expect("release after confirm is allowed");
+        assert_eq!(repo.get(serial.id).unwrap().unwrap().status, SerialStatus::Available);
+        let closed = repo.get_reservation(res.id).unwrap().unwrap();
+        assert!(closed.released_at.is_some() && closed.confirmed_at.is_some());
+        // Once shipped, the reservation is consumed and release is refused.
+        let shipped = make_serial(&repo, "SKU-RC", "SN-RC-2");
+        let res2 = repo.reserve(reserve_input(shipped.id)).expect("reserve");
+        repo.confirm_reservation(res2.id).expect("confirm");
+        repo.mark_shipped(shipped.id, Uuid::new_v4()).expect("ship");
+        assert!(matches!(repo.release_reservation(res2.id), Err(CommerceError::Conflict(_))));
     }
 
     #[test]

@@ -25,7 +25,7 @@
 //! - **Retry with backoff** — fixed, exponential, or linear strategies
 //! - **State machine** — validated transitions for job lifecycle
 //! - **Pluggable storage** — [`JobStore`] trait with [`InMemoryJobStore`] and [`FileJobStore`]
-//! - **Built-in job types** — billing, webhook retry, retention, low stock, subscription renewal
+//! - **Built-in job types** — billing, webhook retry, retention, low stock, subscription renewal, traceability sweep
 //!
 //! ## Quick Start
 //!
@@ -74,7 +74,8 @@ pub mod store;
 
 // Re-exports for convenience
 pub use builtins::{
-    BillingTickJob, EventRetentionJob, LowStockAlertJob, SubscriptionRenewalJob, WebhookRetryJob,
+    BillingTickJob, EventRetentionJob, FnTraceabilitySweeper, LowStockAlertJob,
+    SubscriptionRenewalJob, TraceabilitySweepJob, TraceabilitySweeper, WebhookRetryJob,
 };
 pub use context::JobContext;
 pub use error::JobError;

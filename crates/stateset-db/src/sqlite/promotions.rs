@@ -1,6 +1,6 @@
 //! SQLite repository for promotions and coupons
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
@@ -10,7 +10,7 @@ use stateset_core::{
     CouponCode, CouponFilter, CouponStatus, CreateCouponCode, CreatePromotion,
     CreatePromotionCondition, CurrencyCode, CustomerId, CustomerUsageCounts, OrderId, Promotion,
     PromotionCondition, PromotionFilter, PromotionId, PromotionRepository, PromotionStatus,
-    PromotionTrigger, PromotionUsage, RejectedPromotion, RejectionReason, Result, UpdatePromotion,
+    PromotionUsage, RejectedPromotion, RejectionReason, Result, UpdatePromotion,
     evaluate_promotions, generate_promotion_code, validate_coupon_redemption,
 };
 use uuid::Uuid;
@@ -520,7 +520,7 @@ impl SqlitePromotionRepository {
             .prepare("SELECT * FROM coupon_codes WHERE id = ?1")
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        stmt.query_row([id.to_string()], |row| self.row_to_coupon(row))
+        stmt.query_row([id.to_string()], Self::row_to_coupon)
             .optional()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
     }
@@ -538,11 +538,20 @@ impl SqlitePromotionRepository {
         conn: &rusqlite::Connection,
         code: &str,
     ) -> Result<Option<CouponCode>> {
+        Self::coupon_by_code_with_conn(conn, code)
+    }
+
+    /// Coupon lookup by (case-insensitive) code on `conn`, usable inside a
+    /// transaction without a repository handle.
+    fn coupon_by_code_with_conn(
+        conn: &rusqlite::Connection,
+        code: &str,
+    ) -> Result<Option<CouponCode>> {
         let mut stmt = conn
             .prepare("SELECT * FROM coupon_codes WHERE code = ?1")
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        stmt.query_row([code.to_uppercase()], |row| self.row_to_coupon(row))
+        stmt.query_row([code.to_uppercase()], Self::row_to_coupon)
             .optional()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
     }
@@ -582,7 +591,7 @@ impl SqlitePromotionRepository {
             params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let rows = stmt
-            .query_map(param_refs.as_slice(), |row| self.row_to_coupon(row))
+            .query_map(param_refs.as_slice(), Self::row_to_coupon)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -603,99 +612,19 @@ impl SqlitePromotionRepository {
             ..Default::default()
         };
 
-        // Get active automatic promotions
-        let auto_promotions = self
-            .list(PromotionFilter { is_active: Some(true), ..Default::default() })?
-            .into_iter()
-            .filter(|p| {
-                p.trigger == PromotionTrigger::Automatic || p.trigger == PromotionTrigger::Both
-            })
-            .collect::<Vec<_>>();
+        let conn = self.pool.get().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
+        })?;
 
-        // Get promotions from coupon codes
-        let mut coupon_promotions = Vec::new();
-        for code in &request.coupon_codes {
-            match self.get_coupon_by_code(code)? {
-                Some(coupon) => {
-                    if coupon.status != CouponStatus::Active {
-                        result.rejected_promotions.push(RejectedPromotion {
-                            promotion_id: None,
-                            coupon_code: Some(code.clone()),
-                            reason: "Coupon is not active".into(),
-                            reason_code: RejectionReason::Expired,
-                        });
-                        continue;
-                    }
-
-                    // Validity window (status alone may lag wall-clock expiry).
-                    let now = Utc::now();
-                    if coupon.starts_at.is_some_and(|s| s > now)
-                        || coupon.ends_at.is_some_and(|e| e < now)
-                    {
-                        result.rejected_promotions.push(RejectedPromotion {
-                            promotion_id: None,
-                            coupon_code: Some(code.clone()),
-                            reason: "Coupon is outside its validity window".into(),
-                            reason_code: RejectionReason::Expired,
-                        });
-                        continue;
-                    }
-
-                    // Coupon usage limits (record_usage re-checks these
-                    // transactionally; here they produce friendly rejections).
-                    if coupon.usage_limit.is_some_and(|l| coupon.usage_count >= l) {
-                        result.rejected_promotions.push(RejectedPromotion {
-                            promotion_id: None,
-                            coupon_code: Some(code.clone()),
-                            reason: "Coupon usage limit reached".into(),
-                            reason_code: RejectionReason::UsageLimitReached,
-                        });
-                        continue;
-                    }
-                    if let (Some(limit), Some(customer_id)) =
-                        (coupon.per_customer_limit, request.customer_id)
-                    {
-                        if self.coupon_customer_usage_count(coupon.id, customer_id)?
-                            >= i64::from(limit)
-                        {
-                            result.rejected_promotions.push(RejectedPromotion {
-                                promotion_id: None,
-                                coupon_code: Some(code.clone()),
-                                reason: "Per-customer coupon usage limit reached".into(),
-                                reason_code: RejectionReason::UsageLimitReached,
-                            });
-                            continue;
-                        }
-                    }
-
-                    if let Some(promo) = self.get(coupon.promotion_id)? {
-                        coupon_promotions.push((promo, Some(code.clone())));
-                    }
-                }
-                None => {
-                    result.rejected_promotions.push(RejectedPromotion {
-                        promotion_id: None,
-                        coupon_code: Some(code.clone()),
-                        reason: "Invalid coupon code".into(),
-                        reason_code: RejectionReason::InvalidCode,
-                    });
-                }
-            }
-        }
-
-        // Coupon-carrying entries come first so a redemption keeps its coupon
-        // attribution; the shared evaluator de-duplicates and orders by
-        // priority.
-        let candidates: Vec<(Promotion, Option<String>)> = coupon_promotions
-            .into_iter()
-            .chain(auto_promotions.into_iter().map(|p| (p, None)))
-            .collect();
+        let candidates = Self::candidate_promotions_with_conn(
+            &conn,
+            &request,
+            Utc::now(),
+            &mut result.rejected_promotions,
+        )?;
 
         let customer_usage = match request.customer_id {
             Some(customer_id) => {
-                let conn = self.pool.get().map_err(|e| {
-                    stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-                })?;
                 Self::customer_usage_counts_with_conn(&conn, &candidates, customer_id)
                     .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?
             }
@@ -708,6 +637,95 @@ impl SqlitePromotionRepository {
         evaluate_promotions(&request, candidates, &customer_usage, &mut result)?;
 
         Ok(result)
+    }
+
+    /// THE candidate selection for `request` at `now`, shared by pricing
+    /// ([`Self::apply_promotions`]) and checkout
+    /// ([`Self::consume_cart_promotions_in_tx`]) so the set the evaluator
+    /// stacks at checkout is exactly the set it stacked at pricing.
+    ///
+    /// - Every coupon code in the request resolves to its promotion only
+    ///   while the coupon is active, inside its validity window, under its
+    ///   total usage limit and under its per-customer limit; otherwise it is
+    ///   reported in `rejected` and takes no part — so a dead coupon on an
+    ///   Exclusive promotion can no longer suppress the automatic promotions
+    ///   at checkout that pricing had already granted.
+    /// - Automatic (`automatic`/`both`) promotions that are active inside
+    ///   their window at `now`, in priority order.
+    ///
+    /// Coupon-carrying entries come first so a redemption keeps its coupon
+    /// attribution; the evaluator de-duplicates and orders by priority.
+    fn candidate_promotions_with_conn(
+        conn: &rusqlite::Connection,
+        request: &ApplyPromotionsRequest,
+        now: DateTime<Utc>,
+        rejected: &mut Vec<RejectedPromotion>,
+    ) -> Result<Vec<(Promotion, Option<String>)>> {
+        let mut candidates: Vec<(Promotion, Option<String>)> = Vec::new();
+
+        for code in &request.coupon_codes {
+            let mut reject = |reason: &str, reason_code: RejectionReason| {
+                rejected.push(RejectedPromotion {
+                    promotion_id: None,
+                    coupon_code: Some(code.clone()),
+                    reason: reason.into(),
+                    reason_code,
+                });
+            };
+            let Some(coupon) = Self::coupon_by_code_with_conn(conn, code)? else {
+                reject("Invalid coupon code", RejectionReason::InvalidCode);
+                continue;
+            };
+            if coupon.status != CouponStatus::Active {
+                reject("Coupon is not active", RejectionReason::Expired);
+                continue;
+            }
+            // Validity window (status alone may lag wall-clock expiry).
+            if coupon.starts_at.is_some_and(|s| s > now) || coupon.ends_at.is_some_and(|e| e < now)
+            {
+                reject("Coupon is outside its validity window", RejectionReason::Expired);
+                continue;
+            }
+            // Coupon usage limits (record_usage re-checks these
+            // transactionally; here they produce friendly rejections).
+            if coupon.usage_limit.is_some_and(|l| coupon.usage_count >= l) {
+                reject("Coupon usage limit reached", RejectionReason::UsageLimitReached);
+                continue;
+            }
+            if let (Some(limit), Some(customer_id)) =
+                (coupon.per_customer_limit, request.customer_id)
+            {
+                if Self::coupon_customer_usage_count_with_conn(conn, coupon.id, customer_id)?
+                    >= i64::from(limit)
+                {
+                    reject(
+                        "Per-customer coupon usage limit reached",
+                        RejectionReason::UsageLimitReached,
+                    );
+                    continue;
+                }
+            }
+            let promos = Self::load_promotions_with_conn(
+                conn,
+                "SELECT * FROM promotions WHERE id = ?1",
+                &[&coupon.promotion_id.to_string()],
+            )?;
+            candidates.extend(promos.into_iter().map(|p| (p, Some(code.clone()))));
+        }
+
+        let autos = Self::load_promotions_with_conn(
+            conn,
+            "SELECT * FROM promotions
+             WHERE status = 'active'
+               AND trigger IN ('automatic', 'both')
+               AND datetime(starts_at) <= datetime(?1)
+               AND (ends_at IS NULL OR datetime(ends_at) >= datetime(?1))
+             ORDER BY priority ASC, created_at DESC",
+            &[&now.to_rfc3339()],
+        )?;
+        candidates.extend(autos.into_iter().map(|p| (p, None)));
+
+        Ok(candidates)
     }
 
     /// Per-customer usage counts (from the ledger) for every candidate that
@@ -783,43 +801,14 @@ impl SqlitePromotionRepository {
         request.coupon_codes = cart.coupon_code.iter().map(|c| c.to_uppercase()).collect();
         request.customer_id = customer_id.or(cart.customer_id);
 
-        let mut candidates: Vec<(Promotion, Option<String>)> = Vec::new();
-
-        // The coupon's promotion takes part so stacking is judged against the
-        // same set the cart was priced with.
-        if let Some(code) = request.coupon_codes.first().cloned() {
-            let coupon: Option<(String, String)> = tx
-                .query_row(
-                    "SELECT promotion_id, status FROM coupon_codes WHERE code = ?1",
-                    [&code],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?;
-            if let Some((promotion_id, status)) = coupon {
-                if status == CouponStatus::Active.to_string() {
-                    let promos = Self::load_promotions_with_conn(
-                        tx,
-                        "SELECT * FROM promotions WHERE id = ?1",
-                        &[&promotion_id],
-                    )
-                    .map_err(to_tx_err)?;
-                    candidates.extend(promos.into_iter().map(|p| (p, Some(code.clone()))));
-                }
-            }
-        }
-
-        let autos = Self::load_promotions_with_conn(
-            tx,
-            "SELECT * FROM promotions
-             WHERE status = 'active'
-               AND trigger IN ('automatic', 'both')
-               AND datetime(starts_at) <= datetime('now')
-               AND (ends_at IS NULL OR datetime(ends_at) >= datetime('now'))
-             ORDER BY priority ASC, created_at DESC",
-            &[],
-        )
-        .map_err(to_tx_err)?;
-        candidates.extend(autos.into_iter().map(|p| (p, None)));
+        // The SAME candidate selection pricing used (`apply_promotions`), so
+        // stacking at checkout equals stacking at pricing: a coupon that is
+        // dead by now (outside its window, exhausted) is dropped exactly as
+        // pricing drops it, instead of silently suppressing the automatic
+        // promotions the customer was quoted.
+        let candidates =
+            Self::candidate_promotions_with_conn(tx, &request, Utc::now(), &mut Vec::new())
+                .map_err(to_tx_err)?;
 
         let customer_usage = match request.customer_id {
             Some(customer_id) => {
@@ -874,14 +863,6 @@ impl SqlitePromotionRepository {
     // ========================================================================
     // Usage Tracking
     // ========================================================================
-
-    /// Times a customer has used a specific coupon (from the usage ledger).
-    fn coupon_customer_usage_count(&self, coupon_id: Uuid, customer_id: CustomerId) -> Result<i64> {
-        let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-        })?;
-        Self::coupon_customer_usage_count_with_conn(&conn, coupon_id, customer_id)
-    }
 
     fn coupon_customer_usage_count_with_conn(
         conn: &rusqlite::Connection,
@@ -1398,7 +1379,7 @@ impl SqlitePromotionRepository {
         })
     }
 
-    fn row_to_coupon(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<CouponCode> {
+    fn row_to_coupon(row: &rusqlite::Row<'_>) -> rusqlite::Result<CouponCode> {
         Ok(CouponCode {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "coupon_code", "id")?,
             promotion_id: PromotionId::from(parse_uuid_row(
@@ -2339,5 +2320,290 @@ mod tests {
                 "conditions must belong to their own promotion"
             );
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Candidate-set parity between pricing and checkout
+    // ------------------------------------------------------------------
+
+    fn automatic_pct_promo(
+        repo: &SqlitePromotionRepository,
+        name: &str,
+        pct: Decimal,
+        per_customer_limit: Option<i32>,
+    ) -> Promotion {
+        let promo = repo
+            .create(CreatePromotion {
+                name: name.into(),
+                promotion_type: PromotionType::PercentageOff,
+                trigger: PromotionTrigger::Automatic,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                percentage_off: Some(pct),
+                per_customer_limit,
+                ..Default::default()
+            })
+            .expect("create automatic promo");
+        repo.activate(promo.id).expect("activate")
+    }
+
+    /// A $100 cart carrying `coupon_code` (stamped directly, bypassing the
+    /// cart's own validation, to model a coupon that died AFTER it was
+    /// applied).
+    fn cart_with_coupon(db: &SqliteDatabase, coupon_code: &str) -> stateset_core::Cart {
+        use stateset_core::CartRepository;
+        let cart = db
+            .carts()
+            .create(stateset_core::CreateCart {
+                items: Some(vec![stateset_core::AddCartItem {
+                    product_id: None,
+                    variant_id: None,
+                    sku: "WIDGET".into(),
+                    name: "Widget".into(),
+                    description: None,
+                    image_url: None,
+                    quantity: 1,
+                    unit_price: dec!(100.00),
+                    original_price: None,
+                    weight: None,
+                    requires_shipping: None,
+                    metadata: None,
+                }]),
+                ..Default::default()
+            })
+            .expect("create cart");
+        db.conn()
+            .expect("conn")
+            .execute(
+                "UPDATE carts SET coupon_code = ?1 WHERE id = ?2",
+                rusqlite::params![coupon_code, cart.id.to_string()],
+            )
+            .expect("stamp coupon");
+        db.carts().get(cart.id).expect("get cart").expect("cart exists")
+    }
+
+    fn consume_promotions(
+        repo: &SqlitePromotionRepository,
+        cart: &stateset_core::Cart,
+    ) -> Vec<AppliedPromotion> {
+        let mut conn = repo.pool.get().expect("conn");
+        // The usage ledger references the order the checkout creates; this
+        // exercises the promotion half of checkout alone, with a synthetic
+        // order id, so the order FK is switched off for this connection.
+        conn.execute_batch("PRAGMA foreign_keys = OFF").expect("relax fk");
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .expect("begin");
+        let recorded = SqlitePromotionRepository::consume_cart_promotions_in_tx(
+            &tx,
+            cart,
+            None,
+            stateset_core::OrderId::new(),
+        )
+        .expect("consume");
+        tx.commit().expect("commit");
+        recorded
+    }
+
+    #[test]
+    fn checkout_stacks_exactly_what_pricing_stacked_when_the_coupon_dies() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let auto = automatic_pct_promo(&repo, "AUTO10", dec!(0.10), None);
+        let exclusive = scoped_promo_with_coupon(
+            &repo,
+            "EXCL20",
+            CreatePromotion {
+                code: Some("EXCL20".into()),
+                name: "Exclusive 20".into(),
+                promotion_type: PromotionType::PercentageOff,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Exclusive,
+                percentage_off: Some(dec!(0.20)),
+                ..Default::default()
+            },
+        );
+        let cart = cart_with_coupon(&db, "EXCL20");
+        let mut request = ApplyPromotionsRequest::from_cart(&cart, "EXCL20");
+        request.customer_id = None;
+
+        // While the coupon is live, the Exclusive promotion stands alone at
+        // pricing AND at checkout: nothing automatic is granted or consumed.
+        let priced = repo.apply_promotions(request.clone()).expect("price");
+        assert_eq!(priced.applied_promotions.len(), 1, "{priced:?}");
+        assert_eq!(priced.applied_promotions[0].promotion_id, exclusive.id);
+        assert!(consume_promotions(&repo, &cart).is_empty());
+
+        // The coupon's window closes after it was applied to the cart.
+        db.conn()
+            .expect("conn")
+            .execute(
+                "UPDATE coupon_codes SET ends_at = '2000-01-01T00:00:00Z' WHERE code = 'EXCL20'",
+                [],
+            )
+            .expect("expire coupon");
+
+        // Pricing drops the dead coupon and grants the automatic promotion...
+        let priced = repo.apply_promotions(request).expect("price");
+        assert_eq!(priced.applied_promotions.len(), 1, "{priced:?}");
+        assert_eq!(priced.applied_promotions[0].promotion_id, auto.id);
+        assert_eq!(priced.total_discount, dec!(10.00));
+        assert!(priced.rejected_promotions.iter().any(|r| {
+            r.coupon_code.as_deref() == Some("EXCL20") && r.reason_code == RejectionReason::Expired
+        }));
+
+        // ...and checkout consumes exactly that: the dead Exclusive coupon on
+        // the cart no longer suppresses the automatic promotion the customer
+        // was quoted. (It used to: checkout only checked the coupon's status,
+        // not its window.)
+        let recorded = consume_promotions(&repo, &cart);
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert_eq!(recorded[0].promotion_id, auto.id);
+        assert_eq!(recorded[0].discount_amount, dec!(10.00));
+        let fetched = repo.get(auto.id).expect("get").expect("found");
+        assert_eq!(fetched.usage_count, 1, "automatic usage advanced once at checkout");
+        let exclusive_after = repo.get(exclusive.id).expect("get").expect("found");
+        assert_eq!(exclusive_after.usage_count, 0, "the dead coupon's promotion is untouched");
+    }
+
+    #[test]
+    fn checkout_drops_an_exhausted_coupon_like_pricing_does() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let auto = automatic_pct_promo(&repo, "AUTO5", dec!(0.05), None);
+        let _exclusive = scoped_promo_with_coupon(
+            &repo,
+            "EXCL-ONE",
+            CreatePromotion {
+                code: Some("EXCL-ONE".into()),
+                name: "Exclusive once".into(),
+                promotion_type: PromotionType::PercentageOff,
+                trigger: PromotionTrigger::CouponCode,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Exclusive,
+                percentage_off: Some(dec!(0.50)),
+                ..Default::default()
+            },
+        );
+        // The coupon hits its usage limit after being applied to the cart.
+        db.conn()
+            .expect("conn")
+            .execute(
+                "UPDATE coupon_codes SET usage_limit = 1, usage_count = 1 WHERE code = 'EXCL-ONE'",
+                [],
+            )
+            .expect("exhaust coupon");
+        let cart = cart_with_coupon(&db, "EXCL-ONE");
+
+        let priced = repo
+            .apply_promotions(ApplyPromotionsRequest::from_cart(&cart, "EXCL-ONE"))
+            .expect("price");
+        assert_eq!(priced.applied_promotions.len(), 1, "{priced:?}");
+        assert_eq!(priced.applied_promotions[0].promotion_id, auto.id);
+
+        let recorded = consume_promotions(&repo, &cart);
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert_eq!(recorded[0].promotion_id, auto.id);
+    }
+
+    #[test]
+    fn apply_promotions_enforces_per_customer_limit_on_automatic_promotions() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let promo = automatic_pct_promo(&repo, "ONCE-EACH", dec!(0.10), Some(1));
+        let alice = make_customer(&db);
+        let bob = make_customer(&db);
+
+        let request = |customer: Option<CustomerId>| ApplyPromotionsRequest {
+            customer_id: customer,
+            line_items: vec![line_item("WIDGET", None, dec!(100.00))],
+            subtotal: dec!(100.00),
+            currency: CurrencyCode::USD,
+            ..Default::default()
+        };
+
+        // First use applies for Alice.
+        let priced = repo.apply_promotions(request(Some(alice))).expect("price");
+        assert_eq!(priced.applied_promotions.len(), 1, "{priced:?}");
+        repo.record_usage(promo.id, None, Some(alice), None, None, dec!(10.00), "USD")
+            .expect("alice redeems");
+
+        // Alice is now at her limit: refused at pricing...
+        let priced = repo.apply_promotions(request(Some(alice))).expect("price");
+        assert!(priced.applied_promotions.is_empty(), "{priced:?}");
+        assert!(priced.rejected_promotions.iter().any(|r| {
+            r.promotion_id == Some(promo.id) && r.reason_code == RejectionReason::UsageLimitReached
+        }));
+        // ...and at checkout, where the same candidate selection and
+        // evaluator run inside the order transaction.
+        let mut cart = cart_with_coupon(&db, "");
+        cart.customer_id = Some(alice);
+        cart.coupon_code = None;
+        assert!(consume_promotions(&repo, &cart).is_empty());
+
+        // Bob and anonymous carts are unaffected.
+        assert_eq!(
+            repo.apply_promotions(request(Some(bob))).expect("price").applied_promotions.len(),
+            1
+        );
+        assert_eq!(
+            repo.apply_promotions(request(None)).expect("price").applied_promotions.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn create_refuses_buy_x_get_y_with_zero_quantities() {
+        let repo = fresh_repo();
+        let err = repo
+            .create(CreatePromotion {
+                name: "Broken BOGO".into(),
+                promotion_type: PromotionType::BuyXGetY,
+                trigger: PromotionTrigger::Automatic,
+                buy_quantity: Some(0),
+                get_quantity: Some(1),
+                get_discount_percent: Some(dec!(1)),
+                ..Default::default()
+            })
+            .expect_err("buy_quantity 0 must be refused");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn buy_two_get_one_grants_one_free_unit_on_five() {
+        let repo = fresh_repo();
+        let promo = repo
+            .create(CreatePromotion {
+                name: "B2G1".into(),
+                promotion_type: PromotionType::BuyXGetY,
+                trigger: PromotionTrigger::Automatic,
+                target: PromotionTarget::Order,
+                stacking: StackingBehavior::Stackable,
+                buy_quantity: Some(2),
+                get_quantity: Some(1),
+                get_discount_percent: Some(dec!(1)),
+                ..Default::default()
+            })
+            .expect("create");
+        repo.activate(promo.id).expect("activate");
+        let priced = repo
+            .apply_promotions(ApplyPromotionsRequest {
+                line_items: vec![stateset_core::PromotionLineItem {
+                    id: "W".into(),
+                    product_id: None,
+                    variant_id: None,
+                    sku: Some("W".into()),
+                    category_ids: vec![],
+                    quantity: 5,
+                    unit_price: dec!(10.00),
+                    line_total: dec!(50.00),
+                }],
+                subtotal: dec!(50.00),
+                currency: CurrencyCode::USD,
+                ..Default::default()
+            })
+            .expect("price");
+        assert_eq!(priced.total_discount, dec!(10.00), "{priced:?}");
     }
 }

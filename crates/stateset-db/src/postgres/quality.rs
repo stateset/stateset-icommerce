@@ -1,6 +1,6 @@
 //! PostgreSQL implementation of Quality Control repository
 
-use super::map_db_error;
+use super::{PgLotRepository, map_db_error};
 use chrono::Utc;
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -10,17 +10,11 @@ use stateset_core::traits::QualityRepository;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
     DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
-    InspectionType, LotStatus, LotTransactionType, NcrStatus, NonConformance, NonConformanceFilter,
-    QualityHold, QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result,
-    UpdateInspection, UpdateNonConformance,
+    InspectionType, Lot, LotStatus, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
+    QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection,
+    UpdateNonConformance,
 };
 use uuid::Uuid;
-
-/// How a failed inspection identifies the lot to quarantine.
-enum LotKey {
-    Id(Uuid),
-    Number(String),
-}
 
 #[derive(Debug, Clone)]
 pub struct PgQualityRepository {
@@ -445,80 +439,31 @@ impl PgQualityRepository {
         Ok(Some(Self::row_to_inspection(row, items)?))
     }
 
-    /// Place the lot selected by `key` into quarantine on the caller's
-    /// transaction, mirroring `PgLotRepository::quarantine_async`: only
-    /// `Active`/`OnHold` lots move, every unreserved unit is quarantined, and a
-    /// `Quarantined` lot transaction is written. Lots that are missing, already
-    /// quarantined, or terminal are left untouched — a failed inspection must
-    /// never fail to complete because the lot has already been dealt with.
+    /// Quarantine `lot` on the caller's transaction if it can still be
+    /// quarantined. Mirrors `PgLotRepository::quarantine_async` exactly (same
+    /// helper): the status flips, unreserved units are held, the lot's serials
+    /// are quarantined and the linked inventory balance holds the units — all
+    /// in this transaction. Lots that are already quarantined or terminal are
+    /// left untouched: a failed inspection must never fail to complete
+    /// because the lot has already been dealt with.
     async fn quarantine_lot_on(
         tx: &mut sqlx::Transaction<'_, Postgres>,
-        key: LotKey,
+        lot: Option<Lot>,
         reason: &str,
         now: chrono::DateTime<Utc>,
     ) -> Result<()> {
-        const BY_ID: &str =
-            "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
-             FROM lots WHERE id = $1 FOR UPDATE";
-        const BY_NUMBER: &str =
-            "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
-             FROM lots WHERE lot_number = $1 FOR UPDATE";
-        let row: Option<(Uuid, String, Decimal, Decimal, Decimal)> = match key {
-            LotKey::Id(id) => sqlx::query_as(BY_ID).bind(id).fetch_optional(tx.as_mut()).await,
-            LotKey::Number(n) => {
-                sqlx::query_as(BY_NUMBER).bind(n).fetch_optional(tx.as_mut()).await
-            }
-        }
-        .map_err(map_db_error)?;
-        let Some((lot_id, status, remaining, reserved, quarantined)) = row else {
-            return Ok(());
-        };
-        let status: LotStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!("Invalid lot.status '{status}': {e}"))
-        })?;
-        if !status.can_transition_to(LotStatus::Quarantine) {
+        let Some(lot) = lot else { return Ok(()) };
+        if !lot.status.can_transition_to(LotStatus::Quarantine) {
             return Ok(());
         }
-        let available = (remaining - reserved - quarantined).max(Decimal::ZERO);
-
-        let updated = sqlx::query(
-            "UPDATE lots SET status = $1, quantity_quarantined = $2, updated_at = $3
-             WHERE id = $4 AND status = $5",
-        )
-        .bind(LotStatus::Quarantine.to_string())
-        .bind(available)
-        .bind(now)
-        .bind(lot_id)
-        .bind(status.to_string())
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .rows_affected();
-        if updated != 1 {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot quarantine lot {lot_id}: status changed concurrently"
-            )));
-        }
-        sqlx::query(
-            "INSERT INTO lot_transactions (id, lot_id, transaction_type, quantity, reference_type,
-                                           reference_id, reason, created_at)
-             VALUES ($1, $2, $3, $4, 'quarantine', $2, $5, $6)",
-        )
-        .bind(Uuid::new_v4())
-        .bind(lot_id)
-        .bind(LotTransactionType::Quarantined.to_string())
-        .bind(available)
-        .bind(reason)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        Ok(())
+        PgLotRepository::quarantine_lot_on(tx, &lot, reason, now).await.map(|_| ())
     }
 
     /// Quarantine every lot a failed/partially-failed inspection implicates:
     /// the header's lot when `reference_type = "lot"`, plus each lot named on
-    /// an item whose result is `Fail`.
+    /// an item whose result is `Fail`. Item lots are resolved by
+    /// `(sku, lot_number)` — an item's lot number that exists under a
+    /// different SKU is a `Conflict`, never a silent match on the wrong stock.
     async fn quarantine_failed_lots_on(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         inspection: &Inspection,
@@ -527,7 +472,8 @@ impl PgQualityRepository {
     ) -> Result<()> {
         let reason = format!("Inspection {} completed as {overall}", inspection.inspection_number);
         if overall == InspectionStatus::Failed && inspection.reference_type == "lot" {
-            Self::quarantine_lot_on(tx, LotKey::Id(inspection.reference_id), &reason, now).await?;
+            let lot = PgLotRepository::load_lot_on(tx, inspection.reference_id).await?;
+            Self::quarantine_lot_on(tx, lot, &reason, now).await?;
         }
         if matches!(overall, InspectionStatus::Failed | InspectionStatus::PartialPass) {
             let mut seen = std::collections::HashSet::new();
@@ -536,14 +482,11 @@ impl PgQualityRepository {
                     continue;
                 }
                 if let Some(lot_number) = &item.lot_number {
-                    if seen.insert(lot_number.clone()) {
-                        Self::quarantine_lot_on(
-                            tx,
-                            LotKey::Number(lot_number.clone()),
-                            &reason,
-                            now,
-                        )
-                        .await?;
+                    let sku = Some(item.sku.trim()).filter(|s| !s.is_empty());
+                    if seen.insert((sku.map(str::to_owned), lot_number.clone())) {
+                        let lot =
+                            PgLotRepository::load_lot_by_number_on(tx, lot_number, sku).await?;
+                        Self::quarantine_lot_on(tx, lot, &reason, now).await?;
                     }
                 }
             }

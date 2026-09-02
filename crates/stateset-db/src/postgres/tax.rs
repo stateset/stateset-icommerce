@@ -7,12 +7,19 @@ use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
     CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ExemptionType,
-    JurisdictionLevel, JurisdictionSummary, LineItemTax, ProductTaxCategory, Result, TaxAddress,
-    TaxBreakdown, TaxCalculationMethod, TaxCalculationRequest, TaxCalculationResult,
-    TaxCompoundMethod, TaxDetail, TaxExemption, TaxJurisdiction, TaxJurisdictionFilter, TaxRate,
-    TaxRateFilter, TaxRepository, TaxSettings, TaxType,
+    JurisdictionLevel, ProductTaxCategory, ResolvedTaxRate, Result, TaxAddress,
+    TaxCalculationMethod, TaxCalculationRequest, TaxCalculationResult, TaxCompoundMethod,
+    TaxComputationInputs, TaxExemption, TaxJurisdiction, TaxJurisdictionFilter, TaxRate,
+    TaxRateFilter, TaxRepository, TaxSettings, TaxType, compute_tax,
 };
+use std::collections::HashMap;
 use uuid::Uuid;
+
+/// Upper-case, trimmed form of a jurisdiction/country/state code — the
+/// canonical stored form and the form every lookup compares against.
+fn normalize_code(code: &str) -> String {
+    code.trim().to_ascii_uppercase()
+}
 
 /// PostgreSQL tax repository
 #[derive(Debug, Clone)]
@@ -356,6 +363,8 @@ impl PgTaxRepository {
         })
     }
 
+    /// Create a new jurisdiction. `code`, `country_code` and `state_code`
+    /// are normalised to upper case so lookups are case-insensitive.
     pub async fn create_jurisdiction_async(
         &self,
         input: CreateTaxJurisdiction,
@@ -376,10 +385,10 @@ impl PgTaxRepository {
         .bind(id)
         .bind(input.parent_id)
         .bind(&input.name)
-        .bind(&input.code)
+        .bind(normalize_code(&input.code))
         .bind(input.level.to_string())
-        .bind(&input.country_code)
-        .bind(&input.state_code)
+        .bind(normalize_code(&input.country_code))
+        .bind(input.state_code.as_deref().map(normalize_code))
         .bind(&input.county)
         .bind(&input.city)
         .bind(postal_codes)
@@ -411,9 +420,9 @@ impl PgTaxRepository {
     ) -> Result<Option<TaxJurisdiction>> {
         let row = sqlx::query_as::<_, TaxJurisdictionRow>(
             "SELECT id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at
-             FROM tax_jurisdictions WHERE code = $1",
+             FROM tax_jurisdictions WHERE UPPER(code) = $1",
         )
-        .bind(code)
+        .bind(normalize_code(code))
         .fetch_optional(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -431,12 +440,14 @@ impl PgTaxRepository {
         );
         let mut param_idx = 1;
 
+        // Codes are stored upper-case, but compare case-insensitively so
+        // rows written before normalisation still match ("us" == "US").
         if filter.country_code.is_some() {
-            query.push_str(&format!(" AND country_code = ${}", param_idx));
+            query.push_str(&format!(" AND UPPER(country_code) = ${}", param_idx));
             param_idx += 1;
         }
         if filter.state_code.is_some() {
-            query.push_str(&format!(" AND state_code = ${}", param_idx));
+            query.push_str(&format!(" AND UPPER(state_code) = ${}", param_idx));
             param_idx += 1;
         }
         if filter.level.is_some() {
@@ -459,10 +470,10 @@ impl PgTaxRepository {
         let mut q = sqlx::query_as::<_, TaxJurisdictionRow>(&query);
 
         if let Some(country) = &filter.country_code {
-            q = q.bind(country);
+            q = q.bind(normalize_code(country));
         }
         if let Some(state) = &filter.state_code {
-            q = q.bind(state);
+            q = q.bind(normalize_code(state));
         }
         if let Some(level) = &filter.level {
             q = q.bind(level.to_string());
@@ -631,6 +642,9 @@ impl PgTaxRepository {
         Ok(all_rates)
     }
 
+    /// Create a new exemption. It is created **unverified** and is not
+    /// honoured by tax calculation until [`Self::verify_exemption_async`] is
+    /// called.
     pub async fn create_exemption_async(&self, input: CreateTaxExemption) -> Result<TaxExemption> {
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -708,20 +722,23 @@ impl PgTaxRepository {
         self.get_exemption_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Get all active exemptions for a customer, whatever their verification
+    /// state or validity window. Tax calculation honours only those that are
+    /// [`TaxExemption::is_effective_on`] the transaction date (active,
+    /// verified, inside the window).
     pub async fn get_customer_exemptions_async(
         &self,
         customer_id: Uuid,
     ) -> Result<Vec<TaxExemption>> {
-        let today = Utc::now().date_naive();
         let rows = sqlx::query_as::<_, TaxExemptionRow>(
             "SELECT id, customer_id, exemption_type, certificate_number, issuing_authority,
                     jurisdiction_ids, exempt_categories, effective_from, expires_at, verified,
                     verified_at, notes, active, created_at, updated_at
              FROM tax_exemptions
-             WHERE customer_id = $1 AND active = true AND effective_from <= $2 AND (expires_at IS NULL OR expires_at >= $2)",
+             WHERE customer_id = $1 AND active = true
+             ORDER BY effective_from, id",
         )
         .bind(customer_id)
-        .bind(today)
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -807,277 +824,72 @@ impl PgTaxRepository {
         self.get_settings_async().await
     }
 
+    /// Calculate tax for a request.
+    ///
+    /// This backend only resolves the data — settings, the customer's
+    /// exemptions, and the rates (with their jurisdictions) applicable to the
+    /// shipping address for every product category the request touches —
+    /// and hands it to the shared, pure [`stateset_core::compute_tax`], so
+    /// SQLite and Postgres produce identical results for identical inputs.
     pub async fn calculate_tax_async(
         &self,
         request: TaxCalculationRequest,
     ) -> Result<TaxCalculationResult> {
-        let settings = self.get_settings_async().await?;
         let now = Utc::now();
+        let inputs = self.computation_inputs(&request, now).await?;
+        Ok(compute_tax(&request, &inputs, now))
+    }
+
+    /// Load everything [`stateset_core::compute_tax`] needs for `request`.
+    async fn computation_inputs(
+        &self,
+        request: &TaxCalculationRequest,
+        now: DateTime<Utc>,
+    ) -> Result<TaxComputationInputs> {
+        let settings = self.get_settings_async().await?;
         let transaction_date = request.transaction_date.unwrap_or_else(|| now.date_naive());
 
-        let exemptions = if let Some(customer_id) = request.customer_id {
-            self.get_customer_exemptions_async(customer_id).await?
-        } else {
-            Vec::new()
+        let exemptions = match request.customer_id {
+            Some(customer_id) => self.get_customer_exemptions_async(customer_id).await?,
+            None => Vec::new(),
         };
 
-        let mut subtotal = Decimal::ZERO;
-        let mut total_tax = Decimal::ZERO;
-        let mut line_item_taxes = Vec::new();
-        let mut tax_breakdown: Vec<TaxBreakdown> = Vec::new();
-        let mut jurisdictions_map = std::collections::HashMap::new();
-
-        for item in &request.line_items {
-            let mut line_amount = item.unit_price * item.quantity - item.discount_amount;
-            if line_amount < Decimal::ZERO {
-                line_amount = Decimal::ZERO;
-            }
-            subtotal += line_amount;
-
-            let is_exempt = exemptions.iter().any(|e| {
-                e.exempt_categories.is_empty() || e.exempt_categories.contains(&item.tax_category)
-            });
-
-            if is_exempt || item.tax_category == ProductTaxCategory::Exempt {
-                line_item_taxes.push(LineItemTax {
-                    line_item_id: item.id.clone(),
-                    taxable_amount: line_amount,
-                    tax_amount: Decimal::ZERO,
-                    effective_rate: Decimal::ZERO,
-                    is_exempt: true,
-                    exemption_reason: Some("Customer exemption".to_string()),
-                    tax_details: Vec::new(),
-                });
-                continue;
-            }
-
-            let rates = self
-                .get_rates_for_address_async(
-                    &request.shipping_address,
-                    item.tax_category,
-                    transaction_date,
-                )
-                .await?;
-
-            let mut line_tax = Decimal::ZERO;
-            let mut line_tax_details = Vec::new();
-
-            for rate in &rates {
-                if line_amount <= Decimal::ZERO {
-                    continue;
-                }
-
-                if let Some(min) = rate.threshold_min {
-                    if line_amount < min {
-                        continue;
-                    }
-                }
-
-                let capped_base = match rate.threshold_max {
-                    Some(max) if line_amount > max => max,
-                    _ => line_amount,
-                };
-
-                if capped_base <= Decimal::ZERO {
-                    continue;
-                }
-
-                let taxable_amount = if rate.fixed_amount.is_some() {
-                    capped_base
-                } else if rate.is_compound {
-                    capped_base + line_tax
-                } else {
-                    capped_base
-                };
-
-                let rate_tax = if let Some(fixed) = rate.fixed_amount {
-                    fixed
-                } else {
-                    taxable_amount * rate.rate
-                };
-
-                line_tax += rate_tax;
-
-                if let Some(jurisdiction) =
-                    self.get_jurisdiction_async(rate.jurisdiction_id).await?
-                {
-                    jurisdictions_map.entry(jurisdiction.id).or_insert_with(|| {
-                        JurisdictionSummary {
-                            id: jurisdiction.id,
-                            name: jurisdiction.name.clone(),
-                            code: jurisdiction.code.clone(),
-                            level: jurisdiction.level,
-                            total_rate: Decimal::ZERO,
-                            total_tax: Decimal::ZERO,
-                        }
-                    });
-
-                    if let Some(summary) = jurisdictions_map.get_mut(&jurisdiction.id) {
-                        summary.total_rate += rate.rate;
-                        summary.total_tax += rate_tax;
-                    }
-
-                    if let Some(existing) = tax_breakdown.iter_mut().find(|b| {
-                        b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type
-                    }) {
-                        existing.taxable_amount += taxable_amount;
-                        existing.tax_amount += rate_tax;
-                    } else {
-                        tax_breakdown.push(TaxBreakdown {
-                            jurisdiction_id: jurisdiction.id,
-                            jurisdiction_name: jurisdiction.name.clone(),
-                            tax_type: rate.tax_type,
-                            rate_name: rate.name.clone(),
-                            rate: rate.rate,
-                            taxable_amount,
-                            tax_amount: rate_tax,
-                            is_compound: rate.is_compound,
-                        });
-                    }
-
-                    line_tax_details.push(TaxDetail {
-                        tax_type: rate.tax_type,
-                        jurisdiction_name: jurisdiction.name,
-                        rate: rate.rate,
-                        amount: rate_tax,
-                    });
-                }
-            }
-
-            let effective_rate =
-                if line_amount.is_zero() { Decimal::ZERO } else { line_tax / line_amount };
-
-            total_tax += line_tax;
-            line_item_taxes.push(LineItemTax {
-                line_item_id: item.id.clone(),
-                taxable_amount: line_amount,
-                tax_amount: line_tax,
-                effective_rate,
-                is_exempt: false,
-                exemption_reason: None,
-                tax_details: line_tax_details,
-            });
+        let mut categories: Vec<ProductTaxCategory> = request
+            .line_items
+            .iter()
+            .map(|item| item.tax_category)
+            .filter(|category| *category != ProductTaxCategory::Exempt)
+            .collect();
+        if settings.tax_shipping && request.shipping_amount.is_some() {
+            categories.push(ProductTaxCategory::Standard);
         }
+        categories.sort_by_key(|c| c.as_str());
+        categories.dedup();
 
-        let mut shipping_tax = Decimal::ZERO;
-        if settings.tax_shipping {
-            if let Some(mut shipping_amount) = request.shipping_amount {
-                if shipping_amount < Decimal::ZERO {
-                    shipping_amount = Decimal::ZERO;
-                }
-
-                let shipping_rates = self
-                    .get_rates_for_address_async(
-                        &request.shipping_address,
-                        ProductTaxCategory::Standard,
-                        transaction_date,
-                    )
-                    .await?;
-                for rate in &shipping_rates {
-                    if shipping_amount <= Decimal::ZERO {
-                        continue;
-                    }
-
-                    if let Some(min) = rate.threshold_min {
-                        if shipping_amount < min {
+        let mut jurisdictions: HashMap<Uuid, TaxJurisdiction> = HashMap::new();
+        let mut rates = Vec::new();
+        for category in categories {
+            for rate in self
+                .get_rates_for_address_async(&request.shipping_address, category, transaction_date)
+                .await?
+            {
+                let jurisdiction = match jurisdictions.get(&rate.jurisdiction_id) {
+                    Some(jurisdiction) => jurisdiction.clone(),
+                    None => {
+                        let Some(jurisdiction) =
+                            self.get_jurisdiction_async(rate.jurisdiction_id).await?
+                        else {
                             continue;
-                        }
+                        };
+                        jurisdictions.insert(jurisdiction.id, jurisdiction.clone());
+                        jurisdiction
                     }
-
-                    let capped_base = match rate.threshold_max {
-                        Some(max) if shipping_amount > max => max,
-                        _ => shipping_amount,
-                    };
-
-                    if capped_base <= Decimal::ZERO {
-                        continue;
-                    }
-
-                    let taxable_amount = if rate.fixed_amount.is_some() {
-                        capped_base
-                    } else if rate.is_compound {
-                        capped_base + shipping_tax
-                    } else {
-                        capped_base
-                    };
-
-                    let rate_tax = if let Some(fixed) = rate.fixed_amount {
-                        fixed
-                    } else {
-                        taxable_amount * rate.rate
-                    };
-
-                    shipping_tax += rate_tax;
-
-                    if let Some(jurisdiction) =
-                        self.get_jurisdiction_async(rate.jurisdiction_id).await?
-                    {
-                        jurisdictions_map.entry(jurisdiction.id).or_insert_with(|| {
-                            JurisdictionSummary {
-                                id: jurisdiction.id,
-                                name: jurisdiction.name.clone(),
-                                code: jurisdiction.code.clone(),
-                                level: jurisdiction.level,
-                                total_rate: Decimal::ZERO,
-                                total_tax: Decimal::ZERO,
-                            }
-                        });
-
-                        if let Some(summary) = jurisdictions_map.get_mut(&jurisdiction.id) {
-                            summary.total_rate += rate.rate;
-                            summary.total_tax += rate_tax;
-                        }
-
-                        if let Some(existing) = tax_breakdown.iter_mut().find(|b| {
-                            b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type
-                        }) {
-                            existing.taxable_amount += taxable_amount;
-                            existing.tax_amount += rate_tax;
-                        } else {
-                            tax_breakdown.push(TaxBreakdown {
-                                jurisdiction_id: jurisdiction.id,
-                                jurisdiction_name: jurisdiction.name.clone(),
-                                tax_type: rate.tax_type,
-                                rate_name: rate.name.clone(),
-                                rate: rate.rate,
-                                taxable_amount,
-                                tax_amount: rate_tax,
-                                is_compound: rate.is_compound,
-                            });
-                        }
-                    }
-                }
-
-                total_tax += shipping_tax;
+                };
+                rates.push(ResolvedTaxRate { rate, jurisdiction });
             }
         }
 
-        let decimal_places = settings.decimal_places as u32;
-        let strategy = settings.rounding_strategy();
-        let total_tax = total_tax.round_dp_with_strategy(decimal_places, strategy);
-        let shipping_tax = shipping_tax.round_dp_with_strategy(decimal_places, strategy);
-        let total = subtotal + total_tax + request.shipping_amount.unwrap_or_default();
-
-        // Emit jurisdictions in a stable order (by code, then id) rather than
-        // the HashMap's iteration order, which varies run-to-run and between the
-        // SQLite and Postgres backends — the tax result must be deterministic.
-        let mut jurisdictions: Vec<JurisdictionSummary> = jurisdictions_map.into_values().collect();
-        jurisdictions.sort_by(|a, b| a.code.cmp(&b.code).then_with(|| a.id.cmp(&b.id)));
-
-        Ok(TaxCalculationResult {
-            id: Uuid::new_v4(),
-            total_tax,
-            subtotal,
-            total,
-            shipping_tax,
-            tax_breakdown,
-            line_item_taxes,
-            exemptions_applied: !exemptions.is_empty(),
-            exemption_details: None,
-            jurisdictions,
-            calculated_at: now,
-            is_estimate: true,
-        })
+        Ok(TaxComputationInputs { settings, rates, exemptions })
     }
 
     pub async fn save_calculation_async(

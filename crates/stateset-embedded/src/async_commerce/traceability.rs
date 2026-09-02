@@ -260,6 +260,15 @@ impl AsyncLots {
         self.db.lots().expire_lots_async(chrono::Utc::now()).await
     }
 
+    /// Sweep lot reservations that expired before `now`; see
+    /// `Lots::release_expired_reservations`.
+    pub async fn release_expired_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        self.db.lots().release_expired_reservations_async(now).await
+    }
+
     pub async fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>> {
         self.db.lots().get_available_lots_for_sku_async(sku).await
     }

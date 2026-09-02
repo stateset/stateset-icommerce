@@ -20,9 +20,9 @@ use crate::dto::{
 };
 use crate::error::ErrorBody;
 use crate::routes::a2a_credit::{
-    CreateCreditTermsRequest, CreditAmountRequest, CreditTermsResponse,
+    CreateCreditTermsRequest, CreditAmountRequest, CreditEntryResponse, CreditTermsResponse,
 };
-use crate::routes::a2a_messaging::{MessageResponse, SendMessageRequest};
+use crate::routes::a2a_messaging::{FailMessageRequest, MessageResponse, SendMessageRequest};
 use crate::routes::currency::{
     ConversionResponse, ConvertCurrencyRequest, ExchangeRateListResponse, ExchangeRateResponse,
     SetExchangeRateRequest,
@@ -151,12 +151,15 @@ use crate::state::AppState;
         crate::routes::a2a_messaging::send_message,
         crate::routes::a2a_messaging::list_messages,
         crate::routes::a2a_messaging::acknowledge_message,
+        crate::routes::a2a_messaging::get_message,
+        crate::routes::a2a_messaging::fail_message,
         // A2A Credit
         crate::routes::a2a_credit::create_terms,
         crate::routes::a2a_credit::list_terms,
         crate::routes::a2a_credit::get_terms,
         crate::routes::a2a_credit::charge_credit,
         crate::routes::a2a_credit::record_payment,
+        crate::routes::a2a_credit::list_entries,
         // Subscriptions
         crate::routes::subscriptions::create_subscription,
         crate::routes::subscriptions::list_subscriptions,
@@ -641,11 +644,13 @@ use crate::state::AppState;
         NegotiationResponse,
         // A2A Messaging
         SendMessageRequest,
+        FailMessageRequest,
         MessageResponse,
         // A2A Credit
         CreateCreditTermsRequest,
         CreditAmountRequest,
         CreditTermsResponse,
+        CreditEntryResponse,
         // Subscriptions
         CreateSubscriptionRequest,
         SubscriptionResponse,

@@ -72,8 +72,9 @@ pub use sqlite::SqliteDatabase;
 pub use postgres::PostgresDatabase;
 
 use stateset_core::{
-    A2ACommerceRepository, AccountsPayableRepository, AccountsReceivableRepository,
-    ActivityLogRepository, AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
+    A2ACommerceRepository, A2ACreditTermsRepository, A2AMessagingRepository,
+    AccountsPayableRepository, AccountsReceivableRepository, ActivityLogRepository,
+    AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
     AgentValidationRepository, AnalyticsRepository, BackorderRepository, BinRepository,
     BomRepository, CartRepository, ChannelRepository, CommerceError, CompanyRepository,
     CostAccountingRepository, CreditRepository, CurrencyRepository, CustomObjectRepository,
@@ -354,6 +355,10 @@ pub trait Database: Send + Sync {
     fn a2a_quotes(&self) -> Box<dyn A2ACommerceRepository + '_>;
     /// Get the agent-to-agent commerce repository (quotes and purchases)
     fn a2a_purchases(&self) -> Box<dyn A2ACommerceRepository + '_>;
+    /// Get the durable, tenant-scoped A2A credit terms repository
+    fn a2a_credit_terms(&self) -> Box<dyn A2ACreditTermsRepository + '_>;
+    /// Get the durable, tenant-scoped A2A agent messaging repository
+    fn a2a_messages(&self) -> Box<dyn A2AMessagingRepository + '_>;
     /// Get the agent card repository
     fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_>;
     /// Get the agent identity registry repository (ERC-8004)
@@ -1008,6 +1013,14 @@ macro_rules! impl_database_accessors {
 
             fn a2a_purchases(&self) -> Box<dyn A2ACommerceRepository + '_> {
                 Box::new(<$db_type>::a2a_purchases(self))
+            }
+
+            fn a2a_credit_terms(&self) -> Box<dyn A2ACreditTermsRepository + '_> {
+                Box::new(<$db_type>::a2a_credit_terms(self))
+            }
+
+            fn a2a_messages(&self) -> Box<dyn A2AMessagingRepository + '_> {
+                Box::new(<$db_type>::a2a_messages(self))
             }
 
             fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_> {

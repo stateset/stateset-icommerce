@@ -469,13 +469,22 @@ impl PgFulfillmentRepository {
     /// a `Draft` wave was never on the floor, and a `Cancelled` or already
     /// `Completed` wave is terminal. Completing a cancelled wave used to
     /// succeed, resurrecting it with counters that describe nothing.
+    ///
+    /// A wave also cannot complete while any of its picks is still open
+    /// (`pending`/`assigned`/`in_progress`): the predicate is computed from the
+    /// `pick_tasks` table rather than the `pick_count` counter so waves created
+    /// before the counter was maintained are judged correctly.
     pub async fn complete_wave_async(&self, id: Uuid) -> Result<Wave> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let changed = sqlx::query(
             "UPDATE waves SET status = $1, completed_at = $2
-             WHERE id = $3 AND status IN ('released', 'in_progress')",
+             WHERE id = $3 AND status IN ('released', 'in_progress')
+               AND NOT EXISTS (
+                   SELECT 1 FROM pick_tasks
+                   WHERE wave_id = waves.id
+                     AND status IN ('pending', 'assigned', 'in_progress'))",
         )
         .bind(WaveStatus::Completed.to_string())
         .bind(now)
@@ -484,6 +493,28 @@ impl PgFulfillmentRepository {
         .await
         .map_err(map_db_error)?
         .rows_affected();
+
+        if changed == 0 {
+            let (open,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM pick_tasks WHERE wave_id = $1
+                 AND status IN ('pending', 'assigned', 'in_progress')",
+            )
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            let status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM waves WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            if open > 0 && matches!(status.as_deref(), Some("released" | "in_progress")) {
+                return Err(CommerceError::ValidationError(format!(
+                    "cannot complete wave {id}: {open} pick task(s) still open"
+                )));
+            }
+        }
 
         Self::finish_transition(tx, changed, "waves", "wave", id, "complete", Self::row_to_wave)
             .await
@@ -557,6 +588,34 @@ impl PgFulfillmentRepository {
         let now = Utc::now();
         let id = Uuid::new_v4();
 
+        // Count the pick on its wave. A wave that is already completed or
+        // cancelled cannot take new picks: they would never be reflected in
+        // its counters and `complete_wave` could no longer reconcile them.
+        if let Some(wave_id) = input.wave_id {
+            let changed = sqlx::query(
+                "UPDATE waves SET pick_count = pick_count + 1
+                 WHERE id = $1 AND status IN ('draft', 'released', 'in_progress')",
+            )
+            .bind(wave_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_db_error)?
+            .rows_affected();
+            if changed == 0 {
+                let current: Option<String> =
+                    sqlx::query_scalar("SELECT status FROM waves WHERE id = $1")
+                        .bind(wave_id)
+                        .fetch_optional(&mut *conn)
+                        .await
+                        .map_err(map_db_error)?;
+                return Err(current.map_or(CommerceError::NotFound, |status| {
+                    CommerceError::Conflict(format!(
+                        "cannot add a pick to wave {wave_id}: status is {status}"
+                    ))
+                }));
+            }
+        }
+
         sqlx::query(
             r#"
             INSERT INTO pick_tasks (
@@ -594,9 +653,13 @@ impl PgFulfillmentRepository {
         Self::row_to_pick(row)
     }
 
+    /// Create a pick task. The insert and the wave counter bump are one
+    /// transaction.
     pub async fn create_pick_async(&self, input: CreatePickTask) -> Result<PickTask> {
-        let mut conn = self.pool.acquire().await.map_err(map_db_error)?;
-        Self::insert_pick_on(&mut conn, &input).await
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let pick = Self::insert_pick_on(tx.as_mut(), &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(pick)
     }
 
     pub async fn get_pick_async(&self, id: Uuid) -> Result<Option<PickTask>> {
@@ -885,6 +948,18 @@ impl PgFulfillmentRepository {
         .await
         .map_err(map_db_error)?
         .rows_affected();
+
+        // A cancelled pick no longer counts toward the wave's workload.
+        if changed > 0 {
+            sqlx::query(
+                "UPDATE waves SET pick_count = GREATEST(pick_count - 1, 0)
+                 WHERE id = (SELECT wave_id FROM pick_tasks WHERE id = $1)",
+            )
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
 
         Self::finish_transition(
             tx,

@@ -644,6 +644,60 @@ fn test_order_cancel() {
 }
 
 #[test]
+fn test_order_cancel_refuses_to_orphan_captured_money_unless_forced() {
+    use stateset_core::{CancelOrder, CommerceError, PaymentMethodType, PaymentTransactionStatus};
+    use stateset_embedded::CreatePayment;
+
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+    let order = create_test_order(&commerce, customer_id);
+    let settled = commerce
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(29.99),
+            ..Default::default()
+        })
+        .expect("create payment");
+    commerce.payments().mark_completed(settled.id).expect("capture");
+    let in_flight = commerce
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(10.00),
+            ..Default::default()
+        })
+        .expect("create pending payment");
+
+    // Plain cancel: refused while payments hold money.
+    let err = commerce.orders().cancel(order.id).expect_err("captured money blocks cancel");
+    assert!(
+        matches!(err, CommerceError::ValidationError(ref m) if m.contains("39.99 USD")),
+        "{err:?}"
+    );
+    assert_eq!(commerce.orders().get(order.id).unwrap().unwrap().status, OrderStatus::Pending);
+
+    // Forced cancel: in-flight voided, settled left for refund.
+    let cancelled = commerce
+        .orders()
+        .cancel_with(order.id, CancelOrder { void_payments: true })
+        .expect("forced cancel");
+    assert_eq!(cancelled.status, OrderStatus::Cancelled);
+    assert_eq!(
+        commerce.payments().get(in_flight.id).unwrap().unwrap().status,
+        PaymentTransactionStatus::Cancelled
+    );
+    assert_eq!(
+        commerce.payments().get(settled.id).unwrap().unwrap().status,
+        PaymentTransactionStatus::Completed
+    );
+    let open = commerce.payments().open_captures_for_order(order.id).expect("open captures");
+    assert_eq!(open.iter().map(|p| p.id).collect::<Vec<_>>(), vec![settled.id]);
+}
+
+#[test]
 fn test_order_ship() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let customer_id = create_test_customer(&commerce);

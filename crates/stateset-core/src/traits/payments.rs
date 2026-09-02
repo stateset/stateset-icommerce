@@ -5,7 +5,12 @@ use super::*;
 /// Payment repository trait
 #[auto_impl::auto_impl(&, Box, Arc)]
 pub trait PaymentRepository: Send + Sync {
-    /// Create a new payment
+    /// Create a new payment.
+    ///
+    /// `idempotency_key` makes the call replay-safe: a second call with the
+    /// same key and the SAME request (amount, order, currency, method)
+    /// returns the stored payment; the same key with a different request is
+    /// a `Conflict` ([`crate::Payment::check_idempotent_replay`]).
     fn create(&self, input: CreatePayment) -> Result<Payment>;
 
     /// Get payment by ID
@@ -17,7 +22,13 @@ pub trait PaymentRepository: Send + Sync {
     /// Get payment by external ID (e.g., Stripe payment intent)
     fn get_by_external_id(&self, external_id: &str) -> Result<Option<Payment>>;
 
-    /// Update a payment
+    /// Update a payment (status transition and/or field patches).
+    ///
+    /// Status writes follow [`crate::PaymentTransactionStatus::can_transition_to`],
+    /// except that `Refunded`/`PartiallyRefunded` cannot be reached here: they
+    /// are ledger states written only by [`Self::complete_refund`], which also
+    /// advances `amount_refunded`. Such a write is refused with a
+    /// `ValidationError`.
     fn update(&self, id: PaymentId, input: UpdatePayment) -> Result<Payment>;
 
     /// List payments with filter
@@ -175,6 +186,34 @@ pub trait SubscriptionRepository: Send + Sync {
         id: SubscriptionId,
         input: SkipBillingCycle,
     ) -> Result<Subscription>;
+
+    /// Read-only view of the subscriptions due for billing at `before`:
+    /// `Active` ones whose `next_billing_date` has arrived and `Trial` ones
+    /// whose trial has ended, excluding any under a live billing lease.
+    /// Never claims anything — a billing worker must use
+    /// [`Self::claim_due_for_billing`] before charging.
+    fn get_due_for_billing(
+        &self,
+        before: DateTime<Utc>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Subscription>>;
+
+    /// Atomically lease up to `limit` due subscriptions (same due set as
+    /// [`Self::get_due_for_billing`] at `now`) to `worker_id` for
+    /// `lease_secs`. Concurrent claims return disjoint sets; a lease past its
+    /// expiry is dead and may be re-claimed, so a crashed worker never wedges
+    /// billing. Returned subscriptions carry `billing_lease_owner`/`_until`.
+    fn claim_due_for_billing(
+        &self,
+        limit: u32,
+        worker_id: &str,
+        lease_secs: i64,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Subscription>>;
+
+    /// Release the billing lease on `id` if `worker_id` holds it. Returns
+    /// whether a lease was released (false when none, or another worker's).
+    fn release_billing_claim(&self, id: SubscriptionId, worker_id: &str) -> Result<bool>;
 
     /// Record a subscription event
     fn record_event(

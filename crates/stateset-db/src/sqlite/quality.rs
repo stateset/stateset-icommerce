@@ -1,9 +1,9 @@
 //! SQLite implementation of Quality Control repository
 
 use crate::sqlite::{
-    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_opt_row,
-    parse_uuid_row,
+    SqliteLotRepository, map_db_error, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row,
+    parse_uuid_opt_row, parse_uuid_row,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -13,7 +13,7 @@ use stateset_core::traits::QualityRepository;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
     DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
-    LotStatus, LotTransactionType, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
+    Lot, LotStatus, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
     QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection,
     UpdateNonConformance,
 };
@@ -289,103 +289,41 @@ impl SqliteQualityRepository {
         }
     }
 
-    /// Place the lot selected by `where_sql` (`id = ?` or `lot_number = ?`)
-    /// into quarantine on the caller's transaction, mirroring
-    /// `SqliteLotRepository::quarantine`: only `Active`/`OnHold` lots move, every
-    /// unreserved unit is quarantined, and a `Quarantined` lot transaction is
-    /// written. Lots that are missing, already quarantined, or terminal are
-    /// left untouched — a failed inspection must never fail to complete because
-    /// the lot has already been dealt with.
+    /// Quarantine `lot` on the caller's transaction if it can still be
+    /// quarantined. Mirrors `SqliteLotRepository::quarantine` exactly (same
+    /// helper): the status flips, unreserved units are held, the lot's
+    /// serials are quarantined and the linked inventory balance holds the
+    /// units — all in this transaction. Lots that are already quarantined or
+    /// terminal are left untouched: a failed inspection must never fail to
+    /// complete because the lot has already been dealt with.
     fn quarantine_lot_on(
-        conn: &rusqlite::Connection,
-        where_sql: &str,
-        key: &str,
+        tx: &rusqlite::Transaction<'_>,
+        lot: Option<Lot>,
         reason: &str,
         now: chrono::DateTime<Utc>,
     ) -> Result<()> {
-        let row: Option<(String, String, String, String, String)> = conn
-            .query_row(
-                &format!(
-                    "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
-                     FROM lots WHERE {where_sql}"
-                ),
-                [key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-            )
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                e => Err(map_db_error(e)),
-            })?;
-        let Some((lot_id, status, remaining, reserved, quarantined)) = row else {
-            return Ok(());
-        };
-        let status: LotStatus = parse_enum_row(&status, "lot", "status").map_err(map_db_error)?;
-        if !status.can_transition_to(LotStatus::Quarantine) {
+        let Some(lot) = lot else { return Ok(()) };
+        if !lot.status.can_transition_to(LotStatus::Quarantine) {
             return Ok(());
         }
-        let remaining =
-            parse_decimal_row(&remaining, "lot", "quantity_remaining").map_err(map_db_error)?;
-        let reserved =
-            parse_decimal_row(&reserved, "lot", "quantity_reserved").map_err(map_db_error)?;
-        let quarantined =
-            parse_decimal_row(&quarantined, "lot", "quantity_quarantined").map_err(map_db_error)?;
-        let available = (remaining - reserved - quarantined).max(Decimal::ZERO);
-
-        let updated = conn
-            .execute(
-                "UPDATE lots SET status = ?, quantity_quarantined = ?, updated_at = ?
-                 WHERE id = ? AND status = ?",
-                rusqlite::params![
-                    LotStatus::Quarantine.to_string(),
-                    available.to_string(),
-                    now.to_rfc3339(),
-                    &lot_id,
-                    status.to_string(),
-                ],
-            )
-            .map_err(map_db_error)?;
-        if updated != 1 {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot quarantine lot {lot_id}: status changed concurrently"
-            )));
-        }
-        conn.execute(
-            "INSERT INTO lot_transactions (id, lot_id, transaction_type, quantity, reference_type,
-                                           reference_id, reason, created_at)
-             VALUES (?, ?, ?, ?, 'quarantine', ?, ?, ?)",
-            rusqlite::params![
-                Uuid::new_v4().to_string(),
-                &lot_id,
-                LotTransactionType::Quarantined.to_string(),
-                available.to_string(),
-                &lot_id,
-                reason,
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
-        Ok(())
+        SqliteLotRepository::quarantine_lot_on(tx, &lot, reason, now).map(|_| ())
     }
 
     /// Quarantine every lot a failed/partially-failed inspection implicates:
     /// the header's lot when `reference_type = "lot"`, plus each lot named on
-    /// an item whose result is `Fail`.
+    /// an item whose result is `Fail`. Item lots are resolved by
+    /// `(sku, lot_number)` — an item's lot number that exists under a
+    /// different SKU is a `Conflict`, never a silent match on the wrong stock.
     fn quarantine_failed_lots_on(
-        conn: &rusqlite::Connection,
+        tx: &rusqlite::Transaction<'_>,
         inspection: &Inspection,
         overall: InspectionStatus,
         now: chrono::DateTime<Utc>,
     ) -> Result<()> {
         let reason = format!("Inspection {} completed as {overall}", inspection.inspection_number);
         if overall == InspectionStatus::Failed && inspection.reference_type == "lot" {
-            Self::quarantine_lot_on(
-                conn,
-                "id = ?",
-                &inspection.reference_id.to_string(),
-                &reason,
-                now,
-            )?;
+            let lot = SqliteLotRepository::load_lot_on(tx, inspection.reference_id)?;
+            Self::quarantine_lot_on(tx, lot, &reason, now)?;
         }
         if matches!(overall, InspectionStatus::Failed | InspectionStatus::PartialPass) {
             let mut seen = std::collections::HashSet::new();
@@ -394,8 +332,10 @@ impl SqliteQualityRepository {
                     continue;
                 }
                 if let Some(lot_number) = &item.lot_number {
-                    if seen.insert(lot_number.clone()) {
-                        Self::quarantine_lot_on(conn, "lot_number = ?", lot_number, &reason, now)?;
+                    let sku = Some(item.sku.trim()).filter(|s| !s.is_empty());
+                    if seen.insert((sku.map(str::to_owned), lot_number.clone())) {
+                        let lot = SqliteLotRepository::load_lot_by_number_on(tx, lot_number, sku)?;
+                        Self::quarantine_lot_on(tx, lot, &reason, now)?;
                     }
                 }
             }
@@ -1904,6 +1844,144 @@ mod tests {
         assert_eq!(done.status, InspectionStatus::PartialPass);
         assert_eq!(lots.get(bad.id).unwrap().unwrap().status, LotStatus::Quarantine);
         assert_eq!(lots.get(good.id).unwrap().unwrap().status, LotStatus::Active);
+    }
+
+    /// A failed inspection quarantines the lot's serials and holds the linked
+    /// inventory in the same transaction as the verdict — exactly like
+    /// `LotRepository::quarantine`.
+    #[test]
+    fn failed_inspection_quarantines_serials_and_holds_inventory() {
+        use stateset_core::{
+            CreateInventoryItem, CreateSerialNumber, InventoryRepository, SerialRepository,
+            SerialStatus,
+        };
+        let db = fresh_db();
+        let sku = "SKU-QSI";
+        db.inventory()
+            .create_item(CreateInventoryItem {
+                sku: sku.into(),
+                name: "x".into(),
+                description: None,
+                unit_of_measure: None,
+                initial_quantity: None,
+                location_id: Some(1),
+                reorder_point: None,
+                safety_stock: None,
+            })
+            .expect("item");
+        let lot = db
+            .lots()
+            .create(CreateLot {
+                sku: sku.into(),
+                quantity: dec!(2),
+                initial_location_id: Some(1),
+                ..Default::default()
+            })
+            .expect("lot");
+        let serial = db
+            .serials()
+            .create(CreateSerialNumber {
+                serial: Some("SN-QSI-1".into()),
+                sku: sku.into(),
+                lot_id: Some(lot.id),
+                lot_number: Some(lot.lot_number.clone()),
+                location_id: Some(1),
+                manufactured_at: None,
+                notes: None,
+                attributes: None,
+            })
+            .expect("serial");
+        let item = db.inventory().get_item_by_sku(sku).unwrap().unwrap();
+        let available =
+            || db.inventory().get_balance(item.id, 1).unwrap().unwrap().quantity_available;
+        assert_eq!(available(), dec!(2));
+
+        let repo = db.quality();
+        let insp = inspection_for_lot(&repo, &lot);
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+        repo.complete_inspection(insp.id).expect("complete");
+
+        assert_eq!(db.lots().get(lot.id).unwrap().unwrap().status, LotStatus::Quarantine);
+        assert_eq!(db.serials().get(serial.id).unwrap().unwrap().status, SerialStatus::Quarantined);
+        assert_eq!(available(), dec!(0), "inventory hold");
+
+        db.lots().release_quarantine(lot.id).expect("release");
+        assert_eq!(db.serials().get(serial.id).unwrap().unwrap().status, SerialStatus::Available);
+        assert_eq!(available(), dec!(2));
+    }
+
+    /// An item's lot number is resolved under the item's SKU: a lot with that
+    /// number under a different SKU is a conflict, never a silent match.
+    #[test]
+    fn failed_item_lot_number_is_scoped_to_the_items_sku() {
+        let db = fresh_db();
+        let (lots, repo) = (db.lots(), db.quality());
+        let other = lots
+            .create(CreateLot {
+                sku: "SKU-OTHER".into(),
+                lot_number: Some("SHARED-1".into()),
+                quantity: dec!(10),
+                ..Default::default()
+            })
+            .expect("other sku lot");
+        let insp = repo
+            .create_inspection(CreateInspection {
+                inspection_type: InspectionType::Receiving,
+                reference_type: "receipt".into(),
+                reference_id: Uuid::new_v4(),
+                inspector_id: None,
+                scheduled_at: None,
+                notes: None,
+                items: vec![CreateInspectionItem {
+                    sku: "SKU-MINE".into(),
+                    lot_number: Some("SHARED-1".into()),
+                    serial_number: None,
+                    quantity_to_inspect: dec!(10),
+                }],
+            })
+            .expect("create");
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+        let err = repo.complete_inspection(insp.id).expect_err("wrong-SKU lot");
+        assert!(
+            matches!(err, CommerceError::Conflict(ref m) if m.contains("SKU-OTHER")),
+            "{err:?}"
+        );
+        // Nothing moved: the verdict and the other SKU's lot are untouched.
+        assert_eq!(
+            repo.get_inspection(insp.id).unwrap().unwrap().status,
+            InspectionStatus::InProgress
+        );
+        assert_eq!(lots.get(other.id).unwrap().unwrap().status, LotStatus::Active);
+    }
+
+    /// Without a SKU on the item the lot number alone is the key.
+    #[test]
+    fn failed_item_without_sku_resolves_lot_by_number_only() {
+        let db = fresh_db();
+        let (lots, repo) = (db.lots(), db.quality());
+        let lot = make_lot(&lots, "SKU-NOSKU");
+        let insp = repo
+            .create_inspection(CreateInspection {
+                inspection_type: InspectionType::Receiving,
+                reference_type: "receipt".into(),
+                reference_id: Uuid::new_v4(),
+                inspector_id: None,
+                scheduled_at: None,
+                notes: None,
+                items: vec![CreateInspectionItem {
+                    sku: String::new(),
+                    lot_number: Some(lot.lot_number.clone()),
+                    serial_number: None,
+                    quantity_to_inspect: dec!(10),
+                }],
+            })
+            .expect("create");
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+        repo.complete_inspection(insp.id).expect("complete");
+        assert_eq!(lots.get(lot.id).unwrap().unwrap().status, LotStatus::Quarantine);
     }
 
     #[test]

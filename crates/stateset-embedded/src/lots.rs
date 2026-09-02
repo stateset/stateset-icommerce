@@ -386,6 +386,18 @@ impl Lots {
         self.db.lots().expire_lots(chrono::Utc::now())
     }
 
+    /// Sweep lot reservations that expired before `now` without being
+    /// confirmed or released, handing their units back to the lot (and the
+    /// linked inventory balance). Returns how many were released. Idempotent;
+    /// `reserve` / `confirm_reservation` also expire stale reservations lazily
+    /// on the lot they touch, so this only has to catch lots nobody touches.
+    /// Schedule it together with [`Self::expire_lots`] and
+    /// `Serials::release_expired_reservations` (e.g. via
+    /// `stateset_jobs::TraceabilitySweepJob`).
+    pub fn release_expired_reservations(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64> {
+        self.db.lots().release_expired_reservations(now)
+    }
+
     /// Get lots with available quantity for a SKU.
     ///
     /// Returns lots in FEFO order (soonest `expiration_date` first, unexpiring

@@ -258,7 +258,6 @@ impl PgSerialRepository {
 
     #[allow(clippy::too_many_arguments)]
     async fn record_history_tx(
-        &self,
         tx: &mut sqlx::Transaction<'_, Postgres>,
         serial_id: Uuid,
         event_type: SerialEventType,
@@ -474,7 +473,7 @@ impl PgSerialRepository {
             if serial.status == SerialStatus::Reserved {
                 Self::close_open_reservations(&mut tx, serial.id, now).await?;
             }
-            self.record_history_tx(
+            Self::record_history_tx(
                 &mut tx,
                 id,
                 SerialEventType::StatusChanged,
@@ -653,7 +652,7 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             input.serial_id,
             SerialEventType::StatusChanged,
@@ -703,7 +702,7 @@ impl PgSerialRepository {
             .map(Self::row_to_reservation);
             if let Some(stale) = stale {
                 Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
-                self.record_history_tx(
+                Self::record_history_tx(
                     &mut tx,
                     serial.id,
                     SerialEventType::Released,
@@ -758,7 +757,7 @@ impl PgSerialRepository {
 
         Self::write_transition(&mut tx, &serial, SerialStatus::Reserved, now).await?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             input.serial_id,
             SerialEventType::Reserved,
@@ -829,7 +828,7 @@ impl PgSerialRepository {
 
         Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             reservation.serial_id,
             SerialEventType::Released,
@@ -949,7 +948,7 @@ impl PgSerialRepository {
                 continue; // The unit already moved on; only the stale row needed closing.
             }
             Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
-            self.record_history_tx(
+            Self::record_history_tx(
                 &mut tx,
                 serial.id,
                 SerialEventType::Released,
@@ -994,7 +993,7 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             input.serial_id,
             SerialEventType::LocationChanged,
@@ -1037,7 +1036,7 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             input.serial_id,
             SerialEventType::Transferred,
@@ -1090,7 +1089,7 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             id,
             SerialEventType::Sold,
@@ -1121,7 +1120,7 @@ impl PgSerialRepository {
         // Shipping consumes the open reservation (see write_transition).
         Self::write_transition(&mut tx, &serial, SerialStatus::Shipped, now).await?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             id,
             SerialEventType::Shipped,
@@ -1159,7 +1158,7 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             id,
             SerialEventType::Returned,
@@ -1195,7 +1194,7 @@ impl PgSerialRepository {
 
         if let Some(serial) = self.get_async(id).await? {
             let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-            self.record_history_tx(
+            Self::record_history_tx(
                 &mut tx,
                 id,
                 SerialEventType::Activated,
@@ -1225,7 +1224,7 @@ impl PgSerialRepository {
 
         Self::write_transition(&mut tx, &serial, SerialStatus::Quarantined, now).await?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             id,
             SerialEventType::Quarantined,
@@ -1261,7 +1260,7 @@ impl PgSerialRepository {
 
         Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             id,
             SerialEventType::QuarantineReleased,
@@ -1283,10 +1282,19 @@ impl PgSerialRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn quarantine_for_lot_async(&self, lot_id: Uuid, reason: &str) -> Result<u64> {
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let now = Utc::now();
-
+    /// Quarantine every `Available` / `Reserved` serial of `lot_id` on the
+    /// caller's transaction, closing open reservations; returns how many moved.
+    ///
+    /// This is the serial half of a lot quarantine: `PgLotRepository` and the
+    /// quality repository call it inside the transaction that flips the lot,
+    /// so a quarantined lot can never leave a sellable serial behind.
+    /// Shipped / sold / already-quarantined serials are untouched.
+    pub(crate) async fn quarantine_for_lot_on(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        lot_id: Uuid,
+        reason: &str,
+        now: DateTime<Utc>,
+    ) -> Result<u64> {
         let rows = sqlx::query_as::<_, SerialRow>(
             r#"
             SELECT * FROM serial_numbers
@@ -1305,9 +1313,9 @@ impl PgSerialRepository {
         let mut count = 0u64;
         for row in rows {
             let serial = Self::row_to_serial(row)?;
-            Self::write_transition(&mut tx, &serial, SerialStatus::Quarantined, now).await?;
-            self.record_history_tx(
-                &mut tx,
+            Self::write_transition(tx, &serial, SerialStatus::Quarantined, now).await?;
+            Self::record_history_tx(
+                tx,
                 serial.id,
                 SerialEventType::Quarantined,
                 Some("lot"),
@@ -1324,15 +1332,16 @@ impl PgSerialRepository {
             .await?;
             count += 1;
         }
-
-        tx.commit().await.map_err(map_db_error)?;
         Ok(count)
     }
 
-    pub async fn release_quarantine_for_lot_async(&self, lot_id: Uuid) -> Result<u64> {
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let now = Utc::now();
-
+    /// Return every `Quarantined` serial of `lot_id` to `Available` on the
+    /// caller's transaction; the counterpart of [`Self::quarantine_for_lot_on`].
+    pub(crate) async fn release_quarantine_for_lot_on(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        lot_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<u64> {
         let rows = sqlx::query_as::<_, SerialRow>(
             r#"
             SELECT * FROM serial_numbers
@@ -1350,9 +1359,9 @@ impl PgSerialRepository {
         let mut count = 0u64;
         for row in rows {
             let serial = Self::row_to_serial(row)?;
-            Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
-            self.record_history_tx(
-                &mut tx,
+            Self::write_transition(tx, &serial, SerialStatus::Available, now).await?;
+            Self::record_history_tx(
+                tx,
                 serial.id,
                 SerialEventType::QuarantineReleased,
                 Some("lot"),
@@ -1369,7 +1378,19 @@ impl PgSerialRepository {
             .await?;
             count += 1;
         }
+        Ok(count)
+    }
 
+    pub async fn quarantine_for_lot_async(&self, lot_id: Uuid, reason: &str) -> Result<u64> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let count = Self::quarantine_for_lot_on(&mut tx, lot_id, reason, Utc::now()).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(count)
+    }
+
+    pub async fn release_quarantine_for_lot_async(&self, lot_id: Uuid) -> Result<u64> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let count = Self::release_quarantine_for_lot_on(&mut tx, lot_id, Utc::now()).await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(count)
     }
@@ -1382,7 +1403,7 @@ impl PgSerialRepository {
 
         Self::write_transition(&mut tx, &serial, SerialStatus::Scrapped, now).await?;
 
-        self.record_history_tx(
+        Self::record_history_tx(
             &mut tx,
             id,
             SerialEventType::Scrapped,

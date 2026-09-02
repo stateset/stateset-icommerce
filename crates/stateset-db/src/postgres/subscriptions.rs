@@ -91,7 +91,19 @@ struct SubscriptionRow {
     metadata: Option<serde_json::Value>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    billing_lease_owner: Option<String>,
+    billing_lease_until: Option<DateTime<Utc>>,
 }
+
+/// Every `subscriptions` column [`SubscriptionRow`] maps, in one place, so
+/// each read path (get/list/due/claim) selects exactly the same shape.
+const SUBSCRIPTION_COLUMNS: &str =
+    "id, subscription_number, customer_id, plan_id, plan_name, status, billing_interval,
+     custom_interval_days, price, currency, payment_method_id, started_at, current_period_start,
+     current_period_end, next_billing_date, trial_ends_at, cancelled_at, ends_at, paused_at,
+     resume_at, billing_cycle_count, failed_payment_attempts, shipping_address, billing_address,
+     discount_percent, discount_amount, coupon_code, metadata, created_at, updated_at,
+     billing_lease_owner, billing_lease_until";
 
 #[derive(FromRow)]
 struct SubscriptionItemRow {
@@ -304,6 +316,8 @@ impl PgSubscriptionRepository {
             metadata,
             created_at,
             updated_at,
+            billing_lease_owner,
+            billing_lease_until,
         } = row;
 
         let status: SubscriptionStatus = status.parse().map_err(|e| {
@@ -368,6 +382,8 @@ impl PgSubscriptionRepository {
             items,
             created_at,
             updated_at,
+            billing_lease_owner,
+            billing_lease_until,
         })
     }
 
@@ -490,12 +506,22 @@ impl PgSubscriptionRepository {
         &self,
         subscription_id: SubscriptionId,
     ) -> Result<Vec<SubscriptionItem>> {
+        let mut conn = self.pool.acquire().await.map_err(map_db_error)?;
+        Self::get_subscription_items_on(&mut conn, subscription_id).await
+    }
+
+    /// Subscription items on the caller's connection (usable inside a
+    /// transaction).
+    async fn get_subscription_items_on(
+        conn: &mut sqlx::PgConnection,
+        subscription_id: SubscriptionId,
+    ) -> Result<Vec<SubscriptionItem>> {
         let rows = sqlx::query_as::<_, SubscriptionItemRow>(
             "SELECT id, subscription_id, product_id, variant_id, sku, name, quantity, unit_price, line_total
              FROM subscription_items WHERE subscription_id = $1",
         )
         .bind(subscription_id.into_uuid())
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await
         .map_err(map_db_error)?;
 
@@ -1105,6 +1131,7 @@ impl PgSubscriptionRepository {
             cycle_number: 1,
             period_start: subscription.current_period_start,
             period_end: subscription.current_period_end,
+            claimed_by: None,
         })
         .await?;
 
@@ -1112,14 +1139,9 @@ impl PgSubscriptionRepository {
     }
 
     pub async fn get_subscription_async(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
-        let row = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT id, subscription_number, customer_id, plan_id, plan_name, status, billing_interval,
-                    custom_interval_days, price, currency, payment_method_id, started_at, current_period_start,
-                    current_period_end, next_billing_date, trial_ends_at, cancelled_at, ends_at, paused_at,
-                    resume_at, billing_cycle_count, failed_payment_attempts, shipping_address, billing_address,
-                    discount_percent, discount_amount, coupon_code, metadata, created_at, updated_at
-             FROM subscriptions WHERE id = $1",
-        )
+        let row = sqlx::query_as::<_, SubscriptionRow>(&format!(
+            "SELECT {SUBSCRIPTION_COLUMNS} FROM subscriptions WHERE id = $1"
+        ))
         .bind(id.into_uuid())
         .fetch_optional(&self.pool)
         .await
@@ -1133,18 +1155,172 @@ impl PgSubscriptionRepository {
         }
     }
 
+    /// [`Self::get_subscription_async`] inside `tx`, taking the row
+    /// `FOR UPDATE` so a write path bills exactly the price/discounts it read.
+    async fn get_subscription_for_update_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: SubscriptionId,
+    ) -> Result<Option<Subscription>> {
+        let row = sqlx::query_as::<_, SubscriptionRow>(&format!(
+            "SELECT {SUBSCRIPTION_COLUMNS} FROM subscriptions WHERE id = $1 FOR UPDATE"
+        ))
+        .bind(id.into_uuid())
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let items = Self::get_subscription_items_on(tx.as_mut(), id).await?;
+        Ok(Some(Self::row_to_subscription(row, items)?))
+    }
+
+    /// The ONE definition of "due for billing at `$1`", shared by the
+    /// read-only view and the claim (mirrors the SQLite backend):
+    /// - `active` with `next_billing_date` at or before the instant;
+    /// - `trial` whose trial has ended by then (its `next_billing_date` is
+    ///   the trial end; a legacy row without one falls back to
+    ///   `trial_ends_at`);
+    /// - not under a live billing lease (`billing_lease_until` in the future).
+    const DUE_FOR_BILLING_WHERE: &'static str = "(
+            (status = 'active' AND next_billing_date IS NOT NULL AND next_billing_date <= $1)
+            OR (status = 'trial' AND COALESCE(next_billing_date, trial_ends_at) <= $1)
+        )
+        AND (billing_lease_until IS NULL OR billing_lease_until < $1)";
+
+    /// Read-only view of the subscriptions due for billing at `before`.
+    /// Never leases anything.
+    pub async fn get_due_for_billing_async(
+        &self,
+        before: DateTime<Utc>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Subscription>> {
+        let sql = format!(
+            "SELECT {SUBSCRIPTION_COLUMNS} FROM subscriptions WHERE {}
+             ORDER BY COALESCE(next_billing_date, trial_ends_at) ASC, created_at ASC
+             LIMIT $2",
+            Self::DUE_FOR_BILLING_WHERE
+        );
+        let rows = sqlx::query_as::<_, SubscriptionRow>(&sql)
+            .bind(before)
+            .bind(super::effective_limit(limit))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        let mut subs = Vec::with_capacity(rows.len());
+        for row in rows {
+            let items = self.get_subscription_items_async(SubscriptionId::from(row.id)).await?;
+            subs.push(Self::row_to_subscription(row, items)?);
+        }
+        Ok(subs)
+    }
+
+    /// Atomically lease up to `limit` due subscriptions to `worker_id` until
+    /// `now + lease_secs`.
+    ///
+    /// The due rows are picked with `SELECT ... FOR UPDATE SKIP LOCKED` and
+    /// stamped in the same statement, so concurrent claims never block each
+    /// other and never return the same subscription — the list-then-bill
+    /// race that let two workers charge a customer is closed at the claim,
+    /// not left to the cycle-uniqueness backstop. Mirrors SQLite.
+    pub async fn claim_due_for_billing_async(
+        &self,
+        limit: u32,
+        worker_id: &str,
+        lease_secs: i64,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Subscription>> {
+        if worker_id.trim().is_empty() {
+            return Err(CommerceError::ValidationError("worker_id must not be empty".into()));
+        }
+        if lease_secs <= 0 {
+            return Err(CommerceError::ValidationError("lease_secs must be positive".into()));
+        }
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let lease_until = now + Duration::seconds(lease_secs);
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let sql = format!(
+            "UPDATE subscriptions SET
+                billing_lease_owner = $2,
+                billing_lease_until = $3,
+                updated_at = $1
+             WHERE id IN (
+                SELECT id FROM subscriptions WHERE {}
+                ORDER BY COALESCE(next_billing_date, trial_ends_at) ASC, created_at ASC
+                LIMIT $4
+                FOR UPDATE SKIP LOCKED
+             )
+             RETURNING {SUBSCRIPTION_COLUMNS}",
+            Self::DUE_FOR_BILLING_WHERE
+        );
+        let rows = sqlx::query_as::<_, SubscriptionRow>(&sql)
+            .bind(now)
+            .bind(worker_id)
+            .bind(lease_until)
+            .bind(i64::from(limit))
+            .fetch_all(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let mut subs = Vec::with_capacity(rows.len());
+        for row in rows {
+            let items =
+                Self::get_subscription_items_on(tx.as_mut(), SubscriptionId::from(row.id)).await?;
+            subs.push(Self::row_to_subscription(row, items)?);
+        }
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(subs)
+    }
+
+    /// Release the billing lease on `id` if `worker_id` holds it.
+    pub async fn release_billing_claim_async(
+        &self,
+        id: SubscriptionId,
+        worker_id: &str,
+    ) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE subscriptions SET
+                billing_lease_owner = NULL, billing_lease_until = NULL, updated_at = $1
+             WHERE id = $2 AND billing_lease_owner = $3",
+        )
+        .bind(Utc::now())
+        .bind(id.into_uuid())
+        .bind(worker_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        Ok(rows == 1)
+    }
+
+    /// Refuse to bill a subscription whose LIVE billing lease is held by a
+    /// worker other than `claimed_by` (an unclaimed caller, `None`, is
+    /// refused while any live lease exists). A dead lease never blocks.
+    fn refuse_foreign_billing_lease(
+        sub: &Subscription,
+        claimed_by: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let live = sub.billing_lease_until.is_some_and(|until| until >= now);
+        if live && sub.billing_lease_owner.as_deref() != claimed_by {
+            return Err(CommerceError::Conflict(format!(
+                "Subscription {} is leased for billing by another worker until {}",
+                sub.id,
+                sub.billing_lease_until.map(|d| d.to_rfc3339()).unwrap_or_default()
+            )));
+        }
+        Ok(())
+    }
+
     pub async fn get_subscription_by_number_async(
         &self,
         number: &str,
     ) -> Result<Option<Subscription>> {
-        let row = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT id, subscription_number, customer_id, plan_id, plan_name, status, billing_interval,
-                    custom_interval_days, price, currency, payment_method_id, started_at, current_period_start,
-                    current_period_end, next_billing_date, trial_ends_at, cancelled_at, ends_at, paused_at,
-                    resume_at, billing_cycle_count, failed_payment_attempts, shipping_address, billing_address,
-                    discount_percent, discount_amount, coupon_code, metadata, created_at, updated_at
-             FROM subscriptions WHERE subscription_number = $1",
-        )
+        let row = sqlx::query_as::<_, SubscriptionRow>(&format!(
+            "SELECT {SUBSCRIPTION_COLUMNS} FROM subscriptions WHERE subscription_number = $1"
+        ))
         .bind(number)
         .fetch_optional(&self.pool)
         .await
@@ -1162,12 +1338,7 @@ impl PgSubscriptionRepository {
         &self,
         filter: SubscriptionFilter,
     ) -> Result<Vec<Subscription>> {
-        let mut sql = "SELECT id, subscription_number, customer_id, plan_id, plan_name, status, billing_interval,
-                custom_interval_days, price, currency, payment_method_id, started_at, current_period_start,
-                current_period_end, next_billing_date, trial_ends_at, cancelled_at, ends_at, paused_at,
-                resume_at, billing_cycle_count, failed_payment_attempts, shipping_address, billing_address,
-                discount_percent, discount_amount, coupon_code, metadata, created_at, updated_at
-            FROM subscriptions WHERE 1=1".to_string();
+        let mut sql = format!("SELECT {SUBSCRIPTION_COLUMNS} FROM subscriptions WHERE 1=1");
         let mut param_idx = 1;
 
         if filter.customer_id.is_some() {
@@ -1313,15 +1484,14 @@ impl PgSubscriptionRepository {
         id: SubscriptionId,
         input: CancelSubscription,
     ) -> Result<Subscription> {
-        let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
-
         let reason = input.reason.clone().unwrap_or_else(|| "Cancelled by customer".to_string());
         let data = input.feedback.clone().map(|f| serde_json::json!({"feedback": f}));
 
         // Guard, write and audit in ONE transaction with the subscription row
         // held `FOR UPDATE` (mirrors the SQLite backend): the guard used to
         // read on one connection and write on another, so a concurrent
-        // pause/cancel could interleave between the two.
+        // pause/cancel could interleave between the two. The paid-through
+        // date the cancellation ends at is read under the same lock.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let status = Self::locked_subscription_status(&mut tx, id).await?;
@@ -1330,11 +1500,17 @@ impl PgSubscriptionRepository {
                 "Cannot cancel subscription in {status} status"
             )));
         }
+        let (current_period_end,): (DateTime<Utc>,) =
+            sqlx::query_as("SELECT current_period_end FROM subscriptions WHERE id = $1")
+                .bind(id.into_uuid())
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
         let now = Utc::now();
         let immediate = input.immediate.unwrap_or(false);
         let (new_status, ends_at) =
-            if immediate { ("expired", now) } else { ("cancelled", sub.current_period_end) };
+            if immediate { ("expired", now) } else { ("cancelled", current_period_end) };
 
         sqlx::query(
             "UPDATE subscriptions SET status = $1, cancelled_at = $2, ends_at = $3, next_billing_date = NULL, updated_at = $4 WHERE id = $5",
@@ -1464,19 +1640,19 @@ impl PgSubscriptionRepository {
         id: SubscriptionId,
         input: SkipBillingCycle,
     ) -> Result<Subscription> {
-        let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
-
         let reason =
             input.reason.clone().unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
-        // Guard, write and audit in ONE transaction: two concurrent skips used
-        // to read the same `next_billing_date` and each push it out by a full
-        // interval, silently skipping two periods for one customer request.
-        // Mirrors the SQLite backend.
+        // Guard, read, write and audit in ONE transaction: two concurrent
+        // skips used to read the same `next_billing_date` and each push it
+        // out by a full interval, silently skipping two periods for one
+        // customer request. Mirrors the SQLite backend.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let status = Self::locked_subscription_status(&mut tx, id).await?;
-        if status != SubscriptionStatus::Active {
+        let sub = Self::get_subscription_for_update_tx(&mut tx, id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
+        if sub.status != SubscriptionStatus::Active {
             return Err(CommerceError::ValidationError(
                 "Can only skip billing for active subscriptions".into(),
             ));
@@ -1532,16 +1708,27 @@ impl PgSubscriptionRepository {
         &self,
         input: CreateBillingCycle,
     ) -> Result<BillingCycle> {
-        let CreateBillingCycle { subscription_id, cycle_number, period_start, period_end } = input;
-        let sub =
-            self.get_subscription_async(subscription_id).await?.ok_or(CommerceError::NotFound)?;
-
+        let CreateBillingCycle {
+            subscription_id,
+            cycle_number,
+            period_start,
+            period_end,
+            claimed_by,
+        } = input;
         let id = Uuid::new_v4();
-        let (subtotal, discount, total) = sub.billing_cycle_amounts();
-        let currency = sub.currency;
         let now = Utc::now();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Read the subscription under its row lock: its price/discounts are
+        // what the cycle bills, and a subscription under another worker's
+        // live billing lease is refused (see `claim_due_for_billing_async`).
+        let sub = Self::get_subscription_for_update_tx(&mut tx, subscription_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
+        Self::refuse_foreign_billing_lease(&sub, claimed_by.as_deref(), now)?;
+        let (subtotal, discount, total) = sub.billing_cycle_amounts();
+        let currency = sub.currency;
 
         sqlx::query(
             "INSERT INTO billing_cycles (id, subscription_id, cycle_number, status, period_start, period_end,
@@ -2037,6 +2224,28 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         input: SkipBillingCycle,
     ) -> Result<Subscription> {
         super::block_on(self.skip_billing_cycle_async(id, input))
+    }
+
+    fn get_due_for_billing(
+        &self,
+        before: DateTime<Utc>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Subscription>> {
+        super::block_on(self.get_due_for_billing_async(before, limit))
+    }
+
+    fn claim_due_for_billing(
+        &self,
+        limit: u32,
+        worker_id: &str,
+        lease_secs: i64,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Subscription>> {
+        super::block_on(self.claim_due_for_billing_async(limit, worker_id, lease_secs, now))
+    }
+
+    fn release_billing_claim(&self, id: SubscriptionId, worker_id: &str) -> Result<bool> {
+        super::block_on(self.release_billing_claim_async(id, worker_id))
     }
 
     fn record_event(

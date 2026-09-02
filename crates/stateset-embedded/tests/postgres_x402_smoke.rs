@@ -115,7 +115,9 @@ async fn postgres_async_x402_payment_intent_smoke() {
     let signed_intents = x402.signed_intents().await.expect("list signed intents");
     assert!(signed_intents.iter().any(|i| i.id == intent.id));
 
-    let cart_intent = x402
+    // The signed intent still claims the cart: a second full-amount intent
+    // is a double charge and is refused, naming the open intent.
+    let err = x402
         .create_cart_payment(
             cart_id,
             &payer,
@@ -125,25 +127,48 @@ async fn postgres_async_x402_payment_intent_smoke() {
             X402Asset::Usdc,
         )
         .await
-        .expect("create cart payment intent");
-    assert_eq!(cart_intent.status, X402IntentStatus::Created);
-    assert_eq!(cart_intent.cart_id, Some(cart_id));
+        .expect_err("second intent for a claimed cart must be refused");
+    match &err {
+        stateset_core::CommerceError::Conflict(message) => {
+            assert!(message.contains(&intent.id.to_string()), "{message}");
+        }
+        other => panic!("expected Conflict, got {other:?}"),
+    }
 
     let active = x402.active_intent_for_cart(cart_id).await.expect("find active intent");
-    assert_eq!(active.expect("active intent for cart").id, cart_intent.id);
-
-    let all_for_cart = x402.intents_for_cart(cart_id).await.expect("list intents by cart");
-    assert!(all_for_cart.len() >= 2, "cart should have two intents after cart payment path");
+    assert_eq!(active.expect("active intent for cart").id, intent.id);
+    assert_eq!(x402.intents_for_cart(cart_id).await.expect("list intents by cart").len(), 1);
 
     let sequenced =
         x402.mark_sequenced(intent.id, 42, Uuid::new_v4()).await.expect("mark intent sequenced");
     assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
+
+    let batched = x402
+        .mark_batched(intent.id, "0xroot", vec!["0xproof".into()])
+        .await
+        .expect("mark intent batched");
+    assert_eq!(batched.status, X402IntentStatus::Batched);
+    assert_eq!(batched.batch_merkle_root.as_deref(), Some("0xroot"));
 
     let settled = x402
         .mark_settled(intent.id, &format!("0xsettled-{}", Uuid::new_v4().as_simple()), 123_456)
         .await
         .expect("mark intent settled");
     assert_eq!(settled.status, X402IntentStatus::Settled);
+
+    // A settled intent keeps the cart claimed for good.
+    let err = x402
+        .create_cart_payment(
+            cart_id,
+            &payer,
+            &payee,
+            dec!(2.00),
+            X402Network::SetChain,
+            X402Asset::Usdc,
+        )
+        .await
+        .expect_err("paid cart must not accept another intent");
+    assert!(matches!(err, stateset_core::CommerceError::Conflict(_)), "{err:?}");
 }
 
 #[cfg(feature = "postgres")]
@@ -325,6 +350,18 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
         .expect("list purchases");
     assert!(listed_purchases.iter().any(|p| p.id == purchase.id));
 
+    // Orders are linked while the purchase is live; relinking to a different
+    // order is refused and a completed purchase cannot be linked at all.
+    let order_id = Uuid::new_v4();
+    let updated =
+        x402.link_purchase_to_order(purchase.id, order_id).await.expect("link purchase to order");
+    assert_eq!(updated.order_id, Some(order_id));
+    let err = x402
+        .link_purchase_to_order(purchase.id, Uuid::new_v4())
+        .await
+        .expect_err("relinking to another order is refused");
+    assert!(matches!(err, stateset_core::CommerceError::Conflict(_)), "{err:?}");
+
     let confirmed = x402
         .confirm_delivery(purchase.id, "signature-abc", Some(5), Some("Smooth delivery"))
         .await
@@ -337,11 +374,20 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
         .expect("no-op purchase status update");
     assert_eq!(no_op_purchase.status, PurchaseStatus::Completed);
 
-    let updated = x402
+    let err = x402
         .link_purchase_to_order(purchase.id, Uuid::new_v4())
         .await
-        .expect("link purchase to order");
-    assert!(updated.order_id.is_some(), "purchase should have an order after linking");
+        .expect_err("completed purchase cannot be linked to another order");
+    assert!(
+        matches!(
+            err,
+            stateset_core::CommerceError::ValidationError(_)
+                | stateset_core::CommerceError::Conflict(_)
+        ),
+        "{err:?}"
+    );
+    let unchanged = x402.get_purchase(purchase.id).await.expect("get").expect("exists");
+    assert_eq!(unchanged.order_id, Some(order_id));
 
     let counted_purchases = x402
         .count_purchases(A2APurchaseFilter { buyer_agent_id: Some(buyer_id), ..Default::default() })

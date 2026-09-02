@@ -3,6 +3,8 @@
 //! This module provides async PostgreSQL support for production deployments.
 
 mod a2a;
+mod a2a_credit_terms;
+mod a2a_messaging;
 mod accounts_payable;
 mod accounts_receivable;
 mod activity_logs;
@@ -80,6 +82,8 @@ mod x402_payment_intents;
 mod zone_shipping_methods;
 
 pub use a2a::*;
+pub use a2a_credit_terms::*;
+pub use a2a_messaging::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
 pub use activity_logs::*;
@@ -464,10 +468,28 @@ impl PostgresDatabase {
             "086_serial_reservation_uniqueness",
             include_str!("migrations/086_serial_reservation_uniqueness.sql"),
         ));
+        // Nullable `order_item_id` on inventory_reservations so a removed order
+        // line releases ITS reservation, not the oldest one for the same SKU.
+        migrations.push((
+            "087_reservation_order_line",
+            include_str!("migrations/087_reservation_order_line.sql"),
+        ));
         // Legacy-safe uniqueness for x402 settlement tx hashes.
         migrations.push((
             "089_x402_tx_hash_uniqueness",
             include_str!("migrations/089_x402_tx_hash_uniqueness.sql"),
+        ));
+        // Nullable billing-worker lease columns on subscriptions so due
+        // subscriptions are claimed atomically before they are billed.
+        migrations.push((
+            "091_billing_claim_lease",
+            include_str!("migrations/091_billing_claim_lease.sql"),
+        ));
+        // Durable, tenant-scoped A2A credit terms and agent messaging
+        // (previously process-local state in the HTTP routes).
+        migrations.push((
+            "093_a2a_credit_terms_and_messaging",
+            include_str!("migrations/093_a2a_credit_terms_and_messaging.sql"),
         ));
 
         migrations
@@ -767,6 +789,16 @@ impl PostgresDatabase {
     /// Get A2A quote/purchase repository
     pub fn a2a_purchases(&self) -> PgA2ARepository {
         PgA2ARepository::new(self.pool.clone())
+    }
+
+    /// Get durable A2A credit terms repository
+    pub fn a2a_credit_terms(&self) -> PgA2ACreditTermsRepository {
+        PgA2ACreditTermsRepository::new(self.pool.clone())
+    }
+
+    /// Get durable A2A agent messaging repository
+    pub fn a2a_messages(&self) -> PgA2AMessagingRepository {
+        PgA2AMessagingRepository::new(self.pool.clone())
     }
 
     /// Get agent card repository

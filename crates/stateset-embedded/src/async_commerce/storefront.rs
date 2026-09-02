@@ -681,6 +681,36 @@ impl AsyncSubscriptions {
         self.db.subscriptions().skip_billing_cycle_async(id.into(), input).await
     }
 
+    /// Read-only view of the subscriptions due for billing at `before`
+    /// (excluding any under a live billing lease). Never claims anything.
+    pub async fn get_due_for_billing(
+        &self,
+        before: DateTime<Utc>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Subscription>> {
+        self.db.subscriptions().get_due_for_billing_async(before, limit).await
+    }
+
+    /// Atomically claim up to `limit` due subscriptions for `worker_id`,
+    /// leasing each for `lease_secs` seconds (`SELECT ... FOR UPDATE SKIP
+    /// LOCKED`): concurrent workers receive disjoint batches. Bill with
+    /// `create_billing_cycle` passing `claimed_by: Some(worker_id)`, then
+    /// [`Self::release_billing_claim`].
+    pub async fn claim_due_for_billing(
+        &self,
+        limit: u32,
+        worker_id: &str,
+        lease_secs: i64,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Subscription>> {
+        self.db.subscriptions().claim_due_for_billing_async(limit, worker_id, lease_secs, now).await
+    }
+
+    /// Release the billing lease `worker_id` holds on `id`.
+    pub async fn release_billing_claim(&self, id: Uuid, worker_id: &str) -> Result<bool> {
+        self.db.subscriptions().release_billing_claim_async(id.into(), worker_id).await
+    }
+
     pub async fn record_event(
         &self,
         subscription_id: Uuid,
