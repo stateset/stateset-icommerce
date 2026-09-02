@@ -66,7 +66,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "1.28.4"
+version = "1.28.5"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -199,28 +199,28 @@ serde_yaml = "0.9"
 tempfile = "3.10"
 
 # Internal crates
-stateset-primitives = { path = "crates/stateset-primitives", version = "1.28.4" }
-stateset-core = { path = "crates/stateset-core", version = "1.28.4" }
-stateset-db = { path = "crates/stateset-db", version = "1.28.4" }
-stateset-embedded = { path = "crates/stateset-embedded", version = "1.28.4" }
-stateset-observability = { path = "crates/stateset-observability", version = "1.28.4" }
-stateset-crypto = { path = "crates/stateset-crypto", version = "1.28.4" }
+stateset-primitives = { path = "crates/stateset-primitives", version = "1.28.5" }
+stateset-core = { path = "crates/stateset-core", version = "1.28.5" }
+stateset-db = { path = "crates/stateset-db", version = "1.28.5" }
+stateset-embedded = { path = "crates/stateset-embedded", version = "1.28.5" }
+stateset-observability = { path = "crates/stateset-observability", version = "1.28.5" }
+stateset-crypto = { path = "crates/stateset-crypto", version = "1.28.5" }
 # Intentionally version-less: stateset-test-utils is `publish = false`, and cargo
 # only strips a path dev-dependency when it carries no version requirement. With a
 # version here, packaging any publishable crate that dev-depends on it fails with
 # "no matching package named `stateset-test-utils` found".
 stateset-test-utils = { path = "crates/stateset-test-utils" }
-stateset-macros = { path = "crates/stateset-macros", version = "1.28.4" }
-stateset-policy = { path = "crates/stateset-policy", version = "1.28.4" }
-stateset-a2a = { path = "crates/stateset-a2a", version = "1.28.4" }
-stateset-sync = { path = "crates/stateset-sync", version = "1.28.4" }
-stateset-jobs = { path = "crates/stateset-jobs", version = "1.28.4" }
-stateset-sdk = { path = "crates/stateset-sdk", version = "1.28.4" }
-stateset-http = { path = "crates/stateset-http", version = "1.28.4" }
-stateset-ffi = { path = "crates/stateset-ffi", version = "1.28.4" }
-stateset-pricing = { path = "crates/stateset-pricing", version = "1.28.4" }
-stateset-migrations = { path = "crates/stateset-migrations", version = "1.28.4" }
-stateset-authz = { path = "crates/stateset-authz", version = "1.28.4" }
+stateset-macros = { path = "crates/stateset-macros", version = "1.28.5" }
+stateset-policy = { path = "crates/stateset-policy", version = "1.28.5" }
+stateset-a2a = { path = "crates/stateset-a2a", version = "1.28.5" }
+stateset-sync = { path = "crates/stateset-sync", version = "1.28.5" }
+stateset-jobs = { path = "crates/stateset-jobs", version = "1.28.5" }
+stateset-sdk = { path = "crates/stateset-sdk", version = "1.28.5" }
+stateset-http = { path = "crates/stateset-http", version = "1.28.5" }
+stateset-ffi = { path = "crates/stateset-ffi", version = "1.28.5" }
+stateset-pricing = { path = "crates/stateset-pricing", version = "1.28.5" }
+stateset-migrations = { path = "crates/stateset-migrations", version = "1.28.5" }
+stateset-authz = { path = "crates/stateset-authz", version = "1.28.5" }
 
 # Testing
 insta = { version = "1.34", features = ["json"] }

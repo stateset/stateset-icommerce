@@ -6,6 +6,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.28.5] - 2026-09-01
+
 Closes every open finding on the engine report card — the four critical money
 defects and the three high-severity ones — and then a third round from a
 deeper re-audit of orders, carts, payments, growth, traceability and agentic

@@ -13,7 +13,7 @@ const profile = process.env.STATESET_TOOL_PROFILE || 'core';
 
 const child = spawn(
   process.platform === 'win32' ? 'npx.cmd' : 'npx',
-  ['-y', '-p', '@stateset/cli@1.28.4', 'stateset-mcp', '--db', dbPath, '--profile', profile],
+  ['-y', '-p', '@stateset/cli@1.28.5', 'stateset-mcp', '--db', dbPath, '--profile', profile],
   { stdio: 'inherit' },
 );
 

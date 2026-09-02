@@ -12,9 +12,9 @@ name = "stateset_swift"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", version = "1.28.4" }
-stateset-core = { path = "../../crates/stateset-core", version = "1.28.4" }
-stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.28.4" }
+stateset-embedded = { path = "../../crates/stateset-embedded", version = "1.28.5" }
+stateset-core = { path = "../../crates/stateset-core", version = "1.28.5" }
+stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.28.5" }
 
 # Serialization
 serde = { workspace = true }
