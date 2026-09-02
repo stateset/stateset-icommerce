@@ -4,7 +4,7 @@
 --
 -- The CHECK is added NOT VALID so existing rows are never inspected by the
 -- ALTER (legacy-safe: a deployment with drifted negative balances still
--- migrates); every new write is validated from now on. It is then VALIDATEd
+-- migrates); every new write is validated from now on. It is then validated
 -- only when no violating rows exist, so a clean database gets the fully
 -- validated constraint and a drifted one keeps the NOT VALID guard until the
 -- rows are repaired.
