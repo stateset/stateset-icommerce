@@ -38,15 +38,31 @@ fn main() -> Result<(), CommerceError> {
     let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
     let next_start = NaiveDate::from_ymd_opt(ny, nm as u32, 1).expect("valid next month start");
     let end = next_start.checked_sub_days(Days::new(1)).expect("has previous day");
-    let period = commerce.general_ledger().create_period(CreateGlPeriod {
-        period_name: format!("{year}-{month:02}"),
-        fiscal_year: year,
-        period_number: month,
-        start_date: start,
-        end_date: end,
-    })?;
-    let period = commerce.general_ledger().open_period(period.id)?;
-    println!("✓ GL period opened: {} [{}..{}]", period.period_name, period.start_date, period.end_date);
+    // Open or create+open the period covering today
+    let gl = commerce.general_ledger();
+    let period = match gl.get_period_for_date(today)? {
+        Some(p) => {
+            if p.status != stateset_embedded::PeriodStatus::Open {
+                gl.open_period(p.id)?
+            } else {
+                p
+            }
+        }
+        None => {
+            let created = gl.create_period(CreateGlPeriod {
+                period_name: format!("{year}-{month:02}"),
+                fiscal_year: year,
+                period_number: month,
+                start_date: start,
+                end_date: end,
+            })?;
+            gl.open_period(created.id)?
+        }
+    };
+    println!(
+        "✓ GL period opened: {} [{}..{}]",
+        period.period_name, period.start_date, period.end_date
+    );
 
     // 3) Configure tax (enable and add a simple CA state rate if not present)
     // Default TaxSettings enable tax with half_up rounding; persist them.
