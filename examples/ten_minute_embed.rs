@@ -15,6 +15,7 @@
 use chrono::{Datelike, Days, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use uuid::Uuid;
 use stateset_embedded::{
     Commerce, CommerceError, CreateCustomer, CreateGlPeriod, CreateInventoryItem, CreateJournalEntry,
     CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreateProduct, CreateProductVariant,
@@ -77,19 +78,25 @@ fn main() -> Result<(), CommerceError> {
     }
 
     // 4) Seed a customer, product, and inventory
+    let suffix = Uuid::new_v4().simple().to_string();
+    let short = &suffix[..8];
+    let unique_email = format!("ada+{}@example.com", short);
+    let sku = format!("WIDGET-CA-{}", short);
+    let product_name = format!("Widget {}", short);
+
     let customer = commerce.customers().create(CreateCustomer {
-        email: "ada@example.com".into(),
+        email: unique_email.clone(),
         first_name: "Ada".into(),
         last_name: "L".into(),
         ..Default::default()
     })?;
     println!("✓ Customer created: {}", customer.email);
     let product = commerce.products().create(CreateProduct {
-        name: "Widget".into(),
+        name: product_name.clone(),
         description: Some("A simple demo widget".into()),
         variants: Some(vec![CreateProductVariant {
-            sku: "WIDGET-CA-001".into(),
-            name: Some("Widget CA".into()),
+            sku: sku.clone(),
+            name: Some(format!("{} Variant", product_name)),
             price: dec!(100.00),
             ..Default::default()
         }]),
@@ -98,18 +105,18 @@ fn main() -> Result<(), CommerceError> {
     println!("✓ Product created: {}", product.name);
     // Track inventory for the SKU and stock 10 units
     let _ = commerce.inventory().create_item(CreateInventoryItem {
-        sku: "WIDGET-CA-001".into(),
-        name: "Widget".into(),
+        sku: sku.clone(),
+        name: product_name.clone(),
         initial_quantity: Some(dec!(10)),
         ..Default::default()
     })?;
-    println!("✓ Inventory item created: WIDGET-CA-001 (10 units)");
+    println!("✓ Inventory item created: {} (10 units)", sku);
 
     // 5) Calculate tax for a single-line purchase shipping to CA
     let tax_result = commerce.tax().calculate(TaxCalculationRequest {
         line_items: vec![TaxLineItem {
             id: "line-1".into(),
-            sku: Some("WIDGET-CA-001".into()),
+            sku: Some(sku.clone()),
             product_id: Some(product.id),
             quantity: dec!(1),
             unit_price: dec!(100.00),
@@ -144,17 +151,14 @@ fn main() -> Result<(), CommerceError> {
     let order_tax_total = tax_result.total_tax; // equals line_tax when no shipping tax
 
     // 6) Create an order that carries the calculated line-level tax
-    let variant = commerce
-        .products()
-        .get_variant_by_sku("WIDGET-CA-001")?
-        .expect("variant exists");
+    let variant = commerce.products().get_variant_by_sku(&sku)?.expect("variant exists");
     let order = commerce.orders().create(CreateOrder {
         customer_id: customer.id,
         items: vec![CreateOrderItem {
             product_id: product.id,
             variant_id: Some(variant.id),
-            sku: "WIDGET-CA-001".into(),
-            name: "Widget".into(),
+            sku: sku.clone(),
+            name: product_name.clone(),
             quantity: 1,
             unit_price: dec!(100.00),
             discount: None,
