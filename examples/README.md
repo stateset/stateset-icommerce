@@ -93,6 +93,8 @@ Complete examples in 9 programming languages, each showing the same workflow:
 
 ```bash
 cargo run --example basic_usage
+# Ten-minute embed that posts a journal:
+cargo run --example ten_minute_embed
 ```
 
 ### Node.js / JavaScript
