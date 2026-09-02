@@ -1,7 +1,7 @@
 //! Ten-minute embed: open engine, take order with tax, capture, post journal
 //!
 //! Run with:
-//!   cargo run --example ten_minute_embed
+//!   cargo run --example `ten_minute_embed`
 //!
 //! This example:
 //! - opens an in-process SQLite engine
@@ -86,7 +86,7 @@ fn main() -> Result<(), CommerceError> {
     let product_name = format!("Widget {}", short);
 
     let customer = commerce.customers().create(CreateCustomer {
-        email: unique_email.clone(),
+        email: unique_email,
         first_name: "Ada".into(),
         last_name: "L".into(),
         ..Default::default()
