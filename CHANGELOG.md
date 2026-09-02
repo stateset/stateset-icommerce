@@ -90,14 +90,14 @@ commerce, on both storage backends.
   atomically with the first cycle). Pausing records the paid remainder and
   resuming restores it, so a paused subscription neither loses paid days
   nor drifts its billing anchor.
-- **Tax and promotion rounding is exact per line**: per-line and breakdown
-  tax amounts round to the currency's minor unit with largest-remainder
-  allocation so lines sum to the total; jurisdiction matching is
-  case-insensitive; exemptions apply only when verified, within their
-  validity at the transaction date, and in a covered jurisdiction (new
-  `verify_exemption` on the tax repository). Buy-X-get-Y refuses zero
-  quantities instead of dividing by zero, and bundle promotions require the
-  full bundle.
+- **Promotion and billing rounding is exact**: promotion discounts and
+  billing-cycle amounts round to the currency's minor unit. Buy-X-get-Y
+  refuses zero quantities instead of dividing by zero, and bundle
+  promotions require the full bundle. The tax repository gains
+  `verify_exemption`; the per-line tax allocator and verified/dated/
+  jurisdiction-scoped exemption checks are present in `stateset-core` but
+  are **not yet wired into either tax engine** — that lands in the next
+  release.
 - **Concurrent cart item adds on Postgres no longer lose an update**: the
   cart row is locked for the duration of each item mutation.
 - **x402 intent transitions and a2a quote purchase are atomic.** On
