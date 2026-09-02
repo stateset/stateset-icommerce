@@ -15,12 +15,13 @@
 use chrono::{Datelike, Days, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use uuid::Uuid;
 use stateset_embedded::{
-    Commerce, CommerceError, CreateCustomer, CreateGlPeriod, CreateInventoryItem, CreateJournalEntry,
-    CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreateProduct, CreateProductVariant,
-    JournalEntry, ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem,
+    Commerce, CommerceError, CreateCustomer, CreateGlPeriod, CreateInventoryItem,
+    CreateJournalEntry, CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreateProduct,
+    CreateProductVariant, JournalEntry, ProductTaxCategory, TaxAddress, TaxCalculationRequest,
+    TaxLineItem,
 };
+use uuid::Uuid;
 
 fn main() -> Result<(), CommerceError> {
     println!("=== Ten-minute embed: order, capture, post journal ===\n");
@@ -157,8 +158,8 @@ fn main() -> Result<(), CommerceError> {
         items: vec![CreateOrderItem {
             product_id: product.id,
             variant_id: Some(variant.id),
-            sku: sku.clone(),
-            name: product_name.clone(),
+            sku,
+            name: product_name,
             quantity: 1,
             unit_price: dec!(100.00),
             discount: None,
@@ -205,11 +206,7 @@ fn main() -> Result<(), CommerceError> {
         .expect("default 2010 Accounts Payable must exist");
 
     // Revenue is the pre-tax amount on the line
-    let _pre_tax_revenue = order
-        .items
-        .iter()
-        .map(|it| it.total - it.tax_amount)
-        .sum::<Decimal>();
+    let _pre_tax_revenue = order.items.iter().map(|it| it.total - it.tax_amount).sum::<Decimal>();
     let captured = payment.amount;
     let tax_liability = order_tax_total;
     let revenue_credit = captured - tax_liability;
@@ -242,8 +239,7 @@ fn main() -> Result<(), CommerceError> {
         source_document_id: Some(order.id.into_uuid()),
         auto_post: Some(false),
     })?;
-    let posted: JournalEntry =
-        commerce.general_ledger().post_journal_entry(entry.id, "demo")?;
+    let posted: JournalEntry = commerce.general_ledger().post_journal_entry(entry.id, "demo")?;
     println!("✓ Journal posted: {}", posted.entry_number);
 
     // 9) Print outputs
@@ -255,4 +251,3 @@ fn main() -> Result<(), CommerceError> {
 
     Ok(())
 }
-
